@@ -1,0 +1,84 @@
+name: Release
+
+# Push a tag like "v0.2.0" to trigger a build + GitHub release with a
+# markcheck-<tag>-x86_64-unknown-linux-gnu.tar.gz (binary + README.md) and
+# its .sha256 checksum attached. Only the Linux x86_64 target, matching the
+# runner's own platform. Uses the `GITHUB_TOKEN` GitHub Actions injects
+# automatically for every run rather than requiring a manually-created
+# secret.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # Mirrors check.yml's checks against the exact tagged commit, so a release
+  # can't ship from a commit that never passed CI (e.g. a tag pushed before
+  # check.yml ran, or pointing at an older commit).
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: cargo test
+        run: cargo test --locked
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      # The archive name carries the version/platform detail; the binary
+      # inside it stays plain `markcheck` so extracting it needs no
+      # renaming. ARCHIVE_NAME is computed once here (via $GITHUB_ENV) so
+      # the packaging and upload steps below don't repeat the same string.
+      - name: Package release archive
+        run: |
+          set -euo pipefail
+          echo "ARCHIVE_NAME=markcheck-${{ github.ref_name }}-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
+          source "$GITHUB_ENV"
+
+          mkdir -p "dist/$ARCHIVE_NAME"
+          cp target/release/markcheck "dist/$ARCHIVE_NAME/markcheck"
+          cp README.md "dist/$ARCHIVE_NAME/"
+          chmod +x "dist/$ARCHIVE_NAME/markcheck"
+          tar -C dist -czf "dist/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
+          (cd dist && sha256sum "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256")
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ github.ref_name }}" \
+            "dist/$ARCHIVE_NAME.tar.gz" \
+            "dist/$ARCHIVE_NAME.tar.gz.sha256" \
+            --title "${{ github.ref_name }}"

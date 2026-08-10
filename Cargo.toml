@@ -1,0 +1,22 @@
+[package]
+name = "markcheck"
+version = "1.0.0"
+edition = "2024"
+description = "A pilot-checklist TUI for Markdown runbooks"
+license = "BSD-3-Clause"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+pulldown-cmark = { version = "0.13", default-features = false }
+arboard = { version = "3", features = ["wayland-data-control"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+notify = "8"
+base64 = "0.23"
+shell-words = "1"
+toml = "1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+portable-pty = "0.9.0"

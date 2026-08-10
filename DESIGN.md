@@ -1,0 +1,732 @@
+# markcheck — Project Specification
+
+A TUI application for pilot-style Markdown checklists, aimed at sysadmin/devops repeating workflows (server upgrades, maintenance runbooks). Reads a Markdown file, displays checklist items as navigable cards, and writes completion state back to the same file using `[ ]` / `[x]` syntax.
+
+---
+
+## Project Structure
+
+```text
+markcheck/
+├── Cargo.toml
+└── src/
+    ├── main.rs          # CLI args, terminal + mouse setup, event loop, editor, watcher wiring
+    ├── config.rs        # Config file: TOML defaults for the CLI flags
+    ├── model.rs         # All data types (Item, Screen, AppState, IconSet)
+    ├── parser.rs        # Markdown → Document
+    ├── app.rs           # AppState: navigation, scroll, toggle, reset, reload, key dispatch
+    ├── app_tests.rs     # app.rs's #[cfg(test)] mod tests, split into its own file:
+    │                    # the test module alone was ~2300 lines, dwarfing app.rs's own
+    │                    # ~1500-line implementation and making it look the repo's largest
+    ├── writer.rs        # Write completion state back to file (atomic, perms-preserving)
+    ├── watcher.rs       # Filesystem watch for external file changes
+    ├── git_sync.rs      # Background git commit+push after write-back
+    ├── clipboard.rs     # Copy code: arboard with OSC 52 fallback
+    └── ui/
+        ├── mod.rs       # render() entry point, layout composition, title bar
+        ├── cards.rs     # Card stack + completion / confirm (reset & quit-reset) screens
+        ├── overview.rs  # Right-side overview list (informational)
+        └── statusbar.rs # Bottom keybind legend / status message
+```
+
+---
+
+## Dependencies
+
+```toml
+ratatui = "0.30"
+crossterm = "0.29"
+pulldown-cmark = { version = "0.13", default-features = false }
+arboard = { version = "3", features = ["wayland-data-control"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+notify = "8"
+base64 = "0.23"
+shell-words = "1"
+toml = "1"
+serde = { version = "1", features = ["derive"] }
+```
+
+`notify` powers the file watcher (`src/watcher.rs`). The update tag in the title bar is a *relative* elapsed time computed straight from `SystemTime::duration_since`, so no calendar/timezone crate is needed. `shell-words` splits `$EDITOR`/`$VISUAL`/`$BROWSER` the way a shell would. `toml`/`serde` parse the config file (below). Git-sync (below) shells out to the system `git` binary via `std::process::Command` rather than adding a git library dependency (e.g. `git2`) — it reuses the user's existing SSH agent/credential helper for free, and needs nothing beyond `status`/`commit`/`push`.
+
+`arboard`'s `wayland-data-control` feature pulls in `wl-clipboard-rs`, giving it a native Wayland clipboard backend selected via `WAYLAND_DISPLAY` at runtime; without it, arboard only has an X11 backend on Linux, which silently misses native-Wayland paste targets even though it reports success. The feature is target-gated to `unix, not(macos/android/emscripten)` by arboard itself, so it has no effect on macOS/Windows builds.
+
+---
+
+## Core Data Types (`src/model.rs`)
+
+```rust
+pub type LineNumber = usize; // 1-indexed
+
+pub enum TaskState { NotStarted, Started, Done } // Started counts as not-done
+
+pub enum ItemKind {
+    Checkbox(TaskState),
+    DisplayOnly,
+}
+
+// ordered body runs: plain prose, inline code, styled prose
+// (emphasis/strong/strikethrough — a TextStyle), and links (text + url).
+pub enum BodySpan {
+    Text(String),
+    Code(String),
+    Styled { text: String, style: TextStyle },
+    Link { text: String, url: String },
+}
+
+// a `### H3`+ sub-section label within an `## H2` list; display context
+// (overview divider + card breadcrumb), not a navigable item.
+pub struct SubHeading { pub level: u8, pub text: String }  // level is the raw Markdown level 3–6
+
+pub struct Item {
+    pub line_number: LineNumber,       // for write-back
+    pub depth: usize,                  // nesting level: 0 = top-level, 1 = first sub-list, …
+    pub section: Vec<SubHeading>,      // active `### H3`+ sub-section path, outermost first; empty = directly under the H2
+    pub display_text: String,          // body only; leading bold stripped
+    pub body: Vec<BodySpan>,           // ordered prose/code runs for styled cards
+    pub header: Option<String>,        // leading **bold** → card title
+    pub code_spans: Vec<String>,       // inline `code`, in order
+    pub code_blocks: Vec<String>,      // fenced blocks belonging to item
+    pub kind: ItemKind,
+}
+
+pub struct List {
+    pub title: String,
+    pub banner: Option<String>,   // leading bold-only bullet → list banner
+    pub items: Vec<Item>,
+}
+
+pub struct Document {
+    pub file_path: PathBuf,
+    pub title: Option<String>,    // first `# H1`, the document title
+    pub has_default_list: bool,// lists[0] is the synthesized `(Default)` (no real H2)
+    pub lists: Vec<List>,
+    pub raw_lines: Vec<String>,   // full file, kept for write-back
+    pub uses_crlf: bool,          // source used \r\n; write-back rejoins with it instead of always \n
+}
+
+pub enum Screen {
+    Checklist,
+    ListComplete,
+    AllComplete,
+    ConfirmReset,     // modal confirmation before resetting all tasks
+    ConfirmQuitReset, // offered on quit when all done: reset before quitting?
+    Help,             // keybinding cheatsheet overlay
+    Search,           // incremental `/` search input; cursor jumps live to the first match
+    ListPicker,       // `T` "go to task" overlay: filterable list of every task
+}
+
+pub struct AppState {
+    pub document: Document,
+    pub current_list_index: usize,
+    pub current_item_index: usize,
+    pub screen: Screen,
+    pub status_message: Option<String>,
+    pub status_expiry: Option<SystemTime>,   // when an ephemeral status auto-clears; None = sticky (failures + action feedback)
+    pub status_is_error: bool,               // current message is a failure/nothing-happened; rendered red
+    pub should_quit: bool,
+    pub file_mtime: Option<SystemTime>,      // last known mtime; detects external edits
+    pub file_size: Option<u64>,              // last known size; cross-checked with mtime (narrows a coarse-mtime-fs race)
+    pub last_update_at: Option<SystemTime>,  // when the content last changed (our write or a reload)
+    pub git_sync: GitSyncState,              // background git-sync state (--git-sync) — see below
+    pub card_scroll: u16,                    // current card body scroll; reset on navigation
+    pub card_max_scroll: u16,                // written back by the cards renderer each frame
+    pub card_viewport_height: u16,           // card body visible rows; drives half/full-page scroll
+    pub card_rect: Option<Rect>,             // current card's on-screen area, for click-to-copy hit-testing
+    pub code_regions: Vec<(Rect, String)>,   // per-row copyable code (on-screen row rect, clean text) for row-based click-to-copy
+    pub overview_rows: Vec<(Rect, OverviewTarget)>, // per-row overview click zones (rect → navigate list/item, or toggle a task)
+    pub pending_g: bool,                     // true after a lone `g`, waiting for the second `g` of `gg`
+    pub pending_open_link: bool,             // true after `o` on a multi-link card, waiting for the link number
+    pub icons: IconSet,                      // nerd() default; --no-nerd-font -> unicode()
+    pub editor_requested: bool,              // set by `e`, consumed by the main loop
+    pub screen_before_confirm: Screen,       // return target when a reset/quit prompt is cancelled
+    pub clipboard_primary: bool,             // --primary: also target X11 PRIMARY
+    pub auto_copy: bool,                     // --auto-copy: copy code on navigation, announce on success
+    pub palette: Palette,                    // semantic UI colors resolved at startup
+    pub file_deleted: bool,                  // set when the file is confirmed deleted; blocks writes
+    pub search: SearchState,                 // incremental `/` search state — see below
+    pub picker: PickerState,                 // `T` go-to-task overlay state — see below
+    pub link_open_request: Option<String>,   // set by `o`; consumed by the main loop, which spawns the opener
+    pub help: HelpState,                     // `?` help overlay scroll state — see below
+    pub undo_stack: Vec<StateSnapshot>,      // full checkbox-state snapshots for undo; `u` pops+applies; capped at UNDO_HISTORY_CAP; cleared on external reload
+    pub redo_stack: Vec<StateSnapshot>,      // snapshots for redo; `Ctrl-R` replays; cleared by any fresh change and on external reload
+}
+
+// Fields that arrived together for one feature are grouped into their own
+// sub-struct instead of sitting flat on AppState — keeps a ~40-field struct
+// from reading as one undifferentiated pile as more overlays are added.
+
+pub struct SearchState {
+    pub query: String,           // live query typed while the Search screen is active
+    pub last: Option<String>,    // last committed query, reused by `n`/`N` after the prompt closes
+    pub origin: (usize, usize),  // cursor (list, item) when the search began; restored on `Esc`
+}
+
+pub struct PickerState {
+    pub query: String,           // live filter query typed in the ListPicker overlay
+    pub selection: usize,        // highlighted row index within the picker's filtered entries
+    pub viewport_height: u16,    // picker's visible row count; drives half-page selection jumps
+}
+
+pub struct HelpState {
+    pub scroll: u16,             // `?` help overlay scroll offset
+    pub max_scroll: u16,         // and its viewport height, written back by render_help each frame
+    pub viewport_height: u16,
+}
+
+pub struct GitSyncState {
+    pub active: bool,            // --git-sync requested and GitSync::detect confirmed a git work tree at startup
+    pub last_at: Option<SystemTime>, // when git-sync last committed+pushed; drives the "Synced … ago" tag
+    pub pending: Option<String>, // change description set after a write-back; consumed by the main loop for git-sync
+}
+
+pub type StateSnapshot = Vec<(LineNumber, TaskState)>; // every checkbox's state keyed by line number; the unit of undo/redo history
+pub const UNDO_HISTORY_CAP: usize = 100;               // max undo entries kept
+
+pub struct IconSet { // done, pending, started, current, note, file, list, update glyphs
+    // IconSet::nerd(): Font Awesome range glyphs (Nerd Fonts v3); update = refresh
+    // IconSet::unicode(): ☑ ☐ ◐ ❯ ▪ ≡ • ↻  (done ☑ / pending ☐, started = ◐, update = ↻)
+}
+
+pub enum ColorDepth { TrueColor, Palette256, Basic }
+pub struct Palette { done, started, code_bg, current, note, error, warning }  // semantic UI colors; error is red, warning is amber/orange (list banner). Nesting depth guides use `Palette::depth_color(slot)` — a hard-coded color cycle indexed by the sub-list's document-wide ordinal (`Document::sublist_slot`), not a field
+```
+
+**Color palette:** the UI's semantic colors (done, started, `code_bg`, current, note) come from a `Palette` resolved once at startup to the terminal's capability — `Color::Rgb` curated hues on truecolor terminals, the nearest `Color::Indexed(n)` on 256-color terminals, or named ANSI-16 as the always-safe fallback (which also respects the user's theme). Code is styled markdown-style with a subtle **background** (`code_bg`, a gray) rather than a foreground hue, so it doesn't collide with the dim-foreground elements (side cards, pending dots, captions). Capability is sniffed from `COLORTERM` (`truecolor`/`24bit`) and `TERM` (`256color`) by the pure `depth_from_env`; `detect_color_depth` supplies the real env, and `main.rs` sets `state.palette = Palette::detect()` at startup (default is `Palette::basic()`, used in tests). No color-detection crate is needed. All `ui/` rendering reads colors from `state.palette` (threaded into helpers) rather than hardcoding `Color::*`.
+
+---
+
+## Header Taxonomy
+
+markcheck recognizes five kinds of "header," each a title on a container. This vocabulary is **canonical** across the code, this document, and the README — keep them in sync:
+
+| Level | Markdown | What it is | Code | User-facing |
+| ------- | ---------- | ----------- | ------ | ------------- |
+| **Document header** | `# H1` | the whole file's title | `Document.title` | shown as the title in the title bar |
+| **List header** | `## H2` | a list's title | `List.title` | "list"; shown above the cards + in the overview |
+| **Sub-section header** | `### H3`–`###### H6` | a labeled group of items *within* an H2 list | `Item.section` (a `Vec<SubHeading>`) | overview `── divider`; dim ` › `-joined breadcrumb above the card |
+| **Card header** | leading `**bold**` on a task | a task card's title | `Item.header` | "card title"; shown inside the card (info icon, blue) |
+| **Sub-list header** | a nested/indented list under an item | the parent chain of a nested item | `List::parent_chain` → `breadcrumb_line` | depth-colored breadcrumb above the nested card |
+
+**Naming decision:** the H2-level container was renamed `Section` → **`List`** (it holds an H2 heading plus its items and banner), so "list" is used consistently in code identifiers (`lists`, `current_list_index`, `jump_to_list`, `Screen::ListComplete`, …), in the UI ("List Complete", "jump to list N", "next unfinished list"), and in the docs. `List.title` **is** the list header. This mirrors the other containers — `Document.title` (document header) and `Item.header` (card header) — where the container is a noun and its header is a field.
+
+---
+
+## Markdown Parsing (`src/parser.rs`)
+
+Use `pulldown-cmark` with `Options::ENABLE_TASKLISTS` and `.into_offset_iter()` for byte offsets. Derive line numbers from offsets:
+
+```rust
+fn offset_to_line(offset: usize, src: &str) -> usize {
+    src[..offset].chars().filter(|&c| c == '\n').count() + 1
+}
+```
+
+**Started marker pre-processing:** pulldown-cmark's task-list extension only recognizes `[ ]` and `[x]`, not the `[/]` "started" marker. Before parsing, `extract_started_markers` rewrites `[/]` task bullets to `[ ]` (both are 3 bytes, so byte offsets — and line numbers — are preserved) and returns the set of `[/]` line numbers. The processed string feeds the parser; `raw_lines` keeps the original text. In `End(Item)`, a `Checkbox(NotStarted)` whose line is in that set is promoted to `Checkbox(Started)`. `is_started_task_line` gates the rewrite: it recognizes a `[/]` after any number of leading `>` blockquote levels, then a list marker — an unordered bullet (`-`/`*`/`+`) or an ordered marker (`strip_list_marker`: 1–9 ASCII digits, the CommonMark limit, followed by `.` or `)`). The blockquote case feeds straight into the existing blockquote treatment: once rewritten, pulldown sees a real checkbox, so the item is no longer silently dropped by the no-checkbox-list rule — it surfaces as a non-interactive `DisplayOnly` card, the same degrade `[ ]`/`[x]` already get inside a blockquote.
+
+Walk events:
+
+- `Event::End(Tag::Heading(H2))` → start new `List`; resets the "first item seen" flag for banner detection; clears the sub-section stack
+- `Event::End(Tag::Heading(H1))` → first non-empty one sets `Document.title`; also clears the sub-section stack (H1 is top-level)
+- `Event::End(Tag::Heading(H3..=H6))` with non-empty text → reduce the sub-section stack: pop entries at level ≥ this heading's, then push `SubHeading { level, text }`
+- `Event::Start(Tag::Item)` → push an `ItemBuilder` frame onto a stack (so a nested item's interleaved Start/End doesn't clobber its parent's in-progress fields), recording the line number, nesting `depth` (`list_depth − 1`; 0 = top-level), and a **snapshot of the current sub-section stack** (`section`, stable for the whole item since a heading can't appear inside a list)
+- `Event::TaskListMarker(checked)` → marks item as `Checkbox(Done/NotStarted)`; pulldown strips `[ ]`/`[x]` from text automatically (`[/]` was already rewritten to `[ ]`). Also sets a `list_had_checkbox_syntax` flag (reset at each new top-level list) used by the has-checkbox gate below — tracked independently of the item's final `kind` so a blockquoted checkbox (forced to `DisplayOnly`) still counts as "this list had real task syntax" and doesn't vanish its own segment.
+- `Event::Start`/`End(Tag::BlockQuote)` → tracks a `blockquote_depth` counter; an item opened while `blockquote_depth > 0` is snapshotted `in_blockquote` and, at `End(Tag::Item)`, is forced to `ItemKind::DisplayOnly` regardless of any `TaskListMarker` — a checkbox quoted inside a `>` blockquote (e.g. illustrating another runbook) reads as an example, not a live task, and is also excluded from list-banner eligibility (below) so a quoted bold-only bullet can't hijack the real banner slot.
+- `Event::Start(Tag::Strong)` at the absolute start of an item → capture the bold text as the item's `header` (card title); bold appearing **mid-text** instead toggles inline strong styling on the body runs
+- `Event::Start`/`End(Tag::Emphasis | Tag::Strikethrough)` → toggle the corresponding flag in the builder's active `TextStyle`; body `Text` runs read while any flag is set are emitted as `BodySpan::Styled` instead of `BodySpan::Text`. `Options::ENABLE_STRIKETHROUGH` is enabled alongside `ENABLE_TASKLISTS`.
+- `Event::Start(Tag::Link { dest_url, .. })` → begin buffering the link; its text still flows into `display_text` (so search matches it) and on `End(Tag::Link)` a `BodySpan::Link { text, url }` is emitted. `Item::link_urls()` collects these for the `o` open action. **Known limitation:** a link entirely inside the leading-bold title (`capturing_header`) is gated out — its anchor text still folds into `header` as plain text, but the URL is discarded and `link_urls()` never sees it, so `o` can't open it. Put the link in the body instead if it needs to be openable.
+- `Event::Code(text)` inside item → push to `code_spans`, and append `BodySpan::Code` to `body`
+- `Event::Start/End(Tag::CodeBlock)` → buffer fenced block content into `code_blocks` (kept out of `display_text`); indented code blocks are discarded
+- `Event::Text` → accumulate `display_text` (or the header/code-block buffer when one is active), and append `BodySpan::Text` to `body` when in an item's body
+- `Event::End(Tag::Item)` → classify and buffer item
+
+**List banner:** when the **first** item of a list is a non-checkbox bullet whose entire content is one leading `**bold**` span, it emits no `Item` — its text becomes the list's `banner` (a non-navigable warning line, rendered below the list title). Every *other* bullet, including later bold-only ones, is a normal card (a display-only card when it has no checkbox). A banner attaches to the pre-heading `(Default)` list too. If a banner's list ends up with no checkboxes, the list is dropped (per) and the banner with it. A bullet with its own nested children is never banner-eligible either — the banner emits no `Item`, which would otherwise leave those children with no depth-0 parent in the flat list (`items_before`, a snapshot of `current_list_items.len()` at the bullet's `Start`, detects this: any growth by the bullet's own `End` means it has children, since descendants always finish first). Nor is a bullet inside a `>` blockquote — it's excluded from banner eligibility the same way, so a quoted example can't hijack the slot.
+
+**Sub-sections (`### H3`+):** headings of level 3–6 label a group of items *within* an `## H2` list rather than starting a new list. The parser keeps a **sub-section stack** (`Vec<SubHeading>`): each H3–H6 pops entries at level ≥ its own and pushes itself (so an H4 nests under an H3, a second H3 replaces the first plus any deeper level); the stack is **cleared at every H1/H2 boundary**, which begins a fresh list context. Each item snapshots the active stack into `Item.section` when it opens. Because a heading can't appear *inside* a Markdown list, every item in one list shares the same snapshot — and a single H2 list can hold several Markdown lists separated by sub-headings, all appended to the same `List`. A sub-heading that no item references (e.g. an H3 immediately followed by another heading, with no items between) never appears in any `section`, so **empty sub-sections drop automatically**. Sub-sections are pure display context: they are **not** navigable items, not matched by the main `/` search, and never affect progress counts or write-back. They *do* surface in the `T` go-to-task picker — shown as a dim `— …` path suffix and foldable into its filter — but that is picker-only; the section text stays out of `Item::search_text`. Rendering: the overview draws a `── Text` divider before the first item of each group (diffing adjacent items' `section` paths) and, when a group's ancestor rows scroll above the panel, pins them back as a **sticky header** — the `[n] Title` list header (multi-list only) plus every active `### H3`+ level, outermost first — in reserved rows above the still-visible list, covering nothing; the card shows the path as a dim ` › `-joined breadcrumb above it (see UI Layout).
+
+**List buffering / list invariant:** items are buffered per top-level list and only kept if the list contains at least one checkbox — a notes-only list contributes nothing. After parsing, lists with zero items are dropped entirely, so every list in a parsed `Document` has ≥1 checkbox. Tabs, 1–9 jump keys, and the overview renumber automatically (they enumerate positionally). The empty-list UI placeholder is kept as a defensive fallback only.
+
+**Nested / sub-lists:** nested list items are supported, not flattened. Each `Item` carries a `depth` (0 = top-level, 1 = first indented sub-list, …); items stay a **flat `Vec` in document/pre-order** (depth is metadata, not a tree). Because items are pushed at `End(Item)` — and a parent's `End` fires *after* its children's — a nested subtree arrives post-order, so each flushed top-level list is **sorted by `line_number`** to restore document order (a parent bullet always precedes its indented children). Banner detection is gated to the first *top-level* (depth-0) bullet, so a bold-only bullet inside a sub-list is a normal display-only card, never a banner. Every item — at any depth — remains a navigable card and toggles by its own line, so write-back is unaffected. The overview indents rows by depth (`item_indent`) and draws a **`│` depth guide per nesting level** in the indent, each in `Palette::depth_color(slot)` — a hard-coded color cycle (blue → purple → cyan → orange, resolved per color depth), so hierarchy reads by *which* color rather than one color fading (which the earlier single-dimming-purple failed at legibly). The `slot` is the guide's **document-wide sub-list ordinal**: `Document::sublist_slot(list_index, ancestor)` = the number of sub-lists in all earlier lists (`sublist_base`) plus the ancestor-at-that-level's `List::sublist_slot` (its index among *this* list's parents). Because the ordinal is global, **every sub-list in the document gets its own color** — distinct sub-lists within a list don't blend, and a neighbouring list's guides don't look like the same list continuing — with no collision until the 4-color cycle wraps. The guides descend from each parent's marker column and keep the marker prefix's on-screen width unchanged (so the click toggle-zone is unaffected). A nested item's card shows its parent chain as a breadcrumb above the title — the **sub-list header** (`breadcrumb_line` via `List::parent_chain`) — drawn in the **depth color of the item's own sub-list** (its immediate parent's document-wide slot), matching the overview guides. Deeper nesting is carried faithfully; odd/invalid nesting is hardened separately.
+
+**Fenced blocks after a list:** a fenced code block immediately following a kept list (only other fenced blocks in between) attaches to that list's last item; anything else between the list and the fence breaks the attachment, and a fence after a *discarded* list attaches nowhere.
+
+Items before the first H2 go into a synthesized `List { title: "(Default)", .. }`.
+
+Identity of duplicate items is `line_number`, not content.
+
+---
+
+## Markdown Write-Back (`src/writer.rs`)
+
+Surgical line replacement — only the task marker changes. `set_task_marker` replaces the first `[ ]`/`[x]`/`[X]`/`[/]` found on the item's line with the target for its state (`NotStarted`→`[ ]`, `Started`→`[/]`, `Done`→`[x]`); uppercase `[X]` is recognized too (pulldown parses it as done, so it must be rewritable) and is normalized to the target's casing on rewrite. Written atomically: a temp file is written and fsynced first, then renamed over the target, so a crash or full disk mid-write can never leave the file truncated or corrupted — the fsync (not just the temp-then-rename pattern alone) is what makes that guarantee hold on filesystems like ext4 `data=ordered`, where a rename's durability isn't otherwise assured until the write it points at is flushed.
+
+The original file's permissions are preserved: the temp file is created with mode `0600` (never more permissive than the most restrictive plausible source, even briefly), and the exact source permissions are applied through the file handle (fchmod semantics, immune to umask) before the rename. If the source file's metadata can't be read — **including when it has been deleted externally** — the write aborts with an error and nothing is written, so a deletion is never silently overwritten or recreated. The app layer detects the deletion first and blocks the toggle before `write_back` is even called (see "Reload From Disk"); this abort is the writer's own backstop.
+
+**Documented limitations:** the rename gives the path a new inode, so hard links are severed (other links keep the old content) and ownership is not preserved — the same trade-off every atomic-save editor makes.
+
+**Symlinks:** the CLI path is resolved with `fs::canonicalize` once at startup (`main.rs`), so a file opened through a symlink is written through to the real target, the link stays intact, and the file watcher watches the *target's* parent directory (a cross-directory symlink would otherwise never produce watch events). Consequences: the title bar shows the resolved target's filename, and a symlink retargeted mid-session keeps writing to the startup-resolved target.
+
+```rust
+pub fn write_back(document: &Document) -> io::Result<()> {
+    // 1. Flip [ ]/[x] on the recorded line numbers in raw_lines.
+    // 2. Read source metadata: any error (incl. NotFound) => abort, file
+    //    untouched, so a deleted file is never recreated.
+    // 3. write_temp(): create ".{name}.markcheck-tmp-{pid}" with mode 0600
+    //    (create_new; remove-and-retry once on AlreadyExists), write contents,
+    //    file.set_permissions(source_perms) (fchmod, umask-immune), then
+    //    file.sync_all() to flush the data to disk.
+    // 4. fs::rename over the target; remove the temp on any failure.
+    // 5. unix only, best-effort: fsync the parent directory too, so the
+    //    rename's directory entry itself survives a crash.
+}
+```
+
+Called synchronously on every toggle. Guarantees persistence if the terminal crashes mid-session, and rename's atomicity (same filesystem) means the file is never observed half-written.
+
+---
+
+## App State & Navigation (`src/app.rs`)
+
+Key methods on `AppState`:
+
+- `current_item() -> Option<&Item>` / `current_item_mut() -> Option<&mut Item>` — `None` when the current list has zero items (e.g. an H2 heading with only prose underneath, no checklist). Every call site handles this instead of assuming an item always exists; the UI shows a "No checklist items in \<list\>" placeholder card in that case.
+- `first_undone_index(list)` (free fn) — position of the first `Checkbox` whose state ≠ `Done` (a `Started` task still counts as not-done), or `None`. Drives startup/jump/advance landing on the first not-done item.
+- `AppState::new` — starts the cursor on the first not-done item: the first list's first undone, else the first undone anywhere, else item 0 when everything is done. **Precondition:** the document must hold ≥1 list — `current_list()` indexes `lists[current_list_index]` with no fallback, so a list-less document would panic. This is upheld at both entry points (startup rejects a list-less file in `main.rs`; reload keeps the last good document when the new one has no lists) and is made explicit by a `debug_assert!` in the constructor plus a clear `.expect` message in `current_list()` for release builds.
+- `navigate_next()` / `navigate_prev()` — the clamping primitives: move `current_item_index` by one, clamp at list boundaries, reset `card_scroll`, then `maybe_auto_copy()`. Cursor stops on **all** item kinds including `DisplayOnly`. `l`/`j` and `h`/`k` (and `→`/`↓` / `←`/`↑`) are bound to `navigate_forward`/`navigate_backward`, which call these but **cross** into the adjacent list at a list edge (see "Advancing between lists"); the mouse wheel and toggle-advance use the clamping primitives directly.
+- `scroll_card_down_by(n)` / `scroll_card_up_by(n)` (bound to `Ctrl-E`/`Ctrl-Y` with `n=1`, `Ctrl-D`/`Ctrl-U` with `n=half_page()`, `PageDown`/`PageUp` with `n=page()`) — move `card_scroll` by `n` wrapped lines, clamped to `[0, card_max_scroll]` (which the renderer recomputes each frame). `scroll_card_down()`/`scroll_card_up()` are the `n=1` shorthands the mouse wheel uses. `half_page()`/`page()` derive their distance from `card_viewport_height`.
+- `handle_scroll_down()` / `handle_scroll_up()` (mouse wheel) — scroll an overflowing card, otherwise navigate.
+- `maybe_auto_copy()` — with `--auto-copy`, copy the current item's code when it has exactly one candidate; announces a **successful** copy with the same status message as manual `y`, and stays silent for no-code / ambiguous / failure so passive navigation isn't spammed. Called after every navigation (next/prev/jump/advance/reload remap).
+- `toggle_current()` (Space/Enter) — on a `DisplayOnly` card, which has nothing to toggle, it **advances** via `navigate_forward` (crossing into the next list at a list edge) instead of doing nothing; a `None` current is still a no-op. Otherwise toggles *done*: `Done` → `NotStarted`, anything else (including `Started`) → `Done`. Writes back via `set_current_state`, then `maybe_transition_screen()` on completion.
+- `start_current()` (bound to `s`) — toggles *started*: `Started` → `NotStarted`, anything else (including `Done`) → `Started`. Writes back but **never** completes or auto-advances (stays on `Checklist`), so a started task is marked in place.
+- `set_current_state(state)` — shared write path for both: sets the current `Checkbox` state, `write_back`, and on success refreshes `file_mtime` (self-write guard) and `last_update_at` (the "Updated" tag), via the shared `commit_write` helper (which also stashes a `git_sync.pending` change description — see Git Sync below). Returns `bool`: on a write failure it sets a sticky error (`Write failed — change not saved to disk`) and returns `false`, and both callers skip their screen transition in that case rather than acting as if the toggle had succeeded.
+- `maybe_transition_screen()` — after completing, check if all checkboxes in list done → `ListComplete`; all lists done → `AllComplete`; otherwise `navigate_next()`
+- `jump_to_list(n)` — set `current_list_index`, land `current_item_index` on the list's first undone item (else item 0), set `Screen::Checklist`
+- `advance_to_next_incomplete_list()` — from a complete list, skip fully-complete lists to the next with remaining work, landing on its first undone item; `AllComplete` if none remain. Wired to the `ListComplete` screen's `l`/`Enter`.
+- `request_reset()` / `reset_all()` — the `R` confirmation flow; `take_editor_request()` — consumes the `e` flag for the main loop.
+
+Uncompleting an item always sets `Screen::Checklist`.
+
+Lists with no checkboxes are dropped at parse time, so this case no longer arises in normal use; the empty-list handling in `current_item()`/the UI remains only as a defensive fallback.
+
+---
+
+## Reload From Disk (`src/watcher.rs`, `src/app.rs`)
+
+Detects external edits to the open file (e.g. editing the runbook in another terminal while `markcheck` is running) and reloads it live.
+
+**Watching, not polling:** `FileWatcher` (`src/watcher.rs`, using the `notify` crate) watches the file's **parent directory**, non-recursive — not the file path directly. Watching the path directly can silently lose the watch when the file is replaced via a temp-file-then-rename save, which both `write_back` and most editors (vim, VS Code) use. Events are filtered to the target filename since the directory watch also sees unrelated siblings. `main.rs`'s event loop calls `AppState::reload_if_changed()` only when the watcher reports a relevant event, instead of polling on a timer.
+
+**Self-write filtering:** a directory watch sees our own writes too (the temp-file creation and the rename both generate events), so `AppState.file_mtime`/`file_size` still track the last known mtime and size and are updated immediately after every write we make ourselves. `reload_if_changed()` compares the file's current mtime *and* size against those; both matching means nothing external happened, regardless of what triggered the check. The size cross-check narrows (but doesn't eliminate) the window where a same-instant external edit could be missed on a coarse-mtime filesystem (whole-second resolution is common): an edit landing in the same resolution window that also happens to leave the size unchanged is still missed, but that's a much narrower coincidence than mtime alone.
+
+```rust
+pub fn reload_if_changed(&mut self) {
+    let stat = current_stat(&self.document.file_path); // (mtime, size) from one stat() call
+    if stat.is_none() {
+        // Distinguish a confirmed deletion (NotFound) from a transient
+        // unreadable state; set the sticky flag once on deletion.
+        if is_not_found(&self.document.file_path) && !self.file_deleted {
+            self.file_deleted = true;
+            self.set_error("File deleted — changes cannot be saved".to_string());
+        }
+        return;  // try again next tick
+    }
+    let (modified, size) = stat.unwrap();
+    // File readable again: clear the deleted flag and force a reload so the
+    // restored content is always picked up, even if mtime/size look unchanged.
+    let was_deleted = std::mem::take(&mut self.file_deleted);
+    let unchanged = self.file_mtime == Some(modified) && self.file_size == Some(size);
+    if !was_deleted && unchanged { return; }
+
+    match parser::parse_document(self.document.file_path.clone()) {
+        Ok(new_document) if !new_document.lists.is_empty() => {
+            self.remap_position(&new_document);
+            self.document = new_document;
+            self.screen = Screen::Checklist;
+            self.set_status(if was_deleted { "File restored — reloaded" }
+                            else { "Reloaded: file changed on disk" }.to_string());
+            self.last_update_at = Some(SystemTime::now());
+        }
+        Ok(_) => {  // new content has zero lists; keep the last good document
+            self.set_status("Reload skipped: file has no checklist items".to_string());
+        }
+        Err(err) => {  // e.g. non-UTF8 content; keep the last good document
+            self.set_status(format!("Reload failed: {err}"));
+        }
+    }
+    self.file_mtime = Some(modified);
+    self.file_size = Some(size);
+}
+```
+
+**File deletion:** a plain "unreadable" (`current_stat` returns `None`) is ambiguous — the file may be mid-rename by another writer or genuinely gone. `reload_if_changed` only treats it as a deletion when `fs::metadata` returns `NotFound`, and then sets a **sticky error** status (`File deleted — changes cannot be saved`, via `set_error`) exactly once and raises `AppState.file_deleted`. While that flag is set, every mutating action (`set_current_state`/`toggle_item`/`reset_all`/`undo`/`redo`) refuses to write, showing `File was deleted — cannot save changes` instead — so we never recreate the file behind the user's back (the `write_back` metadata-abort above is the second line of defense). The five identical guard blocks this used to be were consolidated into one `blocked_by_deletion()` helper (sets the error and returns `true`; call sites read as `if self.blocked_by_deletion() { return ...; }`) — no behavior change. When the file reappears the flag clears and the content is reloaded unconditionally (`File restored — reloaded`), regardless of mtime/size. These file-deleted messages are rendered `palette.error` (red) like every other failure message via the `status_is_error` flag — see `ui/statusbar.rs`.
+
+**Cursor remapping:** `remap_position()` keeps the cursor on the same list (matched by title) and item (matched by line number) after a reload, falling back to the start of the document when either can no longer be found — line numbers shift whenever content is inserted or removed above the cursor's position.
+
+**Graceful degradation:** if the watch can't be set up (e.g. inotify unavailable) reload is disabled entirely; if reloaded content has zero lists or fails to parse, the reload is skipped and the last good document is kept, with a status-bar message explaining why (`Reload skipped: file has no checklist items` / `Reload failed: {err}`) — this is a convenience feature, not core functionality, so it never crashes or blanks the screen.
+
+---
+
+## Git Sync (`src/git_sync.rs`)
+
+Auto-commits and pushes the checklist file after every write-back, when it lives in a git repo — so a list stays in sync across hosts that already share it via git. Off by default; activated per-file by `--git-sync` (forces it for this invocation) or a `git_sync_paths` prefix list in the config file (below).
+
+**Detection, once at startup:** `GitSync::detect(file_path)` runs `git rev-parse --is-inside-work-tree` in the file's parent directory. `None` (no `GitSync` constructed, feature inert for the session) when that fails — not inside a work tree, or `git` itself can't be run — the same fails-open convenience-feature stance as the file watcher; this is a single blocking call at startup, not re-checked per toggle.
+
+**Kept out of `AppState`, driven from `main.rs`:** mirrors `FileWatcher` — `main.rs` owns an `Option<GitSync>` and polls it once per loop tick, alongside the existing watcher poll:
+
+```rust
+if let Some(sync) = git_sync.as_mut() && let Some(outcome) = sync.poll() {
+    match outcome {
+        SyncOutcome::Synced => state.record_git_sync(),
+        SyncOutcome::Skipped => {}
+        SyncOutcome::Failed(msg) => state.set_error(format!("Git sync failed: {msg}")),
+    }
+}
+if let Some(change_desc) = state.take_git_sync_request()
+    && let Some(sync) = git_sync.as_mut()
+{
+    sync.request(change_desc);
+}
+```
+
+`AppState` never touches git/process directly — it just stashes a `git_sync.pending: Option<String>` change description (e.g. `Check "Restart service"`) in `commit_write`, the same shared tail every mutating action (toggle/start/reset/undo/redo) already goes through, and `take_git_sync_request()` hands it to the main loop. This is unconditional: `AppState` has no notion of whether git-sync is even enabled, matching the existing `editor_requested`/`take_link_open_request` pattern of "app state signals an external action, `main.rs` performs it."
+
+**Background thread, not the UI thread:** `GitSync::request` spawns a `std::thread` that runs the commit+push sequence and sends a `SyncOutcome` back over an `mpsc::channel` — the same non-blocking shape as `FileWatcher` (background worker → channel → `poll()` drains it via `try_recv` once per frame), so a slow or offline `git push` can never freeze the TUI. A `request` that arrives while a sync is already running is coalesced into a single `pending: Option<String>` slot rather than spawning a second concurrent thread (two `git commit`/`push` runs on the same repo could race on the index/HEAD); `poll()` spawns the queued request once the in-flight one reports back. Only the latest pending description matters, since every sync commits whatever is currently on disk rather than a specific diff.
+
+**Never adds a new file:** the sync sequence is `git status --porcelain --untracked-files=no -- <file>` (empty output — untracked or no change vs. HEAD — reports `Skipped`, no commit attempted at all) → `git commit --only -m <message> -- <file>` (`--only` takes exactly this path's current working-tree content and refuses outright if it isn't already tracked, so this can't stage a new file even if the status check were somehow wrong) → `git push` (no explicit remote/branch — pushes to the current branch's configured upstream). Shells out to the system `git` binary via `std::process::Command` rather than a git library (see Dependencies) — no `git add` step exists anywhere in this flow.
+
+**Commit message:** `<file name>: <change description>`, e.g. `checklist.md: Check "Restart service"`. The change description names the actual transition (`Check`/`Uncheck`/`Start` + the toggled item's `header`/`display_text`; `Reset all tasks to not done`; `Undo: N items`/`Redo: N items`) rather than a generic "updated by markcheck" — these commits accumulate across hosts, so a message naming what changed is more useful in `git log`/`git blame` later than a constant string would be.
+
+**Failure reporting:** a failed `status`/`commit`/`push` becomes `SyncOutcome::Failed(message)` (the failing command's name plus the first line of its stderr) and is surfaced via the existing `set_error` sticky-red-status convention — no new UI channel. A successful sync is *not* echoed to the status bar (that channel is reserved for problems and deliberate-keypress responses); instead it drives the title-bar "Synced … ago" tag — see Title bar, below.
+
+**Two distinct signals, one section:** the title-bar icon (see Title bar, below) is *persistent* — whether the feature is active *at all* this session, never expiring — while the "Synced … ago" text that appends after it is *ephemeral*, tied to one specific sync and fading after 2 minutes. They share a section rather than living in separate places because they answer related but different questions ("is this on" vs. "did it just work"). A `Git sync failed` message is a third, unrelated signal — sticky until the next input like any other error, in the status bar, not the title bar — and is otherwise a plain `set_error` call with nothing git-sync-specific about its lifecycle.
+
+---
+
+## UI Layout (`src/ui/`)
+
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│  Doc Title │ file.md        ↻ Updated 10s ago │ ⇅ git · Synced 8s ago │ ☑ 3/12 │  title bar
+├─────────────────────────────────────────────┬──────────────────────────────┤
+│                                             │ Overview───────────────────┐ │
+│         ╔ ☐ ═══════════════════ 2/7 ╗        │ • [1] List 1            │ │
+│  ┌ ☑ ───║       ▪ Card title        ║─ ☐ ──┐│   ☑ task 1                 │ │
+│  │ prev ║                           ║ next ││   ❯ task 2                 │ │
+│  │(tuck)║    centered body text     ║(tuck)││   ☐ task 3                 │ │
+│  └──────║                           ║──────┘│                            │ │
+│         ╚═════════ • • • ═══════════╝        │                            │ │
+│                                             │                            │ │
+├─────────────────────────────────────────────┴──────────────────────────────┤
+│  hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit                     │  status bar
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+The diagram shows the wide case (overview visible). The **title bar** lays out `H1 title │ filename` on the left — static identity, nothing else — and clusters everything dynamic (the `↻ Updated Ns ago` tag, the `⇅ git · Synced Ns ago` section, and the `done/total` counter) together on the **right**, counter outermost; the list tabs are **not** in the title bar. On **narrow** terminals (overview hidden, `<60` cols) the tabs move to a **dedicated row** directly below the title bar (and only when there's more than one list). The **status-bar legend** is `KEYBIND_LEGEND` (`ui/statusbar.rs`), truncated to the terminal width: `hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit` — trimmed to essentials, with `?` as the full keybinding reference.
+
+Layout tree:
+
+- **Width cap:** before anything else, `render` centers the working area at `Max(120)` columns via a horizontal `Flex::Center`; wider terminals get blank side margins, narrower ones use their full width. Everything below (title/main/status) lives inside this capped area.
+- `Layout::vertical` → title (1 line), **list-tab row (1 line, narrow multi-list only)**, progress bar (1 line), main (fill), statusbar (1 line). The tab row is inserted between the title and the progress bar only when the overview is hidden (`!overview_shown`) and there's more than one list; the constraints are built conditionally.
+- Main → `Layout::horizontal` → cards (`Min(0)`), a 2-column gap, overview (`Length(30)`) — the gap keeps the "next" side card off the overview list.
+- **Card row:** sized to the current item's content — `desired_card_height` measures the wrapped body (at the width the card will actually render, `current_card_width`) plus borders and clamps it to `[MIN_CARD_HEIGHT, ~60% of the main area]`. The card is vertically centered via `Flex::Center` with the rest empty — but when the list heading/banner rows are shown, the heading rows and the card are centered **together as one block** so the heading hugs the card instead of floating at the top; see List header. Short tasks get a compact card (removing the old empty-body void); long tasks get more room before scrolling. The completion/confirm modal cards keep a fixed ~40% height (`fixed_card_height`).
+- **List header:** on the `Checklist` screen, `render_checklist` renders reserved rows for the current list's `## H2` title (`render_list_heading` — ` {list icon} {title} ` centered, `palette.current` bold, matching the overview's current-list row). The heading rows sit just above the card, separated from it by a **single blank spacer row** — mirroring the one-row gap below the card before the link panel, so the card sits symmetrically between them. The `[reserved rows + card]` group is centered together as a single block via `Flex::Center`, so the heading stays visually tied to the card rather than pinned to the top of the area. It's shown only when the current list has a real H2 — suppressed for the synthesized `(Default)` list (`current_list_index == 0 && document.has_default_list`). Sits above the card row in the cards column only (never the overview).
+- **List banner:** when `list.banner` is set (a leading bold-only bullet), the block gains one more row for the banner, rendered **directly below the H2 title with no blank line between them** (the title and banner read as a heading + sub-header pair); the single blank spacer then sits below the banner, above the card. For a title-less default list the banner takes the top row, still one blank spacer above the card. `render_list_banner` centers `{info icon} {banner}` in `palette.warning` (amber/orange) bold. It's a warning line, not a card, and is skipped by all navigation (it's not an `Item`). The reserved rows (title/banner + the one spacer) are only taken when there's room for both them and the card (`area.height > content_h + reserved`); otherwise the heading/banner are dropped and just the card is centered.
+- **Sub-section breadcrumb:** when the current item has a non-empty `section` (`### H3`+ sub-section path), the reserved block gains one more row — **directly above the blank spacer, nearest the card** — showing the path as a dim, centered ` › `-joined breadcrumb (`render_section_breadcrumb`, e.g. `Outer › Inner`), **clamped to the card width with an ellipsis** (`ui::truncate`, the same helper the list tabs use) so a deep or long path can't overflow the card on a narrow terminal. It keeps the single-card view (narrow terminals, where the overview and its dividers are hidden) oriented about which sub-section it's in. Absent when the item sits directly under its H2. Stacking order top→bottom is thus: H2 title, banner, breadcrumb, blank spacer, card.
+- **Card stack:** manual `Rect` math — the center card is full height and `CENTER_CARD_PCT` (72%) of the row width; the side cards fill the remainder, tucked 1 row down, 2 rows shorter, and extend ~4 columns (`STACK_OVERLAP`) underneath the center card. Both side cards are anchored to the center card's own edges (not the row's edges), each starting `STACK_OVERLAP` columns under it, so an odd leftover width can't open a 1-column gap between the center card and the next (right) card. The same `CENTER_CARD_PCT` drives both `current_card_width` (height measurement) and `center_width` (the rendered Rect). Render order: prev, next, `Clear` on the center rect (ratatui doesn't blank covered cells), then the center card on top.
+
+**Card anatomy:** display-only note cards use a **rounded** border while task cards use a **thick** border (thick replaced the old double border for a bolder, cleaner "actionable step" frame), so a note reads as information rather than a step. The top border carries a state icon (done/pending/started/note from `IconSet`) on the left and the position status ` n/m ` on the right. **Card title:** the item's leading `**bold**` (`Item.header`) is shown *inside* the card — not in the border — as the first body line via `card_title_lines`: `{info icon} {header}` centered, followed by a blank separator, then the body. The **title text is bold in the terminal's default foreground** so it always contrasts with the background and stays legible (it was previously `palette.note` blue, which could wash out on some backgrounds); the leading info icon keeps `palette.note` (blue) as a small accent (shared with the list banner, but blue rather than the banner's amber). Items with no leading bold show no title line. The title counts toward `desired_card_height` and scrolls/centers with the body. The bottom border carries a left-aligned pilot-style position dot strip for the list's items (`position_dots` — current `◉` cyan, done `●` green, started `●` yellow, pending `·` dim, and a display-only item a `·` in `palette.note` blue so the strip stays a faithful item map while reading as information, not a pending task), and a right-aligned dim ` first–last/total ` scroll indicator when the body overflows, alongside a **scrollbar** on the right border (`render_scrollbar`). **Budgeted together:** whether the dots fit and whether the indicator is needed (`max_scroll > 0`) are both known before either title is added, so their widths are checked jointly against the card width — the two used to be decided independently, letting ratatui's title truncation silently eat the dots' current-item marker (`◉`) to make room for the indicator on a long list with a wide card. When both can't fit, the indicator (the harder functional need once the body overflows) wins and the dots are dropped entirely rather than truncated. The body has no `[ ]`/`[x]` prefix and sits inside `BODY_PAD` columns of horizontal padding so text isn't flush to the border; it's vertically centered when it fits, top-anchored and scrollable (`card_scroll`) when it overflows. The current card renders the item's ordered `body` spans as styled, word-wrapped `Line`s via `body_lines()`/`wrap_tokens()`. Prose is in the base style and **centered when it fits in ≤`PROSE_CENTER_MAX_LINES` lines, else left-aligned** (set per-`Line`). Inline `` `code` `` is drawn on the palette's `code_bg` background (a subtle gray, markdown-style, rather than a loud foreground; keeps yellow meaning only `started`). **Inline styling:** `body_tokens` carries a per-token `SpanStyle` (widened from the old code/not-code bool) that `wrap_tokens` maps to modifiers — emphasis→italic, strong→bold, strikethrough→crossed-out; a `Link` renders as just its underlined text — the URL is **not** shown inline, because a long URL wrapped ugly mid-token on narrow cards; it's shown in a panel **below the card** instead (see below). When a card has **two or more** links, each link text is followed by a dim `[N]` marker (1-based, document order) that keys it to the numbered list below the card; a lone link gets no marker. Colour isn't used for these (so `line_inline_code`'s `code_bg` test for click-to-copy is unaffected). **Trailing command:** when the item's *last* meaningful body span is inline code (`body_tokens` — trailing whitespace-only text ignored), that command is split onto its own line below a blank separator, so a lead-in and its command read as two tidy blocks; inline code followed by any text stays in the flow, and a body that is only a command has no leading blank. Fenced `code_blocks` are appended below, **left-aligned inside a light box filled with `code_bg`** (`code_block_lines`) preserving their own line breaks (hard-wrapped; falls back to plain left-aligned lines when the card is too narrow for a box). The box **always spans the full card-body width** — `box_w` is the full content width, not the longest content line — so the `code_bg` background reaches both edges even for a short one-line block and successive blocks align, matching a rendered Markdown block. Margins (bounded by the cell grid — whole cells only): the inline chip is padded a space each side, and the box keeps a one-space left/right margin and a blank `code_bg` row just inside the top and bottom borders. Per-`Line` alignment lets prose and code differ within one body while `body_lines` keeps exact line counts for scroll clamping. Items with an empty `body` fall back to `display_text`. Side cards stay plain `display_text`. All three cards vertically center their body the same way via the shared `top_pad(len, height)` helper. Wrapping is char-count based so line counts are exact for scroll clamping; the renderer writes `card_max_scroll` back into `AppState` each frame. State accent (`state_color`): Done → `palette.done`, Started → `palette.started`, else default — applied to the border and the position status via `accent_color`, which is `state_color` except that an **idle display-only note falls back to `palette.note` (blue)** so its frame (border + ` n/m `) matches its blue note icon and inside-title rather than sitting at the default color; tasks are unaffected (a pending task frame stays default). **Display-only parents reflect their sub-list:** `state_color` takes the parent's aggregate child state (`List::info_parent_state` — `Done` when it has ≥1 descendant checkbox and all are done, `Started` when ≥1 is started-or-done but not all done, else none), so an info parent borrows the same green/yellow accent a task would while its **rounded border keeps saying "information"** — shape encodes kind, color encodes state — and takes the **note blue** when nothing is under way (matching the icon, via `accent_color`). The top-left `header_line` note icon takes the same accent (the note *glyph* is unchanged, only its color, staying `palette.note` blue when nothing is under way); `info_parent_state` never feeds `checkbox_progress`, so `done/total`, the progress bar and completion detection are unaffected. The border is bold on the center card and dim on side cards; the body is dimmed only when Done (a started body stays normal, the code color still shows through). Side cards are always dim.
+
+**Responsive tiers:** measured against the width-capped area, driven by `OVERVIEW_MIN_WIDTH` (60) and `NARROW_THRESHOLD` (80, checked on the *card-area* width left after the overview split). Three tiers result: **narrow** (< 60 cols — single full-width card, no overview), **medium** (overview shown but the card pane is < 80 so still a single card), and **wide** (overview + the three-card stack). A card row narrower than `MIN_STACK_WIDTH` (44) also forces the single-card layout.
+
+**Title bar:** split into two independent `Layout::horizontal` chunks, `[left(Min 0)] [right(Length)]`. The **left chunk** is purely static identity — a leading space then `{file icon} {document title} │ {filename}` — the title is the first `# H1` in `palette.current` bold, the filename a dim secondary joined by a dim `│` separator; when there's no H1 a bold **`Missing document title`** placeholder in `palette.error` (red) stands in its place, filename still shown. Nothing dynamic lives here.
+
+**Right-hand cluster:** everything about the file's *current state* — recency, git-sync, progress — reads together on the right rather than trailing the filename on the left (moved here from the left group specifically so the left side could be pure identity and the right side pure status). Built by measuring each present piece's text width up front, then sizing the right chunk to exactly that combined width (tags + ` │ ` separators + the counter) — so it's a variable-width block that grows or shrinks as tags come and go, but the **counter is always its last (rightmost) element**, meaning the counter itself never shifts position on screen even though the tags before it do; only their combined leftward reach changes. a leading space then `{done icon} done/total` is that final, outermost piece. Its color **fades with completion:** `Palette::progress_color(done, total)` returns a two-stop ramp — started-yellow (nothing done) → done-green (complete) — driven by the `done/total` ratio, so progress is glanceable from the counter's hue alone rather than a flat color. It **starts at yellow rather than gray** so the counter is legible even at 0% done (`total == 0` counts as complete/green, preserving the old `done == total` behavior for a doc with no checkboxes). The ramp is resolved per color depth: a smooth 24-bit RGB lerp on TrueColor, the same lerp snapped to the nearest 256-color-cube/gray-ramp index (`rgb_to_256`) on Palette256, and a coarse stepped ramp of named colors (`Yellow` → `Green` → bold `Green`) on Basic, which can't interpolate. This is the **single** `done/total` counter: the overview panel used to carry a copy, but since the title-bar counter is always shown whenever the overview is (the wide layout), that copy was pure duplication and was removed — progress now reads from this counter plus the full-width progress bar below.
+
+Before the counter, in cluster order: the `Updated Ns/Nm ago` tag — relative elapsed time since the content last changed, **either** our own write (toggle/reset) **or** an external reload — is a dim-yellow span, prefixed with the **refresh icon** (`IconSet.update`, `\u{f021}` Nerd / `↻` plain) rather than `[ ]` brackets, since the ` │ ` separator and the dim-yellow style already set it apart; hidden below 80 columns and once ≥2 minutes old. It reads "Updated just now" under 5s, and the seconds are floored to 5s steps so it changes at most every ~5s rather than every render. Then the git-sync section (see below), when active. The title bar itself never carries the list tabs.
+
+**Git-sync section:** appends after the update tag behind its own ` │ ` separator, gated on `AppState.git_sync.active` (set once at startup — see Git Sync, above) rather than on any per-sync state, so it's either fully present for the whole session or fully absent, never flickering in and out as syncs come and go. `{icon} git` is a **persistent** "git-sync is on" indicator, shown from startup regardless of whether anything has synced yet; a relative `· Synced Ns/Nm ago` label **appends** after it, in the same section, only while a completed sync is still recent (`AppState.git_sync.last_at`, set by `record_git_sync()`), and drops away again on its own once stale — leaving just `{icon} git`. The literal word **"git"** is part of the label on purpose, not just the icon: two earlier icon-only attempts (a generic cloud-upload glyph, then a `fa-git` Nerd Font logo) both turned out illegible/unrecognizable on the reporting user's terminal, so the text carries the meaning and the icon (`IconSet.sync`, a plain `⇅` Arrows-block character — deliberately the *same* glyph in both `nerd()` and `unicode()`, since a Nerd Font Private Use Area codepoint was exactly what failed to render) is now just a small visual anchor, not load-bearing on its own. The relative-time half reuses the update tag's mechanism exactly — `relative_label(verb, at, now)` is the one function both tags call (parameterized on the leading verb, `"Updated"`/`"Synced"`), so the wording, the 5s-floored steps, and the 2-minute lifetime are shared, not reimplemented. The whole section shares the update tag's 80-column width gate. Colored `palette.done` (green) rather than the update tag's `palette.started` (yellow), so it reads as its own distinct signal rather than the update tag's neutral "something changed" note. A failed sync never sets `git_sync.last_at` and never touches this section — it goes to the status bar instead (see Git Sync, above), so `{icon} git` can be present at the same time as a red sync-failure message elsewhere on screen.
+
+**List tabs — dedicated row on narrow:** `render_list_tabs` draws the `[n] Title` strip (current list a black-on-`palette.current` pill, others dim) in **its own full-width row** just below the title bar, and only when the overview is hidden *and* there's more than one list. When the overview is visible (wide) it already lists every list, so no tab row is drawn; a single-list doc gets no row either (no wasted line). Giving the strip the whole row (rather than cramming it into the title bar) leaves room for the titles — **Tab fitting:** `fit_tab_titles` shows every list tab at full length when they fit (now usually the case), truncating proportionally (never below 3 chars each) only when they overflow, and falling back to just the current tab (truncated to 20) when even that won't fit. The above-cards list header still shows the *current* list near the cards in both tiers, mirroring how the overview + list header pair up on wide.
+
+**Progress bar:** `render_progress_bar` draws a one-row completion bar under the title bar from `Document::checkbox_progress() -> (done, started, total)`: `━` in `palette.done` (green) for the done portion, then `━` in `palette.started` (yellow) for started/in-progress tasks, then `─` dim for what remains. Widths are proportional via `progress_fill`, with the started segment clamped so the three never exceed the row width. (`checkbox_stats()` now derives its `(done, total)` from `checkbox_progress`.)
+
+**Icons:** `IconSet` in `model.rs` — Nerd Font glyphs by default (classic Font Awesome range, retained by Nerd Fonts v3), `--no-nerd-font` swaps plain-Unicode symbols (`☑ ☐ ❯ ▪ ≡ • ↻`) for terminals without a patched font. `sync` (`⇅`) is the one exception to both halves of that rule — a plain Arrows-block character in *both* icon sets, paired with a literal "git" text label wherever it's used, rather than a Nerd Font glyph relied on to read as "git" by shape alone (see Git-sync section, below).
+
+**Overview:** a progress view that takes no *keyboard* input, but its rows are **click targets** — click a label to jump to a task, a task's marker to toggle it (see Click-to-copy below). Rows: `{list icon} [n] Title` (current list cyan), a non-selectable `palette.warning` banner row (`{info icon} {banner}`) below the title when the list has one, and item rows with markers by precedence `☑` done (`palette.done`) > `◐` started (`palette.started`) > `▪` display-only note > `❯` current > `☐` dim pending — so an item's kind/state stays visible even on the current row (the list's own reversed-highlight already marks "current"). The `❯` current marker is `palette.current` (cyan) at the top level, but a **nested** current row tints it with the item's **own sub-list depth color** (its immediate parent's `sublist_slot`, the same color as its deepest `│` guide) so that under the row's `Modifier::REVERSED` highlight the marker's background matches the colored depth guides on the row instead of clashing with a cyan block. A display-only row's note marker (and, when all its children are done, its label) takes its sub-list's aggregate state color (`info_parent_state` — note blue / started yellow / done green with a dimmed label), matching the card. Items show their `header` when present, otherwise `display_text`. **Sub-section dividers:** before an item whose `section` path diverges from the previous item's (a common-prefix diff via `new_sub_headings`), the overview inserts a non-selectable `── Text` divider row per newly-active `### H3`+ heading (`section_divider` — a bold label between dim rules, indented by heading level and filled to the panel's inner width), so each group of cards reads under its sub-heading. The label is truncated with an ellipsis when it doesn't fit (`section_divider_line`, via the same `truncate` helper the card-side breadcrumb uses) rather than being hard-clipped by the render area. These rows are `RowClick::None` (like the banner) and don't shift the selection. **Sticky header:** as the rows are built, the renderer records per row its pinnable ancestor context (`row_sticky: Vec<StickyContext>`, aligned with `list_items`): the list's `[n] Title` header row (multi-list only) and the active `### H3`+ path as `(SubHeading, divider row index)` pairs, via a per-list `active_stack` that mirrors each item's `section`. The header is rendered **reserve-space**, not overlay: the panel's block is drawn first, and the sticky rows occupy reserved rows at the *top* of the content area with the scrollable list rendered *below* them (`inner.y + reserved`), so a pinned header never covers a list row. How many rows to reserve depends on the scroll offset, which itself depends on the reserved rows (they shrink the list viewport) — so the renderer iterates to a fixed point (bounded at 4 passes): render the `List` into the content area below `reserved` rows, read back `ListState::offset()`, and recompute the pinnable set for the row now at the top (`list_header_line` / `section_divider_line`, for every ancestor whose own row is `< offset`); it converges immediately while the top row stays within one group, since that group's ancestor chain is constant. The pinned set is always a prefix of the chain (an ancestor's row always precedes its descendants', so a scrolled-off deep level implies its shallower ones scrolled off too), capped so it can't fill the whole panel, and each reserved row is `Clear`ed before its header line is drawn (so nothing from an earlier pass bleeds through). So deep in `Deploy › Pre-flight › Data safety`, all three stay pinned above the still-visible list rather than just the deepest, and no content is hidden. The panel title is just ` Overview ` — it carries **no** `done/total` counter: that count is shown once, in the always-on title-bar counter directly above (a copy here was pure duplication, since the overview is only visible in the wide layout where the title-bar counter is too). **Single-list docs:** when there's only one list the `[1] Title` row is dropped — the number is meaningless, the title already appears above the cards as the list header, and a title-less `(Default)` list would otherwise read `[1] (Default)`. Items (and any banner) then de-indent one level so top-level rows sit flush at the left margin (`item_indent(depth, has_list_header)`); nesting still adds a level per `depth`. Multi-list overviews are unchanged. The panel's block carries `Padding::horizontal(1)` so rows sit a column in from the border, matching the card body's `BODY_PAD`. When the rows overflow, a **scrollbar** on the right border (`render_scrollbar`, driven by the `ListState`'s own scroll offset) shows the position. **Clickable rows:** after rendering, `overview::render` writes each *visible* clickable row's on-screen `Rect` plus an `OverviewTarget` into `state.overview_rows`. Because each row is exactly one line (the `List` truncates rather than wraps), the mapping is `y = inner.y + reserved + (row_index − offset)` for rows inside `[offset, offset + content_viewport)` — the list is rendered below the `reserved` sticky-header rows, reading the final `ListState::offset()` back after the render. The reserved header rows carry no click target (non-interactive, like a divider). A **checkbox item row is split into two zones:** its **marker prefix** (the left edge through the indent + state icon + trailing space, `marker_cells` wide — computed as the prefix's char count, since every `IconSet` glyph and the indent are single display cells) → `OverviewTarget::Toggle(list, item)`, and the **label** to the right → `OverviewTarget::Item(list, item)`; the two tile the row with no gap. A **display-only item row** and a **list-title row** each map their whole width to one target (`Item` / `List`); banner rows are skipped. The field is cleared when the overview isn't shown (narrow terminals), so stale rects can't be clicked. (The renderer builds a per-row `RowClick` — `None` / `Whole(target)` / `TaskItem { .., marker_cells }` — that this loop turns into the rects.)
+
+**Scrollbars:** the cards, the overview, and the help overlay share `render_scrollbar` (`ui/mod.rs`) — a ratatui `Scrollbar` drawn over the right border (a soft `▓` shade thumb with `▲`/`▼` end arrows, the box border showing through as the track) only when the content overflows its viewport. **ratatui gotcha:** its thumb reaches the bottom only when `position == content_length - 1`, but a scroll offset maxes at `total - viewport`; so `content_length` is passed as the number of scroll *positions* (`total - viewport + 1`) so the last item lands the thumb flush at the bottom.
+
+`cards.rs` dispatches on `Screen`: `Checklist` (stack above; a defensive "No checklist items" card if a list is somehow empty), `ListComplete`, `AllComplete`, `ConfirmReset`, and `ConfirmQuitReset` — the confirmation cards use a fixed ~40%-height centered row (`fixed_card_height`), while the completion cards (`completion_card`) size to their content so no line is clipped. Completion cards use `palette.done` borders, `ConfirmReset` a `palette.started` border, `ConfirmQuitReset` a `palette.done` border, and `Help` a rounded `palette.current` border (`render_help`, sized to its content; when the terminal is too short it scrolls — `help.scroll`, with a scrollbar). All are threaded from `state.palette`. The completion screens lead with a green check heading, a dim rule divider (`completion_rule`), and footer hints; the all-complete screen additionally surfaces `R` to reset the whole checklist, while the per-list screen does not (resetting is a whole-document action). All these block/modal titles are padded a space each side (`┌ Title ──┐`).
+
+**UI convention — border title padding:** every title rendered in a block/box border must be padded one space on each side (` Title `) so the border never butts against the text. This applies to all bordered panels, cards, and modals, current and future — when adding a new bordered widget with a border title, include the surrounding spaces.
+
+Status bar shows `status_message` when set (e.g., "Copied to clipboard", "Reloaded: file changed on disk"), otherwise the keybind legend. Messages auto-expire: **ephemeral** ones — passive confirmations and info (`Copied…`, `Reloaded…`, `Reload skipped…`, `All tasks reset…`), set via `set_status` — clear after `STATUS_TIMEOUT` (4s) of idle or on the next input; **sticky** ones carry no expiry (`status_expiry = None`) and persist until the next input, set via `set_error` for **failure / "nothing happened"** feedback — copy/reload/editor/open failures, `Nothing to copy`, `Not copied: N candidates`, `Nothing to reset`, `No matches for "q"`, unsupported/absent links, the **file-deletion** notice (`File deleted — changes cannot be saved`), and a failed git-sync commit/push (`Git sync failed: {message}`). `set_error` also raises the `status_is_error` flag, and the status bar renders those messages in `palette.error` (red) so failures stand out from passive confirmations (this supersedes the earlier file-deleted-only red; `set_status`/`clear_status` reset the flag). `expire_status(now)` runs each event-loop tick (the loop idle-redraws every 100ms, so it clears within ~100ms of the deadline); the four input handlers clear via `clear_status`. This is separate from the title bar's reload tag, which persists for up to 2 minutes. A failed git-sync is the only git-sync feedback that lives here — the "is git-sync active" indicator itself lives in the title bar (see Git-sync section, above), not the status bar.
+
+---
+
+## Completion Screens
+
+### Screen State Machine
+
+```rust
+pub enum Screen {
+    Checklist,
+    ListComplete,
+    AllComplete,
+    ConfirmReset,     // modal confirmation before resetting all tasks
+    ConfirmQuitReset, // offered on quit when all done: reset before quitting?
+    Help,             // keybinding cheatsheet overlay
+    Search,           // incremental text-search input, entered with `/`
+    ListPicker,       // filterable "go to task" overlay, opened with `T`
+}
+```
+
+`maybe_transition_screen()` fires after every completed toggle:
+
+```rust
+fn maybe_transition_screen(&mut self) {
+    let all_list_done = /* all Checkbox items in current list completed */;
+    if all_list_done {
+        let all_done = /* all Checkbox items in every list completed */;
+        self.screen = if all_done { Screen::AllComplete } else { Screen::ListComplete };
+    } else {
+        self.navigate_next();
+    }
+}
+```
+
+### ListComplete card
+
+```text
+┌──────────────────────────────────────────────┐
+│                                              │
+│             ✓  List Complete              │
+│            ──────────────────────            │
+│                                              │
+│   Prepare workspace                          │
+│   7 / 7 tasks completed                      │
+│                                              │
+│   Press  l / Enter  to go to next list    │
+│   Press  h  to review tasks                  │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+Green border. Replaces the three-card area entirely.
+
+### AllComplete screen
+
+```text
+┌────────────────────────────────────────────────┐
+│                                                │
+│             ✓  All Tasks Complete              │
+│            ────────────────────────            │
+│                                                │
+│   ✓  Prepare workspace       7 / 7             │
+│   ✓  Second workspace        5 / 5             │
+│                                                │
+│   Total: 12 / 12 tasks                         │
+│                                                │
+│   Press  R  to reset · h to review · q to quit │
+│                                                │
+└────────────────────────────────────────────────┘
+```
+
+---
+
+## Keybindings
+
+| Key | `Checklist` | `ListComplete` | `AllComplete` |
+| ----- | ------------- | ------------------- | --------------- |
+| `h` / `←`, `k` / `↑` | prev item (prev list at start) | back to last item | back to last list |
+| `l` / `→`, `j` / `↓` | next item (next list at end) | next incomplete list | — |
+| `Ctrl-E` / `Ctrl-Y` | scroll card body down / up one line | — | — |
+| `Ctrl-D` / `Ctrl-U` | scroll card body down / up half a page | — | — |
+| `PageDown` / `PageUp` | scroll card body down / up one page | — | — |
+| `gg` / `G` | first / last task in the document | — | — |
+| wheel | scroll overflowing card, else navigate | — | — |
+| `Enter` | toggle done (advance past an info card) | next incomplete list | — |
+| `Space` | toggle done (advance past an info card) | — | — |
+| `s` | toggle started | — | — |
+| `Tab` | next unfinished **task**, anywhere, wraps | next unfinished task | — |
+| `Shift-H` / `Shift-L` | prev / next unfinished **list** | prev / next unfinished list | prev / next unfinished list |
+| `/` | incremental search: jump to a task by text | — | — |
+| `n` / `N` | next / prev search match | — | — |
+| `}` / `{` | next / prev `### H3`+ sub-section, within the list | — | — |
+| `T` | "go to task" overlay: filterable list of every task | open | open |
+| `y` | copy code (see Clipboard) | — | — |
+| `o` | open the card's link in `$BROWSER` — safe schemes only; on a multi-link card, arms a digit to open link `[N]` (see Open link) | — | — |
+| `o` then `1`–`9` | open link `[N]` on a card with several links | — | — |
+| `e` | edit file in `$EDITOR` | edit | edit |
+| `R` | reset all tasks (confirm) | reset | reset |
+| `u` / `Ctrl-R` | undo / redo the last state change | undo / redo | undo / redo |
+| `1`–`9` | jump to list N | jump to list N | jump to list N |
+| `?` | help overlay | help | help |
+| `q` / `Esc` | quit (reset prompt if all done) | quit | quit |
+
+`e`, `R`, `u`/`Ctrl-R`, `1`–`9`, `Tab`, `Shift-H`/`Shift-L`, `?`, and `q`/`Esc` are global (handled before the per-screen dispatch). `handle_key_with_mods` is itself just an orchestrator over one small handler per concern — `handle_pending_open_link_key`, `handle_confirm_key`, `handle_help_key`, `handle_search_key`, `handle_picker_key`, `handle_checklist_scroll_key`, `handle_global_key`, and one per screen's own bindings (`handle_checklist_key`/`handle_list_complete_key`/`handle_all_complete_key`) — called in the exact front-to-back order described throughout this section; the split is structural only; no dispatch order or behavior changed. `gg`/`G` are `Checklist`-only motions — `gg` via a pending-`g` flag on `AppState` that any other key resets. `}`/`{` are likewise `Checklist`-only: they jump to the first item of the next/previous `### H3`+ sub-section **within the current list** (`List::sub_section_starts` gives the divider positions), reporting the landed-on sub-section, or an "already at the first/last" / "no sub-sections in this list" notice rather than wrapping or moving silently. They stay off the always-on legend (a navigation nicety, not an essential) and live only in the `?` overlay. The always-on status-bar legend is trimmed to the essentials (`hjkl:nav · space:toggle · /:search · y:copy · ?:help · q:quit`) with `?` as the full reference. `?` opens the `Help` overlay from any non-modal screen, scrolled to the top; when it overflows a short terminal the card scroll keys plus `j`/`k` and the arrows scroll it (`help.scroll`, clamped by `help.max_scroll`/`help.viewport_height` written back by `render_help`), and **any other key** closes it, returning to the screen it was opened from (via `screen_before_confirm`). **Navigation vs. scrolling:** since the layout stayed **horizontal**, all four home-row/arrow motions navigate between tasks — `h`/`l`/`←`/`→` read as the carousel sliding left/right, `j`/`k`/`↑`/`↓` as walking the list-shaped overview (`j`/`k` are plain aliases of `h`/`l`). Card-body scrolling moved off the plain home row onto vim's viewport keys: `Ctrl-E`/`Ctrl-Y` (line), `Ctrl-D`/`Ctrl-U` (half page), and `PageDown`/`PageUp` (page). Seeing the `Ctrl` modifier requires the real `KeyModifiers`, so `main.rs` calls `handle_key_with_mods(code, modifiers)`; the plain `handle_key(code)` wrapper (unmodified) is kept for headless tests. Half-page/page distances come from `card_viewport_height`, which the cards renderer writes back each frame alongside `card_max_scroll`. The mouse wheel gives an overflowing card body absolute priority; on a card that fits, the wheel navigates prev/next (within the list — only the explicit `l`/→ key crosses a list boundary). Card scroll state (`card_scroll`) resets to 0 on any navigation, list jump, or reload remap.
+
+**Mouse input cancels armed key chords:** `handle_left_click`/`handle_scroll_up`/`handle_scroll_down` call `clear_pending_chords()` (not just `clear_status()`) as their first action, resetting `pending_g` (the `gg` chord) and `pending_open_link` (the `o` digit prompt) alongside the status message. Mouse events don't go through `handle_key_with_mods` — the only other place that consumes these flags — so without this, e.g. clicking an overview row to jump to a different card while `o`'s prompt was armed would leave it armed against the *new* card, and a later digit press would be misread as a link-open selection instead of ordinary input.
+
+**Click-to-copy & click-to-navigate:** a left-click is dispatched to `AppState::handle_left_click(col, row)` (`main.rs`). It first hit-tests `overview_rows`: on the content screens (`Checklist`, `ListComplete`, `AllComplete` — *not* the modal overlays, whose overview is still drawn beside them) a click on an overview row acts on its target — `Item` calls `focus_item` then honours `--auto-copy` (mirroring the `T` go-to-task picker), `List` calls `jump_to_list` (landing on the list's first not-done item, like the number keys), and `Toggle` (a checkbox row's marker prefix) calls `toggle_item` to flip that task done↔not-done **in place**. `focus_item`/`jump_to_list` drop back to the `Checklist` screen; `toggle_item` leaves the cursor and card view untouched, writes back, reports a `Marked done`/`Marked not done` status, and only *demotes* a now-stale completion screen back to `Checklist` (it never *promotes*, which would steal focus). If no overview row is hit, it hit-tests two things the cards renderer writes back each frame (on the `Checklist` screen only):
+
+- **`code_regions`** — **row-based** per-fragment hit-testing. `render_current_card` records, for each rendered body row carrying code, a single-row `Rect` + the *clean* copyable text. `body_layout` produces this in lockstep with the body lines: a fenced-block row → the block text, the trailing command → its command, an inline-code row → the first code span on it (`line_inline_code` recovers it from the code-background chip). Row indices are mapped to on-screen rows through the same `top_pad` (centered) / `card_scroll` (overflow) offset used to draw the body, and clipped to the visible area. A click on such a row copies *that exact fragment* via `clipboard::copy_specific` — **overriding** the fenced-over-inline priority of `y`/`copy_item_code`, so a multi-command card that `y` refuses as ambiguous is copyable per-row. (A row with several inline spans resolves to the first.)
+- **`card_rect`** — the whole-card fallback. A click inside the card but *not* on a code row calls `copy_current_code()` (the MVP behavior): a one-command card copies, a 0-/multi-command card shows the same hint as `y`. Clicks elsewhere / off the checklist are ignored.
+
+**Advancing:** `Tab` is global and jumps to the next unfinished *task* anywhere in the document (`jump_to_next_incomplete_task`) — after the cursor, wrapping around, `NotStarted`/`Started` both count — reporting a sticky `No unfinished tasks` rather than moving silently when none exist. `Shift-L` is the coarser move: the next *list* with remaining work (`next_incomplete_list_after`), landing on its first not-done item; `Shift-H` mirrors it to the *previous* incomplete list (`prev_incomplete_list_before`). Neither wraps or moves silently when nothing qualifies (matching `jump_sub_section`'s convention): `no_further_incomplete_list_message` distinguishes no list in the document having unfinished work at all (`No lists have unfinished tasks`) from simply being at the last/first incomplete list already (`Already at the last/first incomplete list`). (`n` was dropped in an earlier vim-consistency pass.) `l`/→ (`navigate_forward`) steps within the list and, at the **last** item, crosses into the *immediately-next* list (adjacent, not skipping complete ones); `h`/← (`navigate_backward`) mirrors it — at the **first** item it crosses into the *immediately-previous* list. Both cross-boundary moves go through `jump_to_list`, so they land on the target list's **first not-done item, or its first item if all are done** (they may skip already-done items at the top of the adjacent list). `navigate_next`/`navigate_prev` themselves still clamp, so the toggle-driven advance in `maybe_transition_screen` and the mouse wheel never cross a boundary. From `ListComplete`, `l`/`Enter` skip fully-complete lists to the next list with remaining work.
+
+On the `ConfirmReset` screen, only `y` confirms and **any other key (including `Enter`) cancels** (returning to `screen_before_confirm`); `Enter` was dropped because it's too easy to hit by reflex for a whole-file rewrite. This screen is checked before the global `q`/`Esc` handler so `Esc` cancels rather than quits.
+
+On the `ConfirmQuitReset` screen (offered when pressing `q`/`Esc` with every task already done): `y` resets all tasks then quits, `n` quits without resetting, and `Esc`/any other key cancels back to `screen_before_confirm`. Like `ConfirmReset`, it's handled before the global quit check.
+
+## Incremental search (`/`)
+
+`/` on the `Checklist` screen enters `Screen::Search`, remembering the cursor in `search.origin`. The `Search` branch sits at the very top of `handle_key_with_mods` (right after the other modal checks) so every typed key edits `search.query` instead of firing a command — `q`, `?`, `j`, … are literal text. On each edit (`Char`/`Backspace`), `update_search` re-runs `find_matches` and moves the cursor to the first match, **staying** on `Screen::Search` so the query keeps showing in the status bar (rendered vim-style as `/query`; the checklist cards stay visible because `cards::render` treats `Search` like `Checklist`). The status bar always gives feedback: it appends the match count (`/query  (N matches)`) or, when a non-empty query hits nothing, a distinct error-colored `/query  (no matches)` rather than silently leaving the cursor put. `Enter` (`commit_search`) stores the query in `search.last`, returns to `Checklist`, and only then fires `maybe_auto_copy` — auto-copy is suppressed during incremental jumping so `--auto-copy` users don't copy on every keystroke. `Esc` (`cancel_search`) restores `search.origin`.
+
+After committing, `n` / `N` (`search_cycle`) step forward / backward through `find_matches(search.last)` relative to the cursor, wrapping around, and set an ephemeral `Match i/N` status; `commit_search` reports `Match 1/N` too — with a nudge — a leading space then `· n/N to cycle` — appended when there's more than one match, so the cycling keys are discoverable without opening `?` (they're not on the always-on legend) — and a committed query that matches nothing sets a sticky "No matches". Both `n`/`N` are otherwise no-ops when there's no active search, and report the sticky "No matches" if the stored query no longer matches anything. Matching (`find_matches` + `smart_case_contains`) is **smart-case** substring containment (case-insensitive unless the query has an uppercase letter) over each item's `Item::search_text` — the card title, body prose/inline code (folded into `display_text`), and any fenced command blocks — so a task is findable by its command, not just its prose. `focus_item(list, item)` is the shared exact-cursor primitive (unlike `jump_to_list`, which lands on the first not-done item); it's reused by the TOC overlay.
+
+## Go-to-task overlay (`T`)
+
+`T` opens `Screen::ListPicker`, a full-screen overlay (rendered by `render_list_picker` in the cards area, like `Help`, with the overview still beside it) that lists **every** navigable card — checkbox tasks and display-only note cards alike — with its state marker and a dim `— {list} › {sub-section}` context suffix — the list name (only when there are several lists) followed by the item's `### H3`+ sub-section path. Like `Search`, its key branch is at the top of `handle_key_with_mods` so typed keys are filter input. `AppState::picker_matches` returns every item when `picker.query` is empty, otherwise smart-case-matches each item's `picker_match_text` (its `search_text` plus its sub-section path, so "the task under Pre-flight checks" is findable) — the same smart-case predicate shared with search, but over a picker-only source so the section text never leaks into the main `/` search. Because letters are filter input, the selection moves on **arrows and `Ctrl-N`/`Ctrl-P`**, with **`Ctrl-D`/`Ctrl-U`** half-page jumps (matching the card-body scroll keys; the list viewport height is written back by the renderer into `picker.viewport_height`) — not `j`/`k`, which must stay typeable; `picker_move` clamps without wrapping and `picker.selection` resets to 0 on any filter edit. `Enter` (`picker_commit`) calls `focus_item` on the highlighted entry (then `maybe_auto_copy`), or just closes when nothing matched; `Esc` returns to `screen_before_confirm`. The overlay always gives feedback (per the UI Feedback rule): the filter text, and a title count that reads ` N items ` unfiltered ("items" rather than "tasks" since the count includes notes), ` N match(es) `, or ` no matches ` (with a centered "No matching items" body). Selection highlight and scrolling come from ratatui's `List`/`ListState`.
+
+## Editor integration (`e`)
+
+`handle_key` sets `AppState.editor_requested`; the main loop consumes it via `take_editor_request()` and calls `open_in_editor`, which suspends the TUI (disable raw mode + mouse capture, leave the alternate screen), spawns the editor resolved from `$VISUAL` → `$EDITOR` → `vi` (shell-word-split via the `shell-words` crate, so `EDITOR="code --wait"` works and a quoted argument containing spaces — `EDITOR="my-wrapper --arg='value with spaces'"` — stays one token instead of splitting apart) on the file, then always restores the terminal and calls `reload_if_changed()`. Unbalanced quotes fail to parse; `resolve_editor` falls back to `vi` and returns a warning (its third tuple element) that the caller surfaces via `set_error` rather than misparsing silently. The reload's mtime guard makes the watcher's later events a no-op, so the file is reloaded exactly once and the cursor is remapped to the previously selected item. **Cursor line:** for editors that understand the `+N file` convention — `editor_line_args` matches on the program's basename (`vi`/`vim`/`nvim`/`view`/`nano`/`pico`/`emacs`/`emacsclient`/`joe`/`gedit`) — a `+N` arg for the selected task's 1-based `line_number` is spliced in before the path, so the editor opens on that task's source line. Editors that don't use `+N` (VS Code, Sublime, Helix, anything unrecognised) get no line arg and open at the top of the file, unchanged.
+
+The full repaint on restore is done with `terminal.resize(current_size)`, **not** `Terminal::clear()`: ratatui's `clear()` issues a DSR cursor-position query (`ESC[6n`) and waits for the terminal to answer, which hangs/errors on terminals that don't reply (bare PTYs, some multiplexers) — surfacing as "The cursor position could not be read within a normal duration". `resize` to the same size clears the screen and resets the back buffer to force a redraw without any query.
+
+## Reset (`R`; quit-reset)
+
+`request_reset` opens the `ConfirmReset` modal, or shows "Nothing to reset" when no task is done. `reset_all` flips every checkbox to not-done, writes back once (updating `file_mtime` to suppress a self-reload), and returns to `Checklist`. The cursor is kept. A write failure sets a sticky error (`Write failed — reset not saved to disk`) instead — the screen stays on `ConfirmReset` and the reset status is never shown, since it wasn't actually saved (the checkboxes are still flipped in memory, matching `set_current_state`'s behavior).
+
+Quitting with everything already done (`q`/`Esc` when `document.checkbox_stats()` is all-done) opens the `ConfirmQuitReset` modal instead of quitting outright, so a finished checklist can be handed back ready to run again: `y` calls `reset_all` then quits, `n` quits without resetting, `Esc`/other cancels. This keeps the "leave it clean for the next run" workflow one keystroke away without ever resetting silently.
+
+## Undo / redo (`u` / `Ctrl-R`)
+
+Every state-changing action — `toggle_current`/`start_current` (via `set_current_state`), the overview-click `toggle_item`, and `reset_all` — is undoable. Each records an **undo point** by calling `record_undo_point()` immediately before it mutates and writes: it pushes a full `StateSnapshot` (`Vec<(line_number, TaskState)>` of every checkbox's *current* state, from `state_snapshot()`) onto `undo_stack` and clears `redo_stack` (a fresh change invalidates redo). A full snapshot — rather than a per-item delta — makes all four actions uniform and captures `reset_all`'s whole-document change for free; snapshots are a few bytes per task, and the stack is capped at `UNDO_HISTORY_CAP` (100, oldest dropped). The point is recorded only *after* each action's `file_deleted` guard and item validation, so a blocked or no-op action pushes nothing (`toggle_item` validates with an immutable borrow, then re-fetches mutably after the snapshot is taken).
+
+`u` (`undo`) pops `undo_stack`, snapshots the current state onto `redo_stack`, and applies the popped snapshot via `apply_snapshot` — which matches items by `line_number` (a line no longer present is skipped) and returns the lines that actually changed. `Ctrl-R` (`redo`) is the exact mirror, moving a snapshot back the other way. Both refuse when `file_deleted`, and report a sticky error (`Nothing to undo` / `Nothing to redo`) when their stack is empty. The shared tail `finish_history_apply` writes the restored document back (refreshing the `file_mtime` self-write guard and the `Updated` tag), drops any completion screen to `Checklist`, and gives **change-aware feedback** (per the UI Feedback rule): exactly one item changed → the cursor focuses it (`focus_item` via `locate_line`) and the status reads `Undo: marked done`/`marked started`/`marked not done` from the item's new state; several changed (a reset undo) → `Undo: restored N tasks`. A write failure sets a sticky error (`Undo failed`/`Redo failed — write error, change not saved`) and returns before any of that — the snapshot has already moved between the stacks by this point, so a failed save still leaves the in-memory state (and undo/redo stacks) as if the undo/redo had applied; only the on-disk file is stale. `u`/`Ctrl-R` are global (like `R`/`e`), so they work from the completion screens too; the `u` handler is guarded on `!CONTROL` so it never fires on `Ctrl-U` (card scroll), and redo is `Ctrl-R` so it stays distinct from `R` (reset).
+
+**External reloads are a hard boundary.** A successful `reload_if_changed` (an external edit) clears **both** stacks — the new document can change task state and line numbers underneath the snapshots, so they no longer apply cleanly. Our own writes update `file_mtime` and so never trigger a reload, meaning history survives toggles/resets we make ourselves. (Scope is task state only; in-app editing, if built, would need its own history integration.)
+
+---
+
+## Clipboard (`src/clipboard.rs`)
+
+`y` copies code content only. Candidates are the item's fenced `code_blocks` if any exist, otherwise its inline `code_spans`. Exactly one candidate → copy it; zero or several → nothing is copied and the status bar explains why (`Nothing to copy` / `Not copied: item has N code candidates`).
+
+Backend order: `arboard` first — verifiable and correct on a local X11/Wayland session — then an OSC 52 escape (`ESC ] 52 ; c ; <base64> BEL`) written to stdout when arboard fails. OSC 52 travels through SSH to the local terminal emulator, which makes copy work on headless servers (markcheck's core use case); it is fire-and-forget, so the status message distinguishes `Copied to clipboard` from `Copied to clipboard (OSC 52)`. Payloads are capped at 100 KB (tmux truncates around 74 KB). Bare OSC 52 is emitted — tmux users need `set-clipboard on`; VTE-based terminals (e.g. GNOME Terminal) don't support OSC 52 at all. If both backends fail outright, the status bar says so — copy failures are never silent.
+
+Outcomes are modeled as a `CopyOutcome` enum; the candidate selection and the OSC 52 sequence builder are pure functions with unit tests. The `Copied*` paths touch real backends and are verified manually.
+
+**PRIMARY selection (`--primary`):** by default only the CLIPBOARD selection is set. With `--primary`, arboard *also* writes the X11 PRIMARY selection (`SetExtLinux::clipboard(LinuxClipboardKind::Primary)`, Linux-only; best-effort — a PRIMARY failure doesn't fail the copy), and the OSC 52 fallback emits a second sequence with selection `p` in addition to `c`. This makes middle-click paste work alongside Ctrl-V. `copy_item_code`/`copy_text` take a `primary: bool` threaded from `AppState.clipboard_primary`.
+
+**Auto-copy (`--auto-copy`):** when set, `AppState.maybe_auto_copy()` runs after every navigation and copies the current item's code if it has exactly one candidate. It shows the same status message as manual `y` on a **successful** copy, but stays silent when the card has no code or an ambiguous set, so passive navigation isn't spammed. Reuses the same candidate logic and honors `--primary`.
+
+## Open link (`o`)
+
+`o` opens the current card's link: `AppState::open_current_link` reads `Item::link_urls()` — exactly one **with a safe scheme** → set `link_open_request` to that URL and show `Opening <url>`; exactly one with any other scheme → sticky `Not opened: unsupported link type (<url>)`; zero → sticky `Nothing to open: card has no link`; **several** → arm `pending_open_link` and set **no** status message, so the panel below the card keeps showing the numbered URL list (the user needs it to choose) while the status bar shows a short `press 1–N to open · esc cancels` prompt. The armed key is consumed at the top of `handle_key_with_mods`, before both the global digit→list jump (so a digit selects a link, not a list) and the global q/Esc quit (so Esc cancels rather than quitting): a digit `1`–`9` calls `open_link_number(n)` — which opens link `[n]` with the same safe-scheme/unsupported/out-of-range (`No link [n] on this card`) outcomes — `Esc` cancels, and any other key is a soft cancel that also takes its normal action (like the `gg` chord). The card's dim `[N]` markers (see Card anatomy) are the on-screen key for these numbers. **Known limit:** the armed digit only recognizes `'1'..='9'`, so a card's 10th+ link is listed in the panel but has no keyboard (or click — the panel isn't a click target) way to open it; edge case for this app's domain (10+ links on one task is unusual), not worth a multi-digit input mode for. The global `1`–`9` list-jump (`handle_global_key`) has the same nine-item ceiling for the same reason.
+
+The safe schemes are `http://`, `https://` and `mailto:` (`SAFE_LINK_SCHEMES`/`is_safe_link` in `app.rs`, matched case-insensitively per RFC 3986) — everything else is refused, including `javascript:`, `data:`, schemeless URLs like `example.com`, and `file://`. `file://` is excluded deliberately: an opener handed a `file://` URL pointing at a `.desktop` file or an executable can *run* it rather than merely display it. The allowlist also closes the **argument-injection** hole: a link like `[x](--some-flag)` would otherwise reach the opener's argv as an option, and a URL constrained to start with an allowed scheme can never start with `-`. This makes an explicit `--` end-of-options separator unnecessary — which matters, because `xdg-open` is a shell script with no standard `--` convention. Validation lives in `app.rs` (pure and unit-tested) rather than `main.rs`, which stays a dumb spawner. A refused link renders no differently from any other — the URL isn't drawn on the card at all, only its underlined text.
+
+**Link panel below the card:** since the URL no longer appears on the card, `cards::render_link_panel_below` draws the current card's link URLs in the empty space **below the card**, one per line and horizontally centered, under a one-row blank spacer. Single link → `→ <url>`; several → a numbered `[1] <url>` / `[2] <url>` … list matching the card's dim `[N]` markers. Crucially the card is positioned by `card_row` against the **full** main area — the panel is painted into the leftover space afterward, never subtracted from the layout — so the card stays put whether or not it has links (no jitter as you navigate). The full URL always lives in `Item.body`, so `link_urls()` and `o` are independent of how (or whether) it is displayed. Known limitation: a URL wider than the content area is clipped rather than wrapped (rare). While a multi-link `o` is armed (`pending_open_link`), the panel keeps listing the URLs and the **status bar** shows `press 1–N to open · esc cancels` (`statusbar.rs`, on the `Checklist` screen when no transient message is active; priority search overlay > status message > armed prompt > legend). On a short terminal with no room below the centered card for the panel itself (`link_panel_fits`), the card falls back to a compact ` → link ` hint in its bottom-right border title (same slot as the scroll indicator, which wins if both apply — see Card anatomy) so `o` is never a blind guess even when the full URL can't be shown.
+
+Like the editor request, `app.rs` only sets a request — the main loop consumes it via `take_link_open_request()` and calls `open_link`, which resolves the opener (`resolve_opener`: `$BROWSER` shell-word-split the same way as the editor, else `xdg-open`/`open`) and spawns it with the URL as a **plain argument** (no shell, so a crafted URL can't inject a command). Unbalanced quotes in `$BROWSER` fall back to the platform default with a warning surfaced via `set_error`, the same graceful-degradation contract as the editor. The TUI is **not** suspended (unlike the editor) — the browser is a separate GUI process; its stdio is sent to `/dev/null` so it can't corrupt the screen, and the child is reaped in a detached thread so we neither block on the browser nor leak a zombie. A spawn failure is surfaced in the status bar.
+
+---
+
+## Terminal Setup (`src/main.rs`)
+
+`TerminalGuard` with `Drop` ensures the terminal is always restored even on panic — disabling raw mode, releasing mouse capture (when it was enabled), and leaving the alternate screen:
+
+```rust
+struct TerminalGuard { mouse: bool }
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        if self.mouse {
+            let _ = execute!(stdout(), DisableMouseCapture);
+        }
+        let _ = execute!(stdout(), LeaveAlternateScreen);
+    }
+}
+```
+
+CLI via `clap` derive: positional `file: PathBuf`, plus `--no-nerd-font` (plain-Unicode icons), `--no-mouse` (skip mouse capture, so terminal text selection works without Shift), `--primary` (also copy to the X11 PRIMARY selection), `--auto-copy` (silently copy an item's code when navigating to it), and `--git-sync` (commit+push this file's changes after every write, when it's in a git repo). The first four each have a config-file default (below); a passed flag always wins. The `--primary`/`--auto-copy` flags set the matching `AppState` fields after construction; `--git-sync` instead feeds `GitSync::detect` (see Git Sync, above) since it isn't an `AppState` field at all.
+
+`--version`/`-V` (clap's built-in flag, wired via `#[command(version = VERSION)]`) prints `<CARGO_PKG_VERSION> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. `build.rs` shells out to `git rev-parse --short HEAD` at compile time and exports it as the `MARKCHECK_GIT_SHA` build-time env var (`cargo:rustc-env`), falling back to `unknown` when not in a git checkout (e.g. a source tarball); `main.rs`'s `VERSION` const stitches it together with `env!("CARGO_PKG_VERSION")` via `concat!`. `cargo:rerun-if-changed=.git/HEAD` keeps the SHA current across checkouts without forcing a rebuild on every unrelated change.
+
+Mouse capture is enabled by default (`EnableMouseCapture` at startup); `TerminalGuard { mouse }` disables it again on drop, before leaving the alternate screen. The event loop polls at 100ms and dispatches `Event::Key` presses to `handle_key`, `Event::Mouse` wheel events to `handle_scroll_up/down`, and left-clicks (`MouseButton::Left` down) to `handle_left_click` for click-to-copy; `Event::Resize` is handled automatically by ratatui. File reload is watch-driven, not polled — see "Reload From Disk" above.
+
+**Platform support:** Linux and macOS only (see README's Installation section). `default_opener` (`o` link-opening) hard-codes `open` on macOS and `xdg-open` everywhere else, and `resolve_editor`'s no-`$VISUAL`/`$EDITOR` fallback is `vi` — neither exists on Windows. `writer.rs`'s `#[cfg(unix)]`/`#[cfg(not(unix))]` split (permission handling) degrades gracefully on other platforms, but that's the only Windows-aware code path in the app; nothing else has been written or tested against it.
+
+---
+
+## Config File (`src/config.rs`)
+
+Sets defaults for the 4 boolean CLI flags so they don't need to be passed on every invocation, at `$XDG_CONFIG_HOME/markcheck/config.toml` (falling back to `$HOME/.config/markcheck/config.toml`). TOML keys use each flag's positive sense — `nerd_font`, `mouse`, `primary`, `auto_copy` — even though `no_nerd_font`/`no_mouse` are negations on the CLI; the two are merged in `main.rs`, not in `config.rs`:
+
+```rust
+pub struct Config {
+    pub nerd_font: Option<bool>,
+    pub mouse: Option<bool>,
+    pub primary: Option<bool>,
+    pub auto_copy: Option<bool>,
+    pub git_sync_paths: Option<Vec<PathBuf>>,
+}
+```
+
+Precedence, per flag: **CLI flag (if passed) > config value > built-in default.** Since `nerd_font`/`mouse`/`primary`/`auto_copy` are clap switches (no `--nerd-font`-style positive counterpart), a passed flag can only push a setting *away* from its default in the direction the flag names — e.g. `--auto-copy` can force auto-copy on even if the config sets `auto_copy = false`, but there's no CLI way to force it back off when the config sets it `true`; removing the config line is the way to do that.
+
+`git_sync_paths` is the odd field out — a list, not a single default for a single flag. It holds path prefixes: a file whose canonical path starts with one of them auto-activates git-sync, the same as passing `--git-sync` for that one invocation. `main.rs` ORs the two together (`cli.git_sync || paths.iter().any(|p| file_path.starts_with(p))`) rather than the CLI-overrides-config precedence the other four fields use, since `--git-sync` is a blanket "yes, definitely" rather than a default for this same key.
+
+A **missing** config file is not an error (`load_config` returns `Config::default()`, all `None`) — most installs have no file. An **existing but malformed** one *is* a hard error that aborts startup before the TUI opens, with `anyhow` context naming the file: the user asked for these defaults, so silently falling back would hide a typo rather than surface it (this is the same startup-error style as an unresolvable file path). `deny_unknown_fields` on `Config` extends that to a typo'd *key* (e.g. `nerdfont`), which would otherwise be silently ignored by serde.
+
+`config_path(xdg_config_home, home)` takes the two environment values as parameters rather than reading the environment itself, so it's pure and testable without mutating global process state — the same pattern `resolve_editor`/`resolve_opener` (`main.rs`) already use for `$EDITOR`/`$VISUAL`/`$BROWSER`. `main.rs` is the only caller that reads the real environment. Test isolation follows from the same design: `tests/cli.rs` and `tests/pty.rs` both pin `XDG_CONFIG_HOME` to a directory that's guaranteed to hold no `markcheck/config.toml` (`std::env::temp_dir()`) so the suite never picks up a real config file on the machine running it; a test that wants to exercise config behavior overrides it with its own isolated directory.
+
+---
+
+## Implementation Order
+
+1. `Cargo.toml` + `cargo check`
+2. `src/model.rs` — data types only, no logic
+3. `src/parser.rs` — with inline unit tests against the example markdown
+4. `src/writer.rs` — with round-trip test (parse → toggle → write → re-parse → assert)
+5. `src/app.rs` — navigation + toggle + screen transitions; unit test edge cases
+6. `src/ui/` — first visual smoke test with `cargo run -- example.md`
+7. `src/clipboard.rs`
+
+---
+
+## Testing
+
+Unit tests live inline in each module; UI rendering is tested via ratatui's `TestBackend` (content assertions, not styling). `tests/pty.rs` drives the compiled binary under a pseudo-terminal (`portable-pty`, a dev-dependency) to cover `main.rs`'s terminal wiring — the event loop, key dispatch, editor suspend/restore, and reset — which can't be reached headless; assertions are behavioral (clean exit, resulting file contents) rather than screen-scraping. Scripted interactions are a sequence of `Step`s: `Step::Key` paces plain keys with a short fixed delay (nothing to synchronize on before the next one), and `Step::WaitForFile` polls the target markdown file for a condition a preceding key is expected to have caused — mirroring `watcher.rs`'s own `wait_until` test helper — used before any step (notably quitting) that depends on that condition already holding, e.g. an edit having landed or a toggle having been written back. This replaced a fixed guessed delay after every keystroke, which could either be too short under CI load or needlessly long otherwise. `tests/cli.rs` covers the two `main.rs` startup paths that exit *before* any terminal setup — an unresolvable file path and a valid file with zero checklist items — with plain `Command::output()` subprocess runs, no pseudo-terminal needed; `tests/pty.rs` additionally covers `open_in_editor`'s spawn-failure and non-zero-exit branches (a nonexistent/failing `$EDITOR`), asserting the app survives and exits cleanly with the file untouched. Coverage: `cargo llvm-cov` (see CLAUDE.md); the headline figure excludes `main.rs`, though the PTY (and now CLI) tests do cover most of it in practice.
+
+`git_sync.rs`'s own tests build real throwaway git repos under `std::env::temp_dir()` (a bare "remote" plus a working clone, mirroring `watcher.rs`'s temp-file convention) and run actual `git` subprocesses — no mocking, since the whole point is verifying real `git` behavior (e.g. that `git commit --only` genuinely refuses an untracked path). Most tests call the free `run_sync` function directly, synchronously, rather than going through `GitSync::request`/`poll`'s background thread, to keep them deterministic; the couple that do exercise the thread (`request`/`poll` round-trip, and coalescing a second request that arrives while busy) write every file change *before* either `request` call, so there's no race between the background thread's `git status` check and a concurrent write on the test thread — an earlier draft that wrote the file *between* two `request` calls was genuinely flaky (which of two concurrently-racing filesystem operations wins is not deterministic), not just a wrong assertion. `tests/pty.rs`'s `git_sync_flag_commits_and_pushes_after_toggle` covers the same feature end-to-end through the compiled binary (flag parsing, `GitSync::detect`, and the main-loop poll/request wiring) that `git_sync.rs`'s unit tests can't reach, using the same bare-remote-plus-clone setup; its checklist file needs **two** items, not one, since completing the *only* item would swap `q` for the reset-before-quit confirmation prompt instead of exiting.
+
+## Verification Checklist
+
+- `h`/`l`/`j`/`k` (and `←`/`→`/`↓`/`↑`) all navigate prev/next and, at a list edge, cross into the adjacent list landing on its first not-done item; the mouse wheel and toggle-advance clamp instead
+- `Ctrl-E`/`Ctrl-Y`, `Ctrl-D`/`Ctrl-U`, and `PageDown`/`PageUp` scroll an overflowing card body (line / half-page / page) and clamp; on a card that fits they do nothing
+- mouse wheel scrolls an overflowing card, otherwise navigates prev/next
+- `Space`/`Enter` toggles; file updated immediately (`grep -n '\[x\]' <file>`)
+- Duplicate items with identical text: toggling one updates only its line
+- Completing last item in list → `ListComplete` screen appears
+- `l`/`Enter` from `ListComplete` → jumps to next list; `h` returns to last item
+- Completing all lists → `AllComplete` screen with correct per-list counts
+- `y` on a single-code item → copies it; on 0 or several candidates → status-bar alert, nothing copied
+- `e` → suspends TUI, opens `$EDITOR` (on the selected task's line for `+N`-style editors), restores and reloads with the cursor kept
+- `R` → confirmation card; only `y` resets all tasks to not-done, any other key (including `Enter`) cancels
+- `u` undoes the last toggle/start/reset (restoring state and focusing the changed task); `Ctrl-R` redoes it; empty history / a deleted file report a sticky message; an external reload clears the history
+- Card body shows no `[ ]`/`[x]` prefix; done cards read green
+- A leading bold-only bullet renders as the list's warning banner (not a navigable card); a later bold-only bullet renders as a display-only card
+- `### H3`+ under an H2 → an overview `── divider` above its group and a dim ` › ` breadcrumb above the card; deeper H4+ nest; an item-less sub-heading shows nothing; the heading isn't a cursor target, but `}`/`{` jump between sub-sections
+- List with no checklist items is dropped (no tab, not navigable)
+- Terminal resize → layout reflows without panic (incl. the narrow single-card fallbacks)
+- `q` → terminal fully restored (cursor visible, no raw mode, mouse capture released)
+- Title bar `done/total` counter updates live as items are toggled
+- Editing the open file externally → TUI reloads within the same tick, title bar shows `↻ Updated Ns ago` (refresh icon, stepping in 5s increments), cursor stays on the same list/item where possible; toggling a task yourself updates the same tag
+- Toggling a checkbox ourselves never produces a spurious "Reloaded" status message
+- Update tag disappears from the title bar 2 minutes after the last change
+- Wiping the file to zero lists externally → reload is skipped (status bar shows `Reload skipped: file has no checklist items`), last good document stays in memory
