@@ -85,7 +85,11 @@ workflow and file-backed state.
 
 ## Installation
 
-Requires a stable Rust toolchain ([rustup](https://rustup.rs)).
+Pre-built binaries (Linux x86_64) are attached to each
+[release](https://github.com/donnex/markcheck/releases) as a
+`.tar.gz` with a `.sha256` checksum — download, verify, extract, and put
+`markcheck` on your `$PATH`. For any other platform, build from source:
+requires a stable Rust toolchain ([rustup](https://rustup.rs)).
 
 ```sh
 cargo build --release        # binary at target/release/markcheck
