@@ -127,7 +127,7 @@ Before actually running `gh issue create` or `gh issue comment`, re-read the ful
 
 Applies to every file in the repository — not just test fixtures, but source code, comments, commit messages, and the repo's own documentation (`CLAUDE.md`, `README.md`, any design doc, etc).
 
-Real content must never be committed, full stop — no confirmation step, no exception, no "just this once." Always use placeholders or made-up content instead.
+Real content must never be committed, full stop — no confirmation step, no exception, no "just this once." Always use placeholders or made-up content instead. This is the strict counterpart to a confirm-first policy (one that allows a real value once the user has explicitly signed off on that specific use) — here, real data leaking into the repository at all is the failure mode to guard against, not just an unconfirmed one.
 
 - Never write a real person's name anywhere in the repository. Use a generic placeholder instead (e.g. "the user", "example-user").
 - Never write a real hostname, URL, IP address, command, or any other identifying detail. Use a made-up placeholder instead (e.g. `example-host`, `example.com`, or a documentation-range address like `203.0.113.10` — never a real one).
@@ -151,17 +151,26 @@ General git conventions for this project: branching, history rewriting, merging 
 
 - History rewriting — amending, rebasing, force-pushing — is allowed on `dev` (and topic branches based on it), but only for commits not yet merged into `master`, and only as long as `dev` stays linear on top of `master` per the rule above. This overrides the general "always create new commits, never amend/force-push" default, but *only* for `dev`/topic branches — never rewrite `master` history.
 - Aim to keep `dev`'s commit count low. Whenever a later commit would touch the same change as one already on `dev` and not yet merged to `master` — most often a fix or refinement found via testing or review of something just committed — rewrite the earlier commit(s) instead of stacking a new one on top: `git commit --amend` for the tip commit, or a soft-reset-and-recommit for an earlier one (Claude Code's tooling disallows interactive git flags, so `git rebase -i` isn't an option). Do not carry multiple commits into a merge to `master` that are really just successive fixes or changes to the same not-yet-merged work — combine them into the commit(s) they fix before merging. This is about the same change accruing fixes over time, not about splitting distinct work: the one-commit-per-concern rule under Commits still applies to genuinely separate concerns. Keep each commit correct and self-contained, since it hasn't shipped yet; re-run lint and push with `--force-with-lease` afterward per the rule below. Once a commit is merged to `master`, this no longer applies — fix it forward with a new commit as usual.
-- A topic branch gets the same treatment relative to `dev` that `dev` gets relative to `master`: rewrite its commits — amend, or soft-reset and recommit — to fold in fixes and refinements found while working on it, rather than stacking new fix-up commits on top. Clean it up before merging into `dev`, the same way `dev` gets cleaned up before merging into `master`, so what lands on `dev` is already tidy rather than a commit plus a trail of its own fixes.
+- A topic branch gets the same treatment relative to `dev` that `dev` gets relative to `master`: rewrite its commits — amend, or soft-reset and recommit — to fold in fixes and refinements found while working on it, rather than stacking new fix-up commits on top. Clean it up before merging into `dev`, the same way `dev` gets cleaned up before merging into `master`, so what lands on `dev` is already tidy rather than a commit plus a trail of its own fixes. This is not optional — see "Mandatory pre-merge history check" below, which applies to this merge exactly as much as it applies to merging `dev` into `master`.
 - Always push `dev` after committing or rewriting its history, so the remote never lags local. The same applies to a topic branch: push it after every commit made on it, not only once it's ready to merge, so it's never sitting local-only. When history was rewritten (amend/rebase), push with `--force-with-lease` (never a bare `--force`), so the push fails safely instead of clobbering anything unexpectedly added to the remote branch since the last fetch.
+
+#### Mandatory pre-merge history check
+
+**Before merging `dev` into `master`, or a topic branch into `dev`, the commit history being merged MUST be checked and rewritten if needed. This is not optional cleanup, not a judgment call, and not something to skip because the commits "look fine" — it is a required gate, every single time, with no exceptions. This has been missed before, and a missed check means every messy in-between commit ships permanently, since the destination branch's history is never rewritten after the fact.**
+
+The check: walk every commit being merged (`git log --oneline master..dev`, or `master..<topic-branch>` for a topic branch) and compare each one against the History rewriting rules above. Ask, for every commit: *is this really just a fix, refinement, typo correction, or follow-up to an earlier not-yet-merged commit in the same range?* If so, it must not survive as its own commit — squash it into the commit it fixes (`git commit --amend` for the tip, or a soft-reset-and-recommit for an earlier one) before doing anything else. The goal is that what lands on the destination branch reads as if it had been written correctly the first time, not as a live recording of the back-and-forth it took to get there. This is about collapsing accrued fixes to the *same* change, not about squashing genuinely separate concerns into one commit — the one-commit-per-concern rule under Commits still applies.
+
+Do this check — and any resulting rewrite plus `--force-with-lease` push — *before* presenting a merge summary to the user, not after. A merge summary should already describe the clean, final history, not a history that's about to be rewritten out from under it.
 
 #### Merging to master
 
 Merging to `master` happens only on explicit request, as a sequence:
 
-1. Present a summary of what's about to land — the commit range (`git log --oneline master..dev`) and a nutshell of what changed.
-2. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are two separate steps; don't collapse them just because the user already said "merge."
-3. Once confirmed, fast-forward `master` to `dev`: `git merge --ff-only dev` — no merge commit, no squash, since `dev`'s history is already linear and clean. If there's no local `master` checkout to merge into, push `dev`'s tip directly to `master` on the remote instead.
-4. If a true fast-forward isn't possible (something moved `master` independently), stop and ask rather than falling back to a merge commit or force-push.
+1. Perform the mandatory pre-merge history check above. Do not proceed to the next step until `dev`'s history is already clean.
+2. Present a summary of what's about to land — the commit range (`git log --oneline master..dev`) and a nutshell of what changed.
+3. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are two separate steps; don't collapse them just because the user already said "merge."
+4. Once confirmed, fast-forward `master` to `dev`: `git merge --ff-only dev` — no merge commit, no squash, since `dev`'s history is already linear and clean. If there's no local `master` checkout to merge into, push `dev`'s tip directly to `master` on the remote instead.
+5. If a true fast-forward isn't possible (something moved `master` independently), stop and ask rather than falling back to a merge commit or force-push.
 
 Remind the user to merge when it seems due: when a large feature/fix on `dev` looks finished, or `dev` has accumulated a lot of commits ahead of `master`, say so and suggest merging. This is a reminder only — never merge to `master` automatically or without explicit confirmation, no matter how done the work looks or how many commits have piled up.
 
