@@ -118,8 +118,16 @@ markcheck --no-mouse runbook.md       # leave terminal text selection alone
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
 markcheck --git-sync runbook.md       # commit + push after every toggle (needs a git repo)
+markcheck --new runbook.md            # create a starter checklist, then open it
 markcheck --version                   # print the version and build's git commit
 ```
+
+`--new PATH` creates a new file at `PATH` and opens it, instead of opening an
+existing one — `PATH` must not already exist and must end in `.md`
+(case-insensitively). The starter content is a title derived from the
+filename (`meeting-notes.md` → `# Meeting Notes`) and two blank tasks ready
+to fill in. `--new` and the positional `FILE` argument are mutually
+exclusive — pass exactly one.
 
 ## Config file
 

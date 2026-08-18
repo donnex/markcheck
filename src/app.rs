@@ -592,7 +592,7 @@ impl AppState {
 
     /// Sets an **ephemeral** status message that auto-clears after
     /// `STATUS_TIMEOUT` of idle — copies, reload/reset info, hints.
-    fn set_status(&mut self, msg: String) {
+    pub fn set_status(&mut self, msg: String) {
         self.status_message = Some(msg);
         self.status_expiry = Some(SystemTime::now() + STATUS_TIMEOUT);
         self.status_is_error = false;

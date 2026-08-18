@@ -93,6 +93,92 @@ fn version_flag_prints_cargo_version_and_git_sha_then_exits_cleanly() {
 }
 
 #[test]
+fn new_and_file_together_report_a_clear_conflict_and_exit_nonzero() {
+    let path = unique_path("new-conflict");
+    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
+        .arg("--new")
+        .arg(&path)
+        .arg(&path)
+        .env("XDG_CONFIG_HOME", std::env::temp_dir())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero when FILE and --new are both given"
+    );
+    assert!(
+        !path.exists(),
+        "the conflicting invocation must not create anything"
+    );
+}
+
+#[test]
+fn neither_new_nor_file_reports_a_clear_error_and_exits_nonzero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
+        .env("XDG_CONFIG_HOME", std::env::temp_dir())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero when neither FILE nor --new is given"
+    );
+}
+
+#[test]
+fn new_with_non_md_extension_reports_a_clear_error_and_exits_nonzero() {
+    let path = unique_path("new-badext").with_extension("txt");
+    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
+        .arg("--new")
+        .arg(&path)
+        .env("XDG_CONFIG_HOME", std::env::temp_dir())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero for a non-.md --new path"
+    );
+    assert!(!path.exists(), "the rejected path must not be created");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must end in .md"),
+        "clear error context shown: {stderr:?}"
+    );
+}
+
+#[test]
+fn new_with_existing_path_reports_a_clear_error_and_exits_nonzero() {
+    let path = unique_path("new-exists");
+    std::fs::write(&path, "already here").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
+        .arg("--new")
+        .arg(&path)
+        .env("XDG_CONFIG_HOME", std::env::temp_dir())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero when the --new path already exists"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot create"),
+        "clear error context shown: {stderr:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "already here",
+        "the existing file must not be overwritten"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
 fn malformed_config_file_reports_a_clear_error_and_exits_nonzero() {
     // A config file that exists but fails to parse is a hard error — the
     // user asked for these defaults, so silently falling back would hide

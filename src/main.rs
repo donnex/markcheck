@@ -4,6 +4,7 @@ mod config;
 mod git_sync;
 mod model;
 mod parser;
+mod scaffold;
 mod ui;
 mod watcher;
 mod writer;
@@ -46,8 +47,13 @@ const VERSION: &str = concat!(
     version = VERSION
 )]
 struct Cli {
-    /// Path to the Markdown file
-    file: PathBuf,
+    /// Path to the Markdown file (omit when using --new)
+    #[arg(required_unless_present = "new")]
+    file: Option<PathBuf>,
+    /// Create a new starter checklist at PATH, then open it (PATH must not
+    /// already exist and must end in .md)
+    #[arg(long, value_name = "PATH", conflicts_with = "file")]
+    new: Option<PathBuf>,
     /// Use plain Unicode symbols instead of Nerd Font glyphs (config: nerd_font = false)
     #[arg(long)]
     no_nerd_font: bool,
@@ -100,8 +106,26 @@ fn main() -> anyhow::Result<()> {
     // watcher watches the path's parent directory (which is the wrong
     // directory for a cross-directory symlink). Canonicalizing once fixes
     // both and gives dangling links a clear startup error.
-    let file_path = std::fs::canonicalize(&cli.file)
-        .with_context(|| format!("cannot resolve path: {}", cli.file.display()))?;
+    //
+    // `--new` already writes to a canonicalized path (`scaffold` resolves
+    // the parent directory itself, since the file doesn't exist yet for
+    // `canonicalize` to resolve), so only the plain positional-file path
+    // needs canonicalizing here.
+    let (file_path, created_new) = if let Some(new_path) = &cli.new {
+        let created = scaffold::create_new_checklist(new_path)
+            .with_context(|| format!("cannot create {}", new_path.display()))?;
+        (created, true)
+    } else {
+        // clap's `required_unless_present = "new"` guarantees this is `Some`
+        // whenever `cli.new` is `None`.
+        let file = cli
+            .file
+            .as_ref()
+            .expect("clap requires FILE when --new is absent");
+        let resolved = std::fs::canonicalize(file)
+            .with_context(|| format!("cannot resolve path: {}", file.display()))?;
+        (resolved, false)
+    };
     let document = parser::parse_document(file_path)?;
 
     // The parser drops lists without checklist items, so no lists at all
@@ -112,6 +136,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut state = AppState::new(document);
+    if created_new {
+        state.set_status("Created new checklist".to_string());
+    }
     let nerd_font = if cli.no_nerd_font {
         false
     } else {

@@ -68,16 +68,6 @@ fn drive(md_path: &PathBuf, env: &[(&str, &str)], steps: &[Step]) -> bool {
 
 /// Like `drive` but with extra CLI flags before the file argument.
 fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[Step]) -> bool {
-    let pty = native_pty_system();
-    let pair = pty
-        .openpty(PtySize {
-            rows: 30,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
-
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
     cmd.arg("--no-nerd-font");
     for arg in args {
@@ -93,6 +83,31 @@ fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[S
     for (k, v) in env {
         cmd.env(k, v);
     }
+    run_with_pty(cmd, md_path, steps)
+}
+
+/// Like `drive_args`, but for `--new`: passes `--new <path>` instead of the
+/// positional FILE argument, since the two conflict on the CLI. `md_path`
+/// must not already exist yet — markcheck is expected to create it.
+fn drive_new(md_path: &PathBuf, steps: &[Step]) -> bool {
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--new");
+    cmd.arg(md_path);
+    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    run_with_pty(cmd, md_path, steps)
+}
+
+fn run_with_pty(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> bool {
+    let pty = native_pty_system();
+    let pair = pty
+        .openpty(PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
@@ -681,4 +696,29 @@ fn open_link_spawns_the_configured_browser() {
     std::fs::remove_file(&md).ok();
     std::fs::remove_file(&browser).ok();
     std::fs::remove_file(&recorded).ok();
+}
+
+#[test]
+fn new_flag_creates_starter_checklist_and_opens_it() {
+    let path = unique_path("new-flag").with_extension("md");
+    assert!(!path.exists(), "test path must not already exist yet");
+
+    // `--new` creates the file, then falls through into the normal
+    // open-and-run flow: `q` quits it like any other file. The exact
+    // title-derivation text is covered by scaffold.rs's own unit tests;
+    // this only needs to prove the CLI wiring end-to-end.
+    let ok = drive_new(&path, &[Step::Key("q")]);
+    assert!(ok, "binary should exit successfully");
+
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        contents.starts_with("# "),
+        "starter file has a derived title: {contents:?}"
+    );
+    assert!(
+        contents.matches("- [ ]").count() == 2,
+        "starter file has two blank tasks: {contents:?}"
+    );
+
+    std::fs::remove_file(&path).ok();
 }
