@@ -458,7 +458,7 @@ where
     // as a toggle would, instead of leaving it to piggyback on (or be
     // missed by) some later markcheck-driven write.
     if state.reload_if_changed() {
-        state.request_external_edit_sync();
+        state.request_external_edit_sync(&program);
     }
     Ok(())
 }

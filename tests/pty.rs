@@ -897,8 +897,21 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
         }
         thread::sleep(Duration::from_millis(50));
     }
+    // The program name is the fake editor's own (temp-dir, so variable-length)
+    // path, so mirror git_sync's truncate-with-ellipsis rule here rather than
+    // asserting a fixed string.
+    let program = editor.to_str().unwrap();
+    let prefix = "checklist.md: Edited in ";
+    let full = format!("{prefix}{program}");
+    let expected = if full.chars().count() <= 80 {
+        full
+    } else {
+        let budget = 80 - prefix.chars().count() - 1;
+        let truncated: String = program.chars().take(budget).collect();
+        format!("{prefix}{truncated}\u{2026}")
+    };
     assert_eq!(
-        subject, "checklist.md: Edited in $EDITOR",
+        subject, expected,
         "the editor edit must be committed and pushed with no toggle at all"
     );
 
