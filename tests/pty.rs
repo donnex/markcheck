@@ -57,6 +57,15 @@ fn wait_for_file(path: &Path, mut pred: impl FnMut(&str) -> bool) -> bool {
 enum Step {
     Key(&'static str),
     WaitForFile(fn(&str) -> bool),
+    /// Simulates another program (e.g. an editor) writing the file while
+    /// the binary is running: writes `contents` with a bumped mtime
+    /// (avoiding coarse-mtime-resolution flakiness, mirroring
+    /// `app_tests.rs`'s `touch_with_new_mtime`), then pauses well past the
+    /// watcher's poll cycle so the reload has landed before the next step.
+    ExternalWrite(&'static str),
+    /// Simulates the file being deleted out from under the running binary,
+    /// then pauses for the watcher to detect it.
+    ExternalDelete,
 }
 
 /// Pacing delay between plain keys: generous enough for the 100ms event loop
@@ -139,6 +148,20 @@ fn run_with_pty(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> bool {
                         wait_for_file(md_path, pred),
                         "timed out waiting for the expected file content"
                     );
+                }
+                Step::ExternalWrite(contents) => {
+                    std::fs::write(md_path, contents).unwrap();
+                    let metadata = std::fs::metadata(md_path).unwrap();
+                    let new_mtime = metadata.modified().unwrap() + Duration::from_secs(1);
+                    std::fs::File::open(md_path)
+                        .unwrap()
+                        .set_modified(new_mtime)
+                        .unwrap();
+                    thread::sleep(Duration::from_millis(300));
+                }
+                Step::ExternalDelete => {
+                    std::fs::remove_file(md_path).unwrap();
+                    thread::sleep(Duration::from_millis(300));
                 }
             }
         }
@@ -383,6 +406,158 @@ fn advance_across_lists_exits_clean() {
 }
 
 #[test]
+fn live_reload_picks_up_an_external_edit() {
+    // Exercises the real watcher.poll_changed() -> reload_if_changed() wiring
+    // in main.rs's event loop, not just app.rs's own direct-call unit tests.
+    // `G` (jump to the last item) only reaches `beta` if the reload actually
+    // happened — otherwise the app still thinks there's a single-item list
+    // and `G`/toggle would land on `alpha` instead.
+    let path = unique_path("livereload");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+
+    let ok = drive(
+        &path,
+        &[],
+        &[
+            Step::ExternalWrite("## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n"),
+            Step::Key("G"),
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x]")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        contents.contains("[x] `beta`") && contents.contains("[ ] `alpha`"),
+        "reload picked up beta and G landed on it, not the stale alpha: {contents:?}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn file_deletion_blocks_writes_then_reloads_when_restored() {
+    // Exercises the real watcher-driven deletion/restoration path through
+    // main.rs, not just app.rs's own direct-call unit tests: the toggle
+    // attempted while deleted must not crash or resurrect the file, and the
+    // later restore-and-toggle must land on the newly-added item, proving
+    // the app picked the restored content back up.
+    let path = unique_path("deletion");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+
+    let ok = drive(
+        &path,
+        &[],
+        &[
+            Step::ExternalDelete,
+            Step::Key(" "), // attempted toggle while deleted: must not crash
+            Step::ExternalWrite("## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n"),
+            Step::Key("G"),
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x]")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        contents.contains("[x] `beta`") && contents.contains("[ ] `alpha`"),
+        "restored file was reloaded and the toggle landed on the new item: {contents:?}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn opens_through_a_symlink_writes_through_to_the_target() {
+    // Exercises the real startup canonicalization -> write-through ->
+    // watch-the-target's-parent-directory chain end to end, as main.rs
+    // actually wires it — writer.rs/watcher.rs each only unit-test symlink
+    // behavior in isolation.
+    //
+    // Two items, not one: toggling only `alpha` must not complete the whole
+    // list, which would otherwise swap `q` for the reset-before-quit prompt
+    // (unrelated to this test) instead of exiting.
+    let target = unique_path("symlink-target");
+    write_file(&target, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    let link = unique_path("symlink-link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let ok = drive(
+        &link,
+        &[],
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlink itself must survive the write"
+    );
+    let contents = std::fs::read_to_string(&target).unwrap();
+    assert!(
+        contents.contains("[x] `alpha`"),
+        "the write went through to the real target: {contents:?}"
+    );
+
+    std::fs::remove_file(&link).ok();
+    std::fs::remove_file(&target).ok();
+}
+
+#[test]
+fn no_mouse_flag_starts_and_exits_cleanly() {
+    let path = unique_path("no-mouse");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+
+    let ok = drive_args(&path, &["--no-mouse"], &[], &[Step::Key("q")]);
+    assert!(ok, "binary should exit successfully with --no-mouse");
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn mouse_wheel_and_click_do_not_crash() {
+    // main.rs's Event::Mouse dispatch (ScrollUp/ScrollDown ->
+    // handle_scroll_up/down, Down(Left) -> handle_left_click) has no PTY
+    // coverage otherwise. Raw SGR mouse sequences (ESC [ < Cb ; Cx ; Cy
+    // M/m — wheel up is Cb 64, wheel down 65, plain left button 0) can be
+    // written straight into the PTY like any other input, no real terminal
+    // required. Coordinates are just inside the 100x30 PTY, not aimed at any
+    // specific on-screen target — this is a crash/hang smoke test, not a
+    // click-precision one (that's covered headlessly in ui/mod.rs's tests).
+    let path = unique_path("mouse");
+    write_file(
+        &path,
+        "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n- [ ] `gamma`\n",
+    );
+
+    let ok = drive(
+        &path,
+        &[],
+        &[
+            Step::Key("\x1b[<64;40;15M"), // wheel up
+            Step::Key("\x1b[<65;40;15M"), // wheel down
+            Step::Key("\x1b[<0;40;15M"),  // left button down
+            Step::Key("\x1b[<0;40;15m"),  // left button up
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully after mouse input");
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
 fn start_key_persists_started_marker() {
     let path = unique_path("started");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
@@ -582,6 +757,75 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
         thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(subject, "checklist.md: Check \"alpha\"");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn git_sync_paths_config_auto_activates_without_the_flag() {
+    // git_sync_paths shares main.rs's flag-merge logic with the other config
+    // keys, but it's additive (OR'd with --git-sync) rather than a plain
+    // CLI-overrides-config default, and only auto_copy's config path had PTY
+    // coverage before this. A path prefix match must turn git-sync on with
+    // no --git-sync on the command line at all.
+    let root = unique_path("gitsync-cfg");
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    let xdg_config_home = root.join("xdg-config");
+    std::fs::create_dir_all(xdg_config_home.join("markcheck")).unwrap();
+    std::fs::write(
+        xdg_config_home.join("markcheck").join("config.toml"),
+        format!("git_sync_paths = [{:?}]\n", work.to_str().unwrap()),
+    )
+    .unwrap();
+
+    let ok = drive_args(
+        &path,
+        &[], // no --git-sync flag: the config path prefix must be enough
+        &[("XDG_CONFIG_HOME", xdg_config_home.to_str().unwrap())],
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut subject = String::new();
+    while Instant::now() < deadline {
+        let out = std::process::Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if subject != "init" {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        subject, "checklist.md: Check \"alpha\"",
+        "git_sync_paths must auto-activate the sync with no --git-sync flag"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
