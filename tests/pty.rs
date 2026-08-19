@@ -830,6 +830,83 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
 }
 
 #[test]
+fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
+    // A manual edit via `e` used to sit uncommitted until (or be missed
+    // entirely, if there wasn't) some later markcheck-driven toggle — the
+    // editor-reload path never queued a git-sync request the way
+    // commit_write does. Regression test: edit only, no toggle at all, and
+    // the edit must still land in the remote's log.
+    let root = unique_path("gitsync-editor");
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    // Fake $EDITOR: appends a task to the file it's given, then exits.
+    let editor = unique_path("fakeeditor-gitsync");
+    let editor = editor.with_extension("sh");
+    write_file(
+        &editor,
+        "#!/bin/sh\nprintf -- '- [ ] `beta`\\n' >> \"$1\"\n",
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).unwrap();
+    }
+
+    let ok = drive_args(
+        &path,
+        &["--git-sync"],
+        &[("EDITOR", editor.to_str().unwrap())],
+        &[
+            Step::Key("e"),
+            Step::WaitForFile(|s| s.contains("`beta`")),
+            Step::Key("q"), // no toggle at all — the edit alone must sync
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut subject = String::new();
+    while Instant::now() < deadline {
+        let out = std::process::Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if subject != "init" {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        subject, "checklist.md: Edited in $EDITOR",
+        "the editor edit must be committed and pushed with no toggle at all"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_file(&editor).ok();
+}
+
+#[test]
 fn git_sync_reports_when_the_file_is_untracked() {
     // Unlike the other PTY tests, this one *does* inspect the rendered
     // screen text (ANSI-stripped) rather than staying purely behavioral —

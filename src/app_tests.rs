@@ -2208,6 +2208,57 @@ fn reload_picks_up_external_change() {
 }
 
 #[test]
+fn reload_if_changed_returns_true_only_when_new_content_actually_loaded() {
+    // Callers that triggered the on-disk change themselves (the editor)
+    // need to tell a real reload apart from a no-op, to know whether
+    // there's now something worth a git-sync request.
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    assert!(!state.reload_if_changed(), "nothing changed yet");
+
+    touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
+    assert!(state.reload_if_changed(), "a real external edit landed");
+
+    assert!(
+        !state.reload_if_changed(),
+        "already reloaded, mtime/size unchanged since"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn reload_if_changed_returns_false_when_reload_is_skipped_or_fails() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    touch_with_new_mtime(&path, "Just a paragraph, no headings or lists.\n");
+    assert!(
+        !state.reload_if_changed(),
+        "a skipped reload (no checklist items) is not a real reload"
+    );
+    assert_eq!(
+        state.current_list().items.len(),
+        1,
+        "last good document kept"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn request_external_edit_sync_queues_a_git_sync_request() {
+    let mut state = AppState::new(two_list_document());
+    assert!(state.take_git_sync_request().is_none());
+    state.request_external_edit_sync();
+    assert_eq!(
+        state.take_git_sync_request().as_deref(),
+        Some("Edited in $EDITOR")
+    );
+}
+
+#[test]
 fn reload_catches_same_mtime_change_via_size_cross_check() {
     // A same-instant external edit can leave the mtime identical on a
     // coarse-mtime filesystem; forcing that here shows the size cross-check

@@ -356,7 +356,10 @@ normally.
 With `--git-sync` (or a matching `git_sync_paths` entry, above) active for a
 file that's already in a git repository, every toggle/start/reset/undo/redo
 commits and pushes the change in the background, so a checklist shared via
-git stays in sync across machines without leaving the app. It only ever
+git stays in sync across machines without leaving the app. Editing the file
+in `$EDITOR` (`e`) syncs too, as its own commit (`checklist.md: Edited in
+$EDITOR`) — even if you only edit and quit without toggling anything
+afterward. It only ever
 touches files git already tracks — a new/untracked file next to the
 checklist is never picked up and never committed, and the same goes for the
 checklist file itself: if it isn't tracked yet, git-sync won't `git add` it

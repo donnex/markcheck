@@ -1008,7 +1008,12 @@ impl AppState {
     /// edit landing in the same resolution window as our own write, or a
     /// prior external edit, that also happens to leave the size unchanged is
     /// still missed, but that's a much narrower coincidence than mtime alone.
-    pub fn reload_if_changed(&mut self) {
+    /// Returns whether new content was actually loaded (as opposed to
+    /// nothing changing, or a reload being skipped/failed) — callers that
+    /// themselves triggered the on-disk change (e.g. `e`, the editor) use
+    /// this to know whether there's now something worth a git-sync request;
+    /// see [`request_external_edit_sync`](Self::request_external_edit_sync).
+    pub fn reload_if_changed(&mut self) -> bool {
         let Some((modified, size)) = current_stat(&self.document.file_path) else {
             // Distinguish a confirmed deletion from a transient unreadable state.
             let is_deleted = fs::metadata(&self.document.file_path)
@@ -1018,7 +1023,7 @@ impl AppState {
                 self.file_deleted = true;
                 self.set_error("File deleted — changes cannot be saved".to_string());
             }
-            return;
+            return false;
         };
 
         // File is accessible again. Clear the deleted flag and reload regardless
@@ -1027,10 +1032,10 @@ impl AppState {
         let unchanged = self.file_mtime == Some(modified) && self.file_size == Some(size);
 
         if !was_deleted && unchanged {
-            return;
+            return false;
         }
 
-        match parser::parse_document(self.document.file_path.clone()) {
+        let reloaded = match parser::parse_document(self.document.file_path.clone()) {
             Ok(new_document) if !new_document.lists.is_empty() => {
                 self.remap_position(&new_document);
                 self.document = new_document;
@@ -1047,17 +1052,31 @@ impl AppState {
                 };
                 self.set_status(msg);
                 self.last_update_at = Some(SystemTime::now());
+                true
             }
             Ok(_) => {
                 self.set_status("Reload skipped: file has no checklist items".to_string());
+                false
             }
             Err(err) => {
                 self.set_error(format!("Reload failed: {err}"));
+                false
             }
-        }
+        };
 
         self.file_mtime = Some(modified);
         self.file_size = Some(size);
+        reloaded
+    }
+
+    /// Queues a git-sync request for an edit that happened *outside*
+    /// `write_back` — currently just `e`, the external editor — so it isn't
+    /// silently left uncommitted until (or missed entirely, if there isn't)
+    /// some later markcheck-driven change. Mirrors `commit_write`'s
+    /// unconditional stash: `AppState` has no notion of whether git-sync is
+    /// even active, `main.rs` decides that when it drains the request.
+    pub fn request_external_edit_sync(&mut self) {
+        self.git_sync.pending = Some("Edited in $EDITOR".to_string());
     }
 
     /// Keeps the cursor on the same list (by title) and item (by line
