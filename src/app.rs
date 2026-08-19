@@ -1187,7 +1187,8 @@ impl AppState {
     }
 
     fn request_reset(&mut self) {
-        if self.document.checkbox_stats().0 == 0 {
+        let (done, started, _total) = self.document.checkbox_progress();
+        if done == 0 && started == 0 {
             self.set_error("Nothing to reset: no tasks are done".to_string());
             return;
         }
