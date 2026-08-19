@@ -452,8 +452,14 @@ where
     }
 
     // Reload now rather than waiting for the watcher; the mtime guard makes
-    // the watcher's later events a no-op.
-    state.reload_if_changed();
+    // the watcher's later events a no-op. A change here came from us
+    // spawning the editor, so — unlike a generic watcher-detected external
+    // edit from elsewhere — queue a git-sync request for it too, the same
+    // as a toggle would, instead of leaving it to piggyback on (or be
+    // missed by) some later markcheck-driven write.
+    if state.reload_if_changed() {
+        state.request_external_edit_sync();
+    }
     Ok(())
 }
 
