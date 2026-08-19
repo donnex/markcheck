@@ -17,7 +17,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
 
@@ -32,3 +32,11 @@ jobs:
 
       - name: cargo test
         run: cargo test --locked
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: cargo llvm-cov (coverage >= 97%, excluding main.rs)
+        run: |
+          cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \
+            --fail-under-lines 97 --fail-under-regions 97

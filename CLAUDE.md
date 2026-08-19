@@ -80,7 +80,7 @@ If a project has no CI workflow configured yet, suggest setting one up — don't
 - If the user declines CI setup (not now, not wanted, whatever the reason), note that decision — and the date — in this file, then drop it for the rest of the conversation. In a later session, once this file carries that note, treat it as a standing prompt to ask again: whether real time has clearly passed, or the project has grown enough that the case for CI is stronger than when it was declined.
 - A CI workflow is a second copy of "what needs to pass before this is clean" — the same failure mode as any other duplicated logic applies: whenever the project's tools or checks change (a new linter, a new required check, a build step added or removed), the workflow file(s) must change with it, in the same change that changed the tooling. Don't let this slip to a follow-up — treat an out-of-date workflow as a bug, the same way an unsynced snippet or a stale doc would be.
 
-`.github/workflows/release.yml` builds and packages tagged releases; `.github/workflows/check.yml` runs `cargo fmt --check`/`clippy`/`cargo test` on every push and pull request. Keep both in sync with this file per the rule above.
+`.github/workflows/release.yml` builds and packages tagged releases; `.github/workflows/check.yml` runs `cargo fmt --check`/`clippy`/`cargo test`, then `cargo llvm-cov` to enforce the 97% coverage threshold, on every push and pull request. Keep both in sync with this file per the rule above.
 
 ## Rust
 
