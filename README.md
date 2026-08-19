@@ -358,7 +358,11 @@ file that's already in a git repository, every toggle/start/reset/undo/redo
 commits and pushes the change in the background, so a checklist shared via
 git stays in sync across machines without leaving the app. It only ever
 touches files git already tracks — a new/untracked file next to the
-checklist is never picked up and never committed. Commit messages name the
+checklist is never picked up and never committed, and the same goes for the
+checklist file itself: if it isn't tracked yet, git-sync won't `git add` it
+for you — it reports `Git sync skipped: file is not tracked in git` in the
+status bar instead of silently doing nothing, so it's clear a `git add` is
+needed before syncing can start. Commit messages name the
 actual change (`checklist.md: Check "Restart service"`, `checklist.md:
 Reset all tasks to not done`, …) rather than a generic "updated by
 markcheck", so `git log`/`git blame` stay useful across hosts. A failed

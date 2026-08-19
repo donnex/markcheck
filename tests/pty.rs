@@ -830,6 +830,82 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
 }
 
 #[test]
+fn git_sync_reports_when_the_file_is_untracked() {
+    // Unlike the other PTY tests, this one *does* inspect the rendered
+    // screen text (ANSI-stripped) rather than staying purely behavioral —
+    // there's no file-content or git-log side effect to check instead, since
+    // the whole point is a status message that appears on screen and
+    // nowhere else. A silent skip here used to be indistinguishable from
+    // git-sync simply not working at all.
+    let root = unique_path("gitsync-untracked");
+    std::fs::create_dir_all(&root).unwrap();
+    run_git(&root, &["init", "-q", "-b", "main"]);
+    run_git(&root, &["config", "user.email", "test@example.com"]);
+    run_git(&root, &["config", "user.name", "test"]);
+    // Deliberately never `git add` this file.
+    let path = root.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--git-sync");
+    cmd.arg(&path);
+    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    let pty = native_pty_system();
+    let pair = pty
+        .openpty(PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let drain = thread::spawn(move || {
+        let mut sink = Vec::new();
+        let _ = reader.read_to_end(&mut sink);
+        sink
+    });
+    {
+        let mut writer = pair.master.take_writer().unwrap();
+        thread::sleep(Duration::from_millis(600));
+        writer.write_all(b" ").unwrap(); // toggle: triggers a sync attempt
+        writer.flush().unwrap();
+        thread::sleep(Duration::from_millis(800)); // let the background sync poll land
+        writer.write_all(b"q").unwrap();
+        writer.flush().unwrap();
+    }
+    let status = child.wait().unwrap();
+    drop(pair.master);
+    let raw = drain.join().unwrap_or_default();
+    assert!(status.success(), "binary should exit successfully");
+
+    let text = String::from_utf8_lossy(&raw);
+    let visible: String = text
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .collect();
+    assert!(
+        visible.contains("Git sync skipped: file is not tracked in git"),
+        "expected the untracked-file message in the rendered output: {visible:?}"
+    );
+
+    let status_out = std::process::Command::new("git")
+        .current_dir(&root)
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status_out.stdout).contains("?? checklist.md"),
+        "the file must still never be added"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn search_jumps_to_task_then_toggles_it() {
     let path = unique_path("search");
     write_file(

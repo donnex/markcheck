@@ -8,10 +8,15 @@ use std::sync::mpsc;
 pub enum SyncOutcome {
     /// Committed and pushed.
     Synced,
-    /// Nothing to do: the file has no staged-worthy change (untracked, or
-    /// identical to what's already committed). Not reported to the user —
-    /// an untracked file must never be swept into a commit.
+    /// Nothing to do: the file is already tracked and identical to what's
+    /// already committed. Not reported to the user — nothing meaningful
+    /// happened, so silence here doesn't read as broken.
     Skipped,
+    /// The file isn't tracked by git at all. Unlike `Skipped`, this *is*
+    /// reported to the user (git-sync being silently unable to do anything,
+    /// forever, looks exactly like a bug) — but it still never gets
+    /// `git add`ed automatically; that stays the user's call.
+    SkippedUntracked,
     /// `git status`/`commit`/`push` failed; the message is the first line
     /// of the failing command's stderr.
     Failed(String),
@@ -115,12 +120,16 @@ fn commit_message(file_path: &Path, change_desc: &str) -> String {
 /// thread spawned by `spawn`, kept as a free function so tests can drive it
 /// directly without waiting on a thread.
 fn run_sync(repo_dir: &Path, file_path: &Path, message: &str) -> SyncOutcome {
-    // `--untracked-files=no` means an untracked file (or one with no
-    // modification vs. HEAD) produces no output here — that's the single
-    // check that keeps this from ever `git add`-ing a new file.
+    // Scoped to exactly this one file (`--`), so there's at most one
+    // porcelain line to interpret: absent (nothing changed vs. HEAD),
+    // `?? ` (untracked), or any other two-letter code (a real change to
+    // commit). Distinguishing untracked from unchanged — rather than the
+    // single `--untracked-files=no` check this used to be, which folded
+    // both into the same silent no-op — is what lets an untracked file be
+    // reported below instead of a sync that quietly never does anything.
     let status = match Command::new("git")
         .current_dir(repo_dir)
-        .args(["status", "--porcelain", "--untracked-files=no", "--"])
+        .args(["status", "--porcelain", "--"])
         .arg(file_path)
         .output()
     {
@@ -129,6 +138,9 @@ fn run_sync(repo_dir: &Path, file_path: &Path, message: &str) -> SyncOutcome {
     };
     if !status.status.success() {
         return SyncOutcome::Failed(command_error("git status", &status));
+    }
+    if status.stdout.starts_with(b"??") {
+        return SyncOutcome::SkippedUntracked;
     }
     if status.stdout.is_empty() {
         return SyncOutcome::Skipped;
@@ -242,14 +254,14 @@ mod tests {
     }
 
     #[test]
-    fn run_sync_skips_an_untracked_file() {
+    fn run_sync_reports_an_untracked_file_without_adding_it() {
         let work = init_repo_without_remote();
         let untracked = work.join("untracked.md");
         fs::write(&untracked, "- [ ] new\n").unwrap();
 
         assert_eq!(
             run_sync(&work, &untracked, "should not commit"),
-            SyncOutcome::Skipped
+            SyncOutcome::SkippedUntracked
         );
         // Confirm it really never got added.
         let status = Command::new("git")

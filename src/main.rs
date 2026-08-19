@@ -226,6 +226,10 @@ where
             match outcome {
                 git_sync::SyncOutcome::Synced => state.record_git_sync(),
                 git_sync::SyncOutcome::Skipped => {}
+                git_sync::SyncOutcome::SkippedUntracked => state.set_error(
+                    "Git sync skipped: file is not tracked in git (run `git add` on it)"
+                        .to_string(),
+                ),
                 git_sync::SyncOutcome::Failed(msg) => {
                     state.set_error(format!("Git sync failed: {msg}"))
                 }
