@@ -907,6 +907,76 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
 }
 
 #[test]
+fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it() {
+    // request_external_edit_sync() fires whenever reload_if_changed() reports
+    // a real reload (its mtime/size check), which is coarser than "the
+    // content actually differs" — many editors rewrite the file on save even
+    // with no changes, bumping its mtime. The commit itself is still gated
+    // on run_sync's own `git status --porcelain` check, which is
+    // content-based (git hashes the blob), not mtime-based — so a no-op
+    // save must queue a sync request but produce no commit at all.
+    let root = unique_path("gitsync-editor-noop");
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    // Fake $EDITOR: touches the file's mtime forward without touching its
+    // content at all — a "no-op save," which some real editors do too.
+    let editor = unique_path("fakeeditor-gitsync-noop");
+    let editor = editor.with_extension("sh");
+    write_file(&editor, "#!/bin/sh\ntouch -d '+2 seconds' \"$1\"\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).unwrap();
+    }
+
+    let ok = drive_args(
+        &path,
+        &["--git-sync"],
+        &[("EDITOR", editor.to_str().unwrap())],
+        &[Step::Key("e"), Step::Key("q")],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    // Give a would-be (wrong) commit+push every chance to land before
+    // asserting it didn't: poll briefly, then confirm the log is still
+    // exactly the one "init" commit.
+    thread::sleep(Duration::from_millis(500));
+    let out = std::process::Command::new("git")
+        .current_dir(&remote)
+        .args(["log", "--format=%s"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        log.trim(),
+        "init",
+        "a no-op save must not produce any commit: {log:?}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_file(&editor).ok();
+}
+
+#[test]
 fn git_sync_reports_when_the_file_is_untracked() {
     // Unlike the other PTY tests, this one *does* inspect the rendered
     // screen text (ANSI-stripped) rather than staying purely behavioral —
