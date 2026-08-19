@@ -70,8 +70,9 @@ workflow and file-backed state.
   and permissions are preserved
 - Live reload when the file changes on disk (edit it elsewhere, see it update)
 - Optional git sync (`--git-sync`): commit and push the file after every
-  toggle, when it's already in a git repo — a lightweight way to keep a
-  checklist in sync across hosts that share it via git
+  toggle or manual edit (`e`), when it's already in a git repo — a
+  lightweight way to keep a checklist in sync across hosts that share it
+  via git
 - One-key clipboard copy of a task's command, with an SSH-friendly fallback;
   optional auto-copy on navigation and PRIMARY-selection support
 - Open the file in `$EDITOR` without leaving the app
