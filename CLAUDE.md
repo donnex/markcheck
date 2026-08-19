@@ -189,3 +189,12 @@ Once a topic branch has been merged into `dev`, delete it — both the local bra
 - When adding a new file with no meaningful description, use `filename: Add file`. If there is a reason worth stating, describe it instead: `fetch-data: Add script to fetch remote data on a schedule`
 - Never modify `.gitignore` files without explicit confirmation from the user.
 - Before every commit, all lint/format/type checks required by this file must pass with zero errors. Never commit with outstanding failures — fix them, or ask the user how to handle a check that genuinely should be skipped.
+
+## Releasing
+
+Every merge to `master` is a release. Whenever merging to `master` (see "Merging to master" above), always bring both of these up as part of it — don't wait to be asked, and don't let a merge land without them:
+
+- **Version bump:** before presenting the merge summary, look at what's landed on `dev` since the last release and recommend a `Cargo.toml` `version` bump (semver: patch for fixes/internal work, minor for a backward-compatible feature, major for a breaking change) — then ask for confirmation before applying it. Bump it as its own commit on `dev` first (`cargo build` picks up `Cargo.lock` automatically), so it's included in the fast-forward.
+- **Release tag:** once `master` is updated, create and push an annotated tag matching the new version, `vX.Y.Z` (matching the existing `v1.0.0`/`v1.1.0` convention), so `release.yml` picks it up.
+
+**Do not** update the illustrative `--version` example in `DESIGN.md`/`main.rs` (`e.g. 1.0.0 (da90ddd)`) when bumping the version. It demonstrates the output *format*, not a value that needs to stay current — the same as its git-sha half, which nobody keeps in sync with the real SHA either. Only touch it if the format itself changes.
