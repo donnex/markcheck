@@ -5,6 +5,11 @@
 //! rather than screen-scraping, to avoid ANSI/timing flakiness. Run under
 //! `cargo llvm-cov` the spawned binary is instrumented, so this also lifts
 //! `main.rs` coverage.
+//!
+//! Unix-only, matching the project's own platform support (Linux/macOS —
+//! see README's Installation section) and CI (`check.yml` runs on
+//! `ubuntu-latest` only).
+#![cfg(unix)]
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -351,15 +356,17 @@ fn reset_flow_clears_all_done() {
 }
 
 #[test]
-fn advance_across_sections_exits_clean() {
+fn advance_across_lists_exits_clean() {
     let path = unique_path("advance");
     write_file(
         &path,
         "## One\n\n- [ ] `a`\n\n## Two\n\n- [ ] `b`\n- [ ] `c`\n",
     );
 
-    // n jumps to the next incomplete section; l walks forward (crossing the
-    // section boundary at the end of a list). Neither should crash; q quits.
+    // n cycles search matches, but there's no active search here, so it's a
+    // no-op; l walks forward, crossing into the next list at the boundary
+    // (list-jumping is Shift-L/Shift-H, sub-section jumping is }/{). Neither
+    // should crash; q quits.
     let ok = drive(
         &path,
         &[],
