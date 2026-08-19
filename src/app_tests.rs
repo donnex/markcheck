@@ -1634,6 +1634,17 @@ fn r_with_done_tasks_opens_confirm_prompt() {
 }
 
 #[test]
+fn r_with_only_started_tasks_opens_confirm_prompt() {
+    // Regression test: request_reset used to check only the Done count, so
+    // a document whose only progress was Started (`[/]`) items wrongly
+    // reported "nothing to reset" even though reset_all clears Started too.
+    let mut state = AppState::new(two_list_document());
+    state.start_current();
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.screen, Screen::ConfirmReset);
+}
+
+#[test]
 fn confirm_reset_yes_clears_all_and_persists() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.handle_key(KeyCode::Char('R'));
