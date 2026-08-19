@@ -95,7 +95,7 @@ If a project has no CI workflow configured yet, suggest setting one up — don't
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
   - `cargo llvm-cov --html --ignore-filename-regex 'main\.rs'` — line-by-line HTML report
   - Exclude `main.rs` (or an equivalent thin entry-point file) from coverage accounting if it's mostly wiring that's better exercised by integration tests than unit tests.
-- UI/rendering tests should assert on rendered output content, not styling or presentation details, so tests survive cosmetic tweaks.
+- UI/rendering tests should assert on rendered output content, not styling or presentation details, so tests survive cosmetic tweaks. Exception: when color or style *is* the feature under test — a state encoded in color rather than text (e.g. done/started/error rendering in a specific hue) — asserting on that styling is asserting on the actual behavior, not incidental presentation, so it's fine.
 - After making changes, run `cargo fmt` and `cargo clippy` and fix all findings before committing.
 - Run the full test suite (`cargo test`) before committing.
 - Integration tests that drive a compiled binary (e.g. under a pseudo-terminal) require the binary to be built first — run `cargo build` before running them.
