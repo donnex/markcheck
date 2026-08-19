@@ -2460,6 +2460,75 @@ mod tests {
     }
 
     #[test]
+    fn overview_sticky_header_click_rects_stay_consistent_near_a_scroll_boundary() {
+        // Exercises the sticky-header fixed-point loop (src/ui/overview.rs)
+        // under the conditions that could trigger its non-convergence edge
+        // case: several stacked ### H3+ sub-heading levels (so the pinned
+        // ancestor-row count swings sharply between adjacent rows — 3
+        // dropping straight to 0 at the group boundary below) in a short
+        // overview panel, scrolled to the bottom so the offset sits right at
+        // that boundary. A brute-force sweep over many terminal sizes and
+        // selections did not reproduce actual non-convergence (ratatui's
+        // real scroll offsets appear to keep the loop settling within its
+        // 4-pass budget for realistic content), so this doesn't prove the
+        // fixed-point loop can fail to converge — but it does pin the
+        // invariant the fix (see safe fallback to `rendered_reserved` in
+        // overview.rs) guarantees regardless: every recorded click Rect
+        // must map back to the task it visually labels, never a neighboring
+        // row shifted by a stale reserved-row count.
+        let sub = |level: u8, text: &str| crate::model::SubHeading {
+            level,
+            text: text.to_string(),
+        };
+        let with_section = |mut item: Item, section: Vec<crate::model::SubHeading>| {
+            item.section = section;
+            item
+        };
+        let deploy = vec![sub(3, "Deploy")];
+        let preflight = vec![sub(3, "Deploy"), sub(4, "Pre-flight")];
+        let checks = vec![sub(3, "Deploy"), sub(4, "Pre-flight"), sub(5, "Checks")];
+        let verify = vec![sub(3, "Verify")];
+        let items = vec![
+            checkbox(1, "warmup", false),
+            with_section(checkbox(2, "deploy-a", false), deploy.clone()),
+            with_section(checkbox(3, "deploy-b", false), deploy),
+            with_section(checkbox(4, "preflight-a", false), preflight.clone()),
+            with_section(checkbox(5, "preflight-b", false), preflight),
+            with_section(checkbox(6, "check-a", false), checks.clone()),
+            with_section(checkbox(7, "check-b", false), checks.clone()),
+            with_section(checkbox(8, "check-c", false), checks),
+            with_section(checkbox(9, "verify-a", false), verify.clone()),
+            with_section(checkbox(10, "verify-b", false), verify),
+        ];
+        let mut state = state_with(vec![List {
+            title: "Ops".to_string(),
+            banner: None,
+            items,
+        }]);
+        // Select the last item so the overview must scroll to the bottom,
+        // right past the 3-pinned-rows -> 0-pinned-rows boundary.
+        state.current_item_index = 9;
+        let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
+        terminal.draw(|f| render(f, &mut state)).unwrap();
+
+        for (target_list, target_item, label) in [(0, 8, "verify-a"), (0, 9, "verify-b")] {
+            let (rect, _) = state
+                .overview_rows
+                .iter()
+                .find(|(_, t)| *t == OverviewTarget::Item(target_list, target_item))
+                .copied()
+                .unwrap_or_else(|| panic!("{label} has a recorded overview row"));
+            state.handle_left_click(rect.x + rect.width / 2, rect.y);
+            assert_eq!(
+                (state.current_list_index, state.current_item_index),
+                (target_list, target_item),
+                "clicking {label}'s recorded rect must land on {label}, not a \
+                 neighboring row shifted by a stale reserved-row count"
+            );
+        }
+    }
+
+    #[test]
     fn overview_marker_zone_toggles_and_label_zone_navigates() {
         // A rendered checkbox row exposes a marker (toggle) rect to the
         // left of a label (navigate) rect for the same item; the marker toggles
