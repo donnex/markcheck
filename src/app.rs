@@ -1075,8 +1075,10 @@ impl AppState {
     /// some later markcheck-driven change. Mirrors `commit_write`'s
     /// unconditional stash: `AppState` has no notion of whether git-sync is
     /// even active, `main.rs` decides that when it drains the request.
-    pub fn request_external_edit_sync(&mut self) {
-        self.git_sync.pending = Some("Edited in $EDITOR".to_string());
+    /// `editor` is the resolved program name (e.g. `vim`, `code`), not the
+    /// literal `$EDITOR`/`$VISUAL` env var.
+    pub fn request_external_edit_sync(&mut self, editor: &str) {
+        self.git_sync.pending = Some(format!("Edited in {editor}"));
     }
 
     /// Keeps the cursor on the same list (by title) and item (by line

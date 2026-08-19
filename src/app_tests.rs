@@ -2251,10 +2251,10 @@ fn reload_if_changed_returns_false_when_reload_is_skipped_or_fails() {
 fn request_external_edit_sync_queues_a_git_sync_request() {
     let mut state = AppState::new(two_list_document());
     assert!(state.take_git_sync_request().is_none());
-    state.request_external_edit_sync();
+    state.request_external_edit_sync("vim");
     assert_eq!(
         state.take_git_sync_request().as_deref(),
-        Some("Edited in $EDITOR")
+        Some("Edited in vim")
     );
 }
 
