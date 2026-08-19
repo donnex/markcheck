@@ -2298,6 +2298,22 @@ mod tests {
     }
 
     #[test]
+    fn completion_screens_render_on_a_short_terminal_without_panic() {
+        // Regression test: completion_card used to clamp its height directly
+        // against the raw content area, which panics (min > max) once the
+        // area drops under MIN_CARD_HEIGHT rows — exactly what a short
+        // terminal produces on the very screens shown when a checklist (or
+        // the whole document) is finished.
+        let mut list_complete = sample_state();
+        list_complete.screen = Screen::ListComplete;
+        let _ = buffer_text(&mut list_complete, 40, 6);
+
+        let mut all_complete = sample_state();
+        all_complete.screen = Screen::AllComplete;
+        let _ = buffer_text(&mut all_complete, 40, 6);
+    }
+
+    #[test]
     fn wide_layout_shows_prev_and_next_side_cards() {
         let mut state = state_with(vec![List {
             title: "S".to_string(),
