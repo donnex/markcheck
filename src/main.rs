@@ -31,7 +31,7 @@ use ratatui::layout::Rect;
 use model::{AppState, IconSet};
 use watcher::FileWatcher;
 
-/// `<cargo version> (<git short sha>)`, e.g. `1.1.0 (da90ddd)`. The SHA comes
+/// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
 /// compile time and falls back to "unknown" outside a git checkout (e.g. a
 /// source tarball).
