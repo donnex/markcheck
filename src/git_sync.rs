@@ -126,7 +126,14 @@ fn commit_message(file_path: &Path, change_desc: &str) -> String {
     }
     let budget = MAX_COMMIT_MESSAGE_LEN.saturating_sub(prefix.chars().count() + 1);
     let truncated: String = change_desc.chars().take(budget).collect();
-    format!("{prefix}{truncated}\u{2026}")
+    // change_desc is usually `Verb "item text"`; if the cut lands inside the
+    // quoted item text, the opening `"` would otherwise never be closed.
+    if truncated.matches('"').count() % 2 == 1 {
+        let shorter: String = change_desc.chars().take(budget.saturating_sub(1)).collect();
+        format!("{prefix}{shorter}\u{2026}\"")
+    } else {
+        format!("{prefix}{truncated}\u{2026}")
+    }
 }
 
 /// Runs the commit+push sequence synchronously; called from the background
@@ -523,7 +530,25 @@ mod tests {
         );
         assert_eq!(message.chars().count(), 80);
         assert!(message.starts_with("checklist.md: Check \"xxx"));
+        assert!(
+            message.ends_with("\u{2026}\""),
+            "closes the quote opened by the item text: {message:?}"
+        );
+        assert_eq!(message.matches('"').count(), 2);
+    }
+
+    #[test]
+    fn commit_message_truncation_without_a_quote_gets_no_closing_quote() {
+        let message = commit_message(
+            Path::new("/a/b/checklist.md"),
+            &format!(
+                "Reset all tasks to not done and then some more {}",
+                "x".repeat(50)
+            ),
+        );
+        assert_eq!(message.chars().count(), 80);
         assert!(message.ends_with('\u{2026}'));
+        assert!(!message.ends_with("\u{2026}\""));
     }
 
     #[test]
