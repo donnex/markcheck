@@ -5,6 +5,8 @@ mod git_sync;
 mod model;
 mod parser;
 mod scaffold;
+#[cfg(test)]
+mod test_support;
 mod ui;
 mod watcher;
 mod writer;

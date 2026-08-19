@@ -171,16 +171,10 @@ fn command_error(step: &str, output: &Output) -> String {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     fn unique_dir(name_hint: &str) -> PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "markcheck-git-sync-test-{name_hint}-{}-{unique}",
-            std::process::id()
-        ))
+        crate::test_support::unique_temp_path("git-sync", name_hint, None)
     }
 
     fn run(dir: &Path, args: &[&str]) {

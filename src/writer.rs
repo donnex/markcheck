@@ -180,15 +180,7 @@ mod tests {
 ";
 
     fn write_temp_file(contents: &str) -> PathBuf {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "markcheck-writer-test-{}-{unique}.md",
-            std::process::id()
-        ));
+        let path = crate::test_support::unique_temp_path("writer", "", Some("md"));
         fs::write(&path, contents).unwrap();
         path
     }

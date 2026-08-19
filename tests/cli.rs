@@ -4,21 +4,15 @@
 //! plain subprocess, no pseudo-terminal.
 
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+mod common;
 
 fn unique_path(hint: &str) -> std::path::PathBuf {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "markcheck-cli-{hint}-{}-{n}.md",
-        std::process::id()
-    ))
+    common::unique_temp_path("cli", hint, Some("md"))
 }
 
 fn unique_dir(hint: &str) -> std::path::PathBuf {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("markcheck-cli-{hint}-{}-{n}", std::process::id()))
+    common::unique_temp_path("cli", hint, None)
 }
 
 #[test]

@@ -104,15 +104,9 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "markcheck-scaffold-test-{}-{unique}",
-            std::process::id()
-        ));
+        let dir = crate::test_support::unique_temp_path("scaffold", "", None);
         fs::create_dir_all(&dir).unwrap();
         dir
     }
