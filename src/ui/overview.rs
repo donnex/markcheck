@@ -1,10 +1,30 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph};
 
-use crate::model::{AppState, IconSet, ItemKind, OverviewTarget, Palette, SubHeading, TaskState};
+use crate::model::{
+    AppState, Document, IconSet, ItemKind, OverviewTarget, Palette, SubHeading, TaskState,
+};
+
+/// Resolves the color for the ancestor at `level` in an item's `chain`
+/// (outermost-first, from `List::parent_chain`) — its document-wide
+/// `sublist_slot`, mapped through `Palette::depth_color`. Shared by the
+/// depth-guide loop and the selected-marker tint so both key off the exact
+/// same slot a sub-list's guides use elsewhere.
+fn ancestor_color(
+    document: &Document,
+    list_index: usize,
+    chain: &[usize],
+    level: usize,
+    palette: &Palette,
+) -> Color {
+    let slot = chain.get(level).map_or(level, |&ancestor| {
+        document.sublist_slot(list_index, ancestor)
+    });
+    palette.depth_color(slot)
+}
 
 /// Leading indent for an item row. When a list-title row is shown, items
 /// get a base level so they sit under it; with a single list that row is
@@ -207,10 +227,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             // background matches instead; top-level rows (no guides) keep the
             // cyan current accent.
             let current_marker_fg = if item.depth > 0 {
-                let slot = chain.get(item.depth - 1).map_or(item.depth - 1, |&parent| {
-                    state.document.sublist_slot(list_index, parent)
-                });
-                palette.depth_color(slot)
+                ancestor_color(
+                    &state.document,
+                    list_index,
+                    &chain,
+                    item.depth - 1,
+                    &palette,
+                )
             } else {
                 palette.current
             };
@@ -274,13 +297,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 spans.push(Span::raw("  "));
             }
             for level in 0..item.depth {
-                let slot = chain.get(level).map_or(level, |&ancestor| {
-                    state.document.sublist_slot(list_index, ancestor)
-                });
-                spans.push(Span::styled(
-                    "│ ",
-                    Style::default().fg(palette.depth_color(slot)),
-                ));
+                let color = ancestor_color(&state.document, list_index, &chain, level, &palette);
+                spans.push(Span::styled("│ ", Style::default().fg(color)));
             }
             let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
             spans.push(Span::styled(format!("{marker} "), marker_style));
