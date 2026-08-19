@@ -386,7 +386,8 @@ fn safe_card_height(desired: u16, area_height: u16) -> u16 {
 /// Fixed height for the completion/confirmation modal cards — their content
 /// is fixed, so they keep the original ~40%-of-height sizing.
 fn fixed_card_height(area: Rect) -> u16 {
-    ((area.height as u32 * 2 / 5) as u16).max(MIN_CARD_HEIGHT)
+    let desired = (area.height as u32 * 2 / 5) as u16;
+    safe_card_height(desired, area.height)
 }
 
 /// The width the current card will actually render at, so height can be
@@ -416,7 +417,7 @@ fn desired_card_height(item: &Item, area: Rect, code_bg: Color) -> u16 {
         .saturating_add(breadcrumb)
         .saturating_add(2);
     let max_h = ((area.height as u32 * 3 / 5) as u16).max(MIN_CARD_HEIGHT);
-    content.clamp(MIN_CARD_HEIGHT, max_h).min(area.height)
+    safe_card_height(content.min(max_h), area.height)
 }
 
 fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {

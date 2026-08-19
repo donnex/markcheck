@@ -441,11 +441,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 item_index,
                 marker_cells,
             } => {
-                // The marker prefix begins at the content origin (left border +
-                // 1 col of Padding::horizontal). The toggle zone spans the whole
-                // left edge through the marker; the label to the right edge
+                // The marker prefix begins at the content origin (inner.x —
+                // left border + the block's Padding::horizontal, whatever
+                // that currently is). The toggle zone spans the whole left
+                // edge through the marker; the label to the right edge
                 // navigates. The two tile the row with no gap.
-                let marker_end = (area.x + 2 + marker_cells).min(row_end);
+                let marker_end = (inner.x + marker_cells).min(row_end);
                 state.overview_rows.push((
                     Rect::new(area.x, y, marker_end - area.x, 1),
                     OverviewTarget::Toggle(list_index, item_index),
