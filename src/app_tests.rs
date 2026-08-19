@@ -897,12 +897,12 @@ fn single_item_document(item: Item) -> Document {
 fn o_requests_opening_a_single_link_and_reports_it() {
     let mut state = AppState::new(single_item_document(item_with_links(
         1,
-        &["https://ex.com/a"],
+        &["https://example.com/a"],
     )));
     state.handle_key(KeyCode::Char('o'));
     assert_eq!(
         state.take_link_open_request().as_deref(),
-        Some("https://ex.com/a")
+        Some("https://example.com/a")
     );
     assert!(
         state
@@ -915,8 +915,8 @@ fn o_requests_opening_a_single_link_and_reports_it() {
 #[test]
 fn o_opens_every_safe_scheme_including_uppercase() {
     for url in [
-        "http://ex.com/a",
-        "https://ex.com/a",
+        "http://example.com/a",
+        "https://example.com/a",
         "mailto:ops@example.com",
         "HTTPS://EX.COM/A",
     ] {
@@ -973,7 +973,7 @@ fn o_with_multiple_links_arms_a_digit_without_hiding_them() {
     // (matching the card's [N] markers). Crucially it sets NO status
     // message, so the numbered URL list stays visible in the status bar
     // instead of being hidden by a modal prompt.
-    let item = item_with_links(1, &["https://ex.com/a", "https://ex.com/b"]);
+    let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     assert!(state.link_open_request.is_none());
@@ -987,7 +987,7 @@ fn o_with_multiple_links_arms_a_digit_without_hiding_them() {
 fn esc_cancels_the_open_prompt_without_quitting() {
     // Regression: while armed, Esc must cancel the prompt, not fall through
     // to the global q/Esc quit.
-    let item = item_with_links(1, &["https://ex.com/a", "https://ex.com/b"]);
+    let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     assert!(state.pending_open_link);
@@ -1004,14 +1004,14 @@ fn esc_cancels_the_open_prompt_without_quitting() {
 fn o_then_a_digit_opens_that_link_not_a_list() {
     // The armed digit selects a link and must pre-empt the global
     // digit→list jump.
-    let item = item_with_links(1, &["https://ex.com/a", "https://ex.com/b"]);
+    let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     state.handle_key(KeyCode::Char('2'));
     assert!(!state.pending_open_link, "consumed");
     assert_eq!(
         state.take_link_open_request().as_deref(),
-        Some("https://ex.com/b")
+        Some("https://example.com/b")
     );
     assert!(
         state
@@ -1027,7 +1027,7 @@ fn mouse_click_clears_a_pending_open_link_chord() {
     // different card via the overview) must not leave it armed for a later
     // digit to misfire against whatever the click just landed on.
     use ratatui::layout::Rect;
-    let item = item_with_links(1, &["https://ex.com/a", "https://ex.com/b"]);
+    let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     assert!(state.pending_open_link, "armed");
@@ -1039,7 +1039,7 @@ fn mouse_click_clears_a_pending_open_link_chord() {
 
 #[test]
 fn mouse_scroll_clears_a_pending_open_link_chord() {
-    let item = item_with_links(1, &["https://ex.com/a", "https://ex.com/b"]);
+    let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     assert!(state.pending_open_link, "armed");
@@ -1065,7 +1065,7 @@ fn mouse_click_clears_a_pending_gg_chord() {
 
 #[test]
 fn o_then_an_out_of_range_digit_reports_no_such_link() {
-    let item = item_with_links(1, &["https://ex.com/a", "https://ex.com/b"]);
+    let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     state.handle_key(KeyCode::Char('5'));
@@ -1078,7 +1078,7 @@ fn o_then_an_out_of_range_digit_reports_no_such_link() {
 
 #[test]
 fn o_then_a_digit_for_an_unsafe_scheme_is_refused() {
-    let item = item_with_links(1, &["https://ex.com/a", "file:///etc/passwd"]);
+    let item = item_with_links(1, &["https://example.com/a", "file:///etc/passwd"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     state.handle_key(KeyCode::Char('2'));
@@ -1095,7 +1095,7 @@ fn o_then_a_non_digit_cancels_the_prompt_and_acts_normally() {
     // its normal job — here `j` navigates.
     let mut doc = single_item_document(item_with_links(
         1,
-        &["https://ex.com/a", "https://ex.com/b"],
+        &["https://example.com/a", "https://example.com/b"],
     ));
     doc.lists[0].items.push(checkbox(2, false));
     let mut state = AppState::new(doc);

@@ -1789,7 +1789,7 @@ mod tests {
                 BodySpan::Text("see ".to_string()),
                 BodySpan::Link {
                     text: "runbook".to_string(),
-                    url: "https://ex.com/rb".to_string(),
+                    url: "https://example.com/rb".to_string(),
                 },
             ],
             vec![],
@@ -1798,7 +1798,10 @@ mod tests {
         let lines = body_lines(&item, 60, Color::Magenta);
         let whole: String = line_texts(&lines).join(" ");
         assert!(whole.contains("runbook"), "link text shown: {whole:?}");
-        assert!(!whole.contains("ex.com"), "URL not shown inline: {whole:?}");
+        assert!(
+            !whole.contains("example.com"),
+            "URL not shown inline: {whole:?}"
+        );
         assert!(!whole.contains('['), "no marker for a lone link: {whole:?}");
         let mods = span_mods(&lines);
         assert!(
@@ -1816,12 +1819,12 @@ mod tests {
                 BodySpan::Text("see ".to_string()),
                 BodySpan::Link {
                     text: "runbook".to_string(),
-                    url: "https://ex.com/rb".to_string(),
+                    url: "https://example.com/rb".to_string(),
                 },
                 BodySpan::Text(" and ".to_string()),
                 BodySpan::Link {
                     text: "wiki".to_string(),
-                    url: "https://ex.com/wiki".to_string(),
+                    url: "https://example.com/wiki".to_string(),
                 },
             ],
             vec![],
@@ -1831,7 +1834,7 @@ mod tests {
         let whole: String = line_texts(&lines).join(" ");
         assert!(whole.contains("runbook [1]"), "first marker: {whole:?}");
         assert!(whole.contains("wiki [2]"), "second marker: {whole:?}");
-        assert!(!whole.contains("ex.com"), "no inline URL: {whole:?}");
+        assert!(!whole.contains("example.com"), "no inline URL: {whole:?}");
         let mods = span_mods(&lines);
         assert!(
             mods.iter()
