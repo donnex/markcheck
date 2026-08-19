@@ -64,15 +64,9 @@ pub fn load_config(path: &Path) -> anyhow::Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn unique_temp_path() -> PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "markcheck-config-test-{}-{unique}.toml",
-            std::process::id()
-        ))
+        crate::test_support::unique_temp_path("config", "", Some("toml"))
     }
 
     #[test]

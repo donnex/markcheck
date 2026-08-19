@@ -34,13 +34,7 @@ fn display_only(line_number: usize) -> Item {
 }
 
 fn unique_temp_path() -> PathBuf {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "markcheck-app-test-{}-{unique}.md",
-        std::process::id()
-    ))
+    crate::test_support::unique_temp_path("app", "", Some("md"))
 }
 
 fn document_with_lists(lists: Vec<List>) -> Document {

@@ -57,16 +57,10 @@ impl FileWatcher {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     fn unique_temp_path(name_hint: &str) -> std::path::PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "markcheck-watcher-test-{name_hint}-{}-{unique}.md",
-            std::process::id()
-        ))
+        crate::test_support::unique_temp_path("watcher", name_hint, Some("md"))
     }
 
     fn wait_until(mut condition: impl FnMut() -> bool) -> bool {

@@ -13,16 +13,15 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+mod common;
+
 fn unique_path(hint: &str) -> PathBuf {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("markcheck-pty-{hint}-{}-{n}", std::process::id()))
+    common::unique_temp_path("pty", hint, Some("md"))
 }
 
 fn write_file(path: &PathBuf, contents: &str) {
