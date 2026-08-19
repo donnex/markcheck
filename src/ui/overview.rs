@@ -360,8 +360,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // since that group's ancestor chain is constant. The last render in the loop
     // is the one that stays: its list content sits in the content area below the
     // reserved rows.
+    //
+    // `rendered_reserved` tracks the `reserved` value the *last actual render*
+    // used for its content rect — not necessarily the newly-`want`ed value,
+    // which may not have been rendered against yet if the loop exhausts its
+    // pass budget without converging (a scroll boundary between two
+    // differently-nested sub-section groups can plausibly oscillate). Using
+    // `rendered_reserved` below (instead of trusting the last `want`) keeps
+    // the pinned header, the content viewport, and the click-rects always
+    // consistent with what's actually on screen for this frame, even on a
+    // non-converged pass — at worst the sticky header is momentarily short a
+    // deeper ancestor line, never misaligned with the list beneath it.
     let mut reserved = 0usize;
     let mut offset = 0usize;
+    let mut rendered_reserved = 0usize;
     for _ in 0..4 {
         let content = Rect::new(
             inner.x,
@@ -372,6 +384,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let mut list_state = ListState::default().with_selected(Some(selected_index));
         frame.render_stateful_widget(list_widget.clone(), content, &mut list_state);
         offset = list_state.offset();
+        rendered_reserved = reserved;
         let want = sticky_lines(offset).len();
         if want == reserved {
             break;
@@ -380,13 +393,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Pin the reserved rows at the top of the content area. Clear each first so
-    // no stale content from an earlier loop pass shows through.
+    // no stale content from an earlier loop pass shows through. Truncated to
+    // `rendered_reserved` (not the possibly-unrendered `want`) so a
+    // non-converged pass never pins more/fewer header rows than the content
+    // below was actually laid out for.
     let pinned = sticky_lines(offset);
-    reserved = pinned.len().min(inner_height.saturating_sub(1));
-    for (k, line) in pinned.into_iter().take(reserved).enumerate() {
+    reserved = rendered_reserved.min(inner_height.saturating_sub(1));
+    let mut pinned = pinned.into_iter();
+    for k in 0..reserved {
+        // Clear every reserved row regardless of how many pinned lines there
+        // are: on a non-converged pass `pinned` can be shorter than
+        // `reserved` (see above), and an uncleared row would show whatever
+        // the content list rendered there on a previous frame.
         let row = Rect::new(inner.x, inner.y + k as u16, inner.width, 1);
         frame.render_widget(Clear, row);
-        frame.render_widget(Paragraph::new(line), row);
+        if let Some(line) = pinned.next() {
+            frame.render_widget(Paragraph::new(line), row);
+        }
     }
 
     // A scrollbar on the right border when the rows overflow, reflecting
