@@ -2576,3 +2576,320 @@ fn external_reload_clears_undo_history() {
 
     fs::remove_file(&path).ok();
 }
+
+// --- Coverage gaps found by the 2026-08-19 deep code review (REVIEW.md) ---
+
+#[test]
+fn record_git_sync_sets_the_synced_timestamp() {
+    let mut state = AppState::new(two_list_document());
+    assert!(state.git_sync.last_at.is_none());
+    state.record_git_sync();
+    assert!(state.git_sync.last_at.is_some());
+}
+
+#[test]
+fn help_ctrl_scroll_keys_and_page_up_scroll() {
+    // Mirrors help_scroll_keys_scroll_instead_of_closing, but for the
+    // Ctrl-E/Ctrl-Y/Ctrl-U/PageUp arms that test doesn't reach.
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('?'));
+    state.help.max_scroll = 5;
+    state.help.viewport_height = 6;
+    state.handle_key(KeyCode::PageDown);
+    assert_eq!(state.help.scroll, 5, "clamps at max_scroll");
+    state.handle_key_with_mods(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    assert_eq!(state.help.scroll, 2, "Ctrl-U jumps half a page (3) up");
+    state.handle_key(KeyCode::PageUp);
+    assert_eq!(state.help.scroll, 0, "clamps at 0");
+    state.handle_key_with_mods(KeyCode::Char('e'), KeyModifiers::CONTROL);
+    assert_eq!(state.help.scroll, 1, "Ctrl-E scrolls down one line");
+    state.handle_key_with_mods(KeyCode::Char('y'), KeyModifiers::CONTROL);
+    assert_eq!(state.help.scroll, 0, "Ctrl-Y scrolls up one line");
+    assert_eq!(
+        state.screen,
+        Screen::Help,
+        "none of these close the overlay"
+    );
+}
+
+#[test]
+fn picker_backspace_edits_the_query() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('T'));
+    type_str(&mut state, "task");
+    assert_eq!(state.picker.query, "task");
+    state.handle_key(KeyCode::Backspace);
+    assert_eq!(state.picker.query, "tas");
+}
+
+#[test]
+fn picker_move_is_a_no_op_with_no_matches() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('T'));
+    type_str(&mut state, "nonexistent task text");
+    assert_eq!(state.picker_matches().len(), 0);
+    state.handle_key(KeyCode::Down); // picker_move: must not panic or move
+    assert_eq!(state.picker.selection, 0);
+}
+
+#[test]
+fn picker_enter_with_no_matches_closes_without_jumping() {
+    let mut state = AppState::new(two_list_document());
+    let (before_list, before_item) = (state.current_list_index, state.current_item_index);
+    state.handle_key(KeyCode::Char('T'));
+    type_str(&mut state, "nonexistent task text");
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(state.screen, Screen::Checklist, "closes on Enter");
+    assert_eq!(
+        (state.current_list_index, state.current_item_index),
+        (before_list, before_item),
+        "cursor untouched when nothing matched"
+    );
+}
+
+#[test]
+fn go_to_first_and_last_item_are_no_ops_on_a_list_less_document() {
+    // Defensive-only branches: AppState::new requires >=1 list, but
+    // go_to_first_item/go_to_last_item each guard independently, so
+    // construct the (otherwise-unreachable) empty-lists state directly.
+    let mut state = AppState::new(two_list_document());
+    state.document.lists.clear();
+    state.go_to_first_item();
+    state.go_to_last_item();
+    // Must not panic; nothing to assert beyond that since there is no
+    // valid cursor position to check.
+}
+
+#[test]
+fn toggle_item_is_blocked_when_file_deleted() {
+    let mut state = AppState::new(two_list_document());
+    state.file_deleted = true;
+    state.toggle_item(0, 0);
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "blocked toggle must not change state"
+    );
+}
+
+#[test]
+fn toggle_item_out_of_range_is_ignored() {
+    let mut state = AppState::new(two_list_document());
+    state.toggle_item(9, 9); // must not panic
+    state.toggle_item(0, 99);
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+    );
+}
+
+#[test]
+fn toggle_item_reports_error_when_write_fails() {
+    let document = document_with_missing_file(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let mut state = AppState::new(document);
+    state.toggle_item(0, 0);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("Write failed")),
+        "got {:?}",
+        state.status_message
+    );
+}
+
+#[test]
+fn toggle_item_click_on_list_complete_screen_stays_when_list_still_done() {
+    // ListComplete is per the *current* list. Toggling a task in a
+    // *different* list (an overview click can target any visible row,
+    // regardless of the current screen) must not demote it, since the
+    // current list is still fully done either way.
+    let document = document_with_lists(vec![
+        List {
+            title: "Done list".to_string(),
+            banner: None,
+            items: vec![checkbox(1, true)],
+        },
+        List {
+            title: "Other list".to_string(),
+            banner: None,
+            items: vec![checkbox(2, false)],
+        },
+    ]);
+    let mut state = AppState::new(document);
+    state.current_list_index = 0;
+    state.screen = Screen::ListComplete;
+    state.toggle_item(1, 0); // toggles the *other* list's task
+    assert_eq!(
+        state.document.lists[1].items[0].kind,
+        ItemKind::Checkbox(TaskState::Done)
+    );
+    assert_eq!(
+        state.screen,
+        Screen::ListComplete,
+        "the current list is still fully done, so ListComplete must not be demoted"
+    );
+}
+
+#[test]
+fn start_current_is_a_no_op_when_no_current_item() {
+    let document = document_with_lists(vec![List {
+        title: "Empty".to_string(),
+        banner: None,
+        items: vec![],
+    }]);
+    let mut state = AppState::new(document);
+    state.start_current(); // current_item() is None: must not panic
+    assert_eq!(state.screen, Screen::Checklist);
+}
+
+#[test]
+fn start_current_is_a_no_op_on_a_display_only_card() {
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![display_only(1), checkbox(2, false)],
+    }]);
+    let mut state = AppState::new(document);
+    // AppState::new starts on the first *not-done* item, which skips the
+    // DisplayOnly card — land on it explicitly.
+    state.current_item_index = 0;
+    state.start_current(); // current item is DisplayOnly
+    assert_eq!(
+        state.document.lists[0].items[1].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "the checkbox item must be untouched"
+    );
+}
+
+#[test]
+fn reload_reports_a_parse_error_and_keeps_the_last_good_document() {
+    let path = write_real_file("## S\n\n- [ ] `task`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    // Invalid UTF-8 makes fs::read_to_string (and so parse_document) fail.
+    fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
+    let metadata = fs::metadata(&path).unwrap();
+    let new_mtime = metadata.modified().unwrap() + std::time::Duration::from_secs(1);
+    fs::File::open(&path)
+        .unwrap()
+        .set_modified(new_mtime)
+        .unwrap();
+
+    state.reload_if_changed();
+
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Reload failed:")),
+        "got {:?}",
+        state.status_message
+    );
+    assert_eq!(
+        state.current_list().items.len(),
+        1,
+        "last good document kept"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn advancing_past_the_last_list_with_an_earlier_incomplete_shows_all_complete() {
+    // advance_to_next_incomplete_list only searches *forward* from the
+    // current list; completing the last list while an earlier one is
+    // still incomplete has nowhere forward to go, so it falls through to
+    // AllComplete even though list 1 (index 0) isn't actually done.
+    let document = document_with_lists(vec![
+        List {
+            title: "List 1".to_string(),
+            banner: None,
+            items: vec![checkbox(1, false)],
+        },
+        List {
+            title: "List 2".to_string(),
+            banner: None,
+            items: vec![checkbox(2, false)],
+        },
+    ]);
+    let mut state = AppState::new(document);
+    state.current_list_index = 1;
+    state.current_item_index = 0;
+    state.toggle_current(); // completes list 2 -> ListComplete
+    assert_eq!(state.screen, Screen::ListComplete);
+    state.handle_key(KeyCode::Char('l'));
+    assert_eq!(state.screen, Screen::AllComplete);
+}
+
+#[test]
+fn undo_redo_skip_display_only_items_in_the_snapshot() {
+    // state_snapshot/apply_snapshot must ignore DisplayOnly items (nothing
+    // to undo/redo on a note card) even when one sits alongside checkboxes.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![display_only(1), checkbox(2, false)],
+    }]);
+    let mut state = AppState::new(document);
+    state.current_item_index = 1;
+    state.toggle_current(); // item 1 (the checkbox) -> Done
+    state.undo();
+    assert_eq!(
+        state.document.lists[0].items[1].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "undo restores the checkbox"
+    );
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::DisplayOnly,
+        "the note card is never touched by undo"
+    );
+}
+
+#[test]
+fn redo_is_blocked_when_file_deleted() {
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let mut state = AppState::new(document);
+    state.toggle_current();
+    state.undo();
+    state.file_deleted = true;
+    state.redo();
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "blocked redo must not change state"
+    );
+}
+
+#[test]
+fn undo_after_start_then_toggle_reports_marked_started() {
+    // finish_history_apply's exact-one-item-changed branch reports the
+    // item's *new* state; landing back on Started (rather than Done or
+    // NotStarted) exercises the "marked started" arm specifically.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let mut state = AppState::new(document);
+    state.start_current(); // NotStarted -> Started
+    state.toggle_current(); // Started -> Done
+    state.undo(); // back to Started
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::Started)
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Undo: marked started")
+    );
+}
