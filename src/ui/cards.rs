@@ -372,6 +372,17 @@ fn card_row(area: Rect, height: u16) -> Rect {
     row
 }
 
+/// Clamps a desired card height into a safe range: never below
+/// `MIN_CARD_HEIGHT`, never above the available area. Unlike
+/// `desired.clamp(MIN_CARD_HEIGHT, area_height)`, this can't panic when
+/// `area_height < MIN_CARD_HEIGHT` (a short terminal) — `u16::clamp` requires
+/// `min <= max` and panics otherwise, since its bounds come from two
+/// unrelated sources (a floor we choose, a ceiling the terminal imposes) that
+/// can invert on a small enough window.
+fn safe_card_height(desired: u16, area_height: u16) -> u16 {
+    desired.max(MIN_CARD_HEIGHT).min(area_height)
+}
+
 /// Fixed height for the completion/confirmation modal cards — their content
 /// is fixed, so they keep the original ~40%-of-height sizing.
 fn fixed_card_height(area: Rect) -> u16 {
@@ -1402,7 +1413,7 @@ fn completion_card(
 ) {
     // Size the card to its content (+ borders) so no line is clipped on
     // shorter terminals; centered by `card_row`.
-    let height = (lines.len() as u16 + 2).clamp(MIN_CARD_HEIGHT, area.height);
+    let height = safe_card_height(lines.len() as u16 + 2, area.height);
     let row = card_row(area, height);
     let block = Block::default()
         .borders(Borders::ALL)
