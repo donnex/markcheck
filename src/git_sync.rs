@@ -108,12 +108,25 @@ impl GitSync {
     }
 }
 
+/// Commit messages are kept to one line and capped here so a long task
+/// title (the usual source of `change_desc`) can't produce an unwieldy
+/// `git log` entry; the file-name prefix is always kept intact and only
+/// the description is cut, with a trailing `…` marking the cut.
+const MAX_COMMIT_MESSAGE_LEN: usize = 80;
+
 fn commit_message(file_path: &Path, change_desc: &str) -> String {
     let file_name = file_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "checklist".to_string());
-    format!("{file_name}: {change_desc}")
+    let prefix = format!("{file_name}: ");
+    let full = format!("{prefix}{change_desc}");
+    if full.chars().count() <= MAX_COMMIT_MESSAGE_LEN {
+        return full;
+    }
+    let budget = MAX_COMMIT_MESSAGE_LEN.saturating_sub(prefix.chars().count() + 1);
+    let truncated: String = change_desc.chars().take(budget).collect();
+    format!("{prefix}{truncated}\u{2026}")
 }
 
 /// Runs the commit+push sequence synchronously; called from the background
@@ -499,5 +512,24 @@ mod tests {
             commit_message(Path::new("/a/b/checklist.md"), "Check \"x\""),
             "checklist.md: Check \"x\""
         );
+    }
+
+    #[test]
+    fn commit_message_truncates_a_long_description() {
+        let long_item = "x".repeat(100);
+        let message = commit_message(
+            Path::new("/a/b/checklist.md"),
+            &format!("Check \"{long_item}\""),
+        );
+        assert_eq!(message.chars().count(), 80);
+        assert!(message.starts_with("checklist.md: Check \"xxx"));
+        assert!(message.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn commit_message_leaves_a_short_description_untruncated() {
+        let message = commit_message(Path::new("/a/b/checklist.md"), "Check \"short\"");
+        assert_eq!(message, "checklist.md: Check \"short\"");
+        assert!(!message.contains('\u{2026}'));
     }
 }
