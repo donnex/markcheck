@@ -51,6 +51,13 @@ Key non-obvious design points:
 - Whenever you change how Markdown is **parsed** or how items/cards are **rendered** (new or changed syntax, a new card element, a changed display), update the `examples/` files in the **same** piece of work so they still cover the feature — the same in-sync rule as `DESIGN.md` and the README Markdown section. Add a new example (or extend an existing one) for genuinely new syntax; keep the content generic (per Test Data & Privacy).
 - When you need a checklist to **test, verify, or reproduce** something, reach for an `examples/` file first instead of generating a throwaway file on the fly. If none of them fits the case, that usually means the examples are missing something — extend them (per the sync rule above) rather than making a one-off. It's fine to copy an example into the scratchpad and modify the copy for a specific test.
 
+## Changelog
+
+- `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): dated `## [X.Y.Z]` sections (newest first), each broken into `Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` subsections as needed, plus a `## [Unreleased]` section at the top for work already on `dev` but not yet released.
+- Whenever a user-facing change lands — a new feature, a behavior change, a bug fix a user would notice — add a bullet under `## [Unreleased]` in the **same commit** as the change, the same sync-in-the-same-work discipline as `DESIGN.md`/the README Markdown reference/`examples/`. Write it for a user reading release notes, not as a copy of the commit title: describe the effect, not the implementation.
+- Purely internal changes (refactors, test-only additions, CI/tooling, contributor-facing doc updates like this file) don't get a changelog entry — `CHANGELOG.md` is for users, not contributors.
+- At release time, see "Releasing" below: `## [Unreleased]` is renamed to the new version heading and a fresh empty `## [Unreleased]` is added above it, as part of the version-bump commit.
+
 ## Keybindings
 
 - The TUI's keyboard shortcuts are **vim-like**, and should stay that way. When adding or changing a binding, match vim conventions wherever it makes sense (`h`/`j`/`k`/`l` motion, `gg`/`G` for first/last, `y` to yank/copy, capitals for the bigger jumps, `?` for help), and when proposing options to the user, **lead with the vim-idiomatic choice**.
@@ -194,7 +201,7 @@ Once a topic branch has been merged into `dev`, delete it — both the local bra
 
 Every merge to `master` is a release. Whenever merging to `master` (see "Merging to master" above), always bring both of these up as part of it — don't wait to be asked, and don't let a merge land without them:
 
-- **Version bump:** before presenting the merge summary, look at what's landed on `dev` since the last release and recommend a `Cargo.toml` `version` bump (semver: patch for fixes/internal work, minor for a backward-compatible feature, major for a breaking change) — then ask for confirmation before applying it. Bump it as its own commit on `dev` first (`cargo build` picks up `Cargo.lock` automatically), so it's included in the fast-forward.
+- **Version bump + changelog:** before presenting the merge summary, look at what's landed on `dev` since the last release and recommend a `Cargo.toml` `version` bump (semver: patch for fixes/internal work, minor for a backward-compatible feature, major for a breaking change) — then ask for confirmation before applying it. Apply it together with finalizing `CHANGELOG.md` (see "Changelog" above): rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` with the new version and today's date, and add a fresh empty `## [Unreleased]` above it. **This version-bump-and-changelog commit must be the last commit on `dev` before the fast-forward merge to `master`** — nothing else lands on `dev` after it (`cargo build` picks up `Cargo.lock` automatically, so it's included in the same commit).
 - **Release tag:** once `master` is updated, create and push an annotated tag matching the new version, `vX.Y.Z` (matching the existing `v1.0.0`/`v1.1.0` convention), so `release.yml` picks it up.
 
 **Do not** update the illustrative `--version` example in `DESIGN.md`/`main.rs` (`e.g. 1.0.0 (da90ddd)`) when bumping the version. It demonstrates the output *format*, not a value that needs to stay current — the same as its git-sha half, which nobody keeps in sync with the real SHA either. Only touch it if the format itself changes.
