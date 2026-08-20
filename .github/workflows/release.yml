@@ -31,6 +31,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: markdownlint
+        run: markdownlint '**/*.md'
+
       - name: cargo fmt --check
         run: cargo fmt -- --check
 
