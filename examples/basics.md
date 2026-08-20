@@ -10,9 +10,11 @@ states, a card title, inline and fenced commands, and a note card.
 - [/] Warm the build cache
 - [ ] Check out the release branch: `git checkout release`
 - [ ] **Build the artifact** compile and package the release:
-  ```
+
+  ```sh
   build-tool package --profile release
   ```
+
 - Keep this runbook open while you work.
 
 ## Verify
