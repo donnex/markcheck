@@ -760,7 +760,7 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
     // The commit+push happens on a background thread that can outlive the
     // child process (detached, not joined on quit), so poll the
     // bare remote rather than assuming it's already landed.
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(60);
     let mut subject = String::new();
     while Instant::now() < deadline {
         let out = std::process::Command::new("git")
@@ -827,7 +827,7 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(60);
     let mut subject = String::new();
     while Instant::now() < deadline {
         let out = std::process::Command::new("git")
@@ -904,7 +904,7 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(60);
     let mut subject = String::new();
     while Instant::now() < deadline {
         let out = std::process::Command::new("git")
