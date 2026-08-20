@@ -350,12 +350,28 @@ fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
     if title_budget < MIN_TITLE * n {
         return None; // not enough room for meaningful truncated tabs
     }
-    Some(
-        lengths
+    let mut shares: Vec<usize> = lengths
+        .iter()
+        .map(|&len| (title_budget * len / total_len).max(MIN_TITLE))
+        .collect();
+    // The `.max(MIN_TITLE)` floor above can push the total over `title_budget`
+    // when one title is short enough that its proportional share would
+    // otherwise fall under it; claw the excess back from the largest shares
+    // (never below MIN_TITLE, which `title_budget >= MIN_TITLE * n` above
+    // guarantees is always possible) so the total never exceeds what was
+    // actually determined to fit.
+    let mut overflow = shares.iter().sum::<usize>().saturating_sub(title_budget);
+    while overflow > 0 {
+        let (largest, _) = shares
             .iter()
-            .map(|&len| (title_budget * len / total_len).max(MIN_TITLE))
-            .collect(),
-    )
+            .enumerate()
+            .filter(|&(_, &share)| share > MIN_TITLE)
+            .max_by_key(|&(_, &share)| share)
+            .expect("overflow implies at least one share above MIN_TITLE");
+        shares[largest] -= 1;
+        overflow -= 1;
+    }
+    Some(shares)
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
@@ -465,6 +481,24 @@ mod tests {
         assert_eq!(maxes.len(), 2);
         assert!(maxes.iter().all(|&m| m >= 3), "each tab keeps a minimum");
         assert!(maxes[0] < 16, "longer title is actually truncated");
+    }
+
+    #[test]
+    fn tabs_proportional_shares_never_exceed_the_title_budget() {
+        // Regression: a very short title's proportional share floors up to
+        // MIN_TITLE while the rest keep their full proportional (rounded
+        // down) share, which used to let the shares sum above what
+        // fit_tab_titles itself determined would fit.
+        let titles = ["x".repeat(19), "x".repeat(2)];
+        let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
+        let maxes = fit_tab_titles(&titles, 34).unwrap();
+        const TAB_DECORATION: usize = 7;
+        let title_budget = 34 - TAB_DECORATION * titles.len();
+        assert!(
+            maxes.iter().sum::<usize>() <= title_budget,
+            "shares {maxes:?} must not exceed the {title_budget}-column budget"
+        );
+        assert!(maxes.iter().all(|&m| m >= 3), "each tab keeps a minimum");
     }
 
     #[test]
