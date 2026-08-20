@@ -7,20 +7,26 @@ Non-task content and the ways code is handled.
 - **Read before proceeding**
 - A note with a command but no checkbox — you can copy it with `y`, but it is
   not a task and cannot be checked off: `restart-service example-service`
+
 > - [ ] A quoted example from another runbook, shown for reference only — a
 >   blockquoted checkbox never becomes a live task
 > - [/] Neither does a quoted "started" marker — still just reference text
+
 - [ ] A task with a single inline command `apply-config --now`
 - [ ] A task with a fenced block:
-  ```
+
+  ```sh
   run-migration --step 1
   run-migration --step 2
   ```
+
 - [ ] A task with a short one-line fenced block — its box still spans the full
   card width:
-  ```
+
+  ```sh
   sync-now
   ```
+
 - [ ] A task with two commands `first` and `second` — ambiguous for `y`, so
   click the specific command you want to copy
 - [ ] A task with *emphasis*, mid-line **bold**, and ~~struck-through~~ text to
