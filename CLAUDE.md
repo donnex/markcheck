@@ -89,6 +89,8 @@ If a project has no CI workflow configured yet, suggest setting one up — don't
 
 `.github/workflows/release.yml` builds and packages tagged releases; `.github/workflows/check.yml` runs `cargo fmt --check`/`clippy`/`cargo test`, then `cargo llvm-cov` to enforce the 97% coverage threshold, on every push and pull request. Keep both in sync with this file per the rule above.
 
+- The PTY tests need `RUST_TEST_THREADS: 1` in CI (see the comment on the `check` job for why). It's set at **job** level, not on a step, because *every* step that executes the test binaries needs it — and `cargo llvm-cov` is one of them, re-running the whole suite while being easy to overlook since it has no "test" in its name. Any new step that runs the tests inherits it automatically; don't move it back onto a single step.
+
 ## Rust
 
 - Always target the latest stable Rust release, and verify the toolchain is current before committing. Check with `rustup check`.

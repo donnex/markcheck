@@ -55,7 +55,7 @@ jobs:
       - name: cargo test
         run: cargo test --locked
         env:
-          RUST_TEST_THREADS: 2
+          RUST_TEST_THREADS: 1
 
   release:
     needs: check
