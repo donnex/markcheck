@@ -13,12 +13,30 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 mod common;
+
+/// The three `git_sync_*` tests each spawn a subprocess with its own
+/// background commit+push thread and then poll a bare remote for it to
+/// land. Run concurrently (the default, like every other test in this
+/// file), they compete with each other for CPU on top of whatever else the
+/// machine is doing, which can push the background thread past the poll
+/// deadline below on a busy runner. Held for a whole test's duration, this
+/// serializes just these three against each other; `into_inner` recovers
+/// the guard even if an earlier holder panicked, since there's no shared
+/// data here to have been corrupted — only mutual exclusion matters.
+static GIT_SYNC_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn git_sync_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    GIT_SYNC_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn unique_path(hint: &str) -> PathBuf {
     common::unique_temp_path("pty", hint, Some("md"))
@@ -703,6 +721,7 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
     // `main.rs`'s wiring (flag parsing, `GitSync::detect`, and the poll/
     // request loop), which the `git_sync.rs` unit tests can't reach since
     // they drive `GitSync` directly rather than through the compiled binary.
+    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -741,7 +760,7 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
     // The commit+push happens on a background thread that can outlive the
     // child process (detached, not joined on quit), so poll the
     // bare remote rather than assuming it's already landed.
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut subject = String::new();
     while Instant::now() < deadline {
         let out = std::process::Command::new("git")
@@ -767,6 +786,7 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     // CLI-overrides-config default, and only auto_copy's config path had PTY
     // coverage before this. A path prefix match must turn git-sync on with
     // no --git-sync on the command line at all.
+    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-cfg");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -807,7 +827,7 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut subject = String::new();
     while Instant::now() < deadline {
         let out = std::process::Command::new("git")
@@ -836,6 +856,7 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
     // editor-reload path never queued a git-sync request the way
     // commit_write does. Regression test: edit only, no toggle at all, and
     // the edit must still land in the remote's log.
+    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-editor");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -883,7 +904,7 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut subject = String::new();
     while Instant::now() < deadline {
         let out = std::process::Command::new("git")
