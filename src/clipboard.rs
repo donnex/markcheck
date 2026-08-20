@@ -74,6 +74,10 @@ fn copy_text(text: &str, primary: bool) -> CopyOutcome {
 /// Sets the system clipboard via arboard, plus the PRIMARY selection when
 /// requested (best-effort — a PRIMARY failure doesn't fail the copy).
 /// Returns whether the main clipboard write succeeded.
+///
+/// Coverage note: exercising the success path requires a live X11/Wayland
+/// (or macOS/Windows) clipboard session, not reachable headlessly — CI and
+/// most dev sandboxes only ever hit the `Clipboard::new()` failure branch.
 fn set_via_arboard(text: &str, primary: bool) -> bool {
     let Ok(mut clipboard) = arboard::Clipboard::new() else {
         return false;
@@ -184,5 +188,25 @@ mod tests {
     fn osc52_sequence_refuses_oversized_payload() {
         let big = "x".repeat(OSC52_MAX_BYTES);
         assert_eq!(osc52_sequence(&big, 'c'), None);
+    }
+
+    #[test]
+    fn emit_osc52_refuses_oversized_payload_without_writing() {
+        let big = "x".repeat(OSC52_MAX_BYTES);
+        assert!(!emit_osc52(&big, 'c'));
+    }
+
+    #[test]
+    fn copy_text_with_primary_also_targets_the_primary_selection() {
+        // The PRIMARY write is fire-and-forget (best-effort — see
+        // `copy_text`'s doc comment), so it never changes the returned
+        // outcome; this just exercises the `primary` branch, on whichever
+        // backend (arboard or the OSC 52 fallback) the environment
+        // `cargo test` runs in actually has available.
+        let outcome = copy_text("hello", true);
+        assert!(matches!(
+            outcome,
+            CopyOutcome::CopiedSystem | CopyOutcome::CopiedOsc52
+        ));
     }
 }
