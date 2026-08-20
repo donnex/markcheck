@@ -82,6 +82,29 @@ jobs:
           tar -C dist -czf "dist/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
           (cd dist && sha256sum "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256")
 
+      # Release notes come from CHANGELOG.md rather than gh's own
+      # auto-generated (PR-title-based) notes, so they match what
+      # CLAUDE.md's Changelog policy already requires every user-facing
+      # change to carry. Failing when the section is missing/empty doubles
+      # as a check that the version-bump commit actually finalized it.
+      - name: Extract changelog section for this version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            /^## \[/ {
+              if (found) exit
+              if (index($0, "[" ver "]") > 0) { found = 1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $version" >&2
+            exit 1
+          fi
+          cat release-notes.md
+
       - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -90,4 +113,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             "dist/$ARCHIVE_NAME.tar.gz" \
             "dist/$ARCHIVE_NAME.tar.gz.sha256" \
-            --title "${{ github.ref_name }}"
+            --title "${{ github.ref_name }}" \
+            --notes-file release-notes.md
