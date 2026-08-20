@@ -39,8 +39,16 @@ jobs:
       - name: Build
         run: cargo build --locked
 
+      # RUST_TEST_THREADS caps parallelism: the git-sync PTY tests spawn a
+      # subprocess with its own background commit+push thread and poll for
+      # it to land, and GitHub's shared runners are contended enough that
+      # running the full default parallelism (one thread per core) on top
+      # of that regularly pushed those polls past even a 60s deadline.
+      # Local dev is unaffected (this only applies inside CI).
       - name: cargo test
         run: cargo test --locked
+        env:
+          RUST_TEST_THREADS: 2
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov

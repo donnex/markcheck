@@ -49,8 +49,13 @@ jobs:
       - name: Build
         run: cargo build --locked
 
+      # See check.yml's cargo test step for why: GitHub's shared runners are
+      # contended enough that full default parallelism regularly pushed the
+      # git-sync PTY tests' background-thread polls past even a 60s deadline.
       - name: cargo test
         run: cargo test --locked
+        env:
+          RUST_TEST_THREADS: 2
 
   release:
     needs: check
