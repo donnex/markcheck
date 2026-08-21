@@ -97,9 +97,10 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
 
     let contents = template(&full_path);
     let temp_path = canonical_parent.join(format!(
-        ".{}.markcheck-new-{}",
+        ".{}.markcheck-new-{}-{:x}",
         file_name.to_string_lossy(),
-        std::process::id()
+        std::process::id(),
+        crate::writer::random_suffix()
     ));
     if let Err(err) = write_temp(&temp_path, &contents) {
         let _ = fs::remove_file(&temp_path);
@@ -115,11 +116,11 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     Ok(full_path)
 }
 
-/// Writes `contents` to a fresh temp file, retrying once on a stale
-/// same-PID leftover from a crashed prior run (mirroring
-/// `writer::write_temp`), and fsyncs it before returning so the caller's
-/// hard-link is never left pointing at unflushed data. No explicit
-/// permissions are set — unlike `writer::write_temp`, there's no source
+/// Writes `contents` to a fresh temp file, retrying once on a stale leftover
+/// from a crashed prior run that happened to draw the same PID and random
+/// suffix (mirroring `writer::write_temp`), and fsyncs it before returning
+/// so the caller's hard-link is never left pointing at unflushed data. No
+/// explicit permissions are set — unlike `writer::write_temp`, there's no source
 /// file's permissions to protect or restore, so this keeps the same default
 /// (umask-masked) permissions `create_new` on the final path gave directly
 /// before this change.
@@ -131,11 +132,13 @@ fn write_temp(temp_path: &Path, contents: &str) -> io::Result<()> {
             .open(path)
     };
     let mut file = match open(temp_path) {
-        // Stale temp from a crashed prior run with a reused PID. Retried
-        // once, unconditionally, rather than probed for first — the
-        // crashed-run scenario is inherently racy to simulate
-        // deterministically in a test, so this path is exercised by
-        // inspection rather than a dedicated regression test (mirrors
+        // The PID+random-suffix name (see writer::random_suffix) makes a
+        // genuine collision astronomically unlikely; a stale temp from a
+        // crashed prior run (reused PID *and* the same random draw) is the
+        // only realistic cause. Retried once, unconditionally, rather than
+        // probed for first — the crashed-run scenario is inherently racy to
+        // simulate deterministically in a test, so this path is exercised
+        // by inspection rather than a dedicated regression test (mirrors
         // writer::write_temp's identical, identically-untested case).
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
             fs::remove_file(temp_path)?;
