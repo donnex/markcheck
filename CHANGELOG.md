@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the next toggle/start/reset/undo/redo tries to save — the save is
   now refused, the file reloaded with the other change intact, and a sticky
   error asks you to retry.
+- A line like `` ```done `` (a fence run followed by trailing text) inside a
+  code block is no longer mistaken for closing that fence. Previously, a
+  `[/]`-lookalike line genuinely still inside the block, past such a line,
+  could show up in the card as `[ ]` instead of the source's actual `[/]`.
 
 ## [1.2.2] - 2026-08-20
 
