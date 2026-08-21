@@ -69,10 +69,9 @@ workflow and file-backed state.
 - Atomic write-back on every toggle — the file is never left half-written,
   and permissions are preserved
 - Live reload when the file changes on disk (edit it elsewhere, see it update)
-- Optional git sync (`--git-sync`): commit and push the file after every
-  toggle or manual edit (`e`), when it's already in a git repo — a
-  lightweight way to keep a checklist in sync across hosts that share it
-  via git
+- Optional git sync (`--git-sync`): commit and push the file after a toggle
+  or manual edit (`e`), when it's already in a git repo — a lightweight way
+  to keep a checklist in sync across hosts that share it via git
 - One-key clipboard copy of a task's command, with an SSH-friendly fallback;
   optional auto-copy on navigation and PRIMARY-selection support
 - Open the file in `$EDITOR` without leaving the app
@@ -118,7 +117,7 @@ markcheck --no-nerd-font runbook.md   # plain-Unicode icons
 markcheck --no-mouse runbook.md       # leave terminal text selection alone
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
-markcheck --git-sync runbook.md       # commit + push after every toggle (needs a git repo)
+markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --new runbook.md            # create a starter checklist, then open it
 markcheck --version                   # print the version and build's git commit
 ```
@@ -362,7 +361,11 @@ normally.
 With `--git-sync` (or a matching `git_sync_paths` entry, above) active for a
 file that's already in a git repository, every toggle/start/reset/undo/redo
 commits and pushes the change in the background, so a checklist shared via
-git stays in sync across machines without leaving the app. Editing the file
+git stays in sync across machines without leaving the app. Changes are never
+lost, but if several land while a previous commit/push is still in flight,
+they coalesce into one commit rather than one apiece — the commit message
+then names only the last of them, though its content still reflects every
+change up to that point. Editing the file
 in `$EDITOR` (`e`) syncs too, as its own commit (`checklist.md: Edited in
 $EDITOR`) — even if you only edit and quit without toggling anything
 afterward. It only ever
