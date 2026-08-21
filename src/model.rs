@@ -833,12 +833,27 @@ pub struct GitSyncState {
     /// a skipped sync (nothing to commit) or a failed one (that goes to
     /// `set_error` instead).
     pub last_at: Option<SystemTime>,
-    /// Set after a successful write-back, describing what changed (e.g.
-    /// `Check "Restart service"`); consumed by the main loop via
+    /// Set after a successful write-back (or a markcheck-driven external
+    /// edit), describing what changed and capturing the exact file content
+    /// expected as a result; consumed by the main loop via
     /// `take_git_sync_request`, which forwards it to `GitSync::request` when
     /// git-sync is active for this file. Mirrors `editor_requested`/
     /// `link_open_request` — `app.rs` stays free of process/thread concerns.
-    pub pending: Option<String>,
+    pub pending: Option<PendingSync>,
+}
+
+/// A queued git-sync request: the exact file content expected once the
+/// underlying change lands, paired with a human description for the
+/// eventual commit message (e.g. `Check "Restart service"`). Carrying the
+/// expected content — not just the description — lets the sync worker build
+/// its commit directly from this snapshot via git plumbing instead of
+/// re-reading the live working-tree file, so a concurrent, unrelated write
+/// landing on disk mid-sync can't get silently swept into a commit whose
+/// message doesn't describe it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSync {
+    pub content: String,
+    pub description: String,
 }
 
 /// A full snapshot of every checkbox item's state, keyed by 1-based
