@@ -219,6 +219,7 @@ pub fn parse_document(path: PathBuf) -> anyhow::Result<Document> {
 fn parse_source(raw: &str, path: PathBuf) -> Document {
     let raw_lines: Vec<String> = raw.lines().map(str::to_string).collect();
     let uses_crlf = raw.contains("\r\n");
+    let trailing_newline = raw.ends_with('\n');
 
     // A leading UTF-8 BOM defeats ATX heading recognition (CommonMark
     // requires `#`/`##` to start the line) and would otherwise silently lose
@@ -640,6 +641,7 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
         lists,
         raw_lines,
         uses_crlf,
+        trailing_newline,
     }
 }
 
@@ -1784,6 +1786,15 @@ second
 
         let crlf_source = "## S\r\n\r\n- [ ] `alpha`\r\n";
         assert!(parse(crlf_source).uses_crlf);
+    }
+
+    #[test]
+    fn trailing_newline_detects_presence_and_absence() {
+        let with_newline = "## S\n\n- [ ] `alpha`\n";
+        assert!(parse(with_newline).trailing_newline);
+
+        let without_newline = "## S\n\n- [ ] `alpha`";
+        assert!(!parse(without_newline).trailing_newline);
     }
 
     #[test]

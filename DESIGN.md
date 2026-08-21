@@ -104,6 +104,7 @@ pub struct Document {
     pub lists: Vec<List>,
     pub raw_lines: Vec<String>,   // full file, kept for write-back
     pub uses_crlf: bool,          // source used \r\n; write-back rejoins with it instead of always \n
+    pub trailing_newline: bool,   // source ended in \n; write-back only adds one back if it did
 }
 
 pub enum Screen {
@@ -260,6 +261,8 @@ Identity of duplicate items is `line_number`, not content.
 ## Markdown Write-Back (`src/writer.rs`)
 
 Surgical line replacement — only the task marker changes. `set_task_marker` replaces the first `[ ]`/`[x]`/`[X]`/`[/]` found on the item's line with the target for its state (`NotStarted`→`[ ]`, `Started`→`[/]`, `Done`→`[x]`); uppercase `[X]` is recognized too (pulldown parses it as done, so it must be rewritable) and is normalized to the target's casing on rewrite. Written atomically: a temp file is written and fsynced first, then renamed over the target, so a crash or full disk mid-write can never leave the file truncated or corrupted — the fsync (not just the temp-then-rename pattern alone) is what makes that guarantee hold on filesystems like ext4 `data=ordered`, where a rename's durability isn't otherwise assured until the write it points at is flushed.
+
+`str::lines()` (used to build `raw_lines`) discards the line terminator entirely, so rejoining with `.join(newline) + newline` unconditionally would silently add a trailing newline to a source file that didn't have one on its very first toggle. `Document::trailing_newline` (set once at parse time from whether the raw source's last byte was `\n`) gates that final push, so a file with no trailing newline round-trips without gaining one — the same "only the checkbox changes" guarantee `uses_crlf` gives line endings.
 
 The original file's permissions are preserved: the temp file is created with mode `0600` (never more permissive than the most restrictive plausible source, even briefly), and the exact source permissions are applied through the file handle (fchmod semantics, immune to umask) before the rename. If the source file's metadata can't be read — **including when it has been deleted externally** — the write aborts with an error and nothing is written, so a deletion is never silently overwritten or recreated. The app layer detects the deletion first and blocks the toggle before `write_back` is even called (see "Reload From Disk"); this abort is the writer's own backstop.
 

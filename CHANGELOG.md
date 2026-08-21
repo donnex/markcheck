@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rolled back in memory to match what's actually on disk, instead of the
   checklist silently drifting out of sync with the file (and potentially
   showing a false "all complete" screen once a later change is saved).
+- Toggling a task in a checklist file that didn't end in a trailing newline
+  no longer adds one — the very first save used to silently change a byte
+  it had no business touching.
 
 ## [1.2.2] - 2026-08-20
 
