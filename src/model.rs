@@ -706,6 +706,15 @@ pub struct AppState {
     /// coarse-mtime filesystem (whole-second resolution is common) — a
     /// narrower coincidence than mtime alone, though not a complete fix.
     pub file_size: Option<u64>,
+    /// Hash of the file content we last confirmed was on disk — set at load
+    /// and after every write we make or reload we pick up. `commit_write`
+    /// re-hashes the file immediately before writing and compares against
+    /// this: a mismatch means something else (another markcheck instance, an
+    /// external editor) changed the file since we last saw it, so the write
+    /// is refused and the file reloaded instead of blindly overwritten —
+    /// closing the lost-update window that `file_mtime`/`file_size` alone
+    /// can miss on a coarse-mtime filesystem.
+    pub file_content_hash: Option<u64>,
     /// When the document's content last changed — set both when we write it
     /// ourselves (toggle/reset) and when an external change is reloaded.
     /// Drives the title-bar "Updated … ago" tag. Not set for skipped

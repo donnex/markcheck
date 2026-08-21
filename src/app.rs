@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
@@ -24,6 +26,22 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
     let meta = fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
+}
+
+/// A deterministic (within this process) content hash, used to detect
+/// whether the file on disk still matches what we last saw before we
+/// overwrite it. `DefaultHasher::new()` always starts from the same fixed
+/// keys, so two calls in the same run are comparable — this is a
+/// compare-and-swap guard, not a cryptographic or cross-process value.
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Hash of `path`'s current on-disk bytes, or `None` if it can't be read.
+fn current_content_hash(path: &Path) -> Option<u64> {
+    fs::read(path).ok().map(|bytes| hash_bytes(&bytes))
 }
 
 /// Smart-case containment (vim `smartcase`): case-insensitive unless the
@@ -96,6 +114,7 @@ impl AppState {
              is rejected at load (main.rs) and reload (reload_if_changed)",
         );
         let (file_mtime, file_size) = current_stat(&document.file_path).unzip();
+        let file_content_hash = current_content_hash(&document.file_path);
         // Start on the first not-done item: prefer the first list, then
         // fall back to the first list with remaining work, then item 0
         // (everything already done).
@@ -123,6 +142,7 @@ impl AppState {
             should_quit: false,
             file_mtime,
             file_size,
+            file_content_hash,
             last_update_at: None,
             git_sync: GitSyncState::default(),
             card_scroll: 0,
@@ -995,6 +1015,14 @@ impl AppState {
         fail_msg: &str,
         change_desc: &str,
     ) -> bool {
+        if self.disk_content_diverged() {
+            self.apply_snapshot(pre_state);
+            self.force_reload();
+            self.set_error(
+                "File changed on disk — reloaded; change not saved, please retry".to_string(),
+            );
+            return false;
+        }
         let Ok(content) = writer::write_back(&self.document) else {
             self.apply_snapshot(pre_state);
             self.set_error(fail_msg.to_string());
@@ -1003,12 +1031,30 @@ impl AppState {
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
         self.file_mtime = file_mtime;
         self.file_size = file_size;
+        self.file_content_hash = Some(hash_bytes(content.as_bytes()));
         self.last_update_at = Some(SystemTime::now());
         self.git_sync.pending = Some(PendingSync {
             content,
             description: change_desc.to_string(),
         });
         true
+    }
+
+    /// True when the file's current on-disk content no longer matches
+    /// `file_content_hash` — the content we last confirmed was there, at
+    /// load or after our own last write/reload. A mismatch means something
+    /// else (another markcheck instance, an external editor) changed the
+    /// file since, so writing now would silently discard that change — the
+    /// classic lost-update problem for two writers sharing one file, which
+    /// `file_mtime`/`file_size` alone can miss within a single coarse-mtime
+    /// timestamp tick. Fails open (`false`, i.e. "proceed") when the file
+    /// can't be read at all: that's a distinct failure `write_back` itself
+    /// is about to surface with its own, more specific error.
+    fn disk_content_diverged(&self) -> bool {
+        match current_content_hash(&self.document.file_path) {
+            Some(hash) => Some(hash) != self.file_content_hash,
+            None => false,
+        }
     }
 
     fn maybe_transition_screen(&mut self) {
@@ -1059,6 +1105,35 @@ impl AppState {
             return false;
         }
 
+        self.reload_from_disk(modified, size, was_deleted)
+    }
+
+    /// Unconditionally re-reads and applies the file, bypassing the
+    /// mtime/size "unchanged" short-circuit in [`reload_if_changed`]. Used
+    /// by [`commit_write`](Self::commit_write) when `disk_content_diverged`
+    /// has already proven the file changed via its content hash — mtime/size
+    /// can still read as "unchanged" on a coarse-mtime filesystem even
+    /// though the hash caught a real change, and in that case
+    /// `reload_if_changed` would otherwise wrongly skip the reload, leaving
+    /// the conflict undetected on every retry.
+    fn force_reload(&mut self) {
+        // The file vanishing in the instant between disk_content_diverged's
+        // read and this stat is a real but effectively untestable race
+        // (nothing yields between the two calls); reload_if_changed's own
+        // next tick will pick up and report the deletion normally.
+        let Some((modified, size)) = current_stat(&self.document.file_path) else {
+            return;
+        };
+        let was_deleted = std::mem::take(&mut self.file_deleted);
+        self.reload_from_disk(modified, size, was_deleted);
+    }
+
+    /// Shared reload body for [`reload_if_changed`] and [`force_reload`]:
+    /// parses the file fresh, swaps it in on success, and refreshes every
+    /// piece of "what we last saw on disk" state (mtime/size/content hash)
+    /// so a subsequent write or conflict check compares against the file as
+    /// it now stands.
+    fn reload_from_disk(&mut self, modified: SystemTime, size: u64, was_deleted: bool) -> bool {
         let reloaded = match parser::parse_document(self.document.file_path.clone()) {
             Ok(new_document) if !new_document.lists.is_empty() => {
                 self.remap_position(&new_document);
@@ -1090,6 +1165,7 @@ impl AppState {
 
         self.file_mtime = Some(modified);
         self.file_size = Some(size);
+        self.file_content_hash = current_content_hash(&self.document.file_path);
         reloaded
     }
 
