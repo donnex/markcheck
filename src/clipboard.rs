@@ -4,8 +4,10 @@ use base64::Engine;
 
 use crate::model::Item;
 
-/// tmux truncates OSC 52 payloads around 74 KB; stay conservative.
-const OSC52_MAX_BYTES: usize = 100_000;
+/// tmux truncates OSC 52 payloads around 74 KB; stay under that so a
+/// refused-as-too-large payload here is never one tmux would have silently
+/// truncated instead had this cap been laxer.
+const OSC52_MAX_BYTES: usize = 70_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CopyOutcome {
