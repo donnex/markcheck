@@ -437,6 +437,13 @@ which travels over SSH to your local terminal emulator (kitty, alacritty,
 wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
 bar distinguishes a system-clipboard copy from an OSC 52 one.
 
+OSC 52 is an out-of-band channel: the escape sequence rides over whatever
+carries your terminal session, including a chain of SSH hops, so a copied
+command is exposed to anything in that path capable of reading terminal
+output. If a task's command embeds a credential or token, `y` sends it the
+same way as any other command — worth keeping in mind for a runbook shared
+in a less-trusted environment.
+
 When a task has **several** commands, `y` won't guess between them — instead
 **left-click the row** of the command you want and that specific one is
 copied (an inline command, the trailing command, or a fenced block). Clicking
