@@ -2556,6 +2556,44 @@ fn reload_preserves_cursor_by_title_and_line_number() {
 }
 
 #[test]
+fn reload_disambiguates_duplicate_list_titles_by_occurrence() {
+    // Regression: nothing in the Markdown format forbids two `## H2`s
+    // sharing a title, but remap_position used to match by title alone —
+    // `.position()` always finding the *first* occurrence — so a reload
+    // while positioned on the *second* "Servers" list used to snap the
+    // cursor back to the first one instead. Ranking by occurrence (this is
+    // the second "Servers" list, land on the second "Servers" list again)
+    // fixes that as long as the duplicates' relative order is unchanged.
+    let path = write_real_file(
+        "## Servers\n\n- [ ] `first-list-task`\n\n## Servers\n\n- [ ] `second-list-task`\n",
+    );
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+    assert_eq!(
+        state.current_item().unwrap().display_text,
+        "second-list-task"
+    );
+
+    // Rewrite with a line inserted before both lists, shifting line
+    // numbers, but keeping both same-titled lists in the same relative
+    // order.
+    touch_with_new_mtime(
+        &path,
+        "## Other\n\n- [ ] `unrelated`\n\n## Servers\n\n- [ ] `first-list-task`\n\n## Servers\n\n- [ ] `second-list-task`\n",
+    );
+    state.reload_if_changed();
+
+    assert_eq!(state.current_list().title, "Servers");
+    assert_eq!(
+        state.current_item().unwrap().display_text,
+        "second-list-task",
+        "must stay on the second \"Servers\" list, not snap back to the first"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn reload_skips_when_new_content_has_no_lists() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());

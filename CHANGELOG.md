@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git-sync commits now run the repository's normal commit hooks (and honor
   `commit.gpgsign`) again, the same as committing by hand — a prior
   optimization bypassed them entirely.
+- Reloading a file with two `## H2` lists sharing the same title (nothing
+  in Markdown forbids that) no longer snaps the cursor back to the first
+  of them if you were positioned on a later one.
 - Toggling, starting, resetting, undoing, or redoing a task no longer leaves
   it showing the wrong state if the save to disk fails (e.g. the file
   becomes read-only, is deleted, or disk space runs out) — the change is

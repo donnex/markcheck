@@ -1184,9 +1184,10 @@ impl AppState {
         });
     }
 
-    /// Keeps the cursor on the same list (by title) and item (by line
-    /// number) after a reload, falling back to the start of the document
-    /// when either can no longer be found in the new content.
+    /// Keeps the cursor on the same list (by title, disambiguated by
+    /// occurrence — see below) and item (by line number) after a reload,
+    /// falling back to the start of the document when either can no longer
+    /// be found in the new content.
     fn remap_position(&mut self, new_document: &Document) {
         let old_title = self
             .document
@@ -1195,9 +1196,35 @@ impl AppState {
             .map(|s| s.title.clone());
         let old_line_number = self.current_item().map(|item| item.line_number);
 
+        // Two `## H2` lists can share a title (nothing in the Markdown
+        // format forbids it), so title alone doesn't identify a list — a
+        // reload used to always snap back to the *first* same-titled list,
+        // even when the cursor was genuinely on the second one. Ranking the
+        // old list among same-titled lists, then landing on the new
+        // document's list at that same rank, disambiguates the common case
+        // (the duplicate lists' relative order is unchanged) without
+        // needing a real stable list identity; a rank that no longer exists
+        // (e.g. a duplicate got removed) falls back to the first list
+        // overall, the same as a title that vanished entirely.
+        let old_occurrence = old_title.as_deref().map(|title| {
+            self.document.lists[..self.current_list_index]
+                .iter()
+                .filter(|s| s.title == title)
+                .count()
+        });
+
         let new_list_index = old_title
             .as_deref()
-            .and_then(|title| new_document.lists.iter().position(|s| s.title == title))
+            .zip(old_occurrence)
+            .and_then(|(title, occurrence)| {
+                new_document
+                    .lists
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.title == title)
+                    .nth(occurrence)
+                    .map(|(i, _)| i)
+            })
             .unwrap_or(0)
             .min(new_document.lists.len().saturating_sub(1));
 
