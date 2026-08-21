@@ -25,6 +25,31 @@ fn set_task_marker(line: &mut String, target: &str) {
     }
 }
 
+/// Joins `lines` back into a single string using `document`'s original line
+/// ending (`\r\n` if it was CRLF-authored — `raw_lines`/`str::lines()` strip
+/// the `\r`, so it must be rejoined explicitly or every line ending would
+/// silently flip to LF on the first toggle) and only reattaching a final
+/// trailing newline when the source actually had one (`str::lines()` drops
+/// that distinction too — rejoining unconditionally would silently add a
+/// newline to a file that never had one).
+fn join_lines(lines: &[String], document: &Document) -> String {
+    let newline = if document.uses_crlf { "\r\n" } else { "\n" };
+    let mut contents = lines.join(newline);
+    if document.trailing_newline {
+        contents.push_str(newline);
+    }
+    contents
+}
+
+/// The document's current content exactly as it stands in memory — no
+/// checkbox mutation — reconstructed with its original line endings and
+/// trailing-newline state. Used to capture the expected git-sync snapshot
+/// for a change that already landed on disk outside `write_back` (e.g. an
+/// external editor edit picked up by a reload).
+pub fn document_contents(document: &Document) -> String {
+    join_lines(&document.raw_lines, document)
+}
+
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
 /// over the target so a crash or full disk mid-write can't leave the
 /// checklist truncated or corrupted; the original content stays intact
@@ -37,8 +62,9 @@ fn set_task_marker(line: &mut String, target: &str) {
 /// permissions are applied to the temp file before the rename so they
 /// survive the swap. Hard links and ownership are not preserved — the
 /// rename gives the path a new inode, the same trade-off atomic-save
-/// editors make.
-pub fn write_back(document: &Document) -> io::Result<()> {
+/// editors make. Returns the exact content that was written, so callers
+/// (git-sync) can capture it as the expected snapshot for a later commit.
+pub fn write_back(document: &Document) -> io::Result<String> {
     let mut lines = document.raw_lines.clone();
     for list in &document.lists {
         for item in &list.items {
@@ -52,19 +78,7 @@ pub fn write_back(document: &Document) -> io::Result<()> {
             }
         }
     }
-    // `raw_lines` never carries `\r` (str::lines() strips it along with the
-    // `\n`), so a CRLF-authored file must be rejoined with `\r\n` explicitly
-    // or every line ending in the file would silently flip to LF on the
-    // first toggle.
-    let newline = if document.uses_crlf { "\r\n" } else { "\n" };
-    let mut contents = lines.join(newline);
-    // `str::lines()` also drops whether the source ended in a newline at
-    // all; a file with no trailing newline must round-trip without gaining
-    // one, or write-back silently changes a byte it has no business
-    // touching.
-    if document.trailing_newline {
-        contents.push_str(newline);
-    }
+    let contents = join_lines(&lines, document);
 
     // Read the source permissions before touching anything. Any error —
     // including NotFound — aborts before writing, so a deleted file is never
@@ -93,7 +107,7 @@ pub fn write_back(document: &Document) -> io::Result<()> {
     }
     #[cfg(unix)]
     sync_parent_dir(&document.file_path);
-    Ok(())
+    Ok(contents)
 }
 
 /// Best-effort fsync of `path`'s parent directory so the rename's directory

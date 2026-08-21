@@ -8,7 +8,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use crate::clipboard;
 use crate::model::{
     AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, OverviewTarget,
-    Palette, PickerState, Screen, SearchState, StateSnapshot, TaskState, UNDO_HISTORY_CAP,
+    Palette, PendingSync, PickerState, Screen, SearchState, StateSnapshot, TaskState,
+    UNDO_HISTORY_CAP,
 };
 use crate::parser;
 use crate::writer;
@@ -994,16 +995,19 @@ impl AppState {
         fail_msg: &str,
         change_desc: &str,
     ) -> bool {
-        if writer::write_back(&self.document).is_err() {
+        let Ok(content) = writer::write_back(&self.document) else {
             self.apply_snapshot(pre_state);
             self.set_error(fail_msg.to_string());
             return false;
-        }
+        };
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
         self.file_mtime = file_mtime;
         self.file_size = file_size;
         self.last_update_at = Some(SystemTime::now());
-        self.git_sync.pending = Some(change_desc.to_string());
+        self.git_sync.pending = Some(PendingSync {
+            content,
+            description: change_desc.to_string(),
+        });
         true
     }
 
@@ -1098,7 +1102,10 @@ impl AppState {
     /// `editor` is the resolved program name (e.g. `vim`, `code`), not the
     /// literal `$EDITOR`/`$VISUAL` env var.
     pub fn request_external_edit_sync(&mut self, editor: &str) {
-        self.git_sync.pending = Some(format!("Edited in {editor}"));
+        self.git_sync.pending = Some(PendingSync {
+            content: writer::document_contents(&self.document),
+            description: format!("Edited in {editor}"),
+        });
     }
 
     /// Keeps the cursor on the same list (by title) and item (by line
@@ -1211,12 +1218,12 @@ impl AppState {
         self.link_open_request.take()
     }
 
-    /// Consumed by the main loop each tick: the change description of the
-    /// most recent write-back, forwarded to `GitSync::request` when git-sync
-    /// is active for this file. Returned unconditionally — `app.rs`
-    /// has no notion of whether git-sync is enabled, matching
-    /// `take_editor_request`/`take_link_open_request`.
-    pub fn take_git_sync_request(&mut self) -> Option<String> {
+    /// Consumed by the main loop each tick: the expected content and change
+    /// description of the most recent write-back, forwarded to
+    /// `GitSync::request` when git-sync is active for this file. Returned
+    /// unconditionally — `app.rs` has no notion of whether git-sync is
+    /// enabled, matching `take_editor_request`/`take_link_open_request`.
+    pub fn take_git_sync_request(&mut self) -> Option<PendingSync> {
         self.git_sync.pending.take()
     }
 
