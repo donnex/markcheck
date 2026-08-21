@@ -116,9 +116,11 @@ pub fn write_back(document: &Document) -> io::Result<String> {
 /// this point the rename has already succeeded and the content is safely on
 /// disk under normal operation, and some filesystems don't support or need
 /// directory fsync at all — this is a best-effort strengthening of the
-/// crash-safety guarantee, not a correctness requirement.
+/// crash-safety guarantee, not a correctness requirement. `pub(crate)`: also
+/// used by `scaffold::create_new_checklist`, whose hard-link-into-place has
+/// the identical need to make a fresh directory entry durable.
 #[cfg(unix)]
-fn sync_parent_dir(path: &Path) {
+pub(crate) fn sync_parent_dir(path: &Path) {
     if let Some(parent) = path.parent()
         && let Ok(dir) = fs::File::open(parent)
     {

@@ -67,12 +67,16 @@ pub fn validate_new_path(path: &Path) -> io::Result<()> {
 }
 
 /// Creates a new starter checklist at `path` and returns its canonicalized
-/// location. `create_new` makes the existence check and the write a single
-/// atomic filesystem operation, so a file that appears between a separate
-/// check and the write can't be silently clobbered.
-///
-/// Unlike `writer::write_back`, this skips the temp-file-then-rename dance:
-/// there's no prior content at risk, since the file doesn't exist yet.
+/// location. The existence check and the write are kept atomic — a file
+/// that appears between a separate check and the write can't be silently
+/// clobbered — while also never leaving a partially-written file behind if
+/// the write itself fails partway: the template is written to a temp file
+/// in the same directory (fsynced) first, then hard-linked into place.
+/// Unlike `rename`, `hard_link` fails with `AlreadyExists` instead of
+/// silently replacing an existing target, so it preserves the same
+/// never-overwrite guarantee `create_new` gave directly; the temp name is
+/// removed either way (on success it and `full_path` are the same inode, so
+/// nothing is lost by removing it).
 pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     validate_new_path(path)?;
 
@@ -92,13 +96,56 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     let full_path = canonical_parent.join(file_name);
 
     let contents = template(&full_path);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&full_path)?;
+    let temp_path = canonical_parent.join(format!(
+        ".{}.markcheck-new-{}",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    if let Err(err) = write_temp(&temp_path, &contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err);
+    }
+    let link_result = fs::hard_link(&temp_path, &full_path);
+    let _ = fs::remove_file(&temp_path);
+    link_result?;
+
+    #[cfg(unix)]
+    crate::writer::sync_parent_dir(&full_path);
+
+    Ok(full_path)
+}
+
+/// Writes `contents` to a fresh temp file, retrying once on a stale
+/// same-PID leftover from a crashed prior run (mirroring
+/// `writer::write_temp`), and fsyncs it before returning so the caller's
+/// hard-link is never left pointing at unflushed data. No explicit
+/// permissions are set — unlike `writer::write_temp`, there's no source
+/// file's permissions to protect or restore, so this keeps the same default
+/// (umask-masked) permissions `create_new` on the final path gave directly
+/// before this change.
+fn write_temp(temp_path: &Path, contents: &str) -> io::Result<()> {
+    let open = |path: &Path| {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+    };
+    let mut file = match open(temp_path) {
+        // Stale temp from a crashed prior run with a reused PID. Retried
+        // once, unconditionally, rather than probed for first — the
+        // crashed-run scenario is inherently racy to simulate
+        // deterministically in a test, so this path is exercised by
+        // inspection rather than a dedicated regression test (mirrors
+        // writer::write_temp's identical, identically-untested case).
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(temp_path)?;
+            open(temp_path)?
+        }
+        other => other?,
+    };
     file.write_all(contents.as_bytes())?;
     file.sync_all()?;
-    Ok(full_path)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -164,6 +211,100 @@ mod tests {
 
         let document = crate::parser::parse_document(created).unwrap();
         assert!(!document.lists.is_empty());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_new_checklist_leaves_no_temp_file_behind() {
+        let dir = unique_temp_dir();
+        let path = dir.join("todo.md");
+
+        create_new_checklist(&path).unwrap();
+
+        let leftover = fs::read_dir(&dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("markcheck-new-")
+        });
+        assert!(!leftover, "temp file was not cleaned up after hard-link");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_new_checklist_leaves_no_temp_file_behind_when_the_target_exists() {
+        // The failure path (hard_link refuses an existing target) must clean
+        // up the temp file too, not just the success path.
+        let dir = unique_temp_dir();
+        let path = dir.join("todo.md");
+        fs::write(&path, "already here").unwrap();
+
+        create_new_checklist(&path).unwrap_err();
+
+        let leftover = fs::read_dir(&dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("markcheck-new-")
+        });
+        assert!(
+            !leftover,
+            "temp file was not cleaned up after a refused link"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_new_checklist_uses_default_umask_permissions() {
+        // No explicit mode is set on the temp file (unlike writer::write_temp,
+        // which protects an existing source file's permissions) — the final
+        // file should get the same default, umask-masked permissions any
+        // plain `create_new` file in this environment would, regardless of
+        // what the umask actually is here.
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = unique_temp_dir();
+        let created = create_new_checklist(&dir.join("todo.md")).unwrap();
+        let plain = dir.join("plain-reference-file");
+        fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(&plain)
+            .unwrap();
+
+        let created_mode = fs::metadata(&created).unwrap().permissions().mode() & 0o777;
+        let plain_mode = fs::metadata(&plain).unwrap().permissions().mode() & 0o777;
+        assert_eq!(created_mode, plain_mode);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_new_checklist_cleans_up_and_errors_when_the_temp_write_fails() {
+        // A read-only directory lets canonicalize succeed (needs only
+        // read+execute) while the temp file's own create_new fails with
+        // PermissionDenied — exercising create_new_checklist's cleanup
+        // branch for a write_temp failure, distinct from the AlreadyExists
+        // path covered by create_new_checklist_refuses_to_overwrite_existing_file.
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = unique_temp_dir();
+        let path = dir.join("todo.md");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = create_new_checklist(&path);
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!path.exists());
 
         fs::remove_dir_all(&dir).ok();
     }

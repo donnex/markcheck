@@ -160,16 +160,16 @@ fn main() -> anyhow::Result<()> {
 
     // Git-sync: `--git-sync` always requests it; otherwise the file's
     // canonical path must fall under one of the configured prefixes. Either
-    // way it only actually activates once `GitSync::detect` confirms the
-    // file's directory is inside a git work tree — like the watcher, this is
-    // a convenience feature that fails open rather than erroring out.
+    // way git-sync only actually activates once `GitSync::detect` confirms
+    // the file's directory is inside a git work tree — like the watcher,
+    // this is a convenience feature that fails open rather than erroring out.
     let git_sync_requested = cli.git_sync
         || config
             .git_sync_paths
             .as_deref()
             .unwrap_or(&[])
             .iter()
-            .any(|prefix| state.document.file_path.starts_with(prefix));
+            .any(|prefix| git_sync_path_matches(&state.document.file_path, prefix));
     let mut git_sync = git_sync_requested
         .then(|| git_sync::GitSync::detect(&state.document.file_path))
         .flatten();
@@ -200,6 +200,21 @@ fn main() -> anyhow::Result<()> {
         &mut git_sync,
         mouse,
     )
+}
+
+/// Whether a configured `git_sync_paths` entry (`prefix`) covers
+/// `file_path` (already canonicalized by this point — see above).
+/// `prefix` is canonicalized before comparing, since it comes straight from
+/// the config file as written: a relative path, or one reached through a
+/// symlink, would otherwise never match a file a user would expect it to
+/// cover, because only one side of the comparison was ever resolved. A
+/// prefix that doesn't (yet) exist just never matches, the same as
+/// `starts_with` failing outright would. The comparison itself
+/// (`Path::starts_with`) matches path *components*, not string bytes — a
+/// configured `/foo/bar` prefix does not match `/foo/barn/file.md`, unlike
+/// a naive string-prefix check would.
+fn git_sync_path_matches(file_path: &std::path::Path, prefix: &std::path::Path) -> bool {
+    std::fs::canonicalize(prefix).is_ok_and(|canonical| file_path.starts_with(canonical))
 }
 
 fn run<B: Backend>(
@@ -495,7 +510,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{editor_line_args, resolve_editor, resolve_opener};
+    use super::{editor_line_args, git_sync_path_matches, resolve_editor, resolve_opener};
 
     #[test]
     fn opener_prefers_browser_then_platform_default() {
@@ -658,5 +673,45 @@ mod tests {
         ] {
             assert!(editor_line_args(prog, 5).is_empty(), "{prog}");
         }
+    }
+
+    #[test]
+    fn git_sync_path_matches_requires_a_real_directory_boundary() {
+        // Regression for an external review's claim that this was a
+        // lexical string-prefix check (it isn't — Path::starts_with
+        // matches path components, not string bytes): a configured
+        // "checklists" prefix must not match a same-prefix sibling
+        // directory like "checklists-secret".
+        let root = crate::test_support::unique_temp_path("main-gitsync", "", None);
+        std::fs::create_dir_all(&root).unwrap();
+        let checklists = root.join("checklists");
+        let checklists_secret = root.join("checklists-secret");
+        std::fs::create_dir_all(&checklists).unwrap();
+        std::fs::create_dir_all(&checklists_secret).unwrap();
+        let file = std::fs::canonicalize(&checklists).unwrap().join("todo.md");
+
+        assert!(
+            git_sync_path_matches(&file, &checklists),
+            "a file under the configured directory must match"
+        );
+        assert!(
+            !git_sync_path_matches(&file, &checklists_secret),
+            "a same-prefix sibling directory must not match"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn git_sync_path_matches_rejects_a_nonexistent_prefix() {
+        // Fails open (no match), the same as `starts_with` failing outright
+        // would — not an error, and not a match by accident.
+        let root = crate::test_support::unique_temp_path("main-gitsync-missing", "", None);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = std::fs::canonicalize(&root).unwrap().join("todo.md");
+
+        assert!(!git_sync_path_matches(&file, &root.join("does-not-exist")));
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }
