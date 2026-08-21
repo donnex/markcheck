@@ -1,11 +1,10 @@
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use sha2::{Digest, Sha256};
 
 use crate::clipboard;
 use crate::model::{
@@ -28,19 +27,18 @@ fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
     Some((meta.modified().ok()?, meta.len()))
 }
 
-/// A deterministic (within this process) content hash, used to detect
-/// whether the file on disk still matches what we last saw before we
-/// overwrite it. `DefaultHasher::new()` always starts from the same fixed
-/// keys, so two calls in the same run are comparable — this is a
-/// compare-and-swap guard, not a cryptographic or cross-process value.
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+/// A content digest, used to detect whether the file on disk still matches
+/// what we last saw before we overwrite it — a compare-and-swap guard, not
+/// a security boundary (nothing here is adversarial), so a cryptographic
+/// digest is stronger than this actually needs; used anyway since the
+/// abstraction already exists and the cost is negligible at checklist-file
+/// sizes.
+fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
 }
 
 /// Hash of `path`'s current on-disk bytes, or `None` if it can't be read.
-fn current_content_hash(path: &Path) -> Option<u64> {
+fn current_content_hash(path: &Path) -> Option<[u8; 32]> {
     fs::read(path).ok().map(|bytes| hash_bytes(&bytes))
 }
 
