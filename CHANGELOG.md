@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Toggling a task in a checklist file that didn't end in a trailing newline
   no longer adds one — the very first save used to silently change a byte
   it had no business touching.
+- Git-sync (`--git-sync`) commits can no longer pick up an unrelated,
+  concurrent change to the file (another toggle, or an edit made in
+  `$EDITOR`) under a commit message that only describes the original one —
+  each commit now always matches exactly what its message says changed.
+  Quitting right after an edit or toggle also now reliably waits for that
+  commit to land instead of occasionally racing the app's own exit.
 
 ## [1.2.2] - 2026-08-20
 

@@ -2369,8 +2369,8 @@ fn request_external_edit_sync_queues_a_git_sync_request() {
     assert!(state.take_git_sync_request().is_none());
     state.request_external_edit_sync("vim");
     assert_eq!(
-        state.take_git_sync_request().as_deref(),
-        Some("Edited in vim")
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Edited in vim".to_string())
     );
 }
 

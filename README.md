@@ -374,7 +374,10 @@ commit or push (offline, diverged history, no upstream configured, …) is
 reported as a red status-bar message — `markcheck` never attempts to resolve
 it for you (no auto `git pull --rebase`), so fix it in a terminal as usual.
 Since the sync runs on a background thread, a slow or offline `git push`
-never freezes the app.
+never freezes the app during normal use. Quitting right after a toggle or
+edit is the one exception: `markcheck` waits up to 5 seconds for that last
+sync to finish before exiting, so a quick `e` then `q` doesn't leave the
+change unsynced.
 
 Whenever git-sync is actually active for the current file, `⇅ git` sits in
 the title bar too, grouped with the `Updated` tag and the progress counter

@@ -13,7 +13,7 @@ mod writer;
 
 use std::io;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use clap::Parser;
@@ -235,10 +235,10 @@ where
                 }
             }
         }
-        if let Some(change_desc) = state.take_git_sync_request()
+        if let Some(pending) = state.take_git_sync_request()
             && let Some(sync) = git_sync.as_mut()
         {
-            sync.request(change_desc);
+            sync.request(pending);
         }
         state.expire_status(SystemTime::now());
         terminal.draw(|frame| ui::render(frame, state))?;
@@ -269,8 +269,38 @@ where
         }
 
         if state.should_quit {
-            return Ok(());
+            break;
         }
+    }
+
+    // The final action before quitting (a toggle, or an editor edit just
+    // above) can itself be exactly what queues a git-sync request — and the
+    // plumbing-based sync it kicks off (see `git_sync.rs`) is several `git`
+    // subprocesses, not a handful, so it no longer reliably finishes within
+    // one more ~100ms loop tick. Since quitting drops out of the loop
+    // immediately and dropping `git_sync` would abandon any thread it just
+    // spawned mid-flight, forward one last pending request and give it a
+    // bounded window to actually land before the process (and every thread
+    // in it) goes away.
+    if let Some(sync) = git_sync.as_mut() {
+        if let Some(pending) = state.take_git_sync_request() {
+            sync.request(pending);
+        }
+        wait_for_git_sync(sync);
+    }
+
+    Ok(())
+}
+
+/// Polls `sync` until its in-flight (and any coalesced-behind-it) request
+/// settles, or `timeout` elapses — whichever comes first. Only meant to be
+/// called once, right before quitting.
+fn wait_for_git_sync(sync: &mut git_sync::GitSync) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+    let deadline = Instant::now() + TIMEOUT;
+    while sync.is_busy() && Instant::now() < deadline {
+        sync.poll();
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
