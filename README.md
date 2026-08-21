@@ -335,6 +335,11 @@ or full disk can never leave the runbook truncated, and the file's
 permissions are preserved. Opening the file through a symlink writes
 through to the real target and keeps the link intact.
 
+If the file changed on disk since it was last loaded — another `markcheck`
+instance, or an external editor, saved to it after you did — a toggle is
+refused rather than silently overwriting that change: the file is reloaded
+and a sticky error asks you to retry.
+
 ### Live reload
 
 If the file changes on disk while the app is open, `markcheck` reloads it
