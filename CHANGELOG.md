@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer risks committing files you'd separately
+  `git add`ed but hadn't committed yet — it used to build its commit from
+  the repository's real index, which could silently sweep up anything else
+  staged there under a commit message describing only the checklist change.
+  It now uses a private, temporary index that never touches yours.
+- Git-sync now refuses to run — instead of committing — while the
+  repository is mid-merge, mid-rebase, mid-cherry-pick, on a detached
+  `HEAD`, or has any unresolved conflict anywhere in it. Previously, an
+  automatic sync during an unresolved merge conflict on the checklist file
+  could silently "resolve" it and advance past the merge, leaving the
+  repository in a confusing half-finished state.
+- Git-sync commits now run the repository's normal commit hooks (and honor
+  `commit.gpgsign`) again, the same as committing by hand — a prior
+  optimization bypassed them entirely.
 - Toggling, starting, resetting, undoing, or redoing a task no longer leaves
   it showing the wrong state if the save to disk fails (e.g. the file
   becomes read-only, is deleted, or disk space runs out) — the change is
