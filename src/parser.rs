@@ -1881,4 +1881,63 @@ Intro paragraph.
         assert!(item.code_blocks.is_empty());
         assert!(!item.display_text.contains("indented"));
     }
+
+    // External review: strip_blockquote_markers' unconditional trim_start()
+    // (used by is_started_task_line, the [/]-rewrite gate) doesn't
+    // distinguish a real `[/]` bullet from 4+-space indented code, so the
+    // two-parser (custom pre-scan vs pulldown-cmark) disagreement class
+    // from the fence-closing bug could in principle recur here too. Verified
+    // empirically rather than assumed: indented (non-fenced) code content is
+    // *always* discarded by this parser regardless of what the [/]-rewrite
+    // preprocessing did to it (Event::End(TagEnd::CodeBlock) only captures
+    // the fenced case — see indented_code_block_is_ignored above), and
+    // raw_lines/write-back are never touched by the rewrite either, so the
+    // theoretical disagreement has no path to becoming user-visible. These
+    // four cases (the ones the review specifically named) lock that in as a
+    // permanent regression guard, so a future parser change can't quietly
+    // make it reachable without a test noticing.
+
+    #[test]
+    fn indented_lookalike_following_a_list_item_becomes_a_real_nested_task() {
+        // The realistic shape for this: a `[/]`-lookalike indented right
+        // after a list item reads as list *continuation*, not top-level
+        // indented code — pulldown-cmark treats it as a genuine nested
+        // list item, and the preprocessing pass agrees (it's rewritten and
+        // promoted to Started), so there's no divergence at all here.
+        let source = "## S\n\n- [ ] `alpha`\n\n    - [/] nested example\n";
+        let document = parse(source);
+        let items = &document.lists[0].items;
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].depth, 1);
+        assert_eq!(items[1].kind, ItemKind::Checkbox(TaskState::Started));
+    }
+
+    #[test]
+    fn indented_lookalike_before_any_list_produces_no_lists() {
+        // The review's own literal example: no preceding list context at
+        // all, so the whole thing is just an indented code block — inert,
+        // not merely harmless.
+        let document = parse("# Example\n\n    - [/]\n");
+        assert!(document.lists.is_empty());
+    }
+
+    #[test]
+    fn blockquoted_indented_lookalike_is_discarded_not_leaked() {
+        let source = "## S\n\n- [ ] `alpha`\n\n>     - [/] example\n";
+        let document = parse(source);
+        let item = &document.lists[0].items[0];
+        assert!(item.code_blocks.is_empty());
+        assert!(!item.display_text.contains("example"));
+        assert_eq!(document.lists[0].items.len(), 1);
+    }
+
+    #[test]
+    fn nested_blockquoted_indented_lookalike_is_discarded_not_leaked() {
+        let source = "## S\n\n- [ ] `alpha`\n\n> >     - [/] example\n";
+        let document = parse(source);
+        let item = &document.lists[0].items[0];
+        assert!(item.code_blocks.is_empty());
+        assert!(!item.display_text.contains("example"));
+        assert_eq!(document.lists[0].items.len(), 1);
+    }
 }
