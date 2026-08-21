@@ -875,7 +875,7 @@ impl AppState {
             .unwrap_or(&item.display_text)
             .to_string();
 
-        self.record_undo_point();
+        let pre_state = self.state_snapshot();
         // Re-fetch mutably now that the snapshot is taken.
         if let Some(item) = self
             .document
@@ -887,11 +887,13 @@ impl AppState {
         }
 
         if !self.commit_write(
+            &pre_state,
             "Write failed — change not saved to disk",
             &format!("{} \"{item_text}\"", state_verb(new_state)),
         ) {
             return;
         }
+        self.push_undo_point(pre_state);
 
         // Leave the cursor put. Only demote a completion screen that this
         // toggle just invalidated (a task un-done); never promote to one.
@@ -945,7 +947,7 @@ impl AppState {
         if self.blocked_by_deletion() {
             return false;
         }
-        self.record_undo_point();
+        let pre_state = self.state_snapshot();
         let item_text = self
             .current_item()
             .map(|item| {
@@ -958,24 +960,42 @@ impl AppState {
         if let Some(current) = self.current_item_mut() {
             current.kind = ItemKind::Checkbox(state);
         }
-        self.commit_write(
+        if !self.commit_write(
+            &pre_state,
             "Write failed — change not saved to disk",
             &format!("{} \"{item_text}\"", state_verb(state)),
-        )
+        ) {
+            return false;
+        }
+        self.push_undo_point(pre_state);
+        true
     }
 
     /// Writes the document back to disk, refreshing the self-write mtime
     /// guard and the "Updated" tag on success. Every mutating action
     /// (toggle/start/reset/undo/redo) ends with exactly this sequence, so
-    /// it's shared here rather than repeated at each call site. Returns
-    /// whether the write succeeded; on failure sets a sticky error with
-    /// `fail_msg` so callers can bail out with `if !self.commit_write(...) {
-    /// return; }`. On success, `change_desc` (e.g. `Check "Restart service"`)
-    /// is stashed as the pending git-sync request — consumed by the
-    /// main loop via `take_git_sync_request`, regardless of whether git-sync
-    /// is actually active for this file.
-    fn commit_write(&mut self, fail_msg: &str, change_desc: &str) -> bool {
+    /// it's shared here rather than repeated at each call site. On failure,
+    /// restores the document to `pre_state` (the checkbox snapshot captured
+    /// before the mutation) before reporting the error — a failed write
+    /// must never leave memory diverged from what's actually on disk, since
+    /// that phantom state can otherwise persist for the rest of the session
+    /// (the file watcher only reloads on a real mtime/size change, and a
+    /// failed write never touches the file) and even cascade into a false
+    /// "all complete" screen. Returns whether the write succeeded; on
+    /// failure sets a sticky error with `fail_msg` so callers can bail out
+    /// with `if !self.commit_write(...) { return; }`. On success,
+    /// `change_desc` (e.g. `Check "Restart service"`) is stashed as the
+    /// pending git-sync request — consumed by the main loop via
+    /// `take_git_sync_request`, regardless of whether git-sync is actually
+    /// active for this file.
+    fn commit_write(
+        &mut self,
+        pre_state: &StateSnapshot,
+        fail_msg: &str,
+        change_desc: &str,
+    ) -> bool {
         if writer::write_back(&self.document).is_err() {
+            self.apply_snapshot(pre_state);
             self.set_error(fail_msg.to_string());
             return false;
         }
@@ -1221,7 +1241,7 @@ impl AppState {
         if self.blocked_by_deletion() {
             return;
         }
-        self.record_undo_point();
+        let pre_state = self.state_snapshot();
         for list in &mut self.document.lists {
             for item in &mut list.items {
                 if let ItemKind::Checkbox(_) = item.kind {
@@ -1230,11 +1250,13 @@ impl AppState {
             }
         }
         if !self.commit_write(
+            &pre_state,
             "Write failed — reset not saved to disk",
             "Reset all tasks to not done",
         ) {
             return;
         }
+        self.push_undo_point(pre_state);
         self.screen = Screen::Checklist;
         self.set_status("All tasks reset to not done".to_string());
     }
@@ -1255,13 +1277,17 @@ impl AppState {
             .collect()
     }
 
-    /// Records the current checkbox states as an undo point *before* a mutating
-    /// write, and clears the redo stack (a fresh change invalidates redo).
-    /// Called at the start of every state-changing action (toggle/start/reset).
-    /// The history is capped at [`UNDO_HISTORY_CAP`] — the oldest entry is
-    /// dropped once it's exceeded.
-    fn record_undo_point(&mut self) {
-        self.undo_stack.push(self.state_snapshot());
+    /// Commits `pre_state` (the checkbox snapshot captured before a mutation
+    /// that has just been confirmed written to disk) onto the undo stack,
+    /// and clears the redo stack (a fresh change invalidates redo). The
+    /// history is capped at [`UNDO_HISTORY_CAP`] — the oldest entry is
+    /// dropped once it's exceeded. Called only *after* `commit_write`
+    /// reports success — a failed write already rolled the document back
+    /// to `pre_state` itself, so it must never reach the undo/redo stacks:
+    /// pushing it anyway would leave a no-op undo entry and wipe out a
+    /// valid redo stack for a change that never actually happened.
+    fn push_undo_point(&mut self, pre_state: StateSnapshot) {
+        self.undo_stack.push(pre_state);
         if self.undo_stack.len() > UNDO_HISTORY_CAP {
             self.undo_stack.remove(0);
         }
@@ -1293,7 +1319,10 @@ impl AppState {
     /// `u`: undo the last state-changing action. Restores the previous
     /// checkbox snapshot, writes it back, and pushes the pre-undo state onto the
     /// redo stack so `Ctrl-R` can replay it. Refuses when the file is deleted,
-    /// and reports a sticky "Nothing to undo" when the history is empty.
+    /// and reports a sticky "Nothing to undo" when the history is empty. If
+    /// the write fails, the popped entry goes back onto the undo stack
+    /// unchanged — the undo never took effect, so it must still be there to
+    /// retry.
     pub fn undo(&mut self) {
         if self.blocked_by_deletion() {
             return;
@@ -1304,8 +1333,11 @@ impl AppState {
         };
         let redo_point = self.state_snapshot();
         let changed = self.apply_snapshot(&snapshot);
+        if !self.finish_history_apply(&redo_point, &changed, "Undo") {
+            self.undo_stack.push(snapshot);
+            return;
+        }
         self.redo_stack.push(redo_point);
-        self.finish_history_apply(&changed, "Undo");
     }
 
     /// `Ctrl-R`: redo the last undone action. Mirror of [`undo`], moving
@@ -1320,25 +1352,40 @@ impl AppState {
         };
         let undo_point = self.state_snapshot();
         let changed = self.apply_snapshot(&snapshot);
+        if !self.finish_history_apply(&undo_point, &changed, "Redo") {
+            self.redo_stack.push(snapshot);
+            return;
+        }
         self.undo_stack.push(undo_point);
-        self.finish_history_apply(&changed, "Redo");
     }
 
     /// Shared tail for [`undo`]/[`redo`]: writes the restored state back,
     /// refreshes the self-write mtime guard and the "Updated" tag, drops any
     /// completion screen to the checklist, focuses the changed task when exactly
     /// one changed, and reports what happened. `verb` is "Undo" or "Redo".
-    fn finish_history_apply(&mut self, changed: &[usize], verb: &str) {
+    /// `pre_state` is the snapshot from just before this history application
+    /// mutated the document — passed through to `commit_write` so a failed
+    /// write rolls the document back to it rather than leaving the
+    /// half-applied undo/redo in memory. Returns whether the write
+    /// succeeded, so the caller knows whether to commit the swapped
+    /// undo/redo stacks or put the popped entry back.
+    fn finish_history_apply(
+        &mut self,
+        pre_state: &StateSnapshot,
+        changed: &[usize],
+        verb: &str,
+    ) -> bool {
         let change_desc = format!(
             "{verb}: {} item{}",
             changed.len(),
             if changed.len() == 1 { "" } else { "s" }
         );
         if !self.commit_write(
+            pre_state,
             &format!("{verb} failed — write error, change not saved"),
             &change_desc,
         ) {
-            return;
+            return false;
         }
         self.screen = Screen::Checklist;
 
@@ -1358,6 +1405,7 @@ impl AppState {
             }
             many => self.set_status(format!("{verb}: restored {} tasks", many.len())),
         }
+        true
     }
 
     /// Finds the `(list, item)` indices of the checkbox item with the given line
