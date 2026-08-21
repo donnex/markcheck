@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each commit now always matches exactly what its message says changed.
   Quitting right after an edit or toggle also now reliably waits for that
   commit to land instead of occasionally racing the app's own exit.
+- A change is no longer silently overwritten if the file changed on disk
+  (another `markcheck` instance, an external editor) after it was loaded but
+  before the next toggle/start/reset/undo/redo tries to save — the save is
+  now refused, the file reloaded with the other change intact, and a sticky
+  error asks you to retry.
 
 ## [1.2.2] - 2026-08-20
 

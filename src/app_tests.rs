@@ -2149,6 +2149,89 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
 }
 
 #[test]
+fn toggle_refuses_and_reloads_when_disk_content_changed_since_load() {
+    // Two writers sharing one file (another markcheck instance, or an
+    // external editor) — the in-memory document is stale relative to disk
+    // by the time we're about to write, so overwriting now would silently
+    // discard whatever the other writer just did. `disk_content_diverged`
+    // must catch this even though mtime/size alone can miss it on a
+    // coarse-mtime filesystem.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let path = document.file_path.clone();
+    let mut state = AppState::new(document);
+
+    let external_content = "## Other\n\n- [x] external change\n";
+    fs::write(&path, external_content).unwrap();
+
+    state.toggle_current();
+
+    assert!(state.status_is_error, "got {:?}", state.status_message);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("changed on disk")),
+        "got {:?}",
+        state.status_message
+    );
+    // The external writer's content must survive byte-for-byte — our toggle
+    // must never have been allowed to overwrite it.
+    assert_eq!(fs::read_to_string(&path).unwrap(), external_content);
+    // The conflict forces a reload, so the external writer's content is
+    // picked up immediately rather than only on the next watcher tick.
+    assert_eq!(state.document.lists[0].title, "Other");
+}
+
+#[test]
+fn toggle_succeeds_normally_when_disk_content_is_unchanged() {
+    // Sanity check alongside the conflict test above: when nothing external
+    // touched the file, the new hash check must not itself become a false
+    // positive that blocks every ordinary write.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let mut state = AppState::new(document);
+
+    state.toggle_current();
+
+    assert!(!state.status_is_error, "got {:?}", state.status_message);
+}
+
+#[test]
+fn commit_write_updates_content_hash_so_a_second_toggle_does_not_false_positive() {
+    // The conflict check must compare against the hash of what *we* last
+    // wrote, not a stale hash from load time — otherwise our own successful
+    // write would immediately look like an external change on the very next
+    // action.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false), checkbox(2, false)],
+    }]);
+    let mut state = AppState::new(document);
+
+    state.toggle_current();
+    assert!(
+        !state.status_is_error,
+        "first toggle: got {:?}",
+        state.status_message
+    );
+
+    state.toggle_current();
+    assert!(
+        !state.status_is_error,
+        "second toggle must not see our own prior write as a conflict: got {:?}",
+        state.status_message
+    );
+}
+
+#[test]
 fn start_current_reports_error_when_write_fails() {
     let document = document_with_missing_file(vec![List {
         title: "L".to_string(),
