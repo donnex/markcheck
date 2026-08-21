@@ -387,6 +387,15 @@ edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
 change unsynced.
 
+`git push` sends the whole current branch, the same as running it yourself
+with no arguments — if you have other local commits ahead of the remote
+(from work outside markcheck), those get pushed too, not just the checklist
+commit. Also refuses to run while the repository is mid-merge, mid-rebase,
+mid-cherry-pick, on a detached `HEAD`, or has any unresolved conflict
+anywhere in it — an automatic commit in any of those states could silently
+interfere with work already in progress, so it reports a status-bar error
+and does nothing instead, until you resolve it yourself in a terminal.
+
 Whenever git-sync is actually active for the current file, `⇅ git` sits in
 the title bar too, grouped with the `Updated` tag and the progress counter
 on the right — the whole right-hand side reads as "what's going on with
