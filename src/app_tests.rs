@@ -915,6 +915,15 @@ fn o_opens_every_safe_scheme_including_uppercase() {
         "https://example.com/a",
         "mailto:ops@example.com",
         "HTTPS://EX.COM/A",
+        // is_safe_link is a scheme-prefix allowlist, not a full URI
+        // validator — content after a genuinely-safe scheme (however oddly
+        // formed) isn't separately rejected. This is safe because the URL
+        // is handed to the opener as a single argv element
+        // (Command::new(...).arg(url)), never through a shell, so an
+        // embedded control character can't be interpreted as an argument
+        // or command separator the way it could in shell text.
+        "http://example.com/a\0/../etc/passwd",
+        "https://example.com/a\n-oProxyCommand=x",
     ] {
         let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));
         state.handle_key(KeyCode::Char('o'));
@@ -936,6 +945,19 @@ fn o_refuses_unsafe_schemes_with_a_sticky_hint() {
         "data:text/html,<script>alert(1)</script>",
         "example.com/no-scheme",
         "--some-flag",
+        // The scheme must be the literal start of the string — leading
+        // whitespace or a stray BOM (e.g. a copy-paste artifact) must not
+        // let a URL sneak past the allowlist by starting "close enough" to
+        // a safe scheme.
+        " http://evil.com",
+        "\thttps://evil.com",
+        "\u{FEFF}https://evil.com",
+        // Matching is deliberately ASCII-only (`to_ascii_lowercase`), not
+        // full Unicode case folding — a visually-similar non-ASCII
+        // lookalike (Turkish dotted capital İ) must not be treated as
+        // equivalent to ASCII 'h'/'H' and sneak past the allowlist.
+        "İTTP://evil.com",
+        "HTTP\u{130}://evil.com",
     ] {
         let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));
         state.handle_key(KeyCode::Char('o'));
