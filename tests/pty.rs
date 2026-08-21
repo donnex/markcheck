@@ -21,13 +21,13 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 mod common;
 
-/// The three `git_sync_*` tests each spawn a subprocess with its own
+/// These `git_sync_*` tests each spawn a subprocess with its own
 /// background commit+push thread and then poll a bare remote for it to
 /// land. Run concurrently (the default, like every other test in this
 /// file), they compete with each other for CPU on top of whatever else the
 /// machine is doing, which can push the background thread past the poll
 /// deadline below on a busy runner. Held for a whole test's duration, this
-/// serializes just these three against each other; `into_inner` recovers
+/// serializes just these against each other; `into_inner` recovers
 /// the guard even if an earlier holder panicked, since there's no shared
 /// data here to have been corrupted — only mutual exclusion matters.
 static GIT_SYNC_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -844,6 +844,81 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     assert_eq!(
         subject, "checklist.md: Check \"alpha\"",
         "git_sync_paths must auto-activate the sync with no --git-sync flag"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+#[cfg(unix)]
+fn git_sync_paths_config_matches_through_a_symlinked_prefix() {
+    // git_sync_paths is compared against the file's *canonicalized* path
+    // (main.rs resolves symlinks before this check), but the configured
+    // prefix itself used to be compared as written — so a prefix reached via
+    // a symlink never matched, even though the file genuinely lives under
+    // it. Regression test: configure the prefix as a symlink to the real
+    // work dir; sync must still auto-activate.
+    let _guard = git_sync_test_guard();
+    let root = unique_path("gitsync-symlink-cfg");
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    let alias = root.join("work-alias");
+    std::os::unix::fs::symlink(&work, &alias).unwrap();
+
+    let xdg_config_home = root.join("xdg-config");
+    std::fs::create_dir_all(xdg_config_home.join("markcheck")).unwrap();
+    std::fs::write(
+        xdg_config_home.join("markcheck").join("config.toml"),
+        format!("git_sync_paths = [{:?}]\n", alias.to_str().unwrap()),
+    )
+    .unwrap();
+
+    let ok = drive_args(
+        &path,
+        &[], // no --git-sync flag: the (symlinked) config path prefix must be enough
+        &[("XDG_CONFIG_HOME", xdg_config_home.to_str().unwrap())],
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let mut subject = String::new();
+    while Instant::now() < deadline {
+        let out = std::process::Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if subject != "init" {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        subject, "checklist.md: Check \"alpha\"",
+        "a symlinked git_sync_paths prefix must still auto-activate the sync"
     );
 
     std::fs::remove_dir_all(&root).ok();
