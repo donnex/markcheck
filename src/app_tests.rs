@@ -2091,6 +2091,59 @@ fn toggle_current_reports_error_and_does_not_advance_when_write_fails() {
     );
     assert!(state.status_is_error);
     assert_eq!(state.current_item_index, 0, "did not advance");
+    assert_eq!(
+        state.current_item().unwrap().kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "in-memory state rolled back since the toggle was never saved"
+    );
+}
+
+#[test]
+fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_list() {
+    // Without the rollback, a failed write still left the mutation in
+    // memory. That phantom-done item wouldn't trigger a completion screen
+    // by itself (the failing action bails out before checking), but a
+    // *later, successful* toggle of the real remaining item would count it
+    // too via `list_all_done` and show a false completion screen — even
+    // though the file on disk still has it as not-done.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
+    }]);
+    let path = document.file_path.clone();
+    let mut state = AppState::new(document);
+    state.current_item_index = 1; // item 2, the one whose write will fail
+
+    fs::remove_file(&path).unwrap();
+    state.toggle_current();
+    assert!(state.status_is_error, "the write failure must be reported");
+    assert_eq!(
+        state.document.lists[0].items[1].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "rolled back — must not silently become a phantom done item"
+    );
+    assert_eq!(
+        state.screen,
+        Screen::Checklist,
+        "no premature completion screen"
+    );
+
+    // The file reappears, so toggling the *actual* remaining item succeeds.
+    // Clear the sticky error first, matching what a real keypress does
+    // (`handle_key_with_mods` clears status before dispatch) — otherwise
+    // the previous failure's message would still be sitting there and mask
+    // whether this second attempt actually succeeded.
+    fs::write(&path, "").unwrap();
+    state.clear_status();
+    state.current_item_index = 2; // item 3, genuinely not done
+    state.toggle_current();
+    assert!(!state.status_is_error, "the retry succeeds");
+    assert_eq!(
+        state.screen,
+        Screen::Checklist,
+        "item 2 is still genuinely not-done, so the list must not appear complete"
+    );
 }
 
 #[test]
@@ -2111,6 +2164,11 @@ fn start_current_reports_error_when_write_fails() {
         state.status_message
     );
     assert!(state.status_is_error);
+    assert_eq!(
+        state.current_item().unwrap().kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "in-memory state rolled back since the write was never saved"
+    );
 }
 
 #[test]
@@ -2132,11 +2190,13 @@ fn reset_all_reports_error_when_write_fails() {
         state.status_message
     );
     assert!(state.status_is_error);
-    // The task is still (in memory) reset even though the save failed; what
-    // matters is the user is told it wasn't saved, not that state is reverted.
+    // The in-memory reset must be rolled back since it was never saved —
+    // otherwise the UI would show every task done-reset while the file on
+    // disk still has the original (done) state, with nothing left to
+    // reconcile the two for the rest of the session.
     assert_eq!(
         state.document.lists[0].items[0].kind,
-        ItemKind::Checkbox(TaskState::NotStarted)
+        ItemKind::Checkbox(TaskState::Done)
     );
 }
 
@@ -2160,6 +2220,60 @@ fn undo_reports_error_when_write_fails_mid_session() {
         state.status_message
     );
     assert!(state.status_is_error);
+    // The failed undo must not leave the document half-applied: item 1 (the
+    // one the initial toggle touched, not necessarily the cursor's current
+    // position — the toggle auto-advanced) must still read Done.
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::Done),
+        "document rolled back to its pre-undo state"
+    );
+    // ...and the popped undo entry must go back, so retrying (e.g. once the
+    // file reappears) is still possible instead of the history being lost.
+    assert_eq!(
+        state.undo_stack.len(),
+        1,
+        "popped entry restored for a retry"
+    );
+}
+
+#[test]
+fn redo_reports_error_when_write_fails_mid_session() {
+    // Mirror of `undo_reports_error_when_write_fails_mid_session`: an undo
+    // must succeed first (to have something to redo) before the file
+    // disappears out from under a failing redo.
+    let mut state = AppState::new(two_list_document());
+    state.toggle_current();
+    assert!(!state.status_is_error, "the initial toggle succeeds");
+    state.undo();
+    assert!(!state.status_is_error, "the undo succeeds");
+
+    let path = state.document.file_path.clone();
+    fs::remove_file(&path).unwrap();
+
+    state.redo();
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("Redo failed")),
+        "got {:?}",
+        state.status_message
+    );
+    assert!(state.status_is_error);
+    // The failed redo must not leave the document half-applied: item 1
+    // must still read its post-undo (NotStarted) state.
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "document rolled back to its pre-redo state"
+    );
+    // ...and the popped redo entry must go back, so retrying is possible.
+    assert_eq!(
+        state.redo_stack.len(),
+        1,
+        "popped entry restored for a retry"
+    );
 }
 
 #[test]
@@ -2744,6 +2858,11 @@ fn toggle_item_reports_error_when_write_fails() {
             .is_some_and(|m| m.contains("Write failed")),
         "got {:?}",
         state.status_message
+    );
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "in-memory state rolled back since the toggle was never saved"
     );
 }
 

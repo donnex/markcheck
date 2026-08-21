@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Toggling, starting, resetting, undoing, or redoing a task no longer leaves
+  it showing the wrong state if the save to disk fails (e.g. the file
+  becomes read-only, is deleted, or disk space runs out) — the change is
+  rolled back in memory to match what's actually on disk, instead of the
+  checklist silently drifting out of sync with the file (and potentially
+  showing a false "all complete" screen once a later change is saved).
+
 ## [1.2.2] - 2026-08-20
 
 ### Fixed
