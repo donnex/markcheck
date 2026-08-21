@@ -68,8 +68,7 @@ fn extract_started_markers(raw: &str) -> (String, std::collections::HashSet<Line
         .enumerate()
         .map(|(index, line)| {
             if let Some((fence_char, fence_len)) = fence {
-                if matches!(fence_delimiter(line), Some((c, len)) if c == fence_char && len >= fence_len)
-                {
+                if is_closing_fence(line, fence_char, fence_len) {
                     fence = None;
                 }
                 return line.to_string();
@@ -123,6 +122,20 @@ fn fence_delimiter(line: &str) -> Option<(char, usize)> {
         return None;
     }
     Some((fence_char, len))
+}
+
+/// Whether `line` closes a fence opened with `open_char`/`open_len`. Unlike
+/// an opening fence, CommonMark allows a closing fence line to contain
+/// *nothing* after the fence run but trailing whitespace — no info string.
+/// `fence_delimiter` alone doesn't check this (it's shared with opening-line
+/// detection, where trailing content is an info string, not a violation),
+/// so without this a line like `` ```done `` would wrongly be treated as a
+/// closer here while pulldown-cmark itself does not see it as one — the
+/// exact preprocessor/parser disagreement this scan exists to avoid.
+fn is_closing_fence(line: &str, open_char: char, open_len: usize) -> bool {
+    let trimmed = strip_blockquote_markers(line);
+    let len = trimmed.chars().take_while(|&c| c == open_char).count();
+    len >= open_len && trimmed[len..].trim().is_empty()
 }
 
 /// True if `line` is a task-list bullet whose marker is `[/]`, i.e. optional
@@ -1347,6 +1360,57 @@ mod tests {
             fence_delimiter("```has ` a backtick\n"),
             None,
             "backtick info string can't contain a backtick"
+        );
+    }
+
+    #[test]
+    fn is_closing_fence_requires_only_whitespace_after_the_fence_run() {
+        assert!(is_closing_fence("```\n", '`', 3), "bare closer");
+        assert!(
+            is_closing_fence("```   \n", '`', 3),
+            "trailing whitespace only"
+        );
+        assert!(is_closing_fence("````\n", '`', 3), "longer run also closes");
+        assert!(
+            !is_closing_fence("```shell\n", '`', 3),
+            "an info string closes nothing per CommonMark, unlike an opener"
+        );
+        assert!(
+            !is_closing_fence("```done\n", '`', 3),
+            "trailing non-whitespace content after the run is not a closer"
+        );
+        assert!(!is_closing_fence("~~~\n", '`', 3), "wrong fence character");
+        assert!(
+            !is_closing_fence("``\n", '`', 3),
+            "run shorter than the opener"
+        );
+    }
+
+    #[test]
+    fn fence_with_trailing_text_on_the_would_be_closing_line_does_not_close_it() {
+        // CommonMark requires a closing fence line to contain nothing but
+        // the fence run and trailing whitespace; a line like "```done" is
+        // NOT a closer to pulldown-cmark. Before this fix, the preprocessing
+        // scan disagreed and closed the fence early, so the `[/]` marker on
+        // the line after would have been incorrectly rewritten to `[ ]`
+        // (it's plain text inside what's still — per the real parser — a
+        // fenced code block).
+        let source = "\
+## S
+
+- [ ] task with a fence
+
+  ```
+  first line
+  ```done
+  - [/] still inside the fence per CommonMark
+  ```
+";
+        let document = parse(source);
+        let item = &document.lists[0].items[0];
+        assert_eq!(
+            item.code_blocks,
+            vec!["first line\n```done\n- [/] still inside the fence per CommonMark".to_string()]
         );
     }
 
