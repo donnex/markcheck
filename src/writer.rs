@@ -4,6 +4,21 @@ use std::path::Path;
 
 use crate::model::{Document, ItemKind, TaskState};
 
+/// A per-call random `u64`, used to widen a temp file's name beyond just its
+/// PID so two processes racing to create a same-named temp file (or a
+/// crashed run whose PID gets reused) is vanishingly unlikely rather than
+/// merely unlikely. `RandomState`'s keys are freshly drawn from the OS RNG
+/// on each `new()` (the same mechanism `HashMap`'s default hasher uses for
+/// DoS resistance), so hashing nothing and reading `finish()` is a
+/// dependency-free way to get process-random entropy without pulling in a
+/// dedicated `rand` crate for one temp-file suffix. `pub(crate)`: also used
+/// by `scaffold::create_new_checklist`'s equivalent temp file.
+pub(crate) fn random_suffix() -> u64 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    RandomState::new().build_hasher().finish()
+}
+
 /// Replaces the task checkbox on the line with `target`, leaving everything
 /// else untouched. Recognizes `[ ]`, `[x]`, `[X]` (pulldown parses uppercase
 /// `[X]` as done, so we must be able to rewrite it), and `[/]`; rewriting
@@ -93,9 +108,11 @@ pub fn write_back(document: &Document) -> io::Result<String> {
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file path has no file name"))?
         .to_string_lossy();
-    let temp_path = document
-        .file_path
-        .with_file_name(format!(".{file_name}.markcheck-tmp-{}", std::process::id()));
+    let temp_path = document.file_path.with_file_name(format!(
+        ".{file_name}.markcheck-tmp-{}-{:x}",
+        std::process::id(),
+        random_suffix()
+    ));
 
     if let Err(err) = write_temp(&temp_path, &contents, source_perms) {
         let _ = fs::remove_file(&temp_path);
@@ -147,9 +164,11 @@ fn write_temp(temp_path: &Path, contents: &str, perms: Option<fs::Permissions>) 
             .open(path)
     };
     let mut file = match open(temp_path) {
-        // Stale temp from a crashed prior run with a reused PID. Retried
-        // once, unconditionally, rather than probed for first — the
-        // crashed-run scenario is inherently racy to simulate
+        // The PID+random-suffix name makes a genuine collision astronomically
+        // unlikely; this remains a stale temp from a crashed prior run
+        // (reused PID *and* the same random draw) as the only realistic
+        // cause. Retried once, unconditionally, rather than probed for
+        // first — the crashed-run scenario is inherently racy to simulate
         // deterministically in a test, so this path is exercised by
         // inspection rather than a dedicated regression test.
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
