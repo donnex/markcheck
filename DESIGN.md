@@ -385,7 +385,7 @@ pub fn reload_if_changed(&mut self) {
 
 ## Git Sync (`src/git_sync.rs`)
 
-Auto-commits and pushes the checklist file after every write-back, when it lives in a git repo — so a list stays in sync across hosts that already share it via git. Off by default; activated per-file by `--git-sync` (forces it for this invocation) or a `git_sync_paths` prefix list in the config file (below).
+Auto-commits and pushes the checklist file after a write-back, when it lives in a git repo — so a list stays in sync across hosts that already share it via git. Off by default; activated per-file by `--git-sync` (forces it for this invocation) or a `git_sync_paths` prefix list in the config file (below). "After a write-back," not "after every one": requests that arrive while a sync is already running coalesce into a single commit rather than one apiece — see "Background thread, not the UI thread" below.
 
 **Detection, once at startup:** `GitSync::detect(file_path)` runs `git rev-parse --is-inside-work-tree` in the file's parent directory. `None` (no `GitSync` constructed, feature inert for the session) when that fails — not inside a work tree, or `git` itself can't be run — the same fails-open convenience-feature stance as the file watcher; this is a single blocking call at startup, not re-checked per toggle.
 
