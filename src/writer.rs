@@ -360,6 +360,27 @@ mod tests {
     }
 
     #[test]
+    fn write_back_on_an_empty_document_leaves_the_file_empty() {
+        // Not reachable through normal app use (there's nothing to toggle
+        // with zero items), but write_back itself makes no assumption that
+        // the document is non-empty — an empty source (no lists, no
+        // raw_lines, no trailing newline) must round-trip to exactly the
+        // same empty file, not gain a stray newline from an unconditional
+        // join-and-push.
+        let path = write_temp_file("");
+        let document = parse_document(path.clone()).unwrap();
+        assert!(document.lists.is_empty());
+        assert!(document.raw_lines.is_empty());
+        assert!(!document.trailing_newline);
+
+        write_back(&document).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn round_trip_does_not_add_a_missing_trailing_newline() {
         // A source file with no final newline must not gain one on toggle —
         // write_back's "only the checkbox changes" guarantee (documented in
