@@ -1380,15 +1380,19 @@ impl AppState {
     /// Applies a checkbox-state snapshot to the document, matching items by line
     /// number (a line no longer present is skipped). Returns the line numbers
     /// whose state actually changed, so the caller can report and focus the
-    /// change.
+    /// change. Snapshot lookups go through a line-number map built once up
+    /// front rather than a linear scan per item, so this stays O(items +
+    /// snapshot) instead of O(items × snapshot) on a large checklist.
     fn apply_snapshot(&mut self, snapshot: &StateSnapshot) -> Vec<usize> {
+        let wanted: std::collections::HashMap<usize, TaskState> =
+            snapshot.iter().copied().collect();
         let mut changed = Vec::new();
         for list in &mut self.document.lists {
             for item in &mut list.items {
                 let ItemKind::Checkbox(state) = item.kind else {
                     continue;
                 };
-                if let Some(&(_, want)) = snapshot.iter().find(|(ln, _)| *ln == item.line_number)
+                if let Some(&want) = wanted.get(&item.line_number)
                     && state != want
                 {
                     item.kind = ItemKind::Checkbox(want);

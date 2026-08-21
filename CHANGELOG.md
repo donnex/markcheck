@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The OSC 52 clipboard fallback's payload cap is now 70 KB instead of
   100 KB, so it can no longer report a copy as sent when tmux (which
   truncates around 74 KB) would actually have cut it short.
+- A `git_sync_paths` config entry reached through a symlink (or written as a
+  relative path) now correctly matches, instead of silently never
+  activating git-sync for files under it.
+- `--new` no longer risks leaving a partially-written checklist file behind
+  if the write fails partway through — the template is written and fsynced
+  to a temp file first, then placed atomically, the same crash-safety
+  guarantee toggling an existing file already had.
 
 ## [1.2.2] - 2026-08-20
 
