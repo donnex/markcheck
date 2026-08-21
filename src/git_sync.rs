@@ -150,29 +150,68 @@ fn commit_message(file_path: &Path, change_desc: &str) -> String {
 /// thread spawned by `spawn`, kept as a free function so tests can drive it
 /// directly without waiting on a thread.
 ///
-/// The commit is built entirely from `expected_content` via plumbing rather
-/// than `git commit`'s own path-based commit — despite appearances, `git
+/// The commit is built entirely from `expected_content` rather than
+/// re-reading the working tree at commit time — despite appearances, `git
 /// commit --only`/a plain pathspec always re-reads the file's *current
 /// working-tree content* for the named path (it stages it fresh, ignoring
 /// whatever's already in the index for that path), never a manually staged
-/// index entry. That's exactly the hazard: if some other change (another
-/// markcheck write, an external editor, anything) lands on disk between a
-/// request being queued and this function actually running, the old
-/// working-tree-reading commit would silently absorb it under a message
-/// that only describes the *original* request. Building the commit from
-/// `expected_content` instead — via `hash-object`/`update-index
-/// --cacheinfo`/`write-tree`/`commit-tree`/`update-ref`, none of which touch
-/// the working tree at all — makes the commit's content always match its
-/// message exactly, regardless of what else is happening to the file
-/// concurrently. A later, unrelated change still gets synced — as its own,
-/// separately labeled commit, the next time `request` runs — it just can
-/// never bleed into this one.
+/// index entry. That's the hazard the exact-content approach closes: if
+/// some other change (another markcheck write, an external editor,
+/// anything) lands on disk between a request being queued and this function
+/// actually running, a working-tree-reading commit would silently absorb it
+/// under a message that only describes the *original* request. A later,
+/// unrelated change still gets synced — as its own, separately labeled
+/// commit, the next time `request` runs — it just can never bleed into this
+/// one.
+///
+/// The commit itself is built via a **temporary index** (`GIT_INDEX_FILE`)
+/// populated from `HEAD` plus exactly one replaced path, committed with a
+/// normal `git commit` — not by hand-assembling tree/commit objects and
+/// moving `HEAD` with `update-ref`, which an earlier version of this
+/// function did. That manual-plumbing approach used the *real* repo index
+/// for `write-tree`, which silently pulled in anything else the user had
+/// staged (`git add`ed but not yet committed) into markcheck's commit, and
+/// used a bare `update-ref HEAD <new>` with no compare-and-swap against a
+/// concurrently-moving `HEAD`. A temporary index sidesteps the first
+/// problem entirely (the real index is never read or written), and a
+/// normal `git commit` sidesteps the second (it does its own HEAD read as
+/// part of one locked operation, not a separate read-then-blindly-write
+/// step on markcheck's side) while also running the repo's normal commit
+/// hooks and honoring `commit.gpgsign`, neither of which `commit-tree`
+/// ever did. `repo_sync_blocked` (called first, below) covers the one
+/// thing a normal commit *doesn't* refuse on its own: committing while the
+/// repository is mid-merge/rebase/cherry-pick/etc., which would otherwise
+/// silently resolve a conflict or advance past unfinished work.
 fn run_sync(
     repo_dir: &Path,
     file_path: &Path,
     expected_content: &str,
     message: &str,
 ) -> SyncOutcome {
+    // All plumbing commands run from the repo root with a root-relative
+    // path, sidestepping any ambiguity between CWD-relative and
+    // repo-root-relative pathspec handling. Resolved first (before even
+    // `status`) since every other check below needs it.
+    let repo_root = match Command::new("git")
+        .current_dir(repo_dir)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
+        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
+    };
+
+    // Refuse outright while the repository is in a state where an automatic
+    // commit could do real damage (see repo_sync_blocked's own doc comment)
+    // — checked before anything else, so a mid-merge repository never even
+    // reaches the status check below.
+    if let Some(reason) = repo_sync_blocked(&repo_root) {
+        return SyncOutcome::Failed(reason);
+    }
+
     // Scoped to exactly this one file (`--`), so there's at most one
     // porcelain line to interpret: absent (nothing changed vs. HEAD),
     // `?? ` (untracked), or any other two-letter code (a real change to
@@ -202,25 +241,11 @@ fn run_sync(
     // The path relative to the repo root (required by the plumbing commands
     // below, several of which don't share `status`/`commit`/`push`'s
     // CWD-relative pathspec handling) plus the file's tracked mode, in one
-    // call.
+    // call. Safe to read from the real index now that repo_sync_blocked has
+    // already confirmed there's no unmerged (conflicted) entry for it.
     let (mode, relpath) = match index_entry(repo_dir, file_path) {
         Ok(entry) => entry,
         Err(err) => return SyncOutcome::Failed(err),
-    };
-
-    // All plumbing commands below run from the repo root with a
-    // root-relative path, sidestepping any ambiguity between CWD-relative
-    // and repo-root-relative pathspec handling.
-    let repo_root = match Command::new("git")
-        .current_dir(repo_dir)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
-        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
-        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
     };
 
     // If HEAD already holds exactly this content, this request was already
@@ -236,19 +261,10 @@ fn run_sync(
         Ok(sha) => sha,
         Err(err) => return SyncOutcome::Failed(err),
     };
-    if let Err(err) = stage_blob(&repo_root, &mode, &blob, &relpath) {
-        return SyncOutcome::Failed(err);
-    }
-    let tree = match write_tree(&repo_root) {
-        Ok(sha) => sha,
-        Err(err) => return SyncOutcome::Failed(err),
-    };
+
     let parent = current_head(&repo_root);
-    let commit = match commit_tree(&repo_root, &tree, parent.as_deref(), message) {
-        Ok(sha) => sha,
-        Err(err) => return SyncOutcome::Failed(err),
-    };
-    if let Err(err) = update_head(&repo_root, &commit) {
+    let outcome = commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message);
+    if let Err(err) = outcome {
         return SyncOutcome::Failed(err);
     }
 
@@ -260,6 +276,174 @@ fn run_sync(
         Ok(output) if output.status.success() => SyncOutcome::Synced,
         Ok(output) => SyncOutcome::Failed(command_error("git push", &output)),
         Err(err) => SyncOutcome::Failed(format!("git push failed: {err}")),
+    }
+}
+
+/// Populates a fresh temporary index from `parent` (or leaves it empty for
+/// a repository with no commits yet), stages `blob` into it at `mode`/
+/// `relpath`, re-confirms `HEAD` hasn't moved since `parent` was read (a
+/// residual, narrowed version of the same race a bare `update-ref` had —
+/// `git commit` below safely serializes its *own* HEAD update, but the
+/// temporary index's *content* for every path other than `relpath` was
+/// still only as fresh as `parent`; re-checking here catches the common
+/// case rather than silently committing a tree that reverts a
+/// concurrently-landed, unrelated commit), and commits it — normal `git
+/// commit`, so hooks and `commit.gpgsign` apply, never `commit-tree`. The
+/// temporary index file is always removed afterward, success or failure;
+/// the real index is never read or written by any of this.
+fn commit_via_temp_index(
+    repo_root: &Path,
+    parent: &Option<String>,
+    mode: &str,
+    blob: &str,
+    relpath: &str,
+    message: &str,
+) -> Result<(), String> {
+    let git_dir =
+        git_dir(repo_root).ok_or_else(|| "git-sync: could not resolve git-dir".to_string())?;
+    let temp_index = git_dir.join(format!(
+        "markcheck-index-{}-{:x}",
+        std::process::id(),
+        crate::writer::random_suffix()
+    ));
+    let result = (|| {
+        if let Some(head) = parent {
+            populate_temp_index(repo_root, &temp_index, head)?;
+        }
+        stage_into_temp_index(repo_root, &temp_index, mode, blob, relpath)?;
+        if &current_head(repo_root) != parent {
+            return Err("git-sync: repository changed during sync, will retry".to_string());
+        }
+        commit_temp_index(repo_root, &temp_index, message)
+    })();
+    let _ = std::fs::remove_file(&temp_index);
+    result
+}
+
+/// `GIT_INDEX_FILE=<temp_index> git read-tree <parent>`: seeds the
+/// temporary index with `parent`'s tree, so every path other than the one
+/// about to be replaced commits exactly as `parent` had it — never the real
+/// index's (possibly unrelated-staged-content-holding) state.
+fn populate_temp_index(repo_root: &Path, temp_index: &Path, parent: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .env("GIT_INDEX_FILE", temp_index)
+        .args(["read-tree", parent])
+        .output()
+        .map_err(|err| format!("git read-tree failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git read-tree", &output));
+    }
+    Ok(())
+}
+
+/// `GIT_INDEX_FILE=<temp_index> git update-index --add --cacheinfo`: stages
+/// `blob` for `relpath` at `mode` in the *temporary* index — `--add` since
+/// the path may not already be present (a fresh repo's first commit, or a
+/// file staged but never yet committed) — without touching the real index
+/// or the working tree at all.
+fn stage_into_temp_index(
+    repo_root: &Path,
+    temp_index: &Path,
+    mode: &str,
+    blob: &str,
+    relpath: &str,
+) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .env("GIT_INDEX_FILE", temp_index)
+        .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath])
+        .output()
+        .map_err(|err| format!("git update-index failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git update-index", &output));
+    }
+    Ok(())
+}
+
+/// `GIT_INDEX_FILE=<temp_index> git commit -m <message>`: commits the
+/// temporary index's tree against the repository's real `HEAD`/branch —
+/// normal commit machinery (hooks, `commit.gpgsign`, HEAD's own locked
+/// read-and-update), just fed from the temporary index instead of the real
+/// one.
+fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .env("GIT_INDEX_FILE", temp_index)
+        .args(["commit", "-m", message])
+        .output()
+        .map_err(|err| format!("git commit failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git commit", &output));
+    }
+    Ok(())
+}
+
+/// Absolute path to the repository's git directory. Resolved relative to
+/// `repo_root` when `git` reports a relative one (its own behavior differs
+/// depending on whether it's invoked from the work tree root or a
+/// subdirectory) — `repo_sync_blocked` needs an absolute path to check for
+/// marker files regardless of which one `git` happened to hand back.
+fn git_dir(repo_root: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = PathBuf::from(raw);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        repo_root.join(path)
+    })
+}
+
+/// Refuses to sync while the repository is in a state where an automatic
+/// commit would be actively harmful: a merge/cherry-pick/revert/bisect/
+/// rebase in progress (each recorded by git as a marker file or directory
+/// under the git-dir), a detached `HEAD` (a commit made there is one `git
+/// checkout` away from becoming unreachable, with no branch pointing at
+/// it), or an unresolved conflict anywhere in the repository (not just the
+/// target path — any of these mean `HEAD`/the index currently represent
+/// in-progress work a background checklist commit must never interfere
+/// with, silently "resolving" a conflict or completing someone else's
+/// merge). Checked once at the top of `run_sync`, before any other work.
+fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
+    let git_dir = git_dir(repo_root)?;
+    for (marker, label) in [
+        ("MERGE_HEAD", "a merge"),
+        ("CHERRY_PICK_HEAD", "a cherry-pick"),
+        ("REVERT_HEAD", "a revert"),
+        ("BISECT_LOG", "a bisect"),
+    ] {
+        if git_dir.join(marker).exists() {
+            return Some(format!("git-sync: repository has {label} in progress"));
+        }
+    }
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        return Some("git-sync: repository has a rebase in progress".to_string());
+    }
+    let on_a_branch = Command::new("git")
+        .current_dir(repo_root)
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !on_a_branch {
+        return Some("git-sync: repository is in a detached HEAD state".to_string());
+    }
+    let unmerged = Command::new("git")
+        .current_dir(repo_root)
+        .args(["ls-files", "-u"])
+        .output();
+    match unmerged {
+        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
+            Some("git-sync: repository has unresolved merge conflicts".to_string())
+        }
+        _ => None,
     }
 }
 
@@ -329,33 +513,6 @@ fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Stages `blob` for `relpath` in the index, at `mode`, without touching any
-/// other index entry or the working tree.
-fn stage_blob(repo_root: &Path, mode: &str, blob: &str, relpath: &str) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["update-index", "--cacheinfo", mode, blob, relpath])
-        .output()
-        .map_err(|err| format!("git update-index failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git update-index", &output));
-    }
-    Ok(())
-}
-
-/// Writes the current index out as a tree object, returning its SHA.
-fn write_tree(repo_root: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["write-tree"])
-        .output()
-        .map_err(|err| format!("git write-tree failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git write-tree", &output));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 /// The current commit `HEAD` points at, or `None` for a branch with no
 /// commits yet (so the next commit is created as a root commit).
 fn current_head(repo_root: &Path) -> Option<String> {
@@ -368,47 +525,6 @@ fn current_head(repo_root: &Path) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Creates a commit object from `tree` with `parent` (if any) and `message`,
-/// without moving any ref — returns the new commit's SHA.
-fn commit_tree(
-    repo_root: &Path,
-    tree: &str,
-    parent: Option<&str>,
-    message: &str,
-) -> Result<String, String> {
-    let mut args = vec!["commit-tree".to_string(), tree.to_string()];
-    if let Some(parent) = parent {
-        args.push("-p".to_string());
-        args.push(parent.to_string());
-    }
-    args.push("-m".to_string());
-    args.push(message.to_string());
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(&args)
-        .output()
-        .map_err(|err| format!("git commit-tree failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git commit-tree", &output));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Advances the current branch (via `HEAD`) to `commit` — the plumbing
-/// equivalent of what `git commit` does at the ref level once its commit
-/// object exists.
-fn update_head(repo_root: &Path, commit: &str) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["update-ref", "HEAD", commit])
-        .output()
-        .map_err(|err| format!("git update-ref failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git update-ref", &output));
-    }
-    Ok(())
 }
 
 /// The first line of a failed command's stderr, prefixed with which command
@@ -561,6 +677,66 @@ mod tests {
             "Check \"one\"",
         );
         assert!(matches!(outcome, SyncOutcome::Failed(_)));
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn commit_via_temp_index_refuses_when_head_moved_since_parent_was_read() {
+        // Narrows (doesn't need to eliminate — see run_sync's doc comment)
+        // the residual race a bare `update-ref HEAD` used to have with no
+        // compare-and-swap at all: if some other commit landed after
+        // `parent` was captured but before the temp index is actually
+        // committed, the temp index's content for every path *other* than
+        // the one being replaced would silently be stale (based on
+        // `parent`, not the real current HEAD) — better to refuse and let
+        // the next sync attempt retry from fresh state than to commit a
+        // tree that quietly reverts the intervening change.
+        let work = init_repo_without_remote();
+        let stale_parent = current_head(&work);
+
+        // A commit lands that `commit_via_temp_index`'s caller doesn't know
+        // about yet — simulating a concurrent `git commit`/pull/rebase
+        // racing the background sync thread.
+        fs::write(work.join("other.md"), "concurrent\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "concurrent change"]);
+
+        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let result = commit_via_temp_index(
+            &work,
+            &stale_parent,
+            "100644",
+            &blob,
+            "tracked.md",
+            "should not commit",
+        );
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|e| e.contains("changed during sync")),
+            "{result:?}"
+        );
+
+        // Nothing committed on top of the concurrent change; no leftover
+        // temp index file.
+        let log = Command::new("git")
+            .current_dir(&work)
+            .args(["log", "--format=%s"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout).trim(),
+            "concurrent change\ninit"
+        );
+        let leftover = fs::read_dir(work.join(".git")).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("markcheck-index-")
+        });
+        assert!(!leftover, "temp index file was not cleaned up");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -814,6 +990,100 @@ mod tests {
     }
 
     #[test]
+    fn run_sync_never_includes_an_unrelated_staged_file() {
+        // External review, empirically reproduced against the prior
+        // implementation before this fix: `write-tree` against the *real*
+        // index serialized everything in it, not just the checklist path —
+        // so a file the user had `git add`ed but not yet committed
+        // silently rode along inside markcheck's commit, under a message
+        // describing only the checklist change, then got pushed. The
+        // temp-index rewrite must never see the real index's staged
+        // content at all.
+        let (work, remote) = init_repo_with_remote();
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        fs::write(work.join("secret.env"), "SECRET_API_KEY=xyz123\n").unwrap();
+        run(&work, &["add", "secret.env"]);
+
+        let message = commit_message(&file_path, "Check \"one\"");
+        assert_eq!(
+            run_sync(&work, &file_path, "- [x] one\n", &message),
+            SyncOutcome::Synced
+        );
+
+        let show = Command::new("git")
+            .current_dir(&remote)
+            .args(["show", "--stat", "HEAD"])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&show.stdout);
+        assert!(
+            !stat.contains("secret.env"),
+            "the unrelated staged file must never appear in the pushed commit: {stat}"
+        );
+
+        // The real index must be completely untouched — secret.env is
+        // still exactly as the user staged it, ready for their own commit.
+        let index = Command::new("git")
+            .current_dir(&work)
+            .args(["ls-files", "--stage", "secret.env"])
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&index.stdout).is_empty(),
+            "secret.env must remain staged in the real index"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_refuses_during_an_unresolved_merge_conflict() {
+        // External review, empirically reproduced against the prior
+        // implementation before this fix: with a genuine unresolved merge
+        // conflict on the checklist file, the plumbing sequence silently
+        // collapsed the 3-stage conflict entry to markcheck's own expected
+        // content, wrote a normal (non-merge) commit, and advanced HEAD
+        // past the in-progress merge — while `MERGE_HEAD` and the
+        // conflict-marked working tree were left behind, exactly as if the
+        // merge had never been dealt with. run_sync must now refuse
+        // outright instead, leaving the merge exactly as the user left it.
+        let work = init_repo_without_remote();
+        run(&work, &["checkout", "-q", "-b", "branch-a"]);
+        fs::write(work.join("tracked.md"), "- [x] a\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "a"]);
+        run(&work, &["checkout", "-q", "main"]);
+        fs::write(work.join("tracked.md"), "- [x] b\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "b"]);
+        let head_before_merge_attempt = current_head(&work).unwrap();
+        let _ = Command::new("git")
+            .current_dir(&work)
+            .args(["merge", "-q", "branch-a"])
+            .output();
+        assert!(
+            work.join(".git").join("MERGE_HEAD").exists(),
+            "test setup: real conflict expected"
+        );
+
+        let file_path = work.join("tracked.md");
+        let outcome = run_sync(&work, &file_path, "- [x] resolved\n", "should not commit");
+        assert!(matches!(outcome, SyncOutcome::Failed(_)), "{outcome:?}");
+
+        // Nothing about the in-progress merge was touched: HEAD never
+        // moved, MERGE_HEAD still marks the merge as unfinished, and the
+        // conflict markers are still in the working tree.
+        assert_eq!(current_head(&work).unwrap(), head_before_merge_attempt);
+        assert!(work.join(".git").join("MERGE_HEAD").exists());
+        let contents = fs::read_to_string(&file_path).unwrap();
+        assert!(
+            contents.contains("<<<<<<<"),
+            "conflict markers must still be present, untouched: {contents:?}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn a_later_request_commits_the_concurrent_change_separately() {
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
@@ -928,36 +1198,187 @@ mod tests {
     }
 
     #[test]
-    fn stage_blob_reports_failure_for_an_invalid_mode() {
+    fn stage_into_temp_index_reports_failure_for_an_invalid_mode() {
         let work = init_repo_without_remote();
         let blob = hash_object(&work, "content").unwrap();
-        assert!(stage_blob(&work, "not-a-mode", &blob, "tracked.md").is_err());
+        let temp_index = work.join(".git").join("scratch-test-index");
+        assert!(
+            stage_into_temp_index(&work, &temp_index, "not-a-mode", &blob, "tracked.md").is_err()
+        );
+        let _ = fs::remove_file(&temp_index);
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     #[test]
-    fn write_tree_reports_failure_outside_a_git_repo() {
-        let dir = unique_dir("not-a-repo-write-tree");
+    fn populate_temp_index_reports_failure_for_an_unresolvable_parent() {
+        let work = init_repo_without_remote();
+        let temp_index = work.join(".git").join("scratch-test-index");
+        assert!(populate_temp_index(&work, &temp_index, "not-a-commit-id").is_err());
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn commit_temp_index_reports_failure_for_a_tree_unchanged_from_head() {
+        // A temp index populated straight from HEAD, with nothing further
+        // staged into it, produces the exact same tree HEAD already has —
+        // the same "empty commit refused" behavior normal `git commit`
+        // always has, exercised here through the temp-index path
+        // specifically.
+        let work = init_repo_without_remote();
+        let temp_index = work.join(".git").join("scratch-test-index");
+        let head = current_head(&work).unwrap();
+        populate_temp_index(&work, &temp_index, &head).unwrap();
+        assert!(commit_temp_index(&work, &temp_index, "empty").is_err());
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn git_dir_resolves_to_an_absolute_path() {
+        let work = init_repo_without_remote();
+        let dir = git_dir(&work).unwrap();
+        assert!(dir.is_absolute());
+        assert!(dir.ends_with(".git"));
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn git_dir_resolves_correctly_from_a_subdirectory() {
+        // `git rev-parse --git-dir` itself returns an already-absolute path
+        // when run from a subdirectory of the work tree (unlike the
+        // relative "./.git" it returns from the root) — exercises that
+        // branch specifically, distinct from the join-with-repo_root
+        // fallback the root-invocation test above exercises.
+        let work = init_repo_without_remote();
+        let sub = work.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let dir = git_dir(&sub).unwrap();
+        assert!(dir.is_absolute());
+        assert!(dir.ends_with(".git"));
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn git_dir_none_outside_a_repo() {
+        let dir = unique_dir("not-a-repo-git-dir");
         fs::create_dir_all(&dir).unwrap();
-        assert!(write_tree(&dir).is_err());
+        assert!(git_dir(&dir).is_none());
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn commit_tree_reports_failure_for_an_invalid_tree_sha() {
+    fn repo_sync_blocked_is_none_for_a_clean_repo() {
         let work = init_repo_without_remote();
-        let bad_tree = "0".repeat(40);
-        assert!(commit_tree(&work, &bad_tree, None, "msg").is_err());
+        assert_eq!(repo_sync_blocked(&work), None);
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     #[test]
-    fn update_head_reports_failure_for_a_malformed_commit_id() {
-        // `update-ref` accepts any well-formed-looking SHA without checking
-        // the object actually exists (that's `fsck`'s job), so the failure
-        // case to exercise is a value that isn't even object-id shaped.
+    fn repo_sync_blocked_detects_a_merge_in_progress() {
         let work = init_repo_without_remote();
-        assert!(update_head(&work, "not-a-commit-id").is_err());
+        // MERGE_HEAD's presence alone is what's checked — no need to drive
+        // an actual conflicted merge to exercise this specific marker file.
+        fs::write(work.join(".git").join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let reason = repo_sync_blocked(&work);
+        assert!(
+            reason.as_ref().is_some_and(|r| r.contains("merge")),
+            "{reason:?}"
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn repo_sync_blocked_detects_a_rebase_in_progress() {
+        let work = init_repo_without_remote();
+        fs::create_dir_all(work.join(".git").join("rebase-merge")).unwrap();
+        let reason = repo_sync_blocked(&work);
+        assert!(
+            reason.as_ref().is_some_and(|r| r.contains("rebase")),
+            "{reason:?}"
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn repo_sync_blocked_detects_detached_head() {
+        let work = init_repo_without_remote();
+        let head = current_head(&work).unwrap();
+        run(&work, &["checkout", "-q", &head]);
+        let reason = repo_sync_blocked(&work);
+        assert!(
+            reason.as_ref().is_some_and(|r| r.contains("detached")),
+            "{reason:?}"
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn repo_sync_blocked_detects_a_real_merge_conflict() {
+        // End-to-end: a genuine conflicted merge must be blocked — this is
+        // the exact scenario a prior version of run_sync would have
+        // silently "resolved" (see the regression test on run_sync below
+        // for the full empirically-reproduced failure mode this replaces).
+        // MERGE_HEAD's presence is what actually catches it here (checked
+        // before the unmerged-index scan), which is fine: any of the gate's
+        // checks blocking is the invariant that matters.
+        let work = init_repo_without_remote();
+        run(&work, &["checkout", "-q", "-b", "branch-a"]);
+        fs::write(work.join("tracked.md"), "- [x] a\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "a"]);
+        run(&work, &["checkout", "-q", "main"]);
+        fs::write(work.join("tracked.md"), "- [x] b\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "b"]);
+        let _ = Command::new("git")
+            .current_dir(&work)
+            .args(["merge", "-q", "branch-a"])
+            .output();
+
+        assert!(repo_sync_blocked(&work).is_some());
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn repo_sync_blocked_detects_unmerged_entries_without_a_merge_marker() {
+        // Isolates the ls-files -u check specifically: unmerged (stage
+        // 1/2/3) index entries can exist without MERGE_HEAD too (e.g. after
+        // `git checkout -m`, or a conflicted `stash pop`) — inject one
+        // directly via update-index --index-info rather than relying on a
+        // specific porcelain command to produce it. The conflicted path
+        // (other.md) is deliberately *not* the file markcheck is syncing
+        // (tracked.md) — the gate must look at the whole repository, not
+        // just the target path, per the review's own recommendation.
+        let work = init_repo_without_remote();
+        fs::write(work.join("other.md"), "base\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "add other.md"]);
+
+        let base = hash_object(&work, "base\n").unwrap();
+        let ours = hash_object(&work, "ours\n").unwrap();
+        let theirs = hash_object(&work, "theirs\n").unwrap();
+        let index_info = format!(
+            "100644 {base} 1\tother.md\n100644 {ours} 2\tother.md\n100644 {theirs} 3\tother.md\n"
+        );
+        let mut child = Command::new("git")
+            .current_dir(&work)
+            .args(["update-index", "--index-info"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(index_info.as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(!work.join(".git").join("MERGE_HEAD").exists());
+
+        let reason = repo_sync_blocked(&work);
+        assert!(
+            reason.as_ref().is_some_and(|r| r.contains("conflict")),
+            "{reason:?}"
+        );
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
