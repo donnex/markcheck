@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The OSC 52 clipboard fallback's status message now says `Sent to
+  clipboard (OSC 52)` instead of `Copied to clipboard (OSC 52)` — writing
+  the escape sequence out doesn't confirm the terminal or multiplexer
+  actually applied it, unlike a direct system-clipboard copy, so the wording
+  no longer implies a guarantee it can't back up.
+
 ### Fixed
 
 - Toggling, starting, resetting, undoing, or redoing a task no longer leaves
@@ -33,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code block is no longer mistaken for closing that fence. Previously, a
   `[/]`-lookalike line genuinely still inside the block, past such a line,
   could show up in the card as `[ ]` instead of the source's actual `[/]`.
+- The OSC 52 clipboard fallback's payload cap is now 70 KB instead of
+  100 KB, so it can no longer report a copy as sent when tmux (which
+  truncates around 74 KB) would actually have cut it short.
 
 ## [1.2.2] - 2026-08-20
 

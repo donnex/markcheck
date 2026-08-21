@@ -690,7 +690,7 @@ impl AppState {
         match outcome {
             Some(CopyOutcome::CopiedSystem) => self.set_status("Copied to clipboard".to_string()),
             Some(CopyOutcome::CopiedOsc52) => {
-                self.set_status("Copied to clipboard (OSC 52)".to_string())
+                self.set_status("Sent to clipboard (OSC 52)".to_string())
             }
             _ => {}
         }
@@ -820,7 +820,7 @@ impl AppState {
         use clipboard::CopyOutcome;
         match clipboard::copy_specific(text, self.clipboard_primary) {
             CopyOutcome::CopiedSystem => self.set_status("Copied to clipboard".to_string()),
-            CopyOutcome::CopiedOsc52 => self.set_status("Copied to clipboard (OSC 52)".to_string()),
+            CopyOutcome::CopiedOsc52 => self.set_status("Sent to clipboard (OSC 52)".to_string()),
             // copy_specific only ever copies or fails outright.
             _ => self.set_error("Copy failed: no clipboard available".to_string()),
         }
@@ -1514,7 +1514,7 @@ impl AppState {
         };
         match clipboard::copy_item_code(current, self.clipboard_primary) {
             CopyOutcome::CopiedSystem => self.set_status("Copied to clipboard".to_string()),
-            CopyOutcome::CopiedOsc52 => self.set_status("Copied to clipboard (OSC 52)".to_string()),
+            CopyOutcome::CopiedOsc52 => self.set_status("Sent to clipboard (OSC 52)".to_string()),
             CopyOutcome::NoCandidates => {
                 self.set_error("Nothing to copy: item has no code".to_string())
             }
