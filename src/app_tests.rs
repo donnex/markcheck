@@ -57,6 +57,7 @@ fn document_with_lists(lists: Vec<List>) -> Document {
         lists,
         raw_lines: vec![String::new(); max_line],
         uses_crlf: false,
+        trailing_newline: true,
     }
 }
 
@@ -79,6 +80,7 @@ fn document_with_missing_file(lists: Vec<List>) -> Document {
         lists,
         raw_lines: vec![String::new(); max_line],
         uses_crlf: false,
+        trailing_newline: true,
     }
 }
 

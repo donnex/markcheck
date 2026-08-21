@@ -57,7 +57,14 @@ pub fn write_back(document: &Document) -> io::Result<()> {
     // or every line ending in the file would silently flip to LF on the
     // first toggle.
     let newline = if document.uses_crlf { "\r\n" } else { "\n" };
-    let contents = lines.join(newline) + newline;
+    let mut contents = lines.join(newline);
+    // `str::lines()` also drops whether the source ended in a newline at
+    // all; a file with no trailing newline must round-trip without gaining
+    // one, or write-back silently changes a byte it has no business
+    // touching.
+    if document.trailing_newline {
+        contents.push_str(newline);
+    }
 
     // Read the source permissions before touching anything. Any error —
     // including NotFound — aborts before writing, so a deleted file is never
@@ -313,6 +320,42 @@ mod tests {
         let written = fs::read_to_string(&path).unwrap();
 
         assert_eq!(written.trim_end(), EXAMPLE.trim_end());
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn round_trip_does_not_add_a_missing_trailing_newline() {
+        // A source file with no final newline must not gain one on toggle —
+        // write_back's "only the checkbox changes" guarantee (documented in
+        // README.md) otherwise silently breaks on the very first write.
+        let no_trailing_newline = "## S\n\n- [ ] `task`";
+        let path = write_temp_file(no_trailing_newline);
+        let mut document = parse_document(path.clone()).unwrap();
+        assert!(!document.trailing_newline, "source has no final newline");
+
+        document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+        write_back(&document).unwrap();
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert_eq!(written, "## S\n\n- [x] `task`");
+        assert!(!written.ends_with('\n'), "must not gain a trailing newline");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn round_trip_preserves_an_existing_trailing_newline() {
+        let with_trailing_newline = "## S\n\n- [ ] `task`\n";
+        let path = write_temp_file(with_trailing_newline);
+        let mut document = parse_document(path.clone()).unwrap();
+        assert!(document.trailing_newline, "source has a final newline");
+
+        document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+        write_back(&document).unwrap();
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert_eq!(written, "## S\n\n- [x] `task`\n");
 
         fs::remove_file(&path).ok();
     }

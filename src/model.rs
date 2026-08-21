@@ -298,6 +298,12 @@ pub struct Document {
     /// `raw_lines`/`str::lines()` strip the `\r`, so `write_back` needs this
     /// to rejoin with the file's original terminator instead of always `\n`.
     pub uses_crlf: bool,
+    /// True when the source file's last byte was a newline (detected once at
+    /// parse time). `raw_lines`/`str::lines()` drop the trailing terminator
+    /// entirely, so `write_back` needs this to know whether to add one back
+    /// — otherwise a file with no final newline would silently gain one on
+    /// its first toggle.
+    pub trailing_newline: bool,
 }
 
 impl Document {
@@ -1278,6 +1284,7 @@ mod tests {
             title: None,
             has_default_list: false,
             uses_crlf: false,
+            trailing_newline: true,
             lists: vec![
                 List {
                     title: "A".to_string(),
