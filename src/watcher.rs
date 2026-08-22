@@ -37,7 +37,19 @@ impl FileWatcher {
     }
 
     /// Drains all pending events non-blockingly; returns true if any of
-    /// them referenced the watched file.
+    /// them referenced the watched file. Intentionally lossy: several
+    /// events collapse into one boolean, and an A → B → A sequence between
+    /// two polls reports "changed" even though the file is back to A by the
+    /// time anything reacts. That's fine — this is purely a notification
+    /// optimization telling `app.rs` "go check `reload_if_changed`", not a
+    /// content guarantee. Three different mechanisms each answer a
+    /// different question about the file, and only one of them needs to be
+    /// precise: this watcher decides *when* it's worth checking at all;
+    /// `AppState`'s mtime/size pair (see `reload_if_changed`) decides
+    /// whether a check is worth actually re-parsing for; `AppState`'s
+    /// content hash (see `disk_content_diverged`) is the one that actually
+    /// has to be exact, since it's what stops a write from silently
+    /// clobbering a conflicting external change.
     pub fn poll_changed(&self) -> bool {
         let mut changed = false;
         while let Ok(result) = self.receiver.try_recv() {
