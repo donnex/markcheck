@@ -418,6 +418,15 @@ wasn't requested or the file isn't in a repo.
 inside a git work tree at startup; on a file that isn't in a repo, the flag
 (or a `git_sync_paths` match) simply has no effect.
 
+Each commit runs from a private, temporary git index — never your real one —
+so a `git add`ed-but-not-yet-committed file of yours can never ride along
+into a markcheck commit. That index still runs the repository's normal
+commit hooks (and honors `commit.gpgsign`) exactly like committing by hand,
+though, so a `pre-commit` hook that itself runs `git add` against that same
+temporary index *can* still pull other files into the commit alongside the
+checklist. If that matters for a given repo, disable or adjust the hook
+rather than relying on git-sync to scope the commit for you.
+
 ### Search
 
 `/` starts an incremental search: as you type, the cursor jumps to the first
