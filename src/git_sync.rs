@@ -580,25 +580,35 @@ fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
 fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), String> {
     let output = Command::new("git")
         .current_dir(repo_dir)
-        .args(["ls-files", "--stage", "--full-name", "--"])
+        .args(["ls-files", "--stage", "--full-name", "-z", "--"])
         .arg(file_path)
         .output()
         .map_err(|err| format!("git ls-files failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git ls-files", &output));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout
-        .lines()
-        .next()
+    // `-z` NUL-delimits records instead of newline-delimiting them, and
+    // (unlike the default form) never C-quotes/escapes the path — needed
+    // for a tracked path containing a literal newline, which would
+    // otherwise either get truncated by a newline-based split or come back
+    // quoted-and-escaped with no unquoting done here. Exactly one record is
+    // expected, since exactly one path was queried; a tab within the path
+    // itself is harmless to `split_once('\t')` since the single separator
+    // tab is always the leftmost one (the `<mode> <object> <stage>` prefix
+    // before it never itself contains a tab).
+    let record = output
+        .stdout
+        .split(|&b| b == 0)
+        .find(|r| !r.is_empty())
         .ok_or_else(|| "git ls-files: no index entry for file".to_string())?;
-    let (info, path) = line
+    let record = String::from_utf8_lossy(record);
+    let (info, path) = record
         .split_once('\t')
-        .ok_or_else(|| format!("git ls-files: unexpected output {line:?}"))?;
+        .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
     let mode = info
         .split_whitespace()
         .next()
-        .ok_or_else(|| format!("git ls-files: unexpected output {line:?}"))?;
+        .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
     Ok((mode.to_string(), path.to_string()))
 }
 
@@ -696,6 +706,31 @@ mod tests {
         run(&work, &["config", "user.name", "test"]);
         fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
         run(&work, &["add", "tracked.md"]);
+        run(&work, &["commit", "-q", "-m", "init"]);
+        run(
+            &work,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        run(&work, &["push", "-q", "-u", "origin", "main"]);
+        (work, remote)
+    }
+
+    /// Like `init_repo_with_remote`, but the tracked file is named
+    /// `file_name` instead of the fixed `tracked.md` — for exercising the
+    /// git plumbing path (`index_entry`/`head_blob`/`stage_into_temp_index`)
+    /// against unusual filenames.
+    fn init_repo_with_remote_named(file_name: &str) -> (PathBuf, PathBuf) {
+        let root = unique_dir("repo-named");
+        let remote = root.join("remote.git");
+        let work = root.join("work");
+        fs::create_dir_all(&remote).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        run(&remote, &["init", "--bare", "-q", "-b", "main"]);
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+        fs::write(work.join(file_name), "- [ ] one\n").unwrap();
+        run(&work, &["add", "--", file_name]);
         run(&work, &["commit", "-q", "-m", "init"]);
         run(
             &work,
@@ -1476,6 +1511,64 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] one\n");
 
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn run_sync_handles_filenames_with_spaces_dashes_colons_and_unicode() {
+        // External review: the git plumbing path (`index_entry`/
+        // `head_blob`/`stage_into_temp_index`) was never exercised against
+        // anything but a plain `tracked.md`. None of these need `--`
+        // protection to matter in practice (every command that takes a
+        // pathspec already uses it — see `run_sync`'s own doc comment) but
+        // are exactly the filenames most likely to break naive text
+        // parsing of `git` output, like the `ls-files --stage` line this
+        // module parses in `index_entry`. Confirmed against the pre-fix,
+        // newline-delimited version of `index_entry` locally: it actually
+        // failed on the *unicode* case first (not embedded-tab/newline as
+        // expected) — `git ls-files --stage` C-quotes/escapes non-ASCII
+        // bytes by default without `-z`, so `relpath` came back as that
+        // quoted-and-escaped literal string rather than the real path,
+        // silently committing to the wrong index entry instead of erroring
+        // (this sync test's mismatch was `HEAD:<real name>` still showing
+        // the old content). The embedded-tab and embedded-newline cases
+        // are still worth keeping per the review's own callout: `-z` is
+        // what avoids the quoting *and* is what makes a raw newline in the
+        // record safe to split on, even though neither case reaches the
+        // ambiguous `split_once('\t')` call in a way that would actually
+        // break it — see `index_entry`'s doc comment for why a tab in the
+        // path is harmless there regardless.
+        for file_name in [
+            "with space.md",
+            "-leading-dash.md",
+            "colon:name.md",
+            "unicode-\u{2705}\u{65e5}\u{672c}.md",
+            "tab\tname.md",
+            "newline\nname.md",
+        ] {
+            let (work, remote) = init_repo_with_remote_named(file_name);
+            let file_path = work.join(file_name);
+            fs::write(&file_path, "- [x] one\n").unwrap();
+            let message = commit_message(&file_path, "Check \"one\"");
+
+            assert_eq!(
+                run_sync(&work, &file_path, "- [x] one\n", &message),
+                SyncOutcome::Synced,
+                "file name: {file_name:?}"
+            );
+
+            let show = Command::new("git")
+                .current_dir(&remote)
+                .args(["show", &format!("HEAD:{file_name}")])
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&show.stdout),
+                "- [x] one\n",
+                "file name: {file_name:?}"
+            );
+
+            fs::remove_dir_all(work.parent().unwrap()).ok();
+        }
     }
 
     #[test]
