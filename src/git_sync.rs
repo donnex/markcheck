@@ -426,6 +426,15 @@ fn commit_via_temp_index(
         if &current_head(repo_root) != parent {
             return Err("git-sync: repository changed during sync, will retry".to_string());
         }
+        // repo_sync_blocked (in run_sync) is only a snapshot taken before
+        // any of the above ran; re-checking here narrows (not eliminates —
+        // same residual-race tradeoff as the HEAD check just above) the
+        // window in which a merge/rebase/etc. could have started since,
+        // which would otherwise let this land as a merge-completing commit
+        // instead of refusing outright.
+        if let Some(reason) = repo_sync_blocked(repo_root) {
+            return Err(reason);
+        }
         commit_temp_index(repo_root, &temp_index, message)
     })();
     let _ = std::fs::remove_file(&temp_index);
@@ -523,7 +532,13 @@ fn git_dir(repo_root: &Path) -> Option<PathBuf> {
 /// target path — any of these mean `HEAD`/the index currently represent
 /// in-progress work a background checklist commit must never interfere
 /// with, silently "resolving" a conflict or completing someone else's
-/// merge). Checked once at the top of `run_sync`, before any other work.
+/// merge). Checked at the top of `run_sync`, before any other work, and
+/// again by `commit_via_temp_index` immediately before the actual `git
+/// commit` call — a snapshot check either time, not a held lock, so one of
+/// these markers could still appear in the (now much narrower) gap between
+/// the second check and `git commit` itself actually running; see
+/// `commit_via_temp_index`'s doc comment for why that residual window is
+/// accepted rather than eliminated.
 fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
     let git_dir = git_dir(repo_root)?;
     for (marker, label) in [
@@ -844,6 +859,45 @@ mod tests {
             String::from_utf8_lossy(&log.stdout).trim(),
             "concurrent change\ninit"
         );
+        let leftover = fs::read_dir(work.join(".git")).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("markcheck-index-")
+        });
+        assert!(!leftover, "temp index file was not cleaned up");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn commit_via_temp_index_refuses_when_repo_becomes_blocked_after_the_head_check() {
+        // External review: repo_sync_blocked's check in run_sync is only a
+        // snapshot taken before any of the temp-index work below it runs;
+        // a merge/rebase/etc. starting afterward but before the actual
+        // `git commit` call would otherwise slip through undetected. This
+        // exercises commit_via_temp_index's own re-check directly (a
+        // marker present at call time), which narrows — not eliminates,
+        // same as the HEAD race above — that window.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work);
+        fs::write(work.join(".git").join("MERGE_HEAD"), "deadbeef\n").unwrap();
+
+        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let result = commit_via_temp_index(
+            &work,
+            &parent,
+            "100644",
+            &blob,
+            "tracked.md",
+            "should not commit",
+        );
+        assert!(
+            result.as_ref().is_err_and(|e| e.contains("merge")),
+            "{result:?}"
+        );
+
         let leftover = fs::read_dir(work.join(".git")).unwrap().any(|entry| {
             entry
                 .unwrap()
