@@ -3246,3 +3246,51 @@ fn undo_after_start_then_toggle_reports_marked_started() {
         Some("Undo: marked started")
     );
 }
+
+#[test]
+fn is_safe_link_accepts_the_allowlisted_schemes_case_insensitively() {
+    for url in [
+        "http://example.com",
+        "https://example.com",
+        "mailto:user@example.com",
+        "HTTP://example.com",
+        "HTTPS://EXAMPLE.COM",
+        "MAILTO:user@example.com",
+        "HtTpS://example.com",
+    ] {
+        assert!(is_safe_link(url), "should accept: {url:?}");
+    }
+}
+
+#[test]
+fn is_safe_link_rejects_non_allowlisted_or_malformed_urls() {
+    // External review: lock in the allowlist's exact boundary.
+    for url in [
+        "ftp://example.com",
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "-http://example.com",
+        "",
+        " http://example.com",
+        "http:/example.com",
+    ] {
+        assert!(!is_safe_link(url), "should reject: {url:?}");
+    }
+}
+
+#[test]
+fn is_safe_link_only_checks_the_scheme_prefix_not_the_rest_of_the_url() {
+    // External review raised control-character-containing URLs (e.g. an
+    // embedded newline that might smuggle a second "argument" into a
+    // shelled-out opener) as worth testing explicitly. `is_safe_link` only
+    // ever checks the scheme prefix, so a URL like this *is* accepted —
+    // that's safe here specifically because `open_link` (main.rs) passes
+    // the URL to `Command::arg`, never through a shell, so there is no
+    // argv-splitting on embedded whitespace/newlines to exploit. This test
+    // documents that division of responsibility: `is_safe_link` guarantees
+    // an allowlisted scheme (and, incidentally, that the string can't start
+    // with `-`); the no-shell `Command` call is what makes anything after
+    // the scheme safe to pass through unexamined.
+    assert!(is_safe_link("http://example.com\n--some-option"));
+    assert!(is_safe_link("http://example.com\rSet-Cookie: x"));
+}

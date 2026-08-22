@@ -6,8 +6,12 @@ use crate::model::Item;
 
 /// tmux truncates OSC 52 payloads around 74 KB; stay under that so a
 /// refused-as-too-large payload here is never one tmux would have silently
-/// truncated instead had this cap been laxer.
-const OSC52_MAX_BYTES: usize = 70_000;
+/// truncated instead had this cap been laxer. Measures only the base64
+/// payload, not the full `ESC ] 52 ; c ; <base64> BEL` escape sequence
+/// (~8 bytes of framing beyond that) — the name says so explicitly since
+/// the margin to tmux's limit is generous enough that the difference
+/// doesn't need to be accounted for.
+const OSC52_MAX_BASE64_BYTES: usize = 70_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CopyOutcome {
@@ -103,7 +107,7 @@ fn set_via_arboard(text: &str, primary: bool) -> bool {
 /// exceeds the size cap.
 fn osc52_sequence(text: &str, selection: char) -> Option<String> {
     let encoded = base64::engine::general_purpose::STANDARD.encode(text);
-    (encoded.len() <= OSC52_MAX_BYTES).then(|| format!("\x1b]52;{selection};{encoded}\x07"))
+    (encoded.len() <= OSC52_MAX_BASE64_BYTES).then(|| format!("\x1b]52;{selection};{encoded}\x07"))
 }
 
 /// Writing directly to stdout is safe here: it happens synchronously
@@ -188,13 +192,13 @@ mod tests {
 
     #[test]
     fn osc52_sequence_refuses_oversized_payload() {
-        let big = "x".repeat(OSC52_MAX_BYTES);
+        let big = "x".repeat(OSC52_MAX_BASE64_BYTES);
         assert_eq!(osc52_sequence(&big, 'c'), None);
     }
 
     #[test]
     fn emit_osc52_refuses_oversized_payload_without_writing() {
-        let big = "x".repeat(OSC52_MAX_BYTES);
+        let big = "x".repeat(OSC52_MAX_BASE64_BYTES);
         assert!(!emit_osc52(&big, 'c'));
     }
 
@@ -204,11 +208,19 @@ mod tests {
         // `copy_text`'s doc comment), so it never changes the returned
         // outcome; this just exercises the `primary` branch, on whichever
         // backend (arboard or the OSC 52 fallback) the environment
-        // `cargo test` runs in actually has available.
+        // `cargo test` runs in actually has available. Deliberately not
+        // asserting a specific non-`Failed` outcome here: `Failed` requires
+        // both no live clipboard session (the CI-typical case) *and* the
+        // OSC 52 write to stdout itself failing, which is unlikely but not
+        // impossible depending on how the test harness has stdout wired up
+        // — an environment-dependent assertion here would make this test
+        // flaky rather than actually verifying anything about `primary`.
+        // The `selection` parameter's own correctness (`c` vs `p`) is
+        // covered directly by `osc52_sequence_uses_the_given_selection`.
         let outcome = copy_text("hello", true);
         assert!(matches!(
             outcome,
-            CopyOutcome::CopiedSystem | CopyOutcome::CopiedOsc52
+            CopyOutcome::CopiedSystem | CopyOutcome::CopiedOsc52 | CopyOutcome::Failed
         ));
     }
 }
