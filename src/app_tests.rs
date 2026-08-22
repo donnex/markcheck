@@ -2469,6 +2469,50 @@ fn reload_if_changed_returns_false_when_reload_is_skipped_or_fails() {
 }
 
 #[test]
+fn failed_reload_does_not_advance_the_write_conflict_fingerprint() {
+    // External review: a transient malformed intermediate save (common with
+    // editors that write in stages) must not be recorded as the current
+    // disk revision, or a later write would wrongly believe the file still
+    // matches what markcheck last saw and silently overwrite the malformed
+    // content instead of detecting the divergence.
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    let good_hash = state.file_content_hash;
+
+    // `parse_document` only errors on a read failure (parsing itself is
+    // lenient markdown, never "malformed"), so an invalid-UTF-8 byte
+    // sequence stands in for the transient broken intermediate save an
+    // editor might momentarily leave on disk mid-write.
+    fs::write(&path, [0xFF, 0xFE, 0xFD]).unwrap();
+    let metadata = fs::metadata(&path).unwrap();
+    let new_mtime = metadata.modified().unwrap() + std::time::Duration::from_secs(1);
+    fs::File::open(&path)
+        .unwrap()
+        .set_modified(new_mtime)
+        .unwrap();
+
+    assert!(
+        !state.reload_if_changed(),
+        "a failed parse is not a real reload"
+    );
+    assert_eq!(
+        state.current_list().items.len(),
+        1,
+        "last good document kept in memory"
+    );
+    assert_eq!(
+        state.file_content_hash, good_hash,
+        "fingerprint must stay pinned to the last good content, not the broken save"
+    );
+    assert!(
+        state.disk_content_diverged(),
+        "the broken content on disk must still read as diverged from what markcheck knows"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn request_external_edit_sync_queues_a_git_sync_request() {
     let mut state = AppState::new(two_list_document());
     assert!(state.take_git_sync_request().is_none());

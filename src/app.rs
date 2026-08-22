@@ -1127,10 +1127,17 @@ impl AppState {
     }
 
     /// Shared reload body for [`reload_if_changed`] and [`force_reload`]:
-    /// parses the file fresh, swaps it in on success, and refreshes every
-    /// piece of "what we last saw on disk" state (mtime/size/content hash)
-    /// so a subsequent write or conflict check compares against the file as
-    /// it now stands.
+    /// parses the file fresh and swaps it in on success. `file_mtime`/
+    /// `file_size` (reload-optimization only, per `reload_if_changed`'s
+    /// unchanged-check) are always refreshed to the just-observed disk
+    /// state, so a still-broken file isn't re-parsed on every watcher tick.
+    /// `file_content_hash` — the write-conflict-detection fingerprint
+    /// `disk_content_diverged` compares against — is only advanced on a
+    /// successful parse: if it were updated unconditionally, a transient
+    /// malformed intermediate save (common with editors that write in
+    /// stages) would get recorded as the current disk revision even though
+    /// the in-memory document still shows the last good content, silently
+    /// masking the divergence a later write would otherwise catch.
     fn reload_from_disk(&mut self, modified: SystemTime, size: u64, was_deleted: bool) -> bool {
         let reloaded = match parser::parse_document(self.document.file_path.clone()) {
             Ok(new_document) if !new_document.lists.is_empty() => {
@@ -1157,7 +1164,9 @@ impl AppState {
             }
             Err(err) => {
                 self.set_error(format!("Reload failed: {err}"));
-                false
+                self.file_mtime = Some(modified);
+                self.file_size = Some(size);
+                return false;
             }
         };
 
