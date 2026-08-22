@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer leaves a commit stranded local-only
+  forever if its push fails (offline, expired auth, etc.) and you don't
+  happen to make another checklist edit afterward. A failed push is now
+  retried automatically every 30 seconds, retried immediately the next time
+  anything else triggers a sync, and given one more chance right at
+  startup — and the status message now makes clear the commit is safe and
+  a retry is coming, rather than reading as a flat, unexplained failure.
+- Reloading a file after an editor or another process leaves it briefly
+  unreadable mid-save no longer risks a later save silently overwriting
+  that content instead of detecting the conflict — a failed reload no
+  longer advances the fingerprint markcheck uses to notice the file
+  changed underneath it.
 - Git-sync (`--git-sync`) no longer risks committing files you'd separately
   `git add`ed but hadn't committed yet — it used to build its commit from
   the repository's real index, which could silently sweep up anything else
