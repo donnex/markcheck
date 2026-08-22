@@ -2,8 +2,15 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use crate::model::PendingSync;
+
+/// How long to wait between automatic push retries after a
+/// `CommittedNotPushed` outcome, so a still-down network doesn't get
+/// hammered with retries but connectivity returning is still noticed
+/// without requiring another checklist edit.
+const PUSH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Result of one background commit+push attempt, delivered to the
 /// main loop via [`GitSync::poll`].
@@ -11,17 +18,27 @@ use crate::model::PendingSync;
 pub enum SyncOutcome {
     /// Committed and pushed.
     Synced,
-    /// Nothing to do: the file is already tracked and identical to what's
-    /// already committed. Not reported to the user — nothing meaningful
-    /// happened, so silence here doesn't read as broken.
+    /// Nothing to do: the file is already tracked, identical to what's
+    /// already committed, *and* that commit has already reached upstream
+    /// (see `ahead_of_upstream`) — not just committed locally. Not reported
+    /// to the user — nothing meaningful happened, so silence here doesn't
+    /// read as broken.
     Skipped,
     /// The file isn't tracked by git at all. Unlike `Skipped`, this *is*
     /// reported to the user (git-sync being silently unable to do anything,
     /// forever, looks exactly like a bug) — but it still never gets
     /// `git add`ed automatically; that stays the user's call.
     SkippedUntracked,
-    /// `git status`/`commit`/`push` failed; the message is the first line
-    /// of the failing command's stderr.
+    /// The commit succeeded but `git push` failed (offline, auth, no
+    /// upstream, etc.) — distinct from `Failed` because the recovery action
+    /// differs: nothing was lost, and the fix is to retry the *push*, never
+    /// to create another commit. `GitSync` retries this automatically (see
+    /// `retry_push_if_due`) rather than waiting for the next checklist edit,
+    /// since a local commit that already matches the desired content would
+    /// otherwise never trigger another sync attempt on its own.
+    CommittedNotPushed(String),
+    /// `git status`/`commit` failed (nothing was committed); the message is
+    /// the first line of the failing command's stderr.
     Failed(String),
 }
 
@@ -43,6 +60,16 @@ pub struct GitSync {
     /// matters, since a coalesced-over request's content already includes
     /// whatever the dropped one would have committed.
     pending: Option<PendingSync>,
+    /// The content currently being committed/pushed on the background
+    /// thread, if any — cloned aside in `spawn` (the original moves into
+    /// the thread closure) so `poll` can recover it if the attempt ends in
+    /// `CommittedNotPushed` and it needs remembering for a retry.
+    in_flight: Option<PendingSync>,
+    /// Set when the most recently completed attempt committed locally but
+    /// failed to push; cleared on `Synced`. Carries the content to retry
+    /// with plus when that attempt finished, so `retry_push_if_due` can
+    /// back off between attempts instead of hammering a still-down remote.
+    retry: Option<(PendingSync, Instant)>,
 }
 
 impl GitSync {
@@ -68,6 +95,8 @@ impl GitSync {
             receiver,
             busy: false,
             pending: None,
+            in_flight: None,
+            retry: None,
         })
     }
 
@@ -86,6 +115,7 @@ impl GitSync {
 
     fn spawn(&mut self, sync: PendingSync) {
         self.busy = true;
+        self.in_flight = Some(sync.clone());
         let repo_dir = self.repo_dir.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
@@ -99,16 +129,53 @@ impl GitSync {
     /// Drains the channel non-blockingly; call once per frame regardless of
     /// input, like `FileWatcher::poll_changed`. Returns the outcome of a
     /// completed sync, if one just finished, and kicks off a queued
-    /// request that arrived while busy.
+    /// request that arrived while busy. Also updates the push-retry state
+    /// (see `retry_push_if_due`) from the outcome, since `Synced` clears a
+    /// prior pending retry and `CommittedNotPushed` (re)arms one.
     pub fn poll(&mut self) -> Option<SyncOutcome> {
         let outcome = self.receiver.try_recv().ok();
-        if outcome.is_some() {
+        if let Some(outcome) = &outcome {
             self.busy = false;
+            let attempted = self.in_flight.take();
+            match outcome {
+                SyncOutcome::Synced => self.retry = None,
+                SyncOutcome::CommittedNotPushed(_) => {
+                    if let Some(sync) = attempted {
+                        self.retry = Some((sync, Instant::now()));
+                    }
+                }
+                SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::Failed(_) => {}
+            }
             if let Some(sync) = self.pending.take() {
                 self.spawn(sync);
             }
         }
         outcome
+    }
+
+    /// Re-attempts a previously failed push, if one is due: call once per
+    /// frame alongside `poll`, passing the current time (a parameter
+    /// instead of reading `Instant::now()` internally, matching
+    /// `AppState::expire_status`'s pattern, so tests can simulate the
+    /// backoff elapsing without an actual multi-second sleep). A commit
+    /// that already matches the desired content never triggers `request`
+    /// again on its own (there's nothing new to commit), so without this a
+    /// push failure — network down, auth expired — could otherwise leave a
+    /// commit sitting local-only indefinitely if the user makes no further
+    /// checklist edits after connectivity returns. No-ops while `busy` or
+    /// before `PUSH_RETRY_INTERVAL` has elapsed since the last attempt.
+    pub fn retry_push_if_due(&mut self, now: Instant) {
+        if self.busy {
+            return;
+        }
+        let Some((sync, last_attempt)) = &self.retry else {
+            return;
+        };
+        if now.saturating_duration_since(*last_attempt) < PUSH_RETRY_INTERVAL {
+            return;
+        }
+        let sync = sync.clone();
+        self.spawn(sync);
     }
 
     /// Whether a sync is currently running or queued behind one that is.
@@ -248,12 +315,18 @@ fn run_sync(
         Err(err) => return SyncOutcome::Failed(err),
     };
 
-    // If HEAD already holds exactly this content, this request was already
-    // satisfied by an earlier sync (e.g. it sat coalesced behind one that
-    // committed the same or newer content) — nothing left to do, even
-    // though `status` above is non-empty because of someone else's
-    // still-uncommitted change to the file.
+    // If HEAD already holds exactly this content, the commit half of this
+    // request was already satisfied by an earlier sync (e.g. it sat
+    // coalesced behind one that committed the same or newer content) —
+    // even though `status` above is non-empty because of someone else's
+    // still-uncommitted change to the file. That's not the same as the
+    // request being *fully* satisfied, though: if the commit hasn't reached
+    // upstream yet (a prior push failed), there's still a push worth
+    // retrying — see `ahead_of_upstream`'s doc comment for why this matters.
     if head_blob(&repo_root, &relpath).as_deref() == Some(expected_content.as_bytes()) {
+        if ahead_of_upstream(&repo_root) {
+            return push(repo_dir);
+        }
         return SyncOutcome::Skipped;
     }
 
@@ -268,14 +341,53 @@ fn run_sync(
         return SyncOutcome::Failed(err);
     }
 
-    let push = Command::new("git")
+    push(repo_dir)
+}
+
+/// Whether `HEAD` is ahead of its upstream tracking branch — i.e. there's a
+/// local commit not yet on the remote. Used to tell "already fully synced"
+/// apart from "committed locally, but a previous push attempt failed" when
+/// the file's content already matches `HEAD` (see `run_sync`): without this
+/// distinction, a push failure followed by no further checklist edits would
+/// leave the commit local-only forever, since nothing else would ever
+/// re-trigger a push for content that's already committed.
+///
+/// Fails open (`true`, i.e. "assume there's something to push") when the
+/// check itself can't be answered — no upstream configured, detached-ish
+/// tracking state, or any other `git rev-list` failure — so a push is
+/// attempted (and its real failure reason reported) rather than the sync
+/// going quiet with no explanation.
+fn ahead_of_upstream(repo_root: &Path) -> bool {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-list", "--count", "@{u}..HEAD"])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<u64>()
+                .unwrap_or(1)
+                > 0
+        }
+        _ => true,
+    }
+}
+
+/// Runs `git push`, translating the result into a `SyncOutcome`. A failure
+/// here is always `CommittedNotPushed`, never `Failed`: by the time this is
+/// called, either a commit was just made or `HEAD` was already confirmed to
+/// hold the desired content — either way, a local commit exists and the
+/// only thing to retry is the push itself.
+fn push(repo_dir: &Path) -> SyncOutcome {
+    let output = Command::new("git")
         .current_dir(repo_dir)
         .arg("push")
         .output();
-    match push {
+    match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
-        Ok(output) => SyncOutcome::Failed(command_error("git push", &output)),
-        Err(err) => SyncOutcome::Failed(format!("git push failed: {err}")),
+        Ok(output) => SyncOutcome::CommittedNotPushed(command_error("git push", &output)),
+        Err(err) => SyncOutcome::CommittedNotPushed(format!("git push failed: {err}")),
     }
 }
 
@@ -676,7 +788,10 @@ mod tests {
             "- [x] one\n",
             "Check \"one\"",
         );
-        assert!(matches!(outcome, SyncOutcome::Failed(_)));
+        // The commit itself succeeded (nothing was lost); only the push
+        // failed, which is why this is `CommittedNotPushed` rather than
+        // `Failed` — see the `SyncOutcome` doc comments.
+        assert!(matches!(outcome, SyncOutcome::CommittedNotPushed(_)));
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -808,10 +923,12 @@ mod tests {
         );
         assert!(!sync.busy, "must settle back to idle, not stuck busy");
         assert!(sync.pending.is_none(), "no request left dangling");
-        // The very first attempt already had a real change to push, so it's
-        // always a failure against the unreachable remote (never Skipped).
+        // The very first attempt already had a real change committed, so
+        // pushing against the unreachable remote always fails — but the
+        // commit itself always succeeds, hence `CommittedNotPushed` rather
+        // than `Failed` (never Skipped either).
         assert!(
-            matches!(outcomes.first(), Some(SyncOutcome::Failed(_))),
+            matches!(outcomes.first(), Some(SyncOutcome::CommittedNotPushed(_))),
             "first attempt has a real, unpushed change: {outcomes:?}"
         );
 
@@ -859,6 +976,103 @@ mod tests {
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
         fs::remove_dir_all(remote.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_push_if_due_noops_when_nothing_is_pending() {
+        let work = init_repo_without_remote();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        sync.retry_push_if_due(Instant::now());
+        assert!(!sync.busy, "nothing pending, nothing to retry");
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_push_if_due_noops_before_the_backoff_interval_elapses() {
+        let work = init_repo_without_remote();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        let last_attempt = Instant::now();
+        sync.retry = Some((
+            PendingSync {
+                content: "- [x] one\n".to_string(),
+                description: "retry".to_string(),
+            },
+            last_attempt,
+        ));
+
+        sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL - Duration::from_millis(1));
+
+        assert!(!sync.busy, "backoff interval hasn't elapsed yet");
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_push_if_due_noops_while_busy() {
+        let work = init_repo_without_remote();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        sync.busy = true;
+        sync.retry = Some((
+            PendingSync {
+                content: "- [x] one\n".to_string(),
+                description: "retry".to_string(),
+            },
+            Instant::now() - PUSH_RETRY_INTERVAL,
+        ));
+
+        // A no-op here just means "doesn't spawn a second concurrent
+        // attempt while one's already running" -- there's nothing else to
+        // observe from outside, so this mainly guards against a panic or a
+        // stray thread spawn while `busy` is set for an unrelated reason.
+        sync.retry_push_if_due(Instant::now());
+
+        assert!(sync.busy);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_push_if_due_retries_once_the_backoff_interval_elapses() {
+        // External review: the whole point of automatic push retry is
+        // closing the gap where a user makes no further checklist edits
+        // after a push failure -- this drives that path directly, passing
+        // a synthetic `now` (matching AppState::expire_status's pattern)
+        // instead of a real 30-second sleep.
+        let work = init_repo_without_remote();
+        run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
+        run(&work, &["config", "branch.main.remote", "origin"]);
+        run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+
+        let last_attempt = Instant::now();
+        sync.retry = Some((
+            PendingSync {
+                content: "- [x] one\n".to_string(),
+                description: "retry".to_string(),
+            },
+            last_attempt,
+        ));
+
+        sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL);
+        assert!(
+            sync.busy,
+            "the backoff interval elapsed, a retry should have spawned"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut outcome = None;
+        while Instant::now() < deadline {
+            if let Some(o) = sync.poll() {
+                outcome = Some(o);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            matches!(outcome, Some(SyncOutcome::CommittedNotPushed(_))),
+            "still no remote to push to, so this retry fails the same way: {outcome:?}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     #[test]
@@ -1121,18 +1335,47 @@ mod tests {
     }
 
     #[test]
-    fn run_sync_skips_when_expected_content_already_matches_head() {
-        let work = init_repo_without_remote();
+    fn run_sync_skips_when_expected_content_already_matches_head_and_upstream() {
+        // A remote is required here (unlike most `run_sync` tests): a
+        // truly `Skipped` result now requires HEAD to both match the
+        // expected content *and* already be pushed — see `ahead_of_upstream`.
+        let (work, _remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         // Working tree has drifted further (an unrelated concurrent change)
         // so `git status` is non-empty, but this specific request's
-        // expected content is already what's committed at HEAD — e.g. it
-        // sat coalesced behind an earlier sync that already committed it.
+        // expected content is already what's committed at HEAD *and*
+        // already pushed (by `init_repo_with_remote`'s own setup) — e.g. it
+        // sat coalesced behind an earlier sync that already committed and
+        // pushed it.
         fs::write(&file_path, "- [ ] one\n- [x] two\n").unwrap();
 
         assert_eq!(
             run_sync(&work, &file_path, "- [ ] one\n", "already committed"),
             SyncOutcome::Skipped
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_retries_the_push_when_expected_content_matches_head_but_is_unpushed() {
+        // External review: HEAD matching the expected content used to be
+        // treated as proof the request was fully satisfied, even when the
+        // matching commit had never actually reached upstream (e.g. a prior
+        // push failed). That silently stranded the commit local-only
+        // forever unless another checklist edit happened to come along.
+        // `run_sync` must instead retry the push in that case.
+        let work = init_repo_without_remote();
+        run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
+        run(&work, &["config", "branch.main.remote", "origin"]);
+        run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [ ] one\n- [x] two\n").unwrap();
+
+        let outcome = run_sync(&work, &file_path, "- [ ] one\n", "already committed");
+        assert!(
+            matches!(outcome, SyncOutcome::CommittedNotPushed(_)),
+            "must attempt (and report failure of) the push, not silently skip: {outcome:?}"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();

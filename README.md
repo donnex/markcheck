@@ -378,10 +378,15 @@ needed before syncing can start. Commit messages name the
 actual change (`checklist.md: Check "Restart service"`, `checklist.md:
 Reset all tasks to not done`, …) rather than a generic "updated by
 markcheck", so `git log`/`git blame` stay useful across hosts. A failed
-commit or push (offline, diverged history, no upstream configured, …) is
-reported as a red status-bar message — `markcheck` never attempts to resolve
-it for you (no auto `git pull --rebase`), so fix it in a terminal as usual.
-Since the sync runs on a background thread, a slow or offline `git push`
+commit (diverged history, mid-merge, …) is reported as a red status-bar
+message — `markcheck` never attempts to resolve it for you (no auto
+`git pull --rebase`), so fix it in a terminal as usual. A commit that
+succeeds but fails to *push* (offline, no upstream configured, …) is
+reported separately (`Git commit saved locally; push failed, will retry`) —
+nothing is lost, and `markcheck` retries the push on its own every 30
+seconds, on the next sync of any kind, and once more right at startup, so
+you don't have to make another edit just to nudge it once the network's
+back. Since the sync runs on a background thread, a slow or offline `git push`
 never freezes the app during normal use. Quitting right after a toggle or
 edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
