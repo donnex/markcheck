@@ -11,6 +11,7 @@ mod ui;
 mod watcher;
 mod writer;
 
+use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
@@ -177,6 +178,23 @@ fn main() -> anyhow::Result<()> {
     // touched again; `GitSyncState::last_at`/`pending` handle the per-sync
     // timing, this is just "is the feature on for this session at all".
     state.git_sync.active = git_sync.is_some();
+    // A prior session's commit can still be sitting local-only if it quit
+    // (or crashed) before `retry_push_if_due` got a chance to push it, and
+    // without another checklist edit nothing else would ever prompt a retry
+    // — see the `CommittedNotPushed` doc comment in git_sync.rs. Requesting
+    // a sync of the file's current content here is a no-op commit-wise
+    // (content already matches HEAD in the common case) but still runs
+    // run_sync's ahead-of-upstream check, so a leftover unpushed commit
+    // gets one more chance to go out right at startup.
+    if let (Some(sync), Ok(content)) = (
+        git_sync.as_mut(),
+        fs::read_to_string(&state.document.file_path),
+    ) {
+        sync.request(model::PendingSync {
+            content,
+            description: "Catch up a pending push".to_string(),
+        });
+    }
 
     let mouse = if cli.no_mouse {
         false
@@ -235,20 +253,28 @@ where
         // one, so a request queued during the finished run's `pending` slot
         // (see `GitSync::poll`) is already spawned by the time we check
         // `take_git_sync_request` below.
-        if let Some(sync) = git_sync.as_mut()
-            && let Some(outcome) = sync.poll()
-        {
-            match outcome {
-                git_sync::SyncOutcome::Synced => state.record_git_sync(),
-                git_sync::SyncOutcome::Skipped => {}
-                git_sync::SyncOutcome::SkippedUntracked => state.set_error(
-                    "Git sync skipped: file is not tracked in git (run `git add` on it)"
-                        .to_string(),
-                ),
-                git_sync::SyncOutcome::Failed(msg) => {
-                    state.set_error(format!("Git sync failed: {msg}"))
+        if let Some(sync) = git_sync.as_mut() {
+            if let Some(outcome) = sync.poll() {
+                match outcome {
+                    git_sync::SyncOutcome::Synced => state.record_git_sync(),
+                    git_sync::SyncOutcome::Skipped => {}
+                    git_sync::SyncOutcome::SkippedUntracked => state.set_error(
+                        "Git sync skipped: file is not tracked in git (run `git add` on it)"
+                            .to_string(),
+                    ),
+                    git_sync::SyncOutcome::CommittedNotPushed(msg) => state.set_error(format!(
+                        "Git commit saved locally; push failed, will retry: {msg}"
+                    )),
+                    git_sync::SyncOutcome::Failed(msg) => {
+                        state.set_error(format!("Git sync failed: {msg}"))
+                    }
                 }
             }
+            // Not gated on the outcome above: a retry can come due on a
+            // frame where nothing just finished polling, and this is a
+            // no-op unless one is actually pending and the backoff interval
+            // has elapsed — see `retry_push_if_due`'s doc comment.
+            sync.retry_push_if_due(Instant::now());
         }
         if let Some(pending) = state.take_git_sync_request()
             && let Some(sync) = git_sync.as_mut()
