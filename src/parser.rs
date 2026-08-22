@@ -1940,4 +1940,81 @@ Intro paragraph.
         assert!(!item.display_text.contains("example"));
         assert_eq!(document.lists[0].items.len(), 1);
     }
+
+    #[test]
+    fn extract_started_markers_boundary_sweep_never_panics_or_shifts_offsets() {
+        // External review: the highest-value next step beyond targeted
+        // regressions is fuzzing the boundary between
+        // extract_started_markers (raw-text preprocessing) and
+        // pulldown-cmark (the real parser) -- two overlapping lexical
+        // interpretations of the same input. This isn't a persistent-corpus
+        // fuzzer, but it exhaustively sweeps the dimensions the review
+        // called highest-value (indentation 0-4 spaces plus a tab,
+        // blockquote nesting, unordered/ordered markers, fence character
+        // and length, info-string variants, unterminated fences) against
+        // the one invariant that must hold no matter how they combine:
+        // extract_started_markers never panics, and every rewritten line
+        // stays exactly the same byte length as the input (`[/]` -> `[ ]`
+        // is always same-length; untouched lines pass through unchanged) --
+        // which is what keeps every downstream line number/offset valid.
+        let indents = ["", " ", "  ", "   ", "    ", "\t"];
+        let quote_depths = ["", "> ", "> > "];
+        let markers = ["-", "*", "+", "1.", "2)"];
+        let states = ["[/]", "[ ]", "[x]"];
+
+        for indent in indents {
+            for quote in quote_depths {
+                for marker in markers {
+                    for state in states {
+                        let source = format!("{indent}{quote}{marker} {state} task\n");
+                        let raw_len = source.len();
+                        let (processed, _started) = extract_started_markers(&source);
+                        assert_eq!(
+                            processed.len(),
+                            raw_len,
+                            "byte length must be preserved: {source:?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        let fence_chars = ['`', '~'];
+        let fence_lens = [3usize, 4, 6, 10, 20];
+
+        for fence_char in fence_chars {
+            // A backtick fence's info string can't itself contain a
+            // backtick (fence_delimiter's own rule, matching CommonMark) --
+            // that combination is deliberately excluded here since it
+            // isn't a fence opener at all, not a boundary case of one.
+            let info_strings: &[&str] = if fence_char == '`' {
+                &["", "rust", "done"]
+            } else {
+                &["", "rust", "`backtick`", "done"]
+            };
+            for &len in &fence_lens {
+                for &info in info_strings {
+                    let fence: String = std::iter::repeat_n(fence_char, len).collect();
+                    for terminated in [true, false] {
+                        let mut source = format!("{fence}{info}\n- [/] inside fence\n");
+                        if terminated {
+                            source.push_str(&fence);
+                            source.push('\n');
+                        }
+                        let raw_len = source.len();
+                        let (processed, started) = extract_started_markers(&source);
+                        assert_eq!(
+                            processed.len(),
+                            raw_len,
+                            "byte length must be preserved: {source:?}"
+                        );
+                        assert!(
+                            started.is_empty(),
+                            "a [/] inside a fence must never be treated as a real task: {source:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
