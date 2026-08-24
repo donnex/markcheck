@@ -35,8 +35,13 @@ pub enum SyncOutcome {
     /// to create another commit. `GitSync` retries this automatically (see
     /// `retry_push_if_due`) rather than waiting for the next checklist edit,
     /// since a local commit that already matches the desired content would
-    /// otherwise never trigger another sync attempt on its own.
-    CommittedNotPushed(String),
+    /// otherwise never trigger another sync attempt on its own. `commit` is
+    /// the specific commit SHA that failed to push — `retry_push_if_due`
+    /// retries *that commit*, not the file content that produced it, so a
+    /// retry can never turn into a brand new commit built from stale
+    /// content if something else has moved `HEAD` in the meantime (see
+    /// `retry_commit`).
+    CommittedNotPushed { message: String, commit: String },
     /// `git status`/`commit` failed (nothing was committed); the message is
     /// the first line of the failing command's stderr.
     Failed(String),
@@ -60,16 +65,16 @@ pub struct GitSync {
     /// matters, since a coalesced-over request's content already includes
     /// whatever the dropped one would have committed.
     pending: Option<PendingSync>,
-    /// The content currently being committed/pushed on the background
-    /// thread, if any — cloned aside in `spawn` (the original moves into
-    /// the thread closure) so `poll` can recover it if the attempt ends in
-    /// `CommittedNotPushed` and it needs remembering for a retry.
-    in_flight: Option<PendingSync>,
     /// Set when the most recently completed attempt committed locally but
-    /// failed to push; cleared on `Synced`. Carries the content to retry
-    /// with plus when that attempt finished, so `retry_push_if_due` can
-    /// back off between attempts instead of hammering a still-down remote.
-    retry: Option<(PendingSync, Instant)>,
+    /// failed to push; cleared on `Synced`. Carries the *commit SHA* to
+    /// retry pushing plus when that attempt finished, so `retry_push_if_due`
+    /// can back off between attempts instead of hammering a still-down
+    /// remote. Deliberately not the file content that produced the commit
+    /// (see `SyncOutcome::CommittedNotPushed`/`retry_commit`) — replaying
+    /// content through the generic commit-or-skip machinery could build a
+    /// *new* commit from stale content if `HEAD` had moved on in the
+    /// meantime, silently reverting whatever superseded it.
+    retry: Option<(String, Instant)>,
 }
 
 impl GitSync {
@@ -95,7 +100,6 @@ impl GitSync {
             receiver,
             busy: false,
             pending: None,
-            in_flight: None,
             retry: None,
         })
     }
@@ -115,13 +119,25 @@ impl GitSync {
 
     fn spawn(&mut self, sync: PendingSync) {
         self.busy = true;
-        self.in_flight = Some(sync.clone());
         let repo_dir = self.repo_dir.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
         std::thread::spawn(move || {
             let message = commit_message(&file_path, &sync.description);
             let outcome = run_sync(&repo_dir, &file_path, &sync.content, &message);
+            let _ = sender.send(outcome);
+        });
+    }
+
+    /// Like `spawn`, but for retrying a push of an already-made commit
+    /// (`retry_push_if_due`) rather than a fresh content-based sync request
+    /// — see `retry_commit`.
+    fn spawn_retry(&mut self, commit: String) {
+        self.busy = true;
+        let repo_dir = self.repo_dir.clone();
+        let sender = self.sender.clone();
+        std::thread::spawn(move || {
+            let outcome = retry_commit(&repo_dir, &commit);
             let _ = sender.send(outcome);
         });
     }
@@ -136,13 +152,10 @@ impl GitSync {
         let outcome = self.receiver.try_recv().ok();
         if let Some(outcome) = &outcome {
             self.busy = false;
-            let attempted = self.in_flight.take();
             match outcome {
                 SyncOutcome::Synced => self.retry = None,
-                SyncOutcome::CommittedNotPushed(_) => {
-                    if let Some(sync) = attempted {
-                        self.retry = Some((sync, Instant::now()));
-                    }
+                SyncOutcome::CommittedNotPushed { commit, .. } => {
+                    self.retry = Some((commit.clone(), Instant::now()));
                 }
                 SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::Failed(_) => {}
             }
@@ -168,14 +181,14 @@ impl GitSync {
         if self.busy {
             return;
         }
-        let Some((sync, last_attempt)) = &self.retry else {
+        let Some((commit, last_attempt)) = &self.retry else {
             return;
         };
         if now.saturating_duration_since(*last_attempt) < PUSH_RETRY_INTERVAL {
             return;
         }
-        let sync = sync.clone();
-        self.spawn(sync);
+        let commit = commit.clone();
+        self.spawn_retry(commit);
     }
 
     /// Whether a sync is currently running or queued behind one that is.
@@ -378,7 +391,11 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
 /// here is always `CommittedNotPushed`, never `Failed`: by the time this is
 /// called, either a commit was just made or `HEAD` was already confirmed to
 /// hold the desired content — either way, a local commit exists and the
-/// only thing to retry is the push itself.
+/// only thing to retry is the push itself. On failure, resolves the current
+/// `HEAD` to embed in `CommittedNotPushed` (rather than requiring the
+/// caller to pass one in) — captured *after* the push attempt, which is the
+/// most accurate answer to "what commit actually failed to push" regardless
+/// of which of `run_sync`'s two call sites got here.
 fn push(repo_dir: &Path) -> SyncOutcome {
     let output = Command::new("git")
         .current_dir(repo_dir)
@@ -386,9 +403,51 @@ fn push(repo_dir: &Path) -> SyncOutcome {
         .output();
     match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
-        Ok(output) => SyncOutcome::CommittedNotPushed(command_error("git push", &output)),
-        Err(err) => SyncOutcome::CommittedNotPushed(format!("git push failed: {err}")),
+        Ok(output) => SyncOutcome::CommittedNotPushed {
+            message: command_error("git push", &output),
+            commit: current_head(repo_dir).unwrap_or_default(),
+        },
+        Err(err) => SyncOutcome::CommittedNotPushed {
+            message: format!("git push failed: {err}"),
+            commit: current_head(repo_dir).unwrap_or_default(),
+        },
     }
+}
+
+/// Re-attempts pushing a specific commit that previously failed to push
+/// (`GitSync::retry_push_if_due`), rather than replaying the file content
+/// that produced it through the generic commit-or-skip logic in `run_sync`.
+/// That distinction is the whole point: if `expected_commit` is no longer
+/// `HEAD` (something else — most plausibly another concurrent markcheck/
+/// git-sync process — committed on top since the failed push), silently
+/// abandoning the retry is strictly safer than `run_sync` would be here,
+/// since `run_sync` would build a *new* commit from the stale content,
+/// reverting whatever superseded it. Whatever superseded `expected_commit`
+/// gets its own sync opportunity through the normal request path, so
+/// nothing is lost by giving up on this specific stale retry.
+///
+/// Unlike `commit_via_temp_index`'s HEAD-moved race (which matters because
+/// it builds a tree from a possibly-stale parent), the gap between the
+/// `HEAD` check below and the `push` call is benign: `push` never
+/// reconstructs anything from `expected_commit`, it's a bare `git push`, so
+/// `HEAD` moving further ahead in that window just means the push sends
+/// more than expected — no revert risk, no compare-and-swap needed.
+fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
+    let repo_root = match Command::new("git")
+        .current_dir(repo_dir)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
+        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
+    };
+    if current_head(&repo_root).as_deref() != Some(expected_commit) {
+        return SyncOutcome::Skipped;
+    }
+    push(repo_dir)
 }
 
 /// Populates a fresh temporary index from `parent` (or leaves it empty for
@@ -841,7 +900,7 @@ mod tests {
         // The commit itself succeeded (nothing was lost); only the push
         // failed, which is why this is `CommittedNotPushed` rather than
         // `Failed` — see the `SyncOutcome` doc comments.
-        assert!(matches!(outcome, SyncOutcome::CommittedNotPushed(_)));
+        assert!(matches!(outcome, SyncOutcome::CommittedNotPushed { .. }));
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -1017,7 +1076,10 @@ mod tests {
         // commit itself always succeeds, hence `CommittedNotPushed` rather
         // than `Failed` (never Skipped either).
         assert!(
-            matches!(outcomes.first(), Some(SyncOutcome::CommittedNotPushed(_))),
+            matches!(
+                outcomes.first(),
+                Some(SyncOutcome::CommittedNotPushed { .. })
+            ),
             "first attempt has a real, unpushed change: {outcomes:?}"
         );
 
@@ -1079,15 +1141,10 @@ mod tests {
     #[test]
     fn retry_push_if_due_noops_before_the_backoff_interval_elapses() {
         let work = init_repo_without_remote();
+        let commit = current_head(&work).unwrap();
         let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
         let last_attempt = Instant::now();
-        sync.retry = Some((
-            PendingSync {
-                content: "- [x] one\n".to_string(),
-                description: "retry".to_string(),
-            },
-            last_attempt,
-        ));
+        sync.retry = Some((commit, last_attempt));
 
         sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL - Duration::from_millis(1));
 
@@ -1098,15 +1155,10 @@ mod tests {
     #[test]
     fn retry_push_if_due_noops_while_busy() {
         let work = init_repo_without_remote();
+        let commit = current_head(&work).unwrap();
         let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
         sync.busy = true;
-        sync.retry = Some((
-            PendingSync {
-                content: "- [x] one\n".to_string(),
-                description: "retry".to_string(),
-            },
-            Instant::now() - PUSH_RETRY_INTERVAL,
-        ));
+        sync.retry = Some((commit, Instant::now() - PUSH_RETRY_INTERVAL));
 
         // A no-op here just means "doesn't spawn a second concurrent
         // attempt while one's already running" -- there's nothing else to
@@ -1129,17 +1181,18 @@ mod tests {
         run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
         run(&work, &["config", "branch.main.remote", "origin"]);
         run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
-        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
-        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
 
+        // A prior sync attempt already committed locally but failed to push
+        // -- simulate that directly (a plain commit, not via run_sync) to
+        // keep this test focused on retry_push_if_due's own timing logic,
+        // not commit creation.
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "Check \"one\""]);
+        let commit = current_head(&work).unwrap();
+
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
         let last_attempt = Instant::now();
-        sync.retry = Some((
-            PendingSync {
-                content: "- [x] one\n".to_string(),
-                description: "retry".to_string(),
-            },
-            last_attempt,
-        ));
+        sync.retry = Some((commit, last_attempt));
 
         sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL);
         assert!(
@@ -1157,9 +1210,66 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(
-            matches!(outcome, Some(SyncOutcome::CommittedNotPushed(_))),
+            matches!(outcome, Some(SyncOutcome::CommittedNotPushed { .. })),
             "still no remote to push to, so this retry fails the same way: {outcome:?}"
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_commit_abandons_silently_when_head_has_moved_on() {
+        // The actual regression test for the stale-retry bug: a retry must
+        // never rebuild a commit from old content when something else has
+        // moved HEAD past the commit it was trying to push -- it must give
+        // up on this specific retry instead, leaving whatever superseded it
+        // alone.
+        let work = init_repo_without_remote();
+        let file_path = work.join("tracked.md");
+        let stale_commit = current_head(&work).unwrap();
+
+        // Something else advances HEAD past the commit this retry is stale
+        // for -- standing in for a concurrent markcheck/git-sync process,
+        // or any other actor, committing in between.
+        fs::write(&file_path, "- [x] one\n- [x] two\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "newer content"]);
+        let newer_commit = current_head(&work).unwrap();
+        assert_ne!(stale_commit, newer_commit);
+
+        let outcome = retry_commit(&work, &stale_commit);
+
+        assert_eq!(outcome, SyncOutcome::Skipped);
+        assert_eq!(
+            current_head(&work).unwrap(),
+            newer_commit,
+            "the newer commit must be left completely alone"
+        );
+        assert_eq!(
+            fs::read_to_string(&file_path).unwrap(),
+            "- [x] one\n- [x] two\n",
+            "no stale commit was rebuilt on top"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_commit_pushes_when_head_still_matches() {
+        let (work, remote) = init_repo_with_remote();
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "Check \"one\""]);
+        let commit = current_head(&work).unwrap();
+
+        let outcome = retry_commit(&work, &commit);
+
+        assert_eq!(outcome, SyncOutcome::Synced);
+        let show = Command::new("git")
+            .current_dir(&remote)
+            .args(["show", "HEAD:tracked.md"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] one\n");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -1463,7 +1573,7 @@ mod tests {
 
         let outcome = run_sync(&work, &file_path, "- [ ] one\n", "already committed");
         assert!(
-            matches!(outcome, SyncOutcome::CommittedNotPushed(_)),
+            matches!(outcome, SyncOutcome::CommittedNotPushed { .. }),
             "must attempt (and report failure of) the push, not silently skip: {outcome:?}"
         );
 
