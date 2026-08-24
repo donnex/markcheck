@@ -422,10 +422,13 @@ Each commit runs from a private, temporary git index — never your real one —
 so a `git add`ed-but-not-yet-committed file of yours can never ride along
 into a markcheck commit. That index still runs the repository's normal
 commit hooks (and honors `commit.gpgsign`) exactly like committing by hand,
-though, so a `pre-commit` hook that itself runs `git add` against that same
-temporary index *can* still pull other files into the commit alongside the
-checklist. If that matters for a given repo, disable or adjust the hook
-rather than relying on git-sync to scope the commit for you.
+so a `pre-commit` hook that itself runs `git add` against that same
+temporary index can try to pull other files into the commit alongside the
+checklist — but markcheck checks for this after the commit is made and
+undoes it if so, reporting `Git sync failed: ...a commit hook modified
+files beyond the checklist; sync aborted` rather than letting the extra
+files through (let alone pushing them). The hook itself still runs
+normally either way; only the resulting commit's scope is enforced.
 
 ### Search
 

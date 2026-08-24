@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) now detects and undoes a commit that a `pre-commit`
+  hook expanded beyond the checklist file (e.g. a hook that runs
+  `git add -A` or stages formatter output), instead of committing — and
+  pushing — whatever the hook added alongside your change.
 - Git-sync (`--git-sync`)'s automatic push retry no longer risks silently
   reverting a newer commit — it used to replay the original file content
   through the same commit-or-skip logic a fresh edit uses, which could
