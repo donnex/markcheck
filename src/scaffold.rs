@@ -96,16 +96,18 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     let full_path = canonical_parent.join(file_name);
 
     let contents = template(&full_path);
-    let temp_path = canonical_parent.join(format!(
+    let temp_path_base = canonical_parent.join(format!(
         ".{}.markcheck-new-{}-{:x}",
         file_name.to_string_lossy(),
         std::process::id(),
         crate::writer::random_suffix()
     ));
-    if let Err(err) = write_temp(&temp_path, &contents) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(err);
-    }
+    // `write_temp` returns the *actual* path it wrote to, which can differ
+    // from `temp_path_base` if that name was already taken (see its own doc
+    // comment) — and cleans up after itself on any failure past file
+    // creation, so there's no separate `fs::remove_file` needed here on that
+    // path, only for the hard-link step below. Mirrors `writer::write_back`.
+    let temp_path = write_temp(&temp_path_base, &contents)?;
     let link_result = fs::hard_link(&temp_path, &full_path);
     let _ = fs::remove_file(&temp_path);
     link_result?;
@@ -116,39 +118,55 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     Ok(full_path)
 }
 
-/// Writes `contents` to a fresh temp file, retrying once on a stale leftover
-/// from a crashed prior run that happened to draw the same PID and random
-/// suffix (mirroring `writer::write_temp`), and fsyncs it before returning
-/// so the caller's hard-link is never left pointing at unflushed data. No
-/// explicit permissions are set — unlike `writer::write_temp`, there's no source
-/// file's permissions to protect or restore, so this keeps the same default
-/// (umask-masked) permissions `create_new` on the final path gave directly
-/// before this change.
-fn write_temp(temp_path: &Path, contents: &str) -> io::Result<()> {
+/// Creates the temp file at `base_temp_path` (or, if that name is already
+/// taken, at a freshly-suffixed retry path — see below), writes `contents`,
+/// then fsyncs it before returning the *actual* path written to, so the
+/// caller's hard-link always targets a flushed temp file at the right name
+/// regardless of which path was used. No explicit permissions are set —
+/// unlike `writer::write_temp`, there's no source file's permissions to
+/// protect or restore, so this keeps the same default (umask-masked)
+/// permissions `create_new` on the final path gave directly.
+///
+/// The PID+random-suffix name makes a genuine collision with another live
+/// process astronomically unlikely; a stale temp left behind by a crashed
+/// prior run reusing the same PID is the only realistic cause. Retried once
+/// at a freshly-suffixed path — never by deleting the existing file and
+/// reusing its name: a *genuine* collision with another live, legitimate
+/// writer using this exact name would otherwise have its temp file deleted
+/// out from under it. This mirrors `writer::write_temp` exactly, which is
+/// what an earlier version of this function only *claimed* to do while in
+/// fact deleting the collision — the precise behavior `writer::write_temp`
+/// had already been changed away from.
+fn write_temp(base_temp_path: &Path, contents: &str) -> io::Result<PathBuf> {
     let open = |path: &Path| {
         fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)
     };
-    let mut file = match open(temp_path) {
-        // The PID+random-suffix name (see writer::random_suffix) makes a
-        // genuine collision astronomically unlikely; a stale temp from a
-        // crashed prior run (reused PID *and* the same random draw) is the
-        // only realistic cause. Retried once, unconditionally, rather than
-        // probed for first — the crashed-run scenario is inherently racy to
-        // simulate deterministically in a test, so this path is exercised
-        // by inspection rather than a dedicated regression test (mirrors
-        // writer::write_temp's identical, identically-untested case).
+    let (path, mut file) = match open(base_temp_path) {
+        Ok(file) => (base_temp_path.to_path_buf(), file),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            fs::remove_file(temp_path)?;
-            open(temp_path)?
+            let mut retry_path = base_temp_path.as_os_str().to_os_string();
+            retry_path.push(format!("-{:x}", crate::writer::random_suffix()));
+            let retry_path = PathBuf::from(retry_path);
+            let file = open(&retry_path)?;
+            (retry_path, file)
         }
-        other => other?,
+        Err(err) => return Err(err),
     };
-    file.write_all(contents.as_bytes())?;
-    file.sync_all()?;
-    Ok(())
+
+    let write_result = (|| {
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()
+    })();
+    match write_result {
+        Ok(()) => Ok(path),
+        Err(err) => {
+            let _ = fs::remove_file(&path);
+            Err(err)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +177,38 @@ mod tests {
         let dir = crate::test_support::unique_temp_path("scaffold", "", None);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
+        // Deep review: this function used to delete whatever file was
+        // already at the generated name and reuse that name -- the exact
+        // behavior `writer::write_temp` had already been changed away from,
+        // while a comment here claimed to mirror it. A genuine collision
+        // with another live process would have had its temp file deleted
+        // out from under it. Mirrors
+        // `writer::tests::write_temp_retries_at_a_new_name_instead_of_deleting_a_collision`.
+        let dir = unique_temp_dir();
+        let base = dir.join(".todo.md.markcheck-new-collision");
+        fs::write(&base, "a live process's own temp file, not markcheck's\n").unwrap();
+
+        let written_path = write_temp(&base, "# Todo\n\n- [ ]\n").unwrap();
+
+        assert_ne!(
+            written_path, base,
+            "must not have written to (or reused) the colliding name"
+        );
+        assert_eq!(
+            fs::read_to_string(&base).unwrap(),
+            "a live process's own temp file, not markcheck's\n",
+            "the pre-existing file at the colliding name must be completely untouched"
+        );
+        assert_eq!(
+            fs::read_to_string(&written_path).unwrap(),
+            "# Todo\n\n- [ ]\n"
+        );
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::model::{Document, ItemKind, TaskState};
 
@@ -108,16 +108,18 @@ pub fn write_back(document: &Document) -> io::Result<String> {
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file path has no file name"))?
         .to_string_lossy();
-    let temp_path = document.file_path.with_file_name(format!(
+    let temp_path_base = document.file_path.with_file_name(format!(
         ".{file_name}.markcheck-tmp-{}-{:x}",
         std::process::id(),
         random_suffix()
     ));
 
-    if let Err(err) = write_temp(&temp_path, &contents, source_perms) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(err);
-    }
+    // `write_temp` returns the *actual* path it wrote to, which can differ
+    // from `temp_path_base` if that name was already taken (see its own
+    // doc comment) — cleans up after itself on any failure past file
+    // creation, so there's no separate `fs::remove_file` needed here on
+    // that path, only for the rename step below.
+    let temp_path = write_temp(&temp_path_base, &contents, source_perms)?;
     if let Err(err) = fs::rename(&temp_path, &document.file_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(err);
@@ -145,14 +147,30 @@ pub(crate) fn sync_parent_dir(path: &Path) {
     }
 }
 
-/// Creates the temp file with mode 0600 (never more permissive than the
-/// most restrictive plausible source, even for an instant), writes the
-/// contents, applies the exact source permissions through the file handle —
-/// fchmod semantics, immune to the process umask — then fsyncs the data to
-/// disk before returning, so the caller's rename is never left pointing at
-/// an unflushed temp file.
+/// Creates the temp file at `base_temp_path` (or, if that name is already
+/// taken, at a freshly-suffixed retry path — see below) with mode 0600
+/// (never more permissive than the most restrictive plausible source, even
+/// for an instant), writes the contents, applies the exact source
+/// permissions through the file handle — fchmod semantics, immune to the
+/// process umask — then fsyncs the data to disk before returning the
+/// *actual* path written to, so the caller's rename always targets a
+/// flushed temp file at the right name regardless of which path was used.
+///
+/// The PID+random-suffix name makes a genuine collision with another live
+/// process astronomically unlikely; a stale temp left behind by a crashed
+/// prior run reusing the same PID is the only realistic cause. Retried
+/// once at a freshly-suffixed path — never by deleting the existing file
+/// and reusing its name: a *genuine* collision with another live,
+/// legitimate writer using this exact name would otherwise have its temp
+/// file deleted out from under it. The crashed-run scenario is inherently
+/// racy to simulate deterministically, so this path is exercised by
+/// inspection rather than a dedicated regression test.
 #[cfg(unix)]
-fn write_temp(temp_path: &Path, contents: &str, perms: Option<fs::Permissions>) -> io::Result<()> {
+fn write_temp(
+    base_temp_path: &Path,
+    contents: &str,
+    perms: Option<fs::Permissions>,
+) -> io::Result<PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -163,30 +181,40 @@ fn write_temp(temp_path: &Path, contents: &str, perms: Option<fs::Permissions>) 
             .mode(0o600)
             .open(path)
     };
-    let mut file = match open(temp_path) {
-        // The PID+random-suffix name makes a genuine collision astronomically
-        // unlikely; this remains a stale temp from a crashed prior run
-        // (reused PID *and* the same random draw) as the only realistic
-        // cause. Retried once, unconditionally, rather than probed for
-        // first — the crashed-run scenario is inherently racy to simulate
-        // deterministically in a test, so this path is exercised by
-        // inspection rather than a dedicated regression test.
+    let (path, mut file) = match open(base_temp_path) {
+        Ok(file) => (base_temp_path.to_path_buf(), file),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            fs::remove_file(temp_path)?;
-            open(temp_path)?
+            let mut retry_path = base_temp_path.as_os_str().to_os_string();
+            retry_path.push(format!("-{:x}", random_suffix()));
+            let retry_path = PathBuf::from(retry_path);
+            let file = open(&retry_path)?;
+            (retry_path, file)
         }
-        other => other?,
+        Err(err) => return Err(err),
     };
-    file.write_all(contents.as_bytes())?;
-    if let Some(perms) = perms {
-        file.set_permissions(perms)?;
+
+    let write_result = (|| {
+        file.write_all(contents.as_bytes())?;
+        if let Some(perms) = perms {
+            file.set_permissions(perms)?;
+        }
+        file.sync_all()
+    })();
+    match write_result {
+        Ok(()) => Ok(path),
+        Err(err) => {
+            let _ = fs::remove_file(&path);
+            Err(err)
+        }
     }
-    file.sync_all()?;
-    Ok(())
 }
 
 #[cfg(not(unix))]
-fn write_temp(temp_path: &Path, contents: &str, perms: Option<fs::Permissions>) -> io::Result<()> {
+fn write_temp(
+    temp_path: &Path,
+    contents: &str,
+    perms: Option<fs::Permissions>,
+) -> io::Result<PathBuf> {
     use std::io::Write;
 
     let mut file = fs::OpenOptions::new()
@@ -199,7 +227,7 @@ fn write_temp(temp_path: &Path, contents: &str, perms: Option<fs::Permissions>) 
         file.set_permissions(perms)?;
     }
     file.sync_all()?;
-    Ok(())
+    Ok(temp_path.to_path_buf())
 }
 
 #[cfg(test)]
@@ -618,5 +646,38 @@ mod tests {
         assert!(!written.contains("[/]") && !written.contains("[x]"));
 
         fs::remove_file(&path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
+        // External review: the old behavior removed whatever file was
+        // already at the generated name before retrying at that *same*
+        // name -- conceptually wrong regardless of how unlikely a genuine
+        // collision with another live process is, since that file could
+        // belong to one. Deterministically forceable now that write_temp
+        // takes an explicit base path: pre-create a file there and confirm
+        // write_temp writes somewhere else instead, leaving it untouched.
+        let base = crate::test_support::unique_temp_path("writer", "collision", None);
+        fs::write(&base, "a live process's own temp file, not markcheck's\n").unwrap();
+
+        let written_path = write_temp(&base, "checklist content\n", None).unwrap();
+
+        assert_ne!(
+            written_path, base,
+            "must not have written to (or reused) the colliding name"
+        );
+        assert_eq!(
+            fs::read_to_string(&base).unwrap(),
+            "a live process's own temp file, not markcheck's\n",
+            "the pre-existing file at the colliding name must be completely untouched"
+        );
+        assert_eq!(
+            fs::read_to_string(&written_path).unwrap(),
+            "checklist content\n"
+        );
+
+        fs::remove_file(&base).ok();
+        fs::remove_file(&written_path).ok();
     }
 }
