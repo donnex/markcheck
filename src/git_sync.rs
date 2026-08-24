@@ -494,7 +494,8 @@ fn commit_via_temp_index(
         if let Some(reason) = repo_sync_blocked(repo_root) {
             return Err(reason);
         }
-        commit_temp_index(repo_root, &temp_index, message)
+        commit_temp_index(repo_root, &temp_index, message)?;
+        verify_commit_scope(repo_root, parent, relpath)
     })();
     let _ = std::fs::remove_file(&temp_index);
     result
@@ -557,6 +558,117 @@ fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Resu
         return Err(command_error("git commit", &output));
     }
     Ok(())
+}
+
+/// Well-known empty-tree object ID, used as the diff base for a root commit
+/// (`parent: None`) — the same sentinel git's own plumbing uses, so
+/// `verify_commit_scope` can diff against it exactly like a real parent.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// Runs after `commit_temp_index` succeeds (hooks having already executed
+/// against the temporary index) and enforces the invariant a `pre-commit`
+/// hook can otherwise silently break: a `git add`/formatter/`lint-staged`/
+/// "stage everything" hook inherits the same `GIT_INDEX_FILE` as the rest
+/// of this commit, and can stage more into it — defeating the whole point
+/// of the temporary-index design (see `commit_via_temp_index`'s doc
+/// comment), which exists specifically so an unrelated staged file can
+/// never ride along into a markcheck commit. If the resulting commit's
+/// tree differs from `parent` anywhere other than `relpath`, the commit is
+/// undone (`undo_commit`) and an error reported — a hook that adds a
+/// nested commit of its own is undone the same way, since resetting the
+/// branch ref back to `parent` discards the whole chain regardless of how
+/// many commits are in it.
+fn verify_commit_scope(
+    repo_root: &Path,
+    parent: &Option<String>,
+    relpath: &str,
+) -> Result<(), String> {
+    let base = parent.as_deref().unwrap_or(EMPTY_TREE);
+    let new_head = current_head(repo_root).ok_or_else(|| {
+        "git-sync: could not resolve HEAD after commit; hook scope not verified".to_string()
+    })?;
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["diff", "--name-only", "-z", base, &new_head])
+        .output()
+        .map_err(|err| format!("git diff failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git diff", &output));
+    }
+    // `-z` NUL-delimits paths instead of newline-delimiting them, and
+    // (unlike the default form) never C-quotes/escapes non-ASCII bytes —
+    // the same fix `index_entry` needed for `git ls-files`, for the same
+    // reason: a naive newline-delimited parse would otherwise wrongly flag
+    // (or wrongly pass) a checklist filename containing non-ASCII
+    // characters, since git would hand back a quoted-and-escaped literal
+    // string instead of the real path.
+    let changed: Vec<&[u8]> = output
+        .stdout
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if changed == [relpath.as_bytes()] {
+        return Ok(());
+    }
+    match undo_commit(repo_root, parent) {
+        Ok(()) => Err(
+            "git-sync: a commit hook modified files beyond the checklist; sync aborted".to_string(),
+        ),
+        Err(undo_err) => Err(format!(
+            "git-sync: a commit hook modified files beyond the checklist, and undoing the \
+             commit failed ({undo_err}); commit {new_head} may need manual cleanup"
+        )),
+    }
+}
+
+/// Moves the branch ref back to `parent` (or deletes it entirely, for a
+/// root commit with `parent: None`) — the undo side of
+/// `verify_commit_scope`. Never touches the working tree or the real
+/// index, same as everything else in the temp-index commit path.
+fn undo_commit(repo_root: &Path, parent: &Option<String>) -> Result<(), String> {
+    let (args, description): (Vec<&str>, &str) = match parent {
+        Some(sha) => (vec!["update-ref", "HEAD", sha], "git update-ref"),
+        None => {
+            let branch_ref = current_branch_ref(repo_root).ok_or_else(|| {
+                "git-sync: could not resolve branch ref to undo root commit".to_string()
+            })?;
+            return match Command::new("git")
+                .current_dir(repo_root)
+                .args(["update-ref", "-d", &branch_ref])
+                .output()
+            {
+                Ok(output) if output.status.success() => Ok(()),
+                Ok(output) => Err(command_error("git update-ref", &output)),
+                Err(err) => Err(format!("git update-ref failed: {err}")),
+            };
+        }
+    };
+    match Command::new("git")
+        .current_dir(repo_root)
+        .args(&args)
+        .output()
+    {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(command_error(description, &output)),
+        Err(err) => Err(format!("{description} failed: {err}")),
+    }
+}
+
+/// The branch `HEAD` symbolically points at (e.g. `refs/heads/main`),
+/// resolved regardless of whether that branch has any commits yet — `git
+/// init` makes `HEAD` a symref to the default branch immediately, before
+/// the first commit exists, so this works the same before and after the
+/// root-commit case `undo_commit` needs it for.
+fn current_branch_ref(repo_root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Absolute path to the repository's git directory. Resolved relative to
@@ -1445,6 +1557,129 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(&index.stdout).is_empty(),
             "secret.env must remain staged in the real index"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
+        // External review: the temp-index rewrite closes the *staged
+        // file* contamination path (the test above), but a normal `git
+        // commit` still runs the repository's commit hooks, and a hook
+        // that itself runs `git add` inherits the same `GIT_INDEX_FILE` --
+        // so it can stage extra files into the *temporary* index instead,
+        // defeating the same guarantee through a different door. This is
+        // that door: a real, executable `pre-commit` hook that stages an
+        // unrelated file, verifying markcheck detects it and undoes the
+        // whole commit rather than letting it stand (let alone push it).
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\necho unrelated > other.md\ngit add other.md\nexit 0\n",
+        )
+        .unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let message = commit_message(&file_path, "Check \"one\"");
+        let outcome = run_sync(&work, &file_path, "- [x] one\n", &message);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("hook modified files beyond the checklist")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            current_head(&work).unwrap(),
+            parent,
+            "the commit must be fully undone, not just refused going forward"
+        );
+        let head_has_other = Command::new("git")
+            .current_dir(&work)
+            .args(["cat-file", "-e", "HEAD:other.md"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(
+            !head_has_other,
+            "the hook-staged file must never reach a reachable commit"
+        );
+        let real_index = Command::new("git")
+            .current_dir(&work)
+            .args(["ls-files", "other.md"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&real_index.stdout).is_empty(),
+            "the real index must stay untouched by the hook too"
+        );
+        let leftover = fs::read_dir(work.join(".git")).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("markcheck-index-")
+        });
+        assert!(!leftover, "temp index file was not cleaned up");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_sync_undoes_a_hook_violated_root_commit_by_deleting_the_branch_ref() {
+        // The root-commit case (parent: None) needs its own undo path --
+        // there's no prior SHA to move the branch ref back to, so
+        // undo_commit must resolve the branch's symref and delete it
+        // entirely instead, returning to the pre-commit "no commits yet"
+        // state.
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = unique_dir("repo-root-commit-hook").join("work");
+        fs::create_dir_all(&work).unwrap();
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\necho unrelated > other.md\ngit add other.md\nexit 0\n",
+        )
+        .unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Staged (so index_entry can read it) but never committed -- a
+        // fresh repo's first sync, with no HEAD yet at all.
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+
+        let message = commit_message(&file_path, "Check \"one\"");
+        let outcome = run_sync(&work, &file_path, "- [x] one\n", &message);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("hook modified files beyond the checklist")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            current_head(&work),
+            None,
+            "the repository must be back to having no commits at all"
+        );
+        assert_eq!(
+            current_branch_ref(&work).as_deref(),
+            Some("refs/heads/main"),
+            "HEAD must still symbolically resolve to the branch, just with no commit on it yet"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
