@@ -331,8 +331,12 @@ Toggling a task rewrites only its `[ ]`/`[/]`/`[x]` marker character; the rest
 of the file (formatting, comments, other lines) is left untouched. Writes are
 atomic — a temp file is written and renamed over the original — so a crash
 or full disk can never leave the runbook truncated, and the file's
-permissions are preserved. Opening the file through a symlink writes
-through to the real target and keeps the link intact.
+permissions (standard Unix mode bits) are preserved. POSIX ACLs, extended
+attributes, and ownership are **not** preserved — the rename gives the file
+a new inode, and only ordinary permissions are carried forward onto it —
+which matters if the file lives somewhere ACL-managed. Opening the file
+through a symlink writes through to the real target and keeps the link
+intact.
 
 If the file changed on disk since it was last loaded — another `markcheck`
 instance, or an external editor, saved to it after you did — a toggle is
