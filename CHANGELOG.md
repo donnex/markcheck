@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`)'s automatic push retry no longer risks silently
+  reverting a newer commit — it used to replay the original file content
+  through the same commit-or-skip logic a fresh edit uses, which could
+  build a brand new commit from that stale content if something else had
+  committed to the repository in the meantime. A retry now targets the
+  specific commit it's trying to push and gives up cleanly (instead of
+  recommitting) if that commit is no longer current.
 - Git-sync (`--git-sync`) no longer leaves a commit stranded local-only
   forever if its push fails (offline, expired auth, etc.) and you don't
   happen to make another checklist edit afterward. A failed push is now

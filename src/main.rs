@@ -262,9 +262,9 @@ where
                         "Git sync skipped: file is not tracked in git (run `git add` on it)"
                             .to_string(),
                     ),
-                    git_sync::SyncOutcome::CommittedNotPushed(msg) => state.set_error(format!(
-                        "Git commit saved locally; push failed, will retry: {msg}"
-                    )),
+                    git_sync::SyncOutcome::CommittedNotPushed { message, .. } => state.set_error(
+                        format!("Git commit saved locally; push failed, will retry: {message}"),
+                    ),
                     git_sync::SyncOutcome::Failed(msg) => {
                         state.set_error(format!("Git sync failed: {msg}"))
                     }
