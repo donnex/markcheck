@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Git-sync (`--git-sync`) now refuses to sync (rather than pushing
+  everything) if the branch already has local commits unrelated to the
+  checklist that haven't reached the remote yet — `git push` always sends
+  the whole branch, so without this a checklist toggle could publish
+  unrelated work you weren't ready to push. Push the unrelated commits
+  yourself first; the next toggle syncs normally. Several of markcheck's
+  *own* commits accumulating while offline is unaffected.
 - The OSC 52 clipboard fallback's status message now says `Sent to
   clipboard (OSC 52)` instead of `Copied to clipboard (OSC 52)` — writing
   the escape sequence out doesn't confirm the terminal or multiplexer

@@ -343,6 +343,19 @@ fn run_sync(
         return SyncOutcome::Skipped;
     }
 
+    // About to create a *new* commit — refuse if the branch already has
+    // unpushed history that touches something other than this file, rather
+    // than piling a checklist commit on top and pushing the lot (see
+    // `branch_has_unrelated_unpushed_commits`'s doc comment for why plain
+    // ahead-of-upstream isn't the right test here — several of markcheck's
+    // own commits can legitimately stack up while offline).
+    if branch_has_unrelated_unpushed_commits(&repo_root, &relpath) {
+        return SyncOutcome::Failed(
+            "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
+                .to_string(),
+        );
+    }
+
     let blob = match hash_object(&repo_root, expected_content) {
         Ok(sha) => sha,
         Err(err) => return SyncOutcome::Failed(err),
@@ -384,6 +397,41 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
                 > 0
         }
         _ => true,
+    }
+}
+
+/// Whether the branch already has unpushed commits ahead of upstream that
+/// touch something *other* than `relpath` — used only to decide whether to
+/// refuse creating a new commit at all (`run_sync`), never to decide
+/// whether to retry a push. Deliberately not a plain ahead-of-upstream
+/// check: multiple markcheck commits can legitimately stack up while
+/// offline (a user toggling several tasks before connectivity returns —
+/// see `repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits`),
+/// and none of those are "unrelated work" to refuse over — only commits
+/// touching something else are. Diffing `@{u}..HEAD` as a whole (rather
+/// than per-commit) is enough to tell the two apart: if every path that
+/// changed across the whole ahead range is `relpath`, it's markcheck's own
+/// accumulated history; anything else means something unrelated is there.
+///
+/// Deliberately **fails closed** (`false`, i.e. "don't refuse") whenever
+/// the check itself can't be answered — no upstream configured, no commits
+/// yet (a repo's very first sync), or any other `git diff` failure —
+/// because refusing is the consequential action here, not pushing. Failing
+/// open the way `ahead_of_upstream` does would wrongly block every
+/// first-ever commit to a fresh repository and every sync where upstream
+/// tracking simply isn't set up.
+fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> bool {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["diff", "--name-only", "-z", "@{u}", "HEAD"])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => output
+            .stdout
+            .split(|&b| b == 0)
+            .filter(|s| !s.is_empty())
+            .any(|path| path != relpath.as_bytes()),
+        _ => false,
     }
 }
 
@@ -1810,6 +1858,87 @@ mod tests {
         assert!(
             matches!(outcome, SyncOutcome::CommittedNotPushed { .. }),
             "must attempt (and report failure of) the push, not silently skip: {outcome:?}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_refuses_when_branch_has_unrelated_unpushed_commits() {
+        // External review: markcheck's own commit scope is carefully
+        // restricted (temp index, hook-scope enforcement), but `git push`
+        // sends the whole branch -- so an unrelated local commit made
+        // outside markcheck would get published right alongside the
+        // checklist change unless sync refuses outright first.
+        let (work, _remote) = init_repo_with_remote(); // origin/main = A, pushed.
+        fs::write(work.join("other.md"), "unrelated work\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "unrelated local commit"]);
+        let head_before = current_head(&work).unwrap();
+
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let message = commit_message(&file_path, "Check \"one\"");
+        let outcome = run_sync(&work, &file_path, "- [x] one\n", &message);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            current_head(&work).unwrap(),
+            head_before,
+            "no checklist commit should have been created on top"
+        );
+        assert_eq!(
+            fs::read_to_string(&file_path).unwrap(),
+            "- [x] one\n",
+            "the on-disk edit itself is untouched, just not synced yet"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
+        // The refusal above must not fire just because markcheck's own
+        // earlier commits (from toggling while offline) are what's ahead of
+        // upstream -- only genuinely unrelated history should be refused.
+        let work = init_repo_without_remote();
+        run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
+        run(&work, &["config", "branch.main.remote", "origin"]);
+        run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+        let file_path = work.join("tracked.md");
+
+        // First edit: commits locally (via run_sync's own temp-index path),
+        // push fails against the unreachable remote -- exactly the
+        // "markcheck's own commit is what's ahead" state this must allow.
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let first = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &commit_message(&file_path, "Check \"one\""),
+        );
+        assert!(matches!(first, SyncOutcome::CommittedNotPushed { .. }));
+
+        // Second, different edit: must still be allowed to commit, not
+        // refused just because the branch is now ahead of upstream by
+        // markcheck's own first commit.
+        fs::write(&file_path, "- [x] one\n- [x] two\n").unwrap();
+        let second = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n- [x] two\n",
+            &commit_message(&file_path, "Check \"two\""),
+        );
+        assert!(
+            matches!(second, SyncOutcome::CommittedNotPushed { .. }),
+            "must still commit (and only then fail to push), not refuse: {second:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(&file_path).unwrap(),
+            "- [x] one\n- [x] two\n"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
