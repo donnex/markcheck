@@ -1162,6 +1162,149 @@ fn git_sync_reports_when_the_file_is_untracked() {
 }
 
 #[test]
+fn git_sync_reports_push_failure_then_retries_and_succeeds() {
+    // External review (twice): whether `main.rs` actually handles
+    // `SyncOutcome::CommittedNotPushed` and actually calls
+    // `retry_push_if_due` can't be answered by `git_sync.rs`'s unit tests,
+    // which drive `GitSync` directly rather than through the compiled
+    // binary and its main loop — exactly the gap that let two review
+    // rounds in a row plausibly (if incorrectly) doubt that wiring exists.
+    // This drives it for real: an initial toggle whose push fails (broken
+    // remote), confirms the "will retry" message actually appears on
+    // screen, then fixes the remote out-of-band and waits out a real
+    // `PUSH_RETRY_INTERVAL` for the automatic retry to actually land the
+    // push — proving both pieces of wiring, not just that the underlying
+    // `GitSync` methods work in isolation.
+    let _guard = git_sync_test_guard();
+    let root = unique_path("gitsync-retry");
+    let remote = root.join("remote.git");
+    let broken_remote = root.join("does-not-exist.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    // Point origin at a path that will never resolve, so the first sync
+    // attempt's push fails deterministically and fast (no real network
+    // hang), while still recording origin as this branch's upstream so
+    // `ahead_of_upstream` (used by the retry-fast-path and the startup
+    // catch-up push) has something to compare against.
+    run_git(
+        &work,
+        &["remote", "add", "origin", broken_remote.to_str().unwrap()],
+    );
+    run_git(&work, &["config", "branch.main.remote", "origin"]);
+    run_git(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--git-sync");
+    cmd.arg(&path);
+    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    let pty = native_pty_system();
+    let pair = pty
+        .openpty(PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let drain = thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        let mut all = Vec::new();
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    all.extend_from_slice(&buf[..n]);
+                    let visible: String = String::from_utf8_lossy(&all)
+                        .chars()
+                        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+                        .collect();
+                    let _ = tx.send(visible);
+                }
+                Err(_) => break,
+            }
+        }
+        all
+    });
+
+    let visible_contains = |rx: &std::sync::mpsc::Receiver<String>, needle: &str| -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut last = String::new();
+        while Instant::now() < deadline {
+            while let Ok(v) = rx.try_recv() {
+                last = v;
+            }
+            if last.contains(needle) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        false
+    };
+
+    let mut writer = pair.master.take_writer().unwrap();
+    thread::sleep(Duration::from_millis(600));
+    writer.write_all(b" ").unwrap(); // toggle: commits locally, push fails
+    writer.flush().unwrap();
+
+    assert!(
+        visible_contains(&rx, "push failed, will retry"),
+        "the first push failure must be reported, proving CommittedNotPushed is handled"
+    );
+
+    // Fix the remote while the app is still running — the background
+    // worker isn't touched, only the config it reads on its next attempt.
+    run_git(
+        &work,
+        &["remote", "set-url", "origin", remote.to_str().unwrap()],
+    );
+
+    // Wait out a real PUSH_RETRY_INTERVAL for retry_push_if_due to fire on
+    // its own — the actual behavior under test, not simulated.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut subject = String::new();
+    while Instant::now() < deadline {
+        let out = std::process::Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if subject == "checklist.md: Check \"alpha\"" {
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    assert_eq!(
+        subject, "checklist.md: Check \"alpha\"",
+        "the automatic retry must land the push without any further user input"
+    );
+
+    writer.write_all(b"q").unwrap();
+    writer.flush().unwrap();
+    let status = child.wait().unwrap();
+    drop(pair.master);
+    let _ = drain.join();
+    assert!(status.success(), "binary should exit successfully");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn search_jumps_to_task_then_toggles_it() {
     let path = unique_path("search");
     write_file(
