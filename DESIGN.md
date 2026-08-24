@@ -285,10 +285,12 @@ pub fn write_back(document: &Document) -> io::Result<()> {
     // 2. Read source metadata: any error (incl. NotFound) => abort, file
     //    untouched, so a deleted file is never recreated.
     // 3. write_temp(): create ".{name}.markcheck-tmp-{pid}-{random:x}" with
-    //    mode 0600 (create_new; remove-and-retry once on AlreadyExists;
-    //    random_suffix() adds process-random entropy beyond the PID alone
-    //    so a genuine name collision is vanishingly unlikely, not just
-    //    unlikely), write contents,
+    //    mode 0600 (create_new; on AlreadyExists, retry once at a freshly
+    //    -suffixed name instead of deleting the colliding file -- it could
+    //    belong to another live process; random_suffix() adds
+    //    process-random entropy beyond the PID alone so a genuine name
+    //    collision is vanishingly unlikely, not just unlikely), write
+    //    contents,
     //    file.set_permissions(source_perms) (fchmod, umask-immune), then
     //    file.sync_all() to flush the data to disk.
     // 4. fs::rename over the target; remove the temp on any failure.
