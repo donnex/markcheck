@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer risks getting permanently stuck if a
+  `git` command hangs (a broken SSH connection, a stuck credential helper, a
+  commit hook that never returns). Every git-sync operation is now bounded
+  by a timeout — generous for the local steps, longer for the network-bound
+  push — after which it's killed and reported as a normal sync failure
+  instead of silently blocking every future sync attempt.
 - Git-sync (`--git-sync`) now detects and undoes a commit that a `pre-commit`
   hook expanded beyond the checklist file (e.g. a hook that runs
   `git add -A` or stages formatter output), instead of committing — and
