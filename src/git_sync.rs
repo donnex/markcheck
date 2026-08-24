@@ -1,6 +1,6 @@
-use std::io::Write as _;
+use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,185 @@ use crate::model::PendingSync;
 /// hammered with retries but connectivity returning is still noticed
 /// without requiring another checklist edit.
 const PUSH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Timeout for local git plumbing commands (`status`, `ls-files`,
+/// `hash-object`, `rev-parse`, `read-tree`, `update-index`, `commit`,
+/// `symbolic-ref`, `update-ref`, `diff`, `show`) — all normally instant, no
+/// network involved, so a generous-but-bounded cap catches a genuinely
+/// stuck process (a hanging commit hook, a wedged filesystem) without ever
+/// being a realistic limit under normal operation.
+const PLUMBING_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for `git push` specifically — network-bound, so it needs
+/// meaningfully longer than the plumbing commands above.
+const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runs `cmd` to completion, killing it and returning a
+/// [`io::ErrorKind::TimedOut`] error if it hasn't finished within
+/// `timeout`. `Command::output()` has no timeout of its own — it blocks
+/// until the child exits, however long that takes — so without this, a
+/// hung git subprocess (broken SSH, a stuck credential helper, a hanging
+/// commit hook, a wedged network transport) would block the sync worker
+/// thread forever, and quitting markcheck while one is hung would orphan
+/// the child process entirely (Rust neither kills child processes on drop
+/// nor joins/kills detached threads on exit).
+///
+/// stdout/stderr are drained on their own threads for the whole run, not
+/// just read after the child exits: `try_wait`-polling without doing this
+/// risks the classic pipe-deadlock — if the child writes enough output to
+/// fill the OS pipe buffer, it blocks on that write, `try_wait` never
+/// returns, and nothing would ever unblock the child, if fake output
+/// weren't already being drained in the background.
+///
+/// Takes an owned `Command` rather than `&mut Command` (unlike
+/// `Command::output`) so call sites build it as a local variable first
+/// instead of chaining off `Command::new` directly — a builder chain like
+/// `Command::new("git").arg(...)` yields `&mut Command`, borrowing a
+/// temporary, which can't be handed to a function expecting an owned one.
+fn run_with_timeout(mut cmd: Command, timeout: Duration) -> io::Result<Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = spawn_in_own_process_group(cmd)?;
+    wait_with_timeout(child, timeout, None)
+}
+
+/// Spawns `cmd` as the leader of a new process group (its own PID doubling
+/// as the group ID) on Unix — plain on other platforms, where this is a
+/// best-effort feature (see `kill_and_reap`). Matters because `git` itself
+/// can spawn its own subprocesses (a credential helper, `ssh` for a remote
+/// push, a commit hook's own children) that inherit the piped stdout/
+/// stderr file descriptors this module sets up: killing only the direct
+/// `git` child on timeout would leave those grandchildren running and
+/// still holding those descriptors open, which would block
+/// `wait_with_timeout`'s reader threads until the grandchildren happen to
+/// exit on their own — precisely the hang this whole mechanism exists to
+/// prevent. Killing the whole group (`kill_and_reap`) reaches all of them.
+fn spawn_in_own_process_group(mut cmd: Command) -> io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn()
+}
+
+/// Like `run_with_timeout`, but also writes `stdin_data` to the child's
+/// stdin on its own thread before waiting — needed by `hash_object`, the
+/// one call site that feeds git anything over stdin. Writing on a separate
+/// thread (rather than writing then waiting, sequentially) matters for the
+/// same reason draining stdout/stderr on their own threads does: a large
+/// enough write could block on a full pipe buffer just as easily as a
+/// large enough child-produced output could.
+fn run_with_timeout_and_stdin(
+    mut cmd: Command,
+    timeout: Duration,
+    stdin_data: &str,
+) -> io::Result<Output> {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = spawn_in_own_process_group(cmd)?;
+    let mut stdin_pipe = child.stdin.take().expect("stdin was requested as piped");
+    let stdin_data = stdin_data.to_owned();
+    let stdin_thread = std::thread::spawn(move || {
+        // Errors ignored: a write failure here (e.g. the child exited
+        // early) surfaces as a non-success exit status instead, which the
+        // caller already checks.
+        let _ = stdin_pipe.write_all(stdin_data.as_bytes());
+        // `stdin_pipe` drops here, closing the write end so the child sees
+        // EOF on its stdin rather than hanging waiting for more.
+    });
+    wait_with_timeout(child, timeout, Some(stdin_thread))
+}
+
+/// Shared core of `run_with_timeout`/`run_with_timeout_and_stdin`: drains
+/// `child`'s stdout/stderr on their own threads for the whole run (not just
+/// after it exits — `try_wait`-polling without doing this risks the classic
+/// pipe deadlock, where a child that fills the OS pipe buffer blocks on
+/// that write and `try_wait` never returns, with nothing left to drain it),
+/// polls `try_wait` until the child exits or `timeout` elapses, and kills
+/// the child on timeout rather than merely giving up on waiting for it —
+/// `Command::output()`/a bare `wait()` do neither, so a hung `git`
+/// subprocess (broken SSH, a stuck credential helper, a hanging commit
+/// hook, a wedged network transport) would otherwise block the sync worker
+/// thread forever, and quitting markcheck while one is hung would orphan
+/// the child process entirely (Rust neither kills child processes on drop
+/// nor joins/kills detached threads on exit).
+fn wait_with_timeout(
+    mut child: Child,
+    timeout: Duration,
+    stdin_thread: Option<std::thread::JoinHandle<()>>,
+) -> io::Result<Output> {
+    let mut stdout_pipe = child.stdout.take().expect("stdout was requested as piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr was requested as piped");
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            kill_and_reap(&mut child);
+            if let Some(t) = stdin_thread {
+                let _ = t.join();
+            }
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("git command timed out after {timeout:?}"),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    if let Some(t) = stdin_thread {
+        let _ = t.join();
+    }
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Kills `child` and reaps it (`wait`, discarding the result) so it never
+/// lingers as a zombie process — `kill` alone only sends the signal, the
+/// exit status still has to be collected for the OS to release the
+/// process table entry.
+fn kill_and_reap(child: &mut Child) {
+    // Kill the whole process group, not just `child` itself — see
+    // `spawn_in_own_process_group`'s doc comment for why a grandchild
+    // process (git spawning ssh, a hook spawning its own children) would
+    // otherwise survive and keep our piped stdout/stderr open. `kill`'s
+    // negative-PID form targets a process *group* rather than a single
+    // process; shelling out to the `kill` utility rather than adding a
+    // dependency for the raw syscall, consistent with this project's
+    // existing preference for std-only solutions where practical. Best
+    // effort and Unix-only (a no-op on other platforms, where `child.id()`
+    // is not a process group either way) — falls through to the plain
+    // single-process `child.kill()` below regardless, which is the only
+    // option at all on a platform without process groups.
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--"])
+            .arg(format!("-{}", child.id()))
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
 /// Result of one background commit+push attempt, delivered to the
 /// main loop via [`GitSync::poll`].
@@ -84,11 +263,10 @@ impl GitSync {
     /// feature, so this fails open rather than erroring out.
     pub fn detect(file_path: &Path) -> Option<GitSync> {
         let repo_dir = file_path.parent()?.to_path_buf();
-        let output = Command::new("git")
-            .current_dir(&repo_dir)
-            .args(["rev-parse", "--is-inside-work-tree"])
-            .output()
-            .ok()?;
+        let mut cmd = Command::new("git");
+        cmd.current_dir(&repo_dir)
+            .args(["rev-parse", "--is-inside-work-tree"]);
+        let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
         if !output.status.success() {
             return None;
         }
@@ -272,11 +450,10 @@ fn run_sync(
     // path, sidestepping any ambiguity between CWD-relative and
     // repo-root-relative pathspec handling. Resolved first (before even
     // `status`) since every other check below needs it.
-    let repo_root = match Command::new("git")
-        .current_dir(repo_dir)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir)
+        .args(["rev-parse", "--show-toplevel"]);
+    let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => {
             PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -299,12 +476,11 @@ fn run_sync(
     // single `--untracked-files=no` check this used to be, which folded
     // both into the same silent no-op — is what lets an untracked file be
     // reported below instead of a sync that quietly never does anything.
-    let status = match Command::new("git")
-        .current_dir(repo_dir)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir)
         .args(["status", "--porcelain", "--"])
-        .arg(file_path)
-        .output()
-    {
+        .arg(file_path);
+    let status = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) => output,
         Err(err) => return SyncOutcome::Failed(format!("git status failed: {err}")),
     };
@@ -384,10 +560,10 @@ fn run_sync(
 /// attempted (and its real failure reason reported) rather than the sync
 /// going quiet with no explanation.
 fn ahead_of_upstream(repo_root: &Path) -> bool {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["rev-list", "--count", "@{u}..HEAD"])
-        .output();
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["rev-list", "--count", "@{u}..HEAD"]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => {
             String::from_utf8_lossy(&output.stdout)
@@ -421,10 +597,10 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
 /// first-ever commit to a fresh repository and every sync where upstream
 /// tracking simply isn't set up.
 fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> bool {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["diff", "--name-only", "-z", "@{u}", "HEAD"])
-        .output();
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["diff", "--name-only", "-z", "@{u}", "HEAD"]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => output
             .stdout
@@ -445,10 +621,9 @@ fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> boo
 /// most accurate answer to "what commit actually failed to push" regardless
 /// of which of `run_sync`'s two call sites got here.
 fn push(repo_dir: &Path) -> SyncOutcome {
-    let output = Command::new("git")
-        .current_dir(repo_dir)
-        .arg("push")
-        .output();
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir).arg("push");
+    let output = run_with_timeout(cmd, PUSH_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
         Ok(output) => SyncOutcome::CommittedNotPushed {
@@ -481,11 +656,10 @@ fn push(repo_dir: &Path) -> SyncOutcome {
 /// `HEAD` moving further ahead in that window just means the push sends
 /// more than expected — no revert risk, no compare-and-swap needed.
 fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
-    let repo_root = match Command::new("git")
-        .current_dir(repo_dir)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir)
+        .args(["rev-parse", "--show-toplevel"]);
+    let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => {
             PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -546,6 +720,18 @@ fn commit_via_temp_index(
         verify_commit_scope(repo_root, parent, relpath)
     })();
     let _ = std::fs::remove_file(&temp_index);
+    // git's index-writing plumbing (`read-tree`/`update-index`/`commit`)
+    // stages its write through `<index>.lock` (the full filename with a
+    // literal `.lock` suffix appended, not a path-extension replacement —
+    // `temp_index`'s own generated name never has an extension to begin
+    // with), renaming it into place on success. A subprocess killed
+    // mid-write by `run_with_timeout` can leave that lock file behind
+    // without ever reaching the rename — the index-file cleanup just above
+    // wouldn't catch it, since the target index itself may never have
+    // existed at all in that case.
+    let mut lock_file = temp_index.into_os_string();
+    lock_file.push(".lock");
+    let _ = std::fs::remove_file(lock_file);
     result
 }
 
@@ -554,11 +740,11 @@ fn commit_via_temp_index(
 /// about to be replaced commits exactly as `parent` had it — never the real
 /// index's (possibly unrelated-staged-content-holding) state.
 fn populate_temp_index(repo_root: &Path, temp_index: &Path, parent: &str) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
         .env("GIT_INDEX_FILE", temp_index)
-        .args(["read-tree", parent])
-        .output()
+        .args(["read-tree", parent]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git read-tree failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git read-tree", &output));
@@ -578,11 +764,11 @@ fn stage_into_temp_index(
     blob: &str,
     relpath: &str,
 ) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
         .env("GIT_INDEX_FILE", temp_index)
-        .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath])
-        .output()
+        .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git update-index failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git update-index", &output));
@@ -596,11 +782,11 @@ fn stage_into_temp_index(
 /// read-and-update), just fed from the temporary index instead of the real
 /// one.
 fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
         .env("GIT_INDEX_FILE", temp_index)
-        .args(["commit", "-m", message])
-        .output()
+        .args(["commit", "-m", message]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git commit failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git commit", &output));
@@ -635,11 +821,11 @@ fn verify_commit_scope(
     let new_head = current_head(repo_root).ok_or_else(|| {
         "git-sync: could not resolve HEAD after commit; hook scope not verified".to_string()
     })?;
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["diff", "--name-only", "-z", base, &new_head])
-        .output()
-        .map_err(|err| format!("git diff failed: {err}"))?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["diff", "--name-only", "-z", base, &new_head]);
+    let output =
+        run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git diff failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git diff", &output));
     }
@@ -680,22 +866,19 @@ fn undo_commit(repo_root: &Path, parent: &Option<String>) -> Result<(), String> 
             let branch_ref = current_branch_ref(repo_root).ok_or_else(|| {
                 "git-sync: could not resolve branch ref to undo root commit".to_string()
             })?;
-            return match Command::new("git")
-                .current_dir(repo_root)
-                .args(["update-ref", "-d", &branch_ref])
-                .output()
-            {
+            let mut cmd = Command::new("git");
+            cmd.current_dir(repo_root)
+                .args(["update-ref", "-d", &branch_ref]);
+            return match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
                 Ok(output) if output.status.success() => Ok(()),
                 Ok(output) => Err(command_error("git update-ref", &output)),
                 Err(err) => Err(format!("git update-ref failed: {err}")),
             };
         }
     };
-    match Command::new("git")
-        .current_dir(repo_root)
-        .args(&args)
-        .output()
-    {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root).args(&args);
+    match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(command_error(description, &output)),
         Err(err) => Err(format!("{description} failed: {err}")),
@@ -708,11 +891,10 @@ fn undo_commit(repo_root: &Path, parent: &Option<String>) -> Result<(), String> 
 /// the first commit exists, so this works the same before and after the
 /// root-commit case `undo_commit` needs it for.
 fn current_branch_ref(repo_root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["symbolic-ref", "-q", "HEAD"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["symbolic-ref", "-q", "HEAD"]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output
         .status
         .success()
@@ -725,11 +907,9 @@ fn current_branch_ref(repo_root: &Path) -> Option<String> {
 /// subdirectory) — `repo_sync_blocked` needs an absolute path to check for
 /// marker files regardless of which one `git` happened to hand back.
 fn git_dir(repo_root: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["rev-parse", "--git-dir"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root).args(["rev-parse", "--git-dir"]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -773,18 +953,18 @@ fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
     if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
         return Some("git-sync: repository has a rebase in progress".to_string());
     }
-    let on_a_branch = Command::new("git")
+    let mut symbolic_ref_cmd = Command::new("git");
+    symbolic_ref_cmd
         .current_dir(repo_root)
-        .args(["symbolic-ref", "-q", "HEAD"])
-        .output()
+        .args(["symbolic-ref", "-q", "HEAD"]);
+    let on_a_branch = run_with_timeout(symbolic_ref_cmd, PLUMBING_TIMEOUT)
         .is_ok_and(|output| output.status.success());
     if !on_a_branch {
         return Some("git-sync: repository is in a detached HEAD state".to_string());
     }
-    let unmerged = Command::new("git")
-        .current_dir(repo_root)
-        .args(["ls-files", "-u"])
-        .output();
+    let mut ls_files_cmd = Command::new("git");
+    ls_files_cmd.current_dir(repo_root).args(["ls-files", "-u"]);
+    let unmerged = run_with_timeout(ls_files_cmd, PLUMBING_TIMEOUT);
     match unmerged {
         Ok(output) if output.status.success() && !output.stdout.is_empty() => {
             Some("git-sync: repository has unresolved merge conflicts".to_string())
@@ -797,11 +977,11 @@ fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
 /// the index in one call (`git ls-files --stage --full-name`). Only called
 /// once `status` has already confirmed the path is tracked (not `??`).
 fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), String> {
-    let output = Command::new("git")
-        .current_dir(repo_dir)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir)
         .args(["ls-files", "--stage", "--full-name", "-z", "--"])
-        .arg(file_path)
-        .output()
+        .arg(file_path);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git ls-files failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git ls-files", &output));
@@ -835,33 +1015,20 @@ fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), St
 /// `None` if the path has no HEAD entry yet (e.g. staged but never
 /// committed) or `git show` otherwise fails.
 fn head_blob(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["show", &format!("HEAD:{relpath}")])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["show", &format!("HEAD:{relpath}")]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output.status.success().then_some(output.stdout)
 }
 
 /// Writes `content` into the object database without touching the working
 /// tree or index, returning its blob SHA.
 fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
-    let mut child = Command::new("git")
-        .current_dir(repo_root)
-        .args(["hash-object", "-w", "--stdin"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("git hash-object failed: {err}"))?;
-    child
-        .stdin
-        .take()
-        .expect("stdin was requested as piped")
-        .write_all(content.as_bytes())
-        .map_err(|err| format!("git hash-object failed: {err}"))?;
-    let output = child
-        .wait_with_output()
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["hash-object", "-w", "--stdin"]);
+    let output = run_with_timeout_and_stdin(cmd, PLUMBING_TIMEOUT, content)
         .map_err(|err| format!("git hash-object failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git hash-object", &output));
@@ -872,11 +1039,9 @@ fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
 /// The current commit `HEAD` points at, or `None` for a branch with no
 /// commits yet (so the next commit is created as a root commit).
 fn current_head(repo_root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .current_dir(repo_root)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root).args(["rev-parse", "HEAD"]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output
         .status
         .success()
@@ -2289,5 +2454,95 @@ mod tests {
         let message = commit_message(Path::new("/a/b/checklist.md"), "Check \"short\"");
         assert_eq!(message, "checklist.md: Check \"short\"");
         assert!(!message.contains('\u{2026}'));
+    }
+
+    #[test]
+    fn run_with_timeout_returns_normal_output_for_a_fast_command() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo hello"]);
+        let output = run_with_timeout(cmd, Duration::from_secs(5)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+    }
+
+    #[test]
+    fn run_with_timeout_reports_a_nonzero_exit_and_captures_stderr() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo oops >&2; exit 1"]);
+        let output = run_with_timeout(cmd, Duration::from_secs(5)).unwrap();
+        assert!(!output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "oops");
+    }
+
+    #[test]
+    fn run_with_timeout_and_stdin_writes_and_the_command_reads_it_back() {
+        let cmd = Command::new("cat");
+        let output =
+            run_with_timeout_and_stdin(cmd, Duration::from_secs(5), "hello via stdin").unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello via stdin");
+    }
+
+    #[test]
+    fn run_with_timeout_kills_a_process_that_exceeds_the_deadline() {
+        // Proves the child is actually killed, not merely given up on:
+        // rather than just timing the call (which only shows the *wait*
+        // stopped, not that the process itself was terminated), the child
+        // is told to touch a marker file after a delay well past the
+        // timeout -- if it's genuinely killed, that marker must never
+        // appear even after waiting past when it would have.
+        let marker = crate::test_support::unique_temp_path("git-sync-timeout", "marker", None);
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            &format!(
+                "sleep 5 && touch {}",
+                shell_words::quote(marker.to_str().unwrap())
+            ),
+        ]);
+
+        let started = Instant::now();
+        let result = run_with_timeout(cmd, Duration::from_millis(150));
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(&result, Err(err) if err.kind() == io::ErrorKind::TimedOut),
+            "{result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "must return promptly once the deadline passes, not wait for the child: {elapsed:?}"
+        );
+
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(
+            !marker.exists(),
+            "the child must have been killed, not merely abandoned -- \
+             it was still alive it would have created this marker by now"
+        );
+
+        fs::remove_file(&marker).ok();
+    }
+
+    #[test]
+    fn run_with_timeout_kills_a_process_writing_enough_output_to_fill_a_pipe() {
+        // Regression guard for the pipe-deadlock hazard `wait_with_timeout`'s
+        // doc comment describes: without draining stdout on its own thread
+        // for the whole run, a child writing more than the OS pipe buffer
+        // (~64KB on Linux) would block on that write, `try_wait` would
+        // never return, and this call would hang regardless of `timeout`.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "yes | head -c 5000000; sleep 5"]);
+        let started = Instant::now();
+        let result = run_with_timeout(cmd, Duration::from_millis(200));
+        assert!(
+            matches!(&result, Err(err) if err.kind() == io::ErrorKind::TimedOut),
+            "{result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "must not deadlock on a full pipe buffer: {:?}",
+            started.elapsed()
+        );
     }
 }
