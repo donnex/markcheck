@@ -741,7 +741,8 @@ fn commit_via_temp_index(
         if let Some(reason) = repo_sync_blocked(repo_root) {
             return Err(reason);
         }
-        let created_commit = commit_temp_index(repo_root, &temp_index, message)?;
+        let created_commit =
+            commit_temp_index(repo_root, &temp_index, message, parent, PLUMBING_TIMEOUT)?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
         Ok(created_commit)
     })();
@@ -812,18 +813,48 @@ fn stage_into_temp_index(
 /// each re-resolving `HEAD` independently at a later point in time (which
 /// would let a commit landing in between be mistaken for part of this
 /// one).
-fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Result<String, String> {
+///
+/// `timeout` is a parameter (mirroring `run_with_timeout`'s own explicit
+/// design) rather than reading `PLUMBING_TIMEOUT` directly, so tests can
+/// inject a short one — needed to exercise the reconciliation below
+/// deterministically via a hook that sleeps past it.
+///
+/// External review, round 4: `git commit` can run a `post-commit` hook —
+/// which only ever runs *after* the ref update, `git commit`'s own
+/// mutation, is already durable — as its last step before the process
+/// exits. If that hook (or the commit machinery itself, past the point of
+/// no return) is still running when `timeout` expires, `run_with_timeout`
+/// kills the whole process group, and a naive caller would report the
+/// commit as failed even though it had already succeeded. On a timeout
+/// specifically (never on an ordinary nonzero exit, which never leaves
+/// `HEAD` in doubt the way a killed process can), `HEAD` is re-resolved
+/// and compared against `parent`: if it moved, the commit is treated as
+/// having succeeded — returning that new `HEAD` exactly as the success
+/// path would, so the normal `verify_commit_scope` pipeline still runs
+/// against it (a hook that also misbehaved during that same timed-out run
+/// is still caught and undone normally). If `HEAD` didn't move, the
+/// commit genuinely never happened and the original timeout is reported.
+fn commit_temp_index(
+    repo_root: &Path,
+    temp_index: &Path,
+    message: &str,
+    parent: &Option<String>,
+    timeout: Duration,
+) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
         .env("GIT_INDEX_FILE", temp_index)
         .args(["commit", "-m", message]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git commit failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git commit", &output));
+    match run_with_timeout(cmd, timeout) {
+        Ok(output) if output.status.success() => current_head(repo_root)
+            .ok_or_else(|| "git-sync: could not resolve HEAD after commit".to_string()),
+        Ok(output) => Err(command_error("git commit", &output)),
+        Err(err) if err.kind() == io::ErrorKind::TimedOut => match current_head(repo_root) {
+            Some(head) if Some(&head) != parent.as_ref() => Ok(head),
+            _ => Err(format!("git commit failed: {err}")),
+        },
+        Err(err) => Err(format!("git commit failed: {err}")),
     }
-    current_head(repo_root)
-        .ok_or_else(|| "git-sync: could not resolve HEAD after commit".to_string())
 }
 
 /// Well-known empty-tree object ID, used as the diff base for a root commit
@@ -2467,7 +2498,103 @@ mod tests {
         let temp_index = work.join(".git").join("scratch-test-index");
         let head = current_head(&work).unwrap();
         populate_temp_index(&work, &temp_index, &head).unwrap();
-        assert!(commit_temp_index(&work, &temp_index, "empty").is_err());
+        assert!(
+            commit_temp_index(
+                &work,
+                &temp_index,
+                "empty",
+                &Some(head.clone()),
+                PLUMBING_TIMEOUT
+            )
+            .is_err()
+        );
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_temp_index_reconciles_when_a_post_commit_hook_outlives_the_timeout() {
+        // External review, round 4: a `post-commit` hook only ever runs
+        // *after* the ref update is already durable. If `run_with_timeout`
+        // kills the process group while that hook is still running, the
+        // commit itself already succeeded — reporting it as failed would be
+        // wrong. A short injected timeout plus a hook that outlives it
+        // reproduces this deterministically, without needing a real
+        // multi-second wait against `PLUMBING_TIMEOUT` itself.
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("post-commit");
+        fs::write(&hook_path, "#!/bin/sh\nsleep 2\n").unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let temp_index = work.join(".git").join("scratch-test-index-timeout");
+        populate_temp_index(&work, &temp_index, &parent).unwrap();
+        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
+
+        let result = commit_temp_index(
+            &work,
+            &temp_index,
+            "reconciled despite timeout",
+            &Some(parent.clone()),
+            Duration::from_millis(300),
+        );
+        let new_head = current_head(&work);
+        assert!(
+            new_head.is_some() && new_head != Some(parent),
+            "the commit itself must have actually landed: {new_head:?}"
+        );
+        assert_eq!(
+            result.as_deref().ok(),
+            new_head.as_deref(),
+            "a timeout after the ref already moved must report success, not a false failure: {result:?}"
+        );
+
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_temp_index_still_fails_when_the_commit_never_lands() {
+        // Companion to the test above: a `pre-commit` hook runs *before*
+        // the ref update, so a timeout while it's still sleeping means the
+        // commit genuinely never happened — this must still report a
+        // failure, not paper over a real one.
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(&hook_path, "#!/bin/sh\nsleep 2\n").unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let temp_index = work.join(".git").join("scratch-test-index-never-lands");
+        populate_temp_index(&work, &temp_index, &parent).unwrap();
+        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
+
+        let result = commit_temp_index(
+            &work,
+            &temp_index,
+            "should not land",
+            &Some(parent.clone()),
+            Duration::from_millis(300),
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(
+            current_head(&work),
+            Some(parent),
+            "the commit must never have happened"
+        );
+
         let _ = fs::remove_file(&temp_index);
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
