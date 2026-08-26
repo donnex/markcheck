@@ -538,11 +538,13 @@ fn run_sync(
     };
 
     let parent = current_head(&repo_root);
-    if let Err(err) = commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
-        return SyncOutcome::Failed(err);
-    }
+    let created_commit =
+        match commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
+            Ok(sha) => sha,
+            Err(err) => return SyncOutcome::Failed(err),
+        };
 
-    push(repo_dir)
+    push_if_head_unchanged(repo_dir, &repo_root, &created_commit)
 }
 
 /// Whether `HEAD` is ahead of its upstream tracking branch — i.e. there's a
@@ -634,6 +636,30 @@ fn push(repo_dir: &Path) -> SyncOutcome {
             commit: current_head(repo_dir).unwrap_or_default(),
         },
     }
+}
+
+/// Pushes `expected_commit` (the commit `run_sync` just made and verified),
+/// but only if `HEAD` still equals it — external review, round 4:
+/// `branch_has_unrelated_unpushed_commits` only ever ran as a snapshot
+/// *before* the commit, so a commit landing on the branch after
+/// verification but before this point (another markcheck instance, a
+/// human, an IDE) would otherwise get pushed right alongside markcheck's
+/// own, unnoticed. Unlike `retry_commit`'s silent `Skipped` on the same
+/// mismatch (correct there — it's abandoning a *retry* of an
+/// already-reported failure), a first attempt at a freshly-made commit
+/// must surface something rather than going quiet, so a mismatch here is
+/// reported as `CommittedNotPushed` instead: nothing is lost (the commit
+/// is safely local either way) and this reuses the existing automatic
+/// retry machinery (`GitSync::poll`/`retry_push_if_due` → `retry_commit`,
+/// which performs the same check again once due).
+fn push_if_head_unchanged(repo_dir: &Path, repo_root: &Path, expected_commit: &str) -> SyncOutcome {
+    if current_head(repo_root).as_deref() != Some(expected_commit) {
+        return SyncOutcome::CommittedNotPushed {
+            message: "git-sync: repository changed after commit".to_string(),
+            commit: expected_commit.to_string(),
+        };
+    }
+    push(repo_dir)
 }
 
 /// Re-attempts pushing a specific commit that previously failed to push
@@ -1444,6 +1470,69 @@ mod tests {
             current_head(&work),
             Some(concurrent_commit),
             "the branch ref must not be deleted out from under the concurrent commit"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verification() {
+        // External review, round 4: branch_has_unrelated_unpushed_commits
+        // only ever runs as a snapshot before markcheck's own commit — a
+        // commit landing on the branch after that commit was made and
+        // verified, but before the push actually runs, would otherwise get
+        // pushed right alongside it, unnoticed.
+        let (work, remote) = init_repo_with_remote();
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let created_commit = current_head(&work).unwrap();
+
+        fs::write(work.join("other.md"), "concurrent\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "concurrent change"]);
+
+        let outcome = push_if_head_unchanged(&work, &work, &created_commit);
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, commit }
+                if message.contains("repository changed after commit") && commit == &created_commit),
+            "{outcome:?}"
+        );
+
+        let remote_log = Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "--format=%s", "main"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&remote_log.stdout).trim(),
+            "init",
+            "neither the markcheck commit nor the concurrent one must reach the remote"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn push_if_head_unchanged_pushes_normally_when_nothing_raced_it() {
+        let (work, remote) = init_repo_with_remote();
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let created_commit = current_head(&work).unwrap();
+
+        let outcome = push_if_head_unchanged(&work, &work, &created_commit);
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+
+        let remote_log = Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "--format=%s", "main"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&remote_log.stdout).contains("markcheck commit"),
+            "{}",
+            String::from_utf8_lossy(&remote_log.stdout)
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();

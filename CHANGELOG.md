@@ -109,6 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the one it was actually meant to roll back — the rollback is now
   guarded so it only ever undoes the exact commit git-sync itself made,
   refusing instead if the branch has moved on since.
+- Git-sync (`--git-sync`) no longer risks pushing a commit that landed on
+  the branch after its own commit was made and verified but before the
+  push ran — it now refuses to push (retrying automatically, same as any
+  other failed push) rather than sending whatever's there.
 
 ## [1.2.2] - 2026-08-20
 
