@@ -123,6 +123,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since this request was queued`) rather than silently publishing a
   snapshot that's since gone out of date. Toggling or editing again syncs
   the file's actual current content normally.
+- Git-sync (`--git-sync`)'s push — both a fresh commit and an automatic
+  retry — now targets the exact commit it verified, rather than sending
+  whatever the local branch currently is. A commit landing at just the
+  wrong moment (between the check and the push) can no longer ride along
+  and get published as a side effect.
 
 ## [1.2.2] - 2026-08-20
 
