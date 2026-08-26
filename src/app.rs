@@ -4,13 +4,12 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use sha2::{Digest, Sha256};
 
 use crate::clipboard;
 use crate::model::{
     AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, OverviewTarget,
     Palette, PendingSync, PickerState, Screen, SearchState, StateSnapshot, TaskState,
-    UNDO_HISTORY_CAP,
+    UNDO_HISTORY_CAP, hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -27,18 +26,9 @@ fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
     Some((meta.modified().ok()?, meta.len()))
 }
 
-/// A content digest, used to detect whether the file on disk still matches
-/// what we last saw before we overwrite it — a pre-write content check, not
-/// an atomic compare-and-swap (see `disk_content_diverged`'s doc comment for
-/// the gap that leaves) and not a security boundary (nothing here is
-/// adversarial), so a cryptographic digest is stronger than this actually
-/// needs; used anyway since the abstraction already exists and the cost is
-/// negligible at checklist-file sizes.
-fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
-}
-
 /// Hash of `path`'s current on-disk bytes, or `None` if it can't be read.
+/// See `model::hash_bytes`'s doc comment for what this check is (and isn't)
+/// used for — a pre-write content check, not an atomic compare-and-swap.
 fn current_content_hash(path: &Path) -> Option<[u8; 32]> {
     fs::read(path).ok().map(|bytes| hash_bytes(&bytes))
 }
@@ -1030,10 +1020,12 @@ impl AppState {
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
         self.file_mtime = file_mtime;
         self.file_size = file_size;
-        self.file_content_hash = Some(hash_bytes(content.as_bytes()));
+        let content_hash = hash_bytes(content.as_bytes());
+        self.file_content_hash = Some(content_hash);
         self.last_update_at = Some(SystemTime::now());
         self.git_sync.pending = Some(PendingSync {
             content,
+            content_hash,
             description: change_desc.to_string(),
         });
         true
@@ -1200,8 +1192,11 @@ impl AppState {
     /// `editor` is the resolved program name (e.g. `vim`, `code`), not the
     /// literal `$EDITOR`/`$VISUAL` env var.
     pub fn request_external_edit_sync(&mut self, editor: &str) {
+        let content = writer::document_contents(&self.document);
+        let content_hash = hash_bytes(content.as_bytes());
         self.git_sync.pending = Some(PendingSync {
-            content: writer::document_contents(&self.document),
+            content,
+            content_hash,
             description: format!("Edited in {editor}"),
         });
     }

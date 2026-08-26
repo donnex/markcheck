@@ -372,7 +372,13 @@ then names only the last of them, though its content still reflects every
 change up to that point. Editing the file
 in `$EDITOR` (`e`) syncs too, as its own commit (`checklist.md: Edited in
 $EDITOR`) — even if you only edit and quit without toggling anything
-afterward. It only ever
+afterward. If something *else* changes the file in the meantime — an
+edit made outside markcheck entirely, or the file getting deleted — while
+a sync is still queued or in flight, that sync is refused rather than
+publishing content that's since gone stale: `Git sync failed: git-sync:
+file changed since this request was queued; edit or toggle again to sync
+the current content`. Toggling or editing again picks up the file's
+actual current content normally. It only ever
 touches files git already tracks — a new/untracked file next to the
 checklist is never picked up and never committed, and the same goes for the
 checklist file itself: if it isn't tracked yet, git-sync won't `git add` it
