@@ -3,8 +3,20 @@ use std::time::SystemTime;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use sha2::{Digest, Sha256};
 
 pub type LineNumber = usize;
+
+/// A content digest — used to detect whether a file's on-disk bytes still
+/// match what was last seen (`app.rs`'s `disk_content_diverged`), and as
+/// `PendingSync`'s revision marker (below) — not a security boundary
+/// (nothing here is adversarial), so a cryptographic digest is stronger
+/// than either use actually needs; used anyway since the cost is
+/// negligible at checklist-file sizes and the abstraction is shared
+/// between `app.rs`, `git_sync.rs`, and `main.rs`.
+pub(crate) fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
 
 /// A checkbox task's progress. `Started` is persisted with the `[/]`
 /// marker and counts as **not done** for completion and progress stats.
@@ -865,9 +877,19 @@ pub struct GitSyncState {
 /// re-reading the live working-tree file, so a concurrent, unrelated write
 /// landing on disk mid-sync can't get silently swept into a commit whose
 /// message doesn't describe it.
+///
+/// `content_hash` is the SHA-256 of `content` (already computed by every
+/// call site that constructs one, so this is never extra work) — `GitSync`
+/// records it as the *latest* content it's ever been asked to sync,
+/// letting a background sync tell "the disk changed because a newer
+/// request already superseded me, which will correct things right after I
+/// finish" apart from "the disk changed because of something outside
+/// git-sync entirely, which never will" (see `GitSync::request`'s doc
+/// comment).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingSync {
     pub content: String,
+    pub content_hash: [u8; 32],
     pub description: String,
 }
 

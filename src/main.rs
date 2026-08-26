@@ -190,8 +190,10 @@ fn main() -> anyhow::Result<()> {
         git_sync.as_mut(),
         fs::read_to_string(&state.document.file_path),
     ) {
+        let content_hash = model::hash_bytes(content.as_bytes());
         sync.request(model::PendingSync {
             content,
+            content_hash,
             description: "Catch up a pending push".to_string(),
         });
     }

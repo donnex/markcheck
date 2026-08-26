@@ -117,6 +117,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subprocess timeout kills it after the commit itself already succeeded
   (e.g. a slow `post-commit` hook still running past the deadline) —
   it now checks whether the commit actually landed before deciding.
+- Git-sync (`--git-sync`) no longer commits and pushes stale content if
+  the file changes outside markcheck (an external edit, or a deletion)
+  while a sync is queued or in flight — it now refuses (`file changed
+  since this request was queued`) rather than silently publishing a
+  snapshot that's since gone out of date. Toggling or editing again syncs
+  the file's actual current content normally.
 
 ## [1.2.2] - 2026-08-20
 

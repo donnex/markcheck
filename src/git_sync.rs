@@ -1,10 +1,11 @@
+use std::fs;
 use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::model::PendingSync;
+use crate::model::{PendingSync, hash_bytes};
 
 /// How long to wait between automatic push retries after a
 /// `CommittedNotPushed` outcome, so a still-down network doesn't get
@@ -254,6 +255,16 @@ pub struct GitSync {
     /// *new* commit from stale content if `HEAD` had moved on in the
     /// meantime, silently reverting whatever superseded it.
     retry: Option<(String, Instant)>,
+    /// The content hash of the *latest* `PendingSync` this `GitSync` has
+    /// ever been asked to sync — updated on every `request()` call,
+    /// including ones that coalesce into `pending` rather than spawning
+    /// immediately. Shared with the background thread (`run_sync` reads it
+    /// live, not a snapshot taken at spawn time) so a sync in flight can
+    /// tell "the file changed because a newer request already supersedes
+    /// me, which will correct things right after I finish" apart from "the
+    /// file changed because of something outside git-sync entirely, which
+    /// nothing will ever correct" — see `run_sync`'s staleness check.
+    latest_requested_hash: Arc<Mutex<[u8; 32]>>,
 }
 
 impl GitSync {
@@ -279,6 +290,7 @@ impl GitSync {
             busy: false,
             pending: None,
             retry: None,
+            latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
         })
     }
 
@@ -287,7 +299,14 @@ impl GitSync {
     /// `sync.description` (e.g. `Check "Restart service"`); the full commit
     /// message is built from the file name plus this description. Coalesced
     /// with any already-running sync per the `pending` rule above.
+    ///
+    /// Always records `sync.content_hash` as the latest-known request
+    /// first — unconditionally, before deciding whether to coalesce or
+    /// spawn — so a sync already in flight for an *older* request can see
+    /// that a newer one now exists, even though that newer one won't
+    /// itself start running until the current one finishes.
     pub fn request(&mut self, sync: PendingSync) {
+        *self.latest_requested_hash.lock().unwrap() = sync.content_hash;
         if self.busy {
             self.pending = Some(sync);
             return;
@@ -300,9 +319,16 @@ impl GitSync {
         let repo_dir = self.repo_dir.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
+        let latest_requested_hash = Arc::clone(&self.latest_requested_hash);
         std::thread::spawn(move || {
             let message = commit_message(&file_path, &sync.description);
-            let outcome = run_sync(&repo_dir, &file_path, &sync.content, &message);
+            let outcome = run_sync(
+                &repo_dir,
+                &file_path,
+                &sync.content,
+                &message,
+                &latest_requested_hash,
+            );
             let _ = sender.send(outcome);
         });
     }
@@ -419,8 +445,14 @@ fn commit_message(file_path: &Path, change_desc: &str) -> String {
 /// actually running, a working-tree-reading commit would silently absorb it
 /// under a message that only describes the *original* request. A later,
 /// unrelated change still gets synced — as its own, separately labeled
-/// commit, the next time `request` runs — it just can never bleed into this
-/// one.
+/// commit — *whenever something actually requests one*, which it just can
+/// never bleed into this one. External review, round 5: that qualifier
+/// matters — a passive file-watcher reload never requests one (see
+/// `AppState::request_external_edit_sync`'s doc comment), so a request that
+/// goes stale that way would otherwise never be corrected. See the
+/// staleness check below (`latest_requested_hash`) for how this function
+/// refuses rather than publishing a request once that's happened, without
+/// weakening the guarantee in this paragraph.
 ///
 /// The commit itself is built via a **temporary index** (`GIT_INDEX_FILE`)
 /// populated from `HEAD` plus exactly one replaced path, committed with a
@@ -445,6 +477,7 @@ fn run_sync(
     file_path: &Path,
     expected_content: &str,
     message: &str,
+    latest_requested_hash: &Mutex<[u8; 32]>,
 ) -> SyncOutcome {
     // All plumbing commands run from the repo root with a root-relative
     // path, sidestepping any ambiguity between CWD-relative and
@@ -530,6 +563,47 @@ fn run_sync(
             "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
                 .to_string(),
         );
+    }
+
+    // `expected_content` is a snapshot captured whenever the request was
+    // queued — possibly well before this background thread actually gets
+    // to it (coalesced behind a slow push, a busy worker). External
+    // review, round 5: nothing above re-confirms that snapshot is still
+    // accounted for by the file's *current* revision before committing it.
+    //
+    // A naive "disk must equal expected_content" check is too strict,
+    // though: several of markcheck's own toggles can legitimately land on
+    // disk in quick succession (each one queuing its own request) before
+    // the *first* request's background thread ever gets scheduled — by
+    // the time it runs, disk already reflects a *later*, already-queued
+    // request, not an unrelated external change. That's fine (the later
+    // request's own sync will commit that content momentarily); it's not
+    // the case this check needs to catch.
+    //
+    // What actually matters: does the file's current content correspond
+    // to *some* request git-sync knows about — either this one, or a newer
+    // one already queued to run next — or is it something entirely
+    // outside that system (an edit not made through markcheck's own `e`,
+    // or a deletion)? `latest_requested_hash` is updated on every
+    // `request()` call, including coalesced ones, so it always reflects
+    // the newest content git-sync has ever been asked to sync. If disk
+    // matches that, whatever's there is already accounted for (either by
+    // this commit or a following one); if it doesn't, the change is
+    // unaccounted for and must not be silently published. The passive
+    // file-watcher reload deliberately never queues a request of its own
+    // (see "Isolated commits" below), so without this check, nothing would
+    // ever correct the record for that case. `fs::read` failing (the file
+    // was deleted) is always unaccounted for, regardless of
+    // `latest_requested_hash` — committing `expected_content` regardless
+    // would otherwise silently resurrect a file the user just deleted.
+    match fs::read(file_path) {
+        Ok(bytes) if hash_bytes(&bytes) == *latest_requested_hash.lock().unwrap() => {}
+        _ => {
+            return SyncOutcome::Failed(
+                "git-sync: file changed since this request was queued; edit or toggle again to sync the current content"
+                    .to_string(),
+            );
+        }
     }
 
     let blob = match hash_object(&repo_root, expected_content) {
@@ -1218,6 +1292,22 @@ mod tests {
         work
     }
 
+    /// A `latest_requested_hash` for a direct `run_sync` call representing
+    /// "nobody else has requested anything since" — i.e. the ordinary,
+    /// non-racing case most tests want, where the only known request is
+    /// this call's own `content`.
+    fn no_race(content: &str) -> Mutex<[u8; 32]> {
+        Mutex::new(hash_bytes(content.as_bytes()))
+    }
+
+    fn pending_sync(content: &str, description: &str) -> PendingSync {
+        PendingSync {
+            content: content.to_string(),
+            content_hash: hash_bytes(content.as_bytes()),
+            description: description.to_string(),
+        }
+    }
+
     #[test]
     fn detect_finds_a_repo() {
         let work = init_repo_without_remote();
@@ -1240,7 +1330,13 @@ mod tests {
         fs::write(&untracked, "- [ ] new\n").unwrap();
 
         assert_eq!(
-            run_sync(&work, &untracked, "- [ ] new\n", "should not commit"),
+            run_sync(
+                &work,
+                &untracked,
+                "- [ ] new\n",
+                "should not commit",
+                &no_race("- [ ] new\n")
+            ),
             SyncOutcome::SkippedUntracked
         );
         // Confirm it really never got added.
@@ -1258,7 +1354,13 @@ mod tests {
     fn run_sync_skips_when_tracked_file_is_unchanged() {
         let work = init_repo_without_remote();
         assert_eq!(
-            run_sync(&work, &work.join("tracked.md"), "- [ ] one\n", "no changes"),
+            run_sync(
+                &work,
+                &work.join("tracked.md"),
+                "- [ ] one\n",
+                "no changes",
+                &no_race("- [ ] one\n")
+            ),
             SyncOutcome::Skipped
         );
         fs::remove_dir_all(work.parent().unwrap()).ok();
@@ -1272,7 +1374,13 @@ mod tests {
         let message = commit_message(&file_path, "Check \"one\"");
 
         assert_eq!(
-            run_sync(&work, &file_path, "- [x] one\n", &message),
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] one\n",
+                &message,
+                &no_race("- [x] one\n")
+            ),
             SyncOutcome::Synced
         );
 
@@ -1299,6 +1407,7 @@ mod tests {
             &work.join("tracked.md"),
             "- [x] one\n",
             "Check \"one\"",
+            &no_race("- [x] one\n"),
         );
         // The commit itself succeeded (nothing was lost); only the push
         // failed, which is why this is `CommittedNotPushed` rather than
@@ -1588,24 +1697,15 @@ mod tests {
         // inline), so none of this blocks regardless of how slow the
         // background attempt turns out to be.
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
-        sync.request(PendingSync {
-            content: "- [x] one\n".to_string(),
-            description: "first".to_string(),
-        });
+        sync.request(pending_sync("- [x] one\n", "first"));
         fs::write(work.join("tracked.md"), "- [x] one\n- [x] two\n").unwrap();
-        sync.request(PendingSync {
-            content: "- [x] one\n- [x] two\n".to_string(),
-            description: "second".to_string(),
-        });
+        sync.request(pending_sync("- [x] one\n- [x] two\n", "second"));
         fs::write(
             work.join("tracked.md"),
             "- [x] one\n- [x] two\n- [x] three\n",
         )
         .unwrap();
-        sync.request(PendingSync {
-            content: "- [x] one\n- [x] two\n- [x] three\n".to_string(),
-            description: "third".to_string(),
-        });
+        sync.request(pending_sync("- [x] one\n- [x] two\n- [x] three\n", "third"));
         assert!(sync.busy, "still mid-flight on the first attempt");
 
         // Only ever one attempt in flight: "second"/"third" coalesce into a
@@ -1845,10 +1945,7 @@ mod tests {
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
 
         let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
-        sync.request(PendingSync {
-            content: "- [x] one\n".to_string(),
-            description: "Check \"one\"".to_string(),
-        });
+        sync.request(pending_sync("- [x] one\n", "Check \"one\""));
 
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut result = None;
@@ -1875,18 +1972,12 @@ mod tests {
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
         let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
 
-        sync.request(PendingSync {
-            content: "- [x] one\n".to_string(),
-            description: "first".to_string(),
-        });
+        sync.request(pending_sync("- [x] one\n", "first"));
         assert!(sync.busy, "first request should mark the worker busy");
         // A second `request` while busy doesn't spawn a second concurrent
         // thread (two `git commit`/`push` runs on the same repo could race
         // on the index/HEAD) — it queues instead.
-        sync.request(PendingSync {
-            content: "- [x] one\n".to_string(),
-            description: "second".to_string(),
-        });
+        sync.request(pending_sync("- [x] one\n", "second"));
         assert_eq!(
             sync.pending.as_ref().map(|p| p.description.as_str()),
             Some("second")
@@ -1917,36 +2008,35 @@ mod tests {
     }
 
     #[test]
-    fn run_sync_commits_exactly_the_expected_content_ignoring_concurrent_disk_changes() {
-        // The core regression test for the reported git-sync race: even
-        // though the working-tree file already has more written to it than
-        // this request knows about — simulating an unrelated concurrent
-        // write (another toggle, an external editor) landing between the
-        // request being queued and the sync worker actually running — the
-        // commit must contain only the content *this* request captured,
-        // never a mix of the two silently attributed to this request's
-        // message.
+    fn run_sync_refuses_to_commit_content_that_went_stale_before_the_worker_ran() {
+        // External review, round 5: an earlier version of this test asserted
+        // the opposite of what's checked here — that committing exactly the
+        // queued snapshot, even once the working tree has more written to
+        // it, was correct, on the theory that "a later sync picks up the
+        // rest." That's false whenever nothing ever triggers a later sync —
+        // a plain file-watcher reload (unlike the explicit `e`-editor
+        // return path) never queues one, on purpose (see "Isolated
+        // commits" below). A request that's gone stale must now be
+        // refused rather than published, without ever absorbing B into
+        // this commit either.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         let message = commit_message(&file_path, "Check \"A\"");
 
         fs::write(&file_path, "- [x] A\n- [x] B\n").unwrap();
 
-        assert_eq!(
-            run_sync(&work, &file_path, "- [x] A\n", &message),
-            SyncOutcome::Synced
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] A\n",
+            &message,
+            &no_race("- [x] A\n"),
+        );
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("file changed since this request was queued")),
+            "{outcome:?}"
         );
 
-        let show = Command::new("git")
-            .current_dir(&remote)
-            .args(["show", "HEAD:tracked.md"])
-            .output()
-            .unwrap();
-        assert_eq!(
-            String::from_utf8_lossy(&show.stdout),
-            "- [x] A\n",
-            "commit must hold exactly the requested snapshot, not the unrelated concurrent write"
-        );
         let log = Command::new("git")
             .current_dir(&remote)
             .args(["log", "-1", "--format=%s"])
@@ -1954,15 +2044,98 @@ mod tests {
             .unwrap();
         assert_eq!(
             String::from_utf8_lossy(&log.stdout).trim(),
-            "tracked.md: Check \"A\""
+            "init",
+            "nothing must be committed at all -- neither the stale snapshot nor a mix with B"
         );
 
-        // B is still sitting on disk, uncommitted — not lost, just not part
-        // of this commit; a later sync (its own request) picks it up.
+        // B is untouched on disk -- refusing never resurrects, reverts, or
+        // otherwise rewrites the working tree.
         assert_eq!(
             fs::read_to_string(&file_path).unwrap(),
             "- [x] A\n- [x] B\n"
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_refuses_to_recommit_a_file_deleted_after_the_request_was_queued() {
+        // External review, round 5: the same staleness gap, but for a
+        // deletion -- git status still sees a deleted-in-worktree tracked
+        // file (not `??`, not empty) as something to proceed on, so without
+        // this check the stale queued content would be committed via the
+        // temp index regardless, resurrecting a file the user just deleted
+        // locally.
+        let (work, remote) = init_repo_with_remote();
+        let file_path = work.join("tracked.md");
+        let message = commit_message(&file_path, "Check \"one\"");
+
+        fs::remove_file(&file_path).unwrap();
+
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &message,
+            &no_race("- [x] one\n"),
+        );
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("file changed since this request was queued")),
+            "{outcome:?}"
+        );
+
+        let log = Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout).trim(),
+            "init",
+            "the deleted file must not be resurrected in a commit"
+        );
+        assert!(!file_path.exists(), "the deletion must be left alone");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_recovers_on_the_next_request_after_a_stale_refusal() {
+        // A refusal must be a one-shot skip of this specific stale request,
+        // not a stuck state -- the very next sync, carrying the file's
+        // actual current content, must succeed normally.
+        let (work, remote) = init_repo_with_remote();
+        let file_path = work.join("tracked.md");
+
+        fs::write(&file_path, "- [x] A\n- [x] B\n").unwrap();
+        let stale_message = commit_message(&file_path, "Check \"A\"");
+        assert!(matches!(
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] A\n",
+                &stale_message,
+                &no_race("- [x] A\n")
+            ),
+            SyncOutcome::Failed(_)
+        ));
+
+        let fresh_message = commit_message(&file_path, "Edited in vim");
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] A\n- [x] B\n",
+            &fresh_message,
+            &no_race("- [x] A\n- [x] B\n"),
+        );
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+
+        let show = Command::new("git")
+            .current_dir(&remote)
+            .args(["show", "HEAD:tracked.md"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] A\n- [x] B\n");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -1985,7 +2158,13 @@ mod tests {
 
         let message = commit_message(&file_path, "Check \"one\"");
         assert_eq!(
-            run_sync(&work, &file_path, "- [x] one\n", &message),
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] one\n",
+                &message,
+                &no_race("- [x] one\n")
+            ),
             SyncOutcome::Synced
         );
 
@@ -2044,7 +2223,13 @@ mod tests {
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] one\n").unwrap();
         let message = commit_message(&file_path, "Check \"one\"");
-        let outcome = run_sync(&work, &file_path, "- [x] one\n", &message);
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &message,
+            &no_race("- [x] one\n"),
+        );
 
         assert!(
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("hook modified files beyond the checklist")),
@@ -2118,7 +2303,13 @@ mod tests {
         run(&work, &["add", "tracked.md"]);
 
         let message = commit_message(&file_path, "Check \"one\"");
-        let outcome = run_sync(&work, &file_path, "- [x] one\n", &message);
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &message,
+            &no_race("- [x] one\n"),
+        );
 
         assert!(
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("hook modified files beyond the checklist")),
@@ -2167,7 +2358,13 @@ mod tests {
         );
 
         let file_path = work.join("tracked.md");
-        let outcome = run_sync(&work, &file_path, "- [x] resolved\n", "should not commit");
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] resolved\n",
+            "should not commit",
+            &no_race("- [x] resolved\n"),
+        );
         assert!(matches!(outcome, SyncOutcome::Failed(_)), "{outcome:?}");
 
         // Nothing about the in-progress merge was touched: HEAD never
@@ -2186,19 +2383,35 @@ mod tests {
 
     #[test]
     fn a_later_request_commits_the_concurrent_change_separately() {
+        // The disk already holds "A\nB\n" before either sync runs, standing
+        // in for a rapid double-toggle: the first request (content "A") was
+        // queued, then a second toggle wrote "A\nB\n" and queued its own
+        // request before the first one's worker got scheduled. That second
+        // request is why `latest` is set to "A\nB\n" for both calls here --
+        // git-sync already knows about it (it's `pending`, about to be
+        // spawned the moment the first finishes), so the first request's
+        // own staleness check must not refuse just because disk has moved
+        // past its own content.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] A\n- [x] B\n").unwrap();
+        let latest = no_race("- [x] A\n- [x] B\n");
 
         let first_message = commit_message(&file_path, "Check \"A\"");
         assert_eq!(
-            run_sync(&work, &file_path, "- [x] A\n", &first_message),
+            run_sync(&work, &file_path, "- [x] A\n", &first_message, &latest),
             SyncOutcome::Synced
         );
 
         let second_message = commit_message(&file_path, "Check \"B\"");
         assert_eq!(
-            run_sync(&work, &file_path, "- [x] A\n- [x] B\n", &second_message),
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] A\n- [x] B\n",
+                &second_message,
+                &latest
+            ),
             SyncOutcome::Synced
         );
 
@@ -2237,7 +2450,13 @@ mod tests {
         fs::write(&file_path, "- [ ] one\n- [x] two\n").unwrap();
 
         assert_eq!(
-            run_sync(&work, &file_path, "- [ ] one\n", "already committed"),
+            run_sync(
+                &work,
+                &file_path,
+                "- [ ] one\n",
+                "already committed",
+                &no_race("- [ ] one\n")
+            ),
             SyncOutcome::Skipped
         );
 
@@ -2259,7 +2478,13 @@ mod tests {
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [ ] one\n- [x] two\n").unwrap();
 
-        let outcome = run_sync(&work, &file_path, "- [ ] one\n", "already committed");
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [ ] one\n",
+            "already committed",
+            &no_race("- [ ] one\n"),
+        );
         assert!(
             matches!(outcome, SyncOutcome::CommittedNotPushed { .. }),
             "must attempt (and report failure of) the push, not silently skip: {outcome:?}"
@@ -2284,7 +2509,13 @@ mod tests {
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] one\n").unwrap();
         let message = commit_message(&file_path, "Check \"one\"");
-        let outcome = run_sync(&work, &file_path, "- [x] one\n", &message);
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &message,
+            &no_race("- [x] one\n"),
+        );
 
         assert!(
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
@@ -2324,6 +2555,7 @@ mod tests {
             &file_path,
             "- [x] one\n",
             &commit_message(&file_path, "Check \"one\""),
+            &no_race("- [x] one\n"),
         );
         assert!(matches!(first, SyncOutcome::CommittedNotPushed { .. }));
 
@@ -2336,6 +2568,7 @@ mod tests {
             &file_path,
             "- [x] one\n- [x] two\n",
             &commit_message(&file_path, "Check \"two\""),
+            &no_race("- [x] one\n- [x] two\n"),
         );
         assert!(
             matches!(second, SyncOutcome::CommittedNotPushed { .. }),
@@ -2378,7 +2611,13 @@ mod tests {
         fs::write(&file_path, "- [x] one\n").unwrap();
         let message = commit_message(&file_path, "Check \"one\"");
         assert_eq!(
-            run_sync(&sub, &file_path, "- [x] one\n", &message),
+            run_sync(
+                &sub,
+                &file_path,
+                "- [x] one\n",
+                &message,
+                &no_race("- [x] one\n")
+            ),
             SyncOutcome::Synced
         );
 
@@ -2430,7 +2669,13 @@ mod tests {
             let message = commit_message(&file_path, "Check \"one\"");
 
             assert_eq!(
-                run_sync(&work, &file_path, "- [x] one\n", &message),
+                run_sync(
+                    &work,
+                    &file_path,
+                    "- [x] one\n",
+                    &message,
+                    &no_race("- [x] one\n")
+                ),
                 SyncOutcome::Synced,
                 "file name: {file_name:?}"
             );
