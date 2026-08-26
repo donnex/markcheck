@@ -404,7 +404,12 @@ sync failed: git-sync: branch has unpushed commits unrelated to this
 change; push them manually first`. Push those yourself, then the next
 toggle syncs normally. (Several of *markcheck's own* commits accumulating
 while offline is fine and expected — this only refuses for commits that
-aren't the checklist file.) Also refuses to run while the repository is
+aren't the checklist file.) That check only runs before markcheck's own
+commit is made; if something else commits to the branch in the brief
+window after that but before the push, markcheck won't push it either —
+it reports `Git commit saved locally; push failed, will retry: git-sync:
+repository changed after commit` and retries automatically, the same as
+any other failed push. Also refuses to run while the repository is
 mid-merge, mid-rebase, mid-cherry-pick, on a detached `HEAD`, or has any
 unresolved conflict anywhere in it — an automatic commit in any of those
 states could silently interfere with work already in progress, so it
