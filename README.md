@@ -402,20 +402,24 @@ edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
 change unsynced.
 
-`git push` sends the whole current branch, the same as running it yourself
-with no arguments — so if the branch already has other local commits ahead
-of the remote that aren't from this checklist, git-sync refuses to create
-its own commit on top rather than pushing your other work for you: `Git
-sync failed: git-sync: branch has unpushed commits unrelated to this
-change; push them manually first`. Push those yourself, then the next
-toggle syncs normally. (Several of *markcheck's own* commits accumulating
-while offline is fine and expected — this only refuses for commits that
-aren't the checklist file.) That check only runs before markcheck's own
-commit is made; if something else commits to the branch in the brief
-window after that but before the push, markcheck won't push it either —
-it reports `Git commit saved locally; push failed, will retry: git-sync:
-repository changed after commit` and retries automatically, the same as
-any other failed push. Also refuses to run while the repository is
+Running plain `git push` yourself sends the whole current branch — so if
+the branch already has other local commits ahead of the remote that aren't
+from this checklist, git-sync refuses to create its own commit on top
+rather than pushing your other work for you: `Git sync failed: git-sync:
+branch has unpushed commits unrelated to this change; push them manually
+first`. Push those yourself, then the next toggle syncs normally. (Several
+of *markcheck's own* commits accumulating while offline is fine and
+expected — this only refuses for commits that aren't the checklist file.)
+That check only runs before markcheck's own commit is made; if something
+else commits to the branch in the brief window after that but before the
+push, markcheck won't push it either — it reports `Git commit saved
+locally; push failed, will retry: git-sync: repository changed after
+commit` and retries automatically, the same as any other failed push.
+Unlike running `git push` yourself, git-sync's own push always targets the
+exact commit it just made (or verified), not whatever the branch currently
+is — so even in the rare case something else commits to the branch at
+just the wrong moment, that commit is never swept along and published as
+a side effect. Also refuses to run while the repository is
 mid-merge, mid-rebase, mid-cherry-pick, on a detached `HEAD`, or has any
 unresolved conflict anywhere in it — an automatic commit in any of those
 states could silently interfere with work already in progress, so it

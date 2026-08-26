@@ -547,7 +547,7 @@ fn run_sync(
     // retrying — see `ahead_of_upstream`'s doc comment for why this matters.
     if head_blob(&repo_root, &relpath).as_deref() == Some(expected_content.as_bytes()) {
         if ahead_of_upstream(&repo_root) {
-            return push(repo_dir);
+            return push(repo_dir, &current_head(&repo_root).unwrap_or_default());
         }
         return SyncOutcome::Skipped;
     }
@@ -686,28 +686,76 @@ fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> boo
     }
 }
 
-/// Runs `git push`, translating the result into a `SyncOutcome`. A failure
-/// here is always `CommittedNotPushed`, never `Failed`: by the time this is
-/// called, either a commit was just made or `HEAD` was already confirmed to
-/// hold the desired content — either way, a local commit exists and the
-/// only thing to retry is the push itself. On failure, resolves the current
-/// `HEAD` to embed in `CommittedNotPushed` (rather than requiring the
-/// caller to pass one in) — captured *after* the push attempt, which is the
-/// most accurate answer to "what commit actually failed to push" regardless
-/// of which of `run_sync`'s two call sites got here.
-fn push(repo_dir: &Path) -> SyncOutcome {
+/// Resolves `(remote, upstream-branch-ref)` for the current branch via its
+/// `branch.<name>.remote`/`branch.<name>.merge` config — the same two keys
+/// several tests already set up manually (via `-u` push or explicit `git
+/// config` calls) — rather than parsing `@{u}`'s abbreviated form, which
+/// would need guessing where the remote name ends and a branch name that
+/// itself contains `/` begins. `None` when either key is unset (no
+/// upstream configured at all), or the branch itself can't be resolved
+/// (detached `HEAD`).
+fn upstream_parts(repo_root: &Path) -> Option<(String, String)> {
+    let branch_ref = current_branch_ref(repo_root)?;
+    let branch = branch_ref.strip_prefix("refs/heads/")?;
+    let remote = git_config(repo_root, &format!("branch.{branch}.remote"))?;
+    let merge_ref = git_config(repo_root, &format!("branch.{branch}.merge"))?;
+    Some((remote, merge_ref))
+}
+
+/// `git config --get <key>`, trimmed — `None` on any failure (key unset,
+/// not a repo, `git` itself failing to run).
+fn git_config(repo_root: &Path, key: &str) -> Option<String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir).arg("push");
+    cmd.current_dir(repo_root).args(["config", "--get", key]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Pushes `expected_commit` — explicitly, as `<remote>
+/// <expected_commit>:<upstream-branch>` rather than a bare `git push` —
+/// translating the result into a `SyncOutcome`. A failure here is always
+/// `CommittedNotPushed`, never `Failed`: by the time this is called,
+/// either a commit was just made or `HEAD` was already confirmed to hold
+/// the desired content — either way, a local commit exists and the only
+/// thing to retry is the push itself.
+///
+/// External review, round 5: both of this function's callers
+/// (`push_if_head_unchanged`, `retry_commit`) verify `HEAD ==
+/// expected_commit` immediately beforehand, but that check and the actual
+/// push used to be two separate steps regardless — a bare `git push`
+/// sends whatever the local branch tip has become by the time it runs, so
+/// a commit landing in the gap between the check and the push would still
+/// ride along. Targeting `expected_commit` explicitly closes this rather
+/// than merely re-narrowing it: the push can never publish more than that
+/// commit's own ancestry, no matter what the local branch has become by
+/// push-time. Falls back to a bare `git push` only when `upstream_parts`
+/// can't resolve a remote/branch to target explicitly (no upstream
+/// configured at all) — there's nothing to push instead in that case, and
+/// a bare push already reports a clear, git-native error for it.
+fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir);
+    match upstream_parts(repo_dir) {
+        Some((remote, branch_ref)) => {
+            cmd.args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
+        }
+        None => {
+            cmd.arg("push");
+        }
+    }
     let output = run_with_timeout(cmd, PUSH_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
         Ok(output) => SyncOutcome::CommittedNotPushed {
             message: command_error("git push", &output),
-            commit: current_head(repo_dir).unwrap_or_default(),
+            commit: expected_commit.to_string(),
         },
         Err(err) => SyncOutcome::CommittedNotPushed {
             message: format!("git push failed: {err}"),
-            commit: current_head(repo_dir).unwrap_or_default(),
+            commit: expected_commit.to_string(),
         },
     }
 }
@@ -733,7 +781,7 @@ fn push_if_head_unchanged(repo_dir: &Path, repo_root: &Path, expected_commit: &s
             commit: expected_commit.to_string(),
         };
     }
-    push(repo_dir)
+    push(repo_dir, expected_commit)
 }
 
 /// Re-attempts pushing a specific commit that previously failed to push
@@ -747,13 +795,6 @@ fn push_if_head_unchanged(repo_dir: &Path, repo_root: &Path, expected_commit: &s
 /// reverting whatever superseded it. Whatever superseded `expected_commit`
 /// gets its own sync opportunity through the normal request path, so
 /// nothing is lost by giving up on this specific stale retry.
-///
-/// Unlike `commit_via_temp_index`'s HEAD-moved race (which matters because
-/// it builds a tree from a possibly-stale parent), the gap between the
-/// `HEAD` check below and the `push` call is benign: `push` never
-/// reconstructs anything from `expected_commit`, it's a bare `git push`, so
-/// `HEAD` moving further ahead in that window just means the push sends
-/// more than expected — no revert risk, no compare-and-swap needed.
 fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_dir)
@@ -768,7 +809,7 @@ fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     if current_head(&repo_root).as_deref() != Some(expected_commit) {
         return SyncOutcome::Skipped;
     }
-    push(repo_dir)
+    push(repo_dir, expected_commit)
 }
 
 /// Populates a fresh temporary index from `parent` (or leaves it empty for
@@ -1674,6 +1715,46 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&remote_log.stdout)
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn push_never_sends_more_than_the_explicitly_targeted_commit() {
+        // External review, round 5: push_if_head_unchanged/retry_commit
+        // both verify HEAD == expected_commit immediately before calling
+        // push, but that check and the push itself used to be two separate
+        // steps regardless -- a commit landing in between would still ride
+        // along, since a bare `git push` sends whatever the local branch
+        // tip has become by push-time. Proving the fix directly (push an
+        // older commit explicitly, with a newer one already sitting on top
+        // locally) is far more deterministic than trying to time a race
+        // into that now-vanishingly-small window -- the same reasoning
+        // round 4's own verify_commit_scope/undo_commit tests already use.
+        let (work, remote) = init_repo_with_remote();
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "older commit"]);
+        let older_commit = current_head(&work).unwrap();
+
+        fs::write(work.join("other.md"), "newer\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "newer commit"]);
+
+        let outcome = push(&work, &older_commit);
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+
+        let remote_log = Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "--format=%s", "main"])
+            .output()
+            .unwrap();
+        let subjects = String::from_utf8_lossy(&remote_log.stdout);
+        assert!(
+            !subjects.contains("newer commit"),
+            "must never publish anything beyond the targeted commit: {subjects}"
+        );
+        assert!(subjects.contains("older commit"), "{subjects}");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
