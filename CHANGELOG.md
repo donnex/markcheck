@@ -104,6 +104,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the write fails partway through — the template is written and fsynced
   to a temp file first, then placed atomically, the same crash-safety
   guarantee toggling an existing file already had.
+- Git-sync (`--git-sync`)'s hook-scope check no longer risks undoing a
+  concurrent commit (another markcheck instance, a human, an IDE) along
+  with the one it was actually meant to roll back — the rollback is now
+  guarded so it only ever undoes the exact commit git-sync itself made,
+  refusing instead if the branch has moved on since.
 
 ## [1.2.2] - 2026-08-20
 

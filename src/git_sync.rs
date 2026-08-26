@@ -538,8 +538,7 @@ fn run_sync(
     };
 
     let parent = current_head(&repo_root);
-    let outcome = commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message);
-    if let Err(err) = outcome {
+    if let Err(err) = commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
         return SyncOutcome::Failed(err);
     }
 
@@ -691,7 +690,7 @@ fn commit_via_temp_index(
     blob: &str,
     relpath: &str,
     message: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let git_dir =
         git_dir(repo_root).ok_or_else(|| "git-sync: could not resolve git-dir".to_string())?;
     let temp_index = git_dir.join(format!(
@@ -716,8 +715,9 @@ fn commit_via_temp_index(
         if let Some(reason) = repo_sync_blocked(repo_root) {
             return Err(reason);
         }
-        commit_temp_index(repo_root, &temp_index, message)?;
-        verify_commit_scope(repo_root, parent, relpath)
+        let created_commit = commit_temp_index(repo_root, &temp_index, message)?;
+        verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
+        Ok(created_commit)
     })();
     let _ = std::fs::remove_file(&temp_index);
     // git's index-writing plumbing (`read-tree`/`update-index`/`commit`)
@@ -780,8 +780,13 @@ fn stage_into_temp_index(
 /// temporary index's tree against the repository's real `HEAD`/branch —
 /// normal commit machinery (hooks, `commit.gpgsign`, HEAD's own locked
 /// read-and-update), just fed from the temporary index instead of the real
-/// one.
-fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Result<(), String> {
+/// one. Returns the new commit's SHA (resolved once, immediately after
+/// success) — the single source of truth for "the commit markcheck just
+/// made" that `verify_commit_scope`/`undo_commit` operate on, rather than
+/// each re-resolving `HEAD` independently at a later point in time (which
+/// would let a commit landing in between be mistaken for part of this
+/// one).
+fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
         .env("GIT_INDEX_FILE", temp_index)
@@ -791,7 +796,8 @@ fn commit_temp_index(repo_root: &Path, temp_index: &Path, message: &str) -> Resu
     if !output.status.success() {
         return Err(command_error("git commit", &output));
     }
-    Ok(())
+    current_head(repo_root)
+        .ok_or_else(|| "git-sync: could not resolve HEAD after commit".to_string())
 }
 
 /// Well-known empty-tree object ID, used as the diff base for a root commit
@@ -806,24 +812,25 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// of this commit, and can stage more into it — defeating the whole point
 /// of the temporary-index design (see `commit_via_temp_index`'s doc
 /// comment), which exists specifically so an unrelated staged file can
-/// never ride along into a markcheck commit. If the resulting commit's
-/// tree differs from `parent` anywhere other than `relpath`, the commit is
-/// undone (`undo_commit`) and an error reported — a hook that adds a
-/// nested commit of its own is undone the same way, since resetting the
-/// branch ref back to `parent` discards the whole chain regardless of how
-/// many commits are in it.
+/// never ride along into a markcheck commit. Diffs `parent..created_commit`
+/// — the exact commit `commit_temp_index` just made, captured once by its
+/// caller — rather than re-resolving `HEAD` here: a commit landing after
+/// `created_commit` was captured must never be mistaken for (or silently
+/// swept into) markcheck's own commit. If the tree differs from `parent`
+/// anywhere other than `relpath`, the commit is undone (`undo_commit`) and
+/// an error reported — a hook that adds a nested commit of its own is
+/// undone the same way, since resetting the branch ref back to `parent`
+/// discards the whole chain regardless of how many commits are in it.
 fn verify_commit_scope(
     repo_root: &Path,
     parent: &Option<String>,
     relpath: &str,
+    created_commit: &str,
 ) -> Result<(), String> {
     let base = parent.as_deref().unwrap_or(EMPTY_TREE);
-    let new_head = current_head(repo_root).ok_or_else(|| {
-        "git-sync: could not resolve HEAD after commit; hook scope not verified".to_string()
-    })?;
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
-        .args(["diff", "--name-only", "-z", base, &new_head]);
+        .args(["diff", "--name-only", "-z", base, created_commit]);
     let output =
         run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git diff failed: {err}"))?;
     if !output.status.success() {
@@ -844,13 +851,13 @@ fn verify_commit_scope(
     if changed == [relpath.as_bytes()] {
         return Ok(());
     }
-    match undo_commit(repo_root, parent) {
+    match undo_commit(repo_root, parent, created_commit) {
         Ok(()) => Err(
             "git-sync: a commit hook modified files beyond the checklist; sync aborted".to_string(),
         ),
         Err(undo_err) => Err(format!(
             "git-sync: a commit hook modified files beyond the checklist, and undoing the \
-             commit failed ({undo_err}); commit {new_head} may need manual cleanup"
+             commit failed ({undo_err}); commit {created_commit} may need manual cleanup"
         )),
     }
 }
@@ -859,16 +866,30 @@ fn verify_commit_scope(
 /// root commit with `parent: None`) — the undo side of
 /// `verify_commit_scope`. Never touches the working tree or the real
 /// index, same as everything else in the temp-index commit path.
-fn undo_commit(repo_root: &Path, parent: &Option<String>) -> Result<(), String> {
+///
+/// Both forms are compare-and-swapped against `created_commit` — `git
+/// update-ref`'s optional expected-old-value argument — rather than an
+/// unconditional move/delete: if the branch has advanced past
+/// `created_commit` (another process committed on top before this undo
+/// ran), the update-ref itself fails instead of silently rewinding that
+/// concurrent commit out of the branch's history.
+fn undo_commit(
+    repo_root: &Path,
+    parent: &Option<String>,
+    created_commit: &str,
+) -> Result<(), String> {
     let (args, description): (Vec<&str>, &str) = match parent {
-        Some(sha) => (vec!["update-ref", "HEAD", sha], "git update-ref"),
+        Some(sha) => (
+            vec!["update-ref", "HEAD", sha, created_commit],
+            "git update-ref",
+        ),
         None => {
             let branch_ref = current_branch_ref(repo_root).ok_or_else(|| {
                 "git-sync: could not resolve branch ref to undo root commit".to_string()
             })?;
             let mut cmd = Command::new("git");
             cmd.current_dir(repo_root)
-                .args(["update-ref", "-d", &branch_ref]);
+                .args(["update-ref", "-d", &branch_ref, created_commit]);
             return match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
                 Ok(output) if output.status.success() => Ok(()),
                 Ok(output) => Err(command_error("git update-ref", &output)),
@@ -1325,6 +1346,105 @@ mod tests {
                 .starts_with("markcheck-index-")
         });
         assert!(!leftover, "temp index file was not cleaned up");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn verify_commit_scope_checks_the_captured_commit_not_whatever_head_is_now() {
+        // External review, round 4: the old implementation re-resolved
+        // `current_head` inside verify_commit_scope itself, so a commit
+        // landing after the one being verified (but before this function
+        // ran) could be mistaken for part of it. Passing the exact SHA in
+        // means a concurrent commit on top must be ignored entirely,
+        // whatever it touches.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+
+        // Stands in for markcheck's own commit: touches only tracked.md.
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let created_commit = current_head(&work).unwrap();
+
+        // A concurrent commit lands on top, touching an unrelated file —
+        // if verify_commit_scope re-resolved HEAD instead of using
+        // `created_commit`, this would wrongly look like markcheck's own
+        // hook had modified `other.md`.
+        fs::write(work.join("other.md"), "concurrent\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "concurrent change"]);
+        let concurrent_commit = current_head(&work).unwrap();
+
+        let result = verify_commit_scope(&work, &Some(parent), "tracked.md", &created_commit);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            current_head(&work),
+            Some(concurrent_commit),
+            "must never touch the concurrent commit sitting on top"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn undo_commit_refuses_to_rewind_a_commit_that_landed_after_the_one_being_undone() {
+        // External review, round 4: the old undo_commit did a bare
+        // `update-ref HEAD <parent>` with no compare-and-swap, so a commit
+        // landing on top of the one being undone (between the commit and
+        // the undo) would be silently rewound along with it. The
+        // CAS-guarded update-ref must refuse instead.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "to be undone"]);
+        let created_commit = current_head(&work).unwrap();
+
+        fs::write(work.join("other.md"), "concurrent\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "concurrent change"]);
+        let concurrent_commit = current_head(&work).unwrap();
+
+        let result = undo_commit(&work, &Some(parent), &created_commit);
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(
+            current_head(&work),
+            Some(concurrent_commit),
+            "the concurrent commit must not be rewound"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_commit_refuses_to_delete_a_root_commit_that_already_has_a_child() {
+        // Same CAS guarantee as the test above, for the root-commit
+        // (`parent: None`) undo path, which deletes the branch ref outright
+        // instead of moving it.
+        let work = unique_dir("repo-root-commit-cas").join("work");
+        fs::create_dir_all(&work).unwrap();
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        run(&work, &["commit", "-q", "-m", "root commit to be undone"]);
+        let created_commit = current_head(&work).unwrap();
+
+        fs::write(work.join("other.md"), "concurrent\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "concurrent change"]);
+        let concurrent_commit = current_head(&work).unwrap();
+
+        let result = undo_commit(&work, &None, &created_commit);
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(
+            current_head(&work),
+            Some(concurrent_commit),
+            "the branch ref must not be deleted out from under the concurrent commit"
+        );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
