@@ -2226,6 +2226,45 @@ fn toggle_succeeds_normally_when_disk_content_is_unchanged() {
 }
 
 #[test]
+fn write_back_can_still_overwrite_a_change_that_lands_after_the_diverged_check() {
+    // External review, round 4: disk_content_diverged/commit_write is a
+    // pre-write content check, not an atomic compare-and-swap (see
+    // hash_bytes's and disk_content_diverged's doc comments in app.rs) —
+    // there's a real gap between this check returning "unchanged" and
+    // write_back's own rename actually landing, in which another writer
+    // can still save a change that gets silently overwritten. This
+    // documents that accepted gap directly, standing in for the two real
+    // steps `commit_write` takes with a race manually inserted between
+    // them, rather than leaving it implicit.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let path = document.file_path.clone();
+    let state = AppState::new(document);
+
+    assert!(
+        !state.disk_content_diverged(),
+        "nothing external has happened yet"
+    );
+
+    // Stands in for another writer landing in the gap between the check
+    // above and the write below.
+    let external_content = "## Other\n\n- [x] external change\n";
+    fs::write(&path, external_content).unwrap();
+
+    crate::writer::write_back(&state.document).unwrap();
+
+    assert_ne!(
+        fs::read_to_string(&path).unwrap(),
+        external_content,
+        "the external writer's content is silently overwritten here -- \
+         this is the accepted gap, not a regression"
+    );
+}
+
+#[test]
 fn commit_write_updates_content_hash_so_a_second_toggle_does_not_false_positive() {
     // The conflict check must compare against the hash of what *we* last
     // wrote, not a stale hash from load time — otherwise our own successful

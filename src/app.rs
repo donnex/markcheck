@@ -28,11 +28,12 @@ fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
 }
 
 /// A content digest, used to detect whether the file on disk still matches
-/// what we last saw before we overwrite it — a compare-and-swap guard, not
-/// a security boundary (nothing here is adversarial), so a cryptographic
-/// digest is stronger than this actually needs; used anyway since the
-/// abstraction already exists and the cost is negligible at checklist-file
-/// sizes.
+/// what we last saw before we overwrite it — a pre-write content check, not
+/// an atomic compare-and-swap (see `disk_content_diverged`'s doc comment for
+/// the gap that leaves) and not a security boundary (nothing here is
+/// adversarial), so a cryptographic digest is stronger than this actually
+/// needs; used anyway since the abstraction already exists and the cost is
+/// negligible at checklist-file sizes.
 fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
@@ -1048,6 +1049,20 @@ impl AppState {
     /// timestamp tick. Fails open (`false`, i.e. "proceed") when the file
     /// can't be read at all: that's a distinct failure `write_back` itself
     /// is about to surface with its own, more specific error.
+    ///
+    /// External review, round 4: this check and the write it guards
+    /// (`commit_write`'s call into `writer::write_back`) aren't one atomic
+    /// operation — there's a real gap between this returning `false` and
+    /// `write_back`'s rename actually landing, in which another writer could
+    /// still save a change that this write then silently overwrites. This is
+    /// accepted, not eliminated, the same "narrowed, not closed" tradeoff
+    /// `commit_via_temp_index` makes on the git-sync side (see
+    /// `git_sync.rs`'s doc comments) rather than reaching for a repository-
+    /// or file-level lock: the check still catches the far more common case
+    /// (a change that landed before this call runs at all), and two
+    /// markcheck instances — or an external editor — racing to save the
+    /// exact same file within this narrow a window is rare enough not to be
+    /// worth the added platform-dependent locking machinery.
     fn disk_content_diverged(&self) -> bool {
         match current_content_hash(&self.document.file_path) {
             Some(hash) => Some(hash) != self.file_content_hash,
