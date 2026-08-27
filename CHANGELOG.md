@@ -128,6 +128,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whatever the local branch currently is. A commit landing at just the
   wrong moment (between the check and the push) can no longer ride along
   and get published as a side effect.
+- Git-sync (`--git-sync`) no longer risks publishing an unrelated local
+  commit when nothing new needs to be committed for the checklist itself
+  (e.g. a coalesced sync re-checking already-committed content) — the
+  same "refuse rather than push unrelated work" guard now applies
+  whenever git-sync is about to push, not only when it's about to create
+  a new commit.
 
 ## [1.2.2] - 2026-08-20
 
