@@ -134,6 +134,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same "refuse rather than push unrelated work" guard now applies
   whenever git-sync is about to push, not only when it's about to create
   a new commit.
+- Git-sync (`--git-sync`) no longer keeps retrying a push in the
+  background forever after whatever it was trying to push has been
+  superseded by a newer commit — the abandoned retry is now actually
+  cleared, instead of silently re-attempting (and re-abandoning) it on
+  every tick indefinitely.
 
 ## [1.2.2] - 2026-08-20
 
