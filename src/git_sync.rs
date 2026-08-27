@@ -265,6 +265,13 @@ pub struct GitSync {
     /// file changed because of something outside git-sync entirely, which
     /// nothing will ever correct" — see `run_sync`'s staleness check.
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
+    /// Whether the background operation whose outcome `poll` is currently
+    /// processing was a push retry (`spawn_retry`) rather than a fresh
+    /// content-based sync (`spawn`) — set right before each spawn, read by
+    /// `poll` to disambiguate `SyncOutcome::Skipped`, which both a retry
+    /// abandoning itself and an ordinary no-op sync can produce (see
+    /// `poll`'s doc comment).
+    last_spawn_was_retry: bool,
 }
 
 impl GitSync {
@@ -291,6 +298,7 @@ impl GitSync {
             pending: None,
             retry: None,
             latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
+            last_spawn_was_retry: false,
         })
     }
 
@@ -316,6 +324,7 @@ impl GitSync {
 
     fn spawn(&mut self, sync: PendingSync) {
         self.busy = true;
+        self.last_spawn_was_retry = false;
         let repo_dir = self.repo_dir.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
@@ -338,6 +347,7 @@ impl GitSync {
     /// — see `retry_commit`.
     fn spawn_retry(&mut self, commit: String) {
         self.busy = true;
+        self.last_spawn_was_retry = true;
         let repo_dir = self.repo_dir.clone();
         let sender = self.sender.clone();
         std::thread::spawn(move || {
@@ -350,8 +360,19 @@ impl GitSync {
     /// input, like `FileWatcher::poll_changed`. Returns the outcome of a
     /// completed sync, if one just finished, and kicks off a queued
     /// request that arrived while busy. Also updates the push-retry state
-    /// (see `retry_push_if_due`) from the outcome, since `Synced` clears a
-    /// prior pending retry and `CommittedNotPushed` (re)arms one.
+    /// (see `retry_push_if_due`) from the outcome: `Synced` clears a prior
+    /// pending retry, `CommittedNotPushed` (re)arms one, and a retry
+    /// attempt's own `Skipped` — external review, round 7 — clears it too,
+    /// rather than leaving a retry armed forever for a commit `retry_commit`
+    /// has already concluded is stale. Without this, `self.retry`'s
+    /// timestamp is never refreshed once abandonment starts, so
+    /// `retry_push_if_due`'s backoff check stays permanently elapsed and
+    /// fires a fresh (equally-abandoned) retry attempt on every subsequent
+    /// call, not just every `PUSH_RETRY_INTERVAL`. An *ordinary* sync's
+    /// `Skipped` (nothing to do) must not clear a still-valid armed retry
+    /// for an unrelated earlier commit, though — `last_spawn_was_retry`
+    /// disambiguates the two, since `retry_commit`'s only `Skipped` return
+    /// is precisely "the retried commit is no longer `HEAD`."
     pub fn poll(&mut self) -> Option<SyncOutcome> {
         let outcome = self.receiver.try_recv().ok();
         if let Some(outcome) = &outcome {
@@ -360,6 +381,9 @@ impl GitSync {
                 SyncOutcome::Synced => self.retry = None,
                 SyncOutcome::CommittedNotPushed { commit, .. } => {
                     self.retry = Some((commit.clone(), Instant::now()));
+                }
+                SyncOutcome::Skipped if self.last_spawn_was_retry => {
+                    self.retry = None;
                 }
                 SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::Failed(_) => {}
             }
@@ -1976,6 +2000,61 @@ mod tests {
             matches!(outcome, Some(SyncOutcome::CommittedNotPushed { .. })),
             "still no remote to push to, so this retry fails the same way: {outcome:?}"
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn retry_push_if_due_clears_the_retry_when_head_has_moved_on() {
+        // External review, round 7: retry_commit correctly abandons a
+        // stale retry (Skipped) when HEAD has moved past the commit being
+        // retried, but poll() used to leave `retry` armed regardless --
+        // its Instant never refreshed, so the backoff check stays
+        // permanently elapsed and a fresh (equally-abandoned) attempt
+        // would otherwise fire on every subsequent call, not just every
+        // PUSH_RETRY_INTERVAL. Confirms both halves: the retry state is
+        // actually cleared, and a follow-up call is a genuine no-op.
+        let work = init_repo_without_remote();
+        run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
+        run(&work, &["config", "branch.main.remote", "origin"]);
+        run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "Check \"one\""]);
+        let stale_commit = current_head(&work).unwrap();
+
+        // Something else supersedes it before the retry fires.
+        fs::write(work.join("tracked.md"), "- [x] one\n- [x] two\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "newer commit"]);
+
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        let last_attempt = Instant::now();
+        sync.retry = Some((stale_commit, last_attempt));
+
+        sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL);
+        assert!(
+            sync.busy,
+            "the backoff interval elapsed, a retry should have spawned"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut outcome = None;
+        while Instant::now() < deadline {
+            if let Some(o) = sync.poll() {
+                outcome = Some(o);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(outcome, Some(SyncOutcome::Skipped), "{outcome:?}");
+        assert!(
+            sync.retry.is_none(),
+            "the stale retry must be cleared, not left armed forever"
+        );
+
+        // And retry_push_if_due is now a genuine no-op -- no second spawn.
+        sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL * 2);
+        assert!(!sync.busy, "nothing left to retry");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
