@@ -537,6 +537,33 @@ fn run_sync(
         Err(err) => return SyncOutcome::Failed(err),
     };
 
+    // Refuse if the branch already has unpushed history that touches
+    // something other than this file, rather than publishing it as a side
+    // effect — checked before *both* branches below that can push (see
+    // `branch_has_unrelated_unpushed_commits`'s doc comment for why plain
+    // ahead-of-upstream isn't the right test here — several of markcheck's
+    // own commits can legitimately stack up while offline). External
+    // review, round 7: this used to run only right before building a new
+    // commit, on the assumption that the `head_blob`-matches fast path
+    // below is always "markcheck's own prior commit, always legitimate to
+    // push" — false whenever an unrelated commit lands on top of that
+    // prior commit without touching the checklist file at all: the
+    // checklist's blob at `HEAD` still matches `expected_content` (the
+    // unrelated commit never touched it), so the fast path would push
+    // `HEAD` — and the unrelated commit riding along with it — without
+    // this check ever running. Reachable whenever a request queued
+    // earlier gets processed after both a newer, not-yet-committed edit
+    // has landed on disk (so `status` above is non-empty, reaching this
+    // far) *and* an unrelated commit has landed on the branch — see the
+    // fast path's own comment below for why `status` can be non-empty
+    // even once this older request is already satisfied at `HEAD`.
+    if branch_has_unrelated_unpushed_commits(&repo_root, &relpath) {
+        return SyncOutcome::Failed(
+            "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
+                .to_string(),
+        );
+    }
+
     // If HEAD already holds exactly this content, the commit half of this
     // request was already satisfied by an earlier sync (e.g. it sat
     // coalesced behind one that committed the same or newer content) —
@@ -550,19 +577,6 @@ fn run_sync(
             return push(repo_dir, &current_head(&repo_root).unwrap_or_default());
         }
         return SyncOutcome::Skipped;
-    }
-
-    // About to create a *new* commit — refuse if the branch already has
-    // unpushed history that touches something other than this file, rather
-    // than piling a checklist commit on top and pushing the lot (see
-    // `branch_has_unrelated_unpushed_commits`'s doc comment for why plain
-    // ahead-of-upstream isn't the right test here — several of markcheck's
-    // own commits can legitimately stack up while offline).
-    if branch_has_unrelated_unpushed_commits(&repo_root, &relpath) {
-        return SyncOutcome::Failed(
-            "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
-                .to_string(),
-        );
     }
 
     // `expected_content` is a snapshot captured whenever the request was
@@ -652,10 +666,13 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
 }
 
 /// Whether the branch already has unpushed commits ahead of upstream that
-/// touch something *other* than `relpath` — used only to decide whether to
-/// refuse creating a new commit at all (`run_sync`), never to decide
-/// whether to retry a push. Deliberately not a plain ahead-of-upstream
-/// check: multiple markcheck commits can legitimately stack up while
+/// touch something *other* than `relpath` — checked in `run_sync` before
+/// either of its two paths that can push (building a new commit, or the
+/// `head_blob`-already-matches fast path's push of the existing `HEAD`),
+/// never inside `retry_commit`'s own timed retry (a stale retry is instead
+/// abandoned outright — see its doc comment — rather than re-checked
+/// against this). Deliberately not a plain ahead-of-upstream check:
+/// multiple markcheck commits can legitimately stack up while
 /// offline (a user toggling several tasks before connectivity returns —
 /// see `repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits`),
 /// and none of those are "unrelated work" to refuse over — only commits
@@ -2611,6 +2628,78 @@ mod tests {
             fs::read_to_string(&file_path).unwrap(),
             "- [x] one\n",
             "the on-disk edit itself is untouched, just not synced yet"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commits() {
+        // External review, round 7: the unrelated-unpushed-commits guard
+        // used to run only right before building a *new* commit, on the
+        // assumption that the head_blob-matches fast path is always
+        // "markcheck's own prior commit, always legitimate to push." That's
+        // false whenever an unrelated commit lands on top without touching
+        // the checklist file at all: the checklist's blob at HEAD still
+        // matches an older, already-satisfied request's expected_content,
+        // so the fast path would push HEAD -- and the unrelated commit
+        // riding along with it.
+        //
+        // Reaching the fast path (rather than the earlier `git status`
+        // empty-check, or the new-commit path) needs `expected_content` to
+        // match HEAD while the *working tree* currently holds something
+        // else -- exactly the fast path's own doc comment scenario ("status
+        // is non-empty because of someone else's still-uncommitted
+        // change"): a request queued earlier (content "one", now already
+        // satisfied at HEAD) executes after both a newer, not-yet-committed
+        // edit lands on disk *and* an unrelated commit lands on the branch.
+        let (work, remote) = init_repo_with_remote(); // origin/main = A, pushed.
+
+        // A1: a checklist commit that's ahead of upstream (standing in for
+        // one whose push failed -- the fast path doesn't care why it's
+        // unpushed, only that it is).
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "Check \"one\""]);
+
+        // A2: an unrelated commit on top that never touches the checklist.
+        fs::write(work.join("other.md"), "unrelated work\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "unrelated local commit"]);
+        let head_before = current_head(&work).unwrap();
+
+        // A newer edit sits on disk, uncommitted -- makes `git status`
+        // non-empty, so the stale "one"-content request below reaches the
+        // fast path instead of the earlier empty-status Skip.
+        fs::write(work.join("tracked.md"), "- [x] one\n- [x] two\n").unwrap();
+
+        let file_path = work.join("tracked.md");
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            "Catch up a pending push",
+            &no_race("- [x] one\n"),
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            current_head(&work).unwrap(),
+            head_before,
+            "nothing should have been committed or pushed"
+        );
+
+        let remote_log = Command::new("git")
+            .current_dir(&remote)
+            .args(["log", "--format=%s", "main"])
+            .output()
+            .unwrap();
+        let subjects = String::from_utf8_lossy(&remote_log.stdout);
+        assert!(
+            !subjects.contains("unrelated local commit"),
+            "the unrelated commit must never reach the remote: {subjects}"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
