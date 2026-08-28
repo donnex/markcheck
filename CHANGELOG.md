@@ -139,6 +139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   superseded by a newer commit — the abandoned retry is now actually
   cleared, instead of silently re-attempting (and re-abandoning) it on
   every tick indefinitely.
+- Git-sync (`--git-sync`)'s unrelated-work guard no longer misses a commit
+  that touches something outside the checklist if a later commit reverts
+  that exact change — it now checks each unpushed commit individually
+  instead of the net difference between upstream and the branch tip,
+  since a revert can make an unrelated change disappear from that net
+  diff while the commit (and the one that reverted it) are still in the
+  history that gets pushed. A merge commit anywhere in that range is now
+  also treated as unrelated and refused, rather than left unexamined.
 
 ## [1.2.2] - 2026-08-20
 
