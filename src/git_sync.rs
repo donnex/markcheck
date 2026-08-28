@@ -700,31 +700,99 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
 /// offline (a user toggling several tasks before connectivity returns —
 /// see `repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits`),
 /// and none of those are "unrelated work" to refuse over — only commits
-/// touching something else are. Diffing `@{u}..HEAD` as a whole (rather
-/// than per-commit) is enough to tell the two apart: if every path that
-/// changed across the whole ahead range is `relpath`, it's markcheck's own
-/// accumulated history; anything else means something unrelated is there.
+/// touching something else are. `range_has_unrelated_commits` checks each
+/// commit in `@{u}..HEAD` individually, which is what tells the two apart
+/// correctly — see its own doc comment for why a single net diff isn't
+/// enough.
 ///
 /// Deliberately **fails closed** (`false`, i.e. "don't refuse") whenever
 /// the check itself can't be answered — no upstream configured, no commits
-/// yet (a repo's very first sync), or any other `git diff` failure —
-/// because refusing is the consequential action here, not pushing. Failing
-/// open the way `ahead_of_upstream` does would wrongly block every
-/// first-ever commit to a fresh repository and every sync where upstream
-/// tracking simply isn't set up.
+/// yet (a repo's very first sync), or any other `git` failure — because
+/// refusing is the consequential action here, not pushing. Failing open
+/// the way `ahead_of_upstream` does would wrongly block every first-ever
+/// commit to a fresh repository and every sync where upstream tracking
+/// simply isn't set up.
 fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> bool {
+    range_has_unrelated_commits(repo_root, Some("@{u}"), "HEAD", relpath).unwrap_or(false)
+}
+
+/// Whether any commit in `base..tip` — or, when `base` is `None`, in the
+/// full ancestry of `tip` (the root-commit case) — touches a path other
+/// than `relpath`. Checked **per commit**, not as a single net diff between
+/// `base` and `tip`: external review, round 8, and a self-review finding of
+/// the same shape in `verify_commit_scope` below — a commit that touches an
+/// unrelated path followed by a later commit that reverts that exact change
+/// nets out to zero in a `base..tip` tree diff, so a naive check sees
+/// nothing wrong, even though both commits are still in the range and still
+/// get published (they're ancestors of `tip`, and an explicit-SHA push
+/// sends a commit's whole ancestry regardless of what any single commit's
+/// net effect on the tree looks like).
+///
+/// `git rev-list --parents <range>` gives every commit in the range and its
+/// parent count in one call; a commit with more than one parent (a merge)
+/// is treated as unrelated unconditionally — refusing outright rather than
+/// attempting a combined-diff interpretation of what a merge itself
+/// touched, which has genuine edge cases (conflict resolutions, content
+/// changed only during the merge) that could misjudge it either way. Each
+/// remaining (single-parent or root) commit is checked with `git diff-tree
+/// --root ... <sha>` — `--root` is required for a root commit to show
+/// anything at all (confirmed empirically: without it, `diff-tree` on a
+/// zero-parent commit prints nothing) and is a no-op for an ordinary commit
+/// (still diffs against its own first parent).
+///
+/// Returns `Err` (rather than failing open or closed itself) on any `git`
+/// failure, leaving that decision to each caller: `branch_has_unrelated_
+/// unpushed_commits` fails closed (`false`) on `Err`, matching its existing
+/// behavior; `verify_commit_scope` propagates it as a hard sync failure,
+/// also matching its existing behavior.
+fn range_has_unrelated_commits(
+    repo_root: &Path,
+    base: Option<&str>,
+    tip: &str,
+    relpath: &str,
+) -> Result<bool, String> {
+    let range = match base {
+        Some(base) => format!("{base}..{tip}"),
+        None => tip.to_string(),
+    };
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
-        .args(["diff", "--name-only", "-z", "@{u}", "HEAD"]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT);
-    match output {
-        Ok(output) if output.status.success() => output
+        .args(["rev-list", "--parents", &range]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
+        .map_err(|err| format!("git rev-list failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git rev-list", &output));
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut tokens = line.split_whitespace();
+        let Some(sha) = tokens.next() else { continue };
+        if tokens.count() > 1 {
+            return Ok(true);
+        }
+        let mut diff_cmd = Command::new("git");
+        diff_cmd.current_dir(repo_root).args([
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            sha,
+        ]);
+        let diff_output = run_with_timeout(diff_cmd, PLUMBING_TIMEOUT)
+            .map_err(|err| format!("git diff-tree failed: {err}"))?;
+        if !diff_output.status.success() {
+            return Err(command_error("git diff-tree", &diff_output));
+        }
+        if diff_output
             .stdout
             .split(|&b| b == 0)
-            .filter(|s| !s.is_empty())
-            .any(|path| path != relpath.as_bytes()),
-        _ => false,
+            .any(|path| !path.is_empty() && path != relpath.as_bytes())
+        {
+            return Ok(true);
+        }
     }
+    Ok(false)
 }
 
 /// Resolves `(remote, upstream-branch-ref)` for the current branch via its
@@ -1013,11 +1081,6 @@ fn commit_temp_index(
     }
 }
 
-/// Well-known empty-tree object ID, used as the diff base for a root commit
-/// (`parent: None`) — the same sentinel git's own plumbing uses, so
-/// `verify_commit_scope` can diff against it exactly like a real parent.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-
 /// Runs after `commit_temp_index` succeeds (hooks having already executed
 /// against the temporary index) and enforces the invariant a `pre-commit`
 /// hook can otherwise silently break: a `git add`/formatter/`lint-staged`/
@@ -1025,43 +1088,29 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// of this commit, and can stage more into it — defeating the whole point
 /// of the temporary-index design (see `commit_via_temp_index`'s doc
 /// comment), which exists specifically so an unrelated staged file can
-/// never ride along into a markcheck commit. Diffs `parent..created_commit`
+/// never ride along into a markcheck commit. Checks `parent..created_commit`
 /// — the exact commit `commit_temp_index` just made, captured once by its
 /// caller — rather than re-resolving `HEAD` here: a commit landing after
 /// `created_commit` was captured must never be mistaken for (or silently
-/// swept into) markcheck's own commit. If the tree differs from `parent`
-/// anywhere other than `relpath`, the commit is undone (`undo_commit`) and
-/// an error reported — a hook that adds a nested commit of its own is
-/// undone the same way, since resetting the branch ref back to `parent`
-/// discards the whole chain regardless of how many commits are in it.
+/// swept into) markcheck's own commit. `range_has_unrelated_commits` (not
+/// a single net diff — see its own doc comment for why: a hook that makes
+/// two nested commits where a later one reverts an earlier one's unrelated
+/// change would net out to zero in a plain diff, even though both extra
+/// commits are still in history and still get pushed) decides whether
+/// anything beyond `relpath` changed; if so, the commit is undone
+/// (`undo_commit`) and an error reported — a hook that adds a nested commit
+/// of its own is undone the same way, since resetting the branch ref back
+/// to `parent` discards the whole chain regardless of how many commits are
+/// in it.
 fn verify_commit_scope(
     repo_root: &Path,
     parent: &Option<String>,
     relpath: &str,
     created_commit: &str,
 ) -> Result<(), String> {
-    let base = parent.as_deref().unwrap_or(EMPTY_TREE);
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["diff", "--name-only", "-z", base, created_commit]);
-    let output =
-        run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git diff failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git diff", &output));
-    }
-    // `-z` NUL-delimits paths instead of newline-delimiting them, and
-    // (unlike the default form) never C-quotes/escapes non-ASCII bytes —
-    // the same fix `index_entry` needed for `git ls-files`, for the same
-    // reason: a naive newline-delimited parse would otherwise wrongly flag
-    // (or wrongly pass) a checklist filename containing non-ASCII
-    // characters, since git would hand back a quoted-and-escaped literal
-    // string instead of the real path.
-    let changed: Vec<&[u8]> = output
-        .stdout
-        .split(|&b| b == 0)
-        .filter(|s| !s.is_empty())
-        .collect();
-    if changed == [relpath.as_bytes()] {
+    let has_unrelated =
+        range_has_unrelated_commits(repo_root, parent.as_deref(), created_commit, relpath)?;
+    if !has_unrelated {
         return Ok(());
     }
     match undo_commit(repo_root, parent, created_commit) {
@@ -2779,6 +2828,137 @@ mod tests {
         assert!(
             !subjects.contains("unrelated local commit"),
             "the unrelated commit must never reach the remote: {subjects}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_refuses_when_an_unrelated_commit_is_reverted_before_the_checklist_commit() {
+        // External review, round 8, empirically confirmed: a plain net
+        // tree diff between upstream and HEAD nets an unrelated commit and
+        // its own revert out to zero, even though both commits are still
+        // in the unpushed range and still get published (they're ancestors
+        // of the checklist commit, and an explicit-SHA push sends a
+        // commit's whole ancestry regardless of any single commit's net
+        // effect on the tree). Reproduced directly: `git diff --name-only`
+        // between the pre-unrelated-commit state and HEAD here shows only
+        // tracked.md, despite `other.md` genuinely appearing and
+        // disappearing in between.
+        let (work, _remote) = init_repo_with_remote(); // origin/main = A, pushed.
+
+        fs::write(work.join("other.md"), "unrelated work\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "unrelated local commit"]);
+
+        run(&work, &["rm", "-q", "other.md"]);
+        run(
+            &work,
+            &["commit", "-q", "-m", "revert unrelated local commit"],
+        );
+        let head_before = current_head(&work).unwrap();
+
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let message = commit_message(&file_path, "Check \"one\"");
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &message,
+            &no_race("- [x] one\n"),
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            "the reverted commit must still count as unrelated history: {outcome:?}"
+        );
+        assert_eq!(
+            current_head(&work).unwrap(),
+            head_before,
+            "no checklist commit should have been created on top"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_refuses_when_a_merge_commit_is_in_the_unpushed_range() {
+        // A merge commit's own diff-tree needs a combined-diff
+        // interpretation that's genuinely ambiguous to check safely against
+        // a single path (conflict resolutions, content changed only during
+        // the merge) -- treated as unrelated unconditionally instead, even
+        // when the merge itself is trivial and touches nothing but the
+        // checklist.
+        let (work, _remote) = init_repo_with_remote(); // origin/main = A, pushed.
+
+        run(&work, &["checkout", "-q", "-b", "side"]);
+        fs::write(work.join("other.md"), "side\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "side change"]);
+        run(&work, &["checkout", "-q", "main"]);
+        run(
+            &work,
+            &["merge", "-q", "--no-ff", "side", "-m", "merge side"],
+        );
+        let head_before = current_head(&work).unwrap();
+
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            "already committed",
+            &no_race("- [x] one\n"),
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            "a merge commit in range must refuse, even a clean one: {outcome:?}"
+        );
+        assert_eq!(current_head(&work).unwrap(), head_before);
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn verify_commit_scope_catches_a_revert_cancelled_unrelated_change() {
+        // The same net-diff blind spot as branch_has_unrelated_unpushed_
+        // commits, but for verify_commit_scope's own parent..created_commit
+        // range -- a hook that made two nested commits where the second
+        // reverts the first's unrelated change would net out to zero in a
+        // plain diff, even though both extra commits are still in history
+        // and still get pushed. Simulated directly here rather than through
+        // an actual hook, since the mechanism being tested is
+        // range_has_unrelated_commits itself, not hook plumbing.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "checklist change"]);
+
+        fs::write(work.join("other.md"), "unrelated\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "unrelated nested commit"]);
+
+        run(&work, &["rm", "-q", "other.md"]);
+        run(
+            &work,
+            &["commit", "-q", "-m", "revert unrelated nested commit"],
+        );
+        let created_commit = current_head(&work).unwrap();
+
+        let result =
+            verify_commit_scope(&work, &Some(parent.clone()), "tracked.md", &created_commit);
+        assert!(
+            result.is_err_and(|e| e.contains("hook modified files beyond the checklist")),
+            "the revert-cancelled unrelated commit must still be caught"
+        );
+        assert_eq!(
+            current_head(&work).unwrap(),
+            parent,
+            "the whole chain must be undone, not just the checklist commit"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
