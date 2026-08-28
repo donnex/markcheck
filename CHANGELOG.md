@@ -152,6 +152,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit hook left behind a background process still holding its
   output open — the wait for that output is now itself bounded, closing
   a gap in the timeout it was already supposed to guarantee.
+- Git-sync (`--git-sync`) no longer risks building a commit that silently
+  drops every other tracked file from its tree if resolving the current
+  commit merely fails transiently (a wedged filesystem, a slow disk) —
+  that case is no longer treated the same as a genuinely empty repository.
 
 ## [1.2.2] - 2026-08-20
 
