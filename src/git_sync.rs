@@ -978,7 +978,10 @@ fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 /// concurrently-landed, unrelated commit), and commits it — normal `git
 /// commit`, so hooks and `commit.gpgsign` apply, never `commit-tree`. The
 /// temporary index file is always removed afterward, success or failure;
-/// the real index is never read or written by any of this.
+/// the real index is never read, and the only write it ever makes is
+/// `align_real_index_entry`'s single-path realignment after a successful
+/// commit (see its own doc comment for why that's needed) — every other
+/// path in the real index, staged or not, is left completely alone.
 fn commit_via_temp_index(
     repo_root: &Path,
     parent: &Option<String>,
@@ -1014,6 +1017,7 @@ fn commit_via_temp_index(
         let created_commit =
             commit_temp_index(repo_root, &temp_index, message, parent, PLUMBING_TIMEOUT)?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
+        align_real_index_entry(repo_root, mode, blob, relpath);
         Ok(created_commit)
     })();
     let _ = std::fs::remove_file(&temp_index);
@@ -1071,6 +1075,37 @@ fn stage_into_temp_index(
         return Err(command_error("git update-index", &output));
     }
     Ok(())
+}
+
+/// `git update-index --add --cacheinfo`, run against the *real* index (no
+/// `GIT_INDEX_FILE` override) — called once, right after a commit succeeds,
+/// to set the real index's entry for `relpath` to the blob/mode just
+/// committed. Building the commit through a separate temporary index (see
+/// `stage_into_temp_index`) keeps unrelated staged content from riding
+/// along, but it also means the real index's own entry for `relpath` is
+/// never advanced as a side effect the way a normal `git commit -- <path>`
+/// would leave it — external review, round 9: reproduced empirically
+/// against a clean repo with no staged content at all. Before any sync,
+/// the real index matches `HEAD` for `relpath`; once the temp-index commit
+/// moves `HEAD` forward without touching the real index, that path's real
+/// entry is left pointing at the *old* blob — permanently, from the very
+/// first toggle. From then on `git status` shows the file as both staged
+/// (stale index vs. new `HEAD`) and not staged (current working tree vs.
+/// that same stale index), recurring on every subsequent toggle, since
+/// nothing else ever corrects it. This call is the fix: it realigns only
+/// `relpath`'s own entry, mirroring exactly what committing that one path
+/// normally leaves behind — every other real-index entry (e.g. an
+/// unrelated file the user `git add`ed) is left completely untouched, so
+/// `run_sync_never_includes_an_unrelated_staged_file`'s guarantee still
+/// holds. Best-effort: the commit and any push it enables have already
+/// succeeded by the time this runs, so a failure here (this is local
+/// bookkeeping only, not part of the commit's correctness) is not worth
+/// reporting as a sync failure.
+fn align_real_index_entry(repo_root: &Path, mode: &str, blob: &str, relpath: &str) {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath]);
+    let _ = run_with_timeout(cmd, PLUMBING_TIMEOUT);
 }
 
 /// `GIT_INDEX_FILE=<temp_index> git commit -m <message>`: commits the
@@ -1614,6 +1649,45 @@ mod tests {
         assert_eq!(
             String::from_utf8_lossy(&log.stdout).trim(),
             "tracked.md: Check \"one\""
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_leaves_the_real_index_matching_head_after_a_commit() {
+        // External review, round 9: reproduced empirically against a
+        // freshly cloned repo with no staged content at all -- before this
+        // fix, the temp-index commit advanced HEAD for `tracked.md` without
+        // ever advancing the real index's own entry for it, so `git
+        // status` permanently showed the file as both staged (stale index
+        // vs. new HEAD) and not staged (current working tree vs. that same
+        // stale index), starting from the very first sync.
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        let file_path = work.join("tracked.md");
+        let message = commit_message(&file_path, "Check \"one\"");
+
+        assert_eq!(
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] one\n",
+                &message,
+                &no_race("- [x] one\n")
+            ),
+            SyncOutcome::Synced
+        );
+
+        let status = Command::new("git")
+            .current_dir(&work)
+            .args(["status", "--porcelain", "--", "tracked.md"])
+            .output()
+            .unwrap();
+        assert!(
+            status.stdout.is_empty(),
+            "real index must match HEAD and the working tree after a commit: {:?}",
+            String::from_utf8_lossy(&status.stdout)
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();

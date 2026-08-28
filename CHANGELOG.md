@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer leaves the checklist file looking
+  perpetually modified in `git status` after every toggle — it used to show
+  up as both staged and not-staged changes, starting from the very first
+  sync, because the commit was built without ever updating the file's own
+  entry in the real index. That entry is now kept in sync with each commit.
 - Git-sync (`--git-sync`) no longer risks getting permanently stuck if a
   `git` command hangs (a broken SSH connection, a stuck credential helper, a
   commit hook that never returns). Every git-sync operation is now bounded
