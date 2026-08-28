@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diff while the commit (and the one that reverted it) are still in the
   history that gets pushed. A merge commit anywhere in that range is now
   also treated as unrelated and refused, rather than left unexamined.
+- Git-sync (`--git-sync`)'s per-command timeout no longer risks hanging
+  indefinitely after the `git` process itself has already exited, if a
+  commit hook left behind a background process still holding its
+  output open — the wait for that output is now itself bounded, closing
+  a gap in the timeout it was already supposed to guarantee.
 
 ## [1.2.2] - 2026-08-20
 

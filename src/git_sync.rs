@@ -102,6 +102,14 @@ fn run_with_timeout_and_stdin(
     wait_with_timeout(child, timeout, Some(stdin_thread))
 }
 
+/// How long to wait for the stdout/stderr reader threads to finish once
+/// `child` itself is known to be gone (exited on its own, or just killed on
+/// timeout) — deliberately much shorter than `PLUMBING_TIMEOUT`/
+/// `PUSH_TIMEOUT`, since this is only ever bounding a *lingering
+/// descendant* holding the pipe open, not real work. See `wait_with_timeout`
+/// for why this exists at all.
+const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
 /// Shared core of `run_with_timeout`/`run_with_timeout_and_stdin`: drains
 /// `child`'s stdout/stderr on their own threads for the whole run (not just
 /// after it exits — `try_wait`-polling without doing this risks the classic
@@ -115,6 +123,26 @@ fn run_with_timeout_and_stdin(
 /// thread forever, and quitting markcheck while one is hung would orphan
 /// the child process entirely (Rust neither kills child processes on drop
 /// nor joins/kills detached threads on exit).
+///
+/// External review, round 8: the reader threads used to hand back their
+/// buffer through a plain `JoinHandle`, joined unconditionally once `child`
+/// was known to be gone — but `git` can spawn its own children (a
+/// credential helper, `ssh`, a hook's own children) that inherit the piped
+/// stdout/stderr file descriptors, and a hook that backgrounds one of those
+/// without closing them leaves the pipe's write end open even after `git`
+/// itself has exited. `read_to_end()` in the reader thread then blocks
+/// forever waiting for an EOF that only the lingering descendant is
+/// preventing, and an unconditional `.join()` waits right along with it —
+/// hanging the whole operation *after* the timeout above should have
+/// already bounded it. The reader threads now send their buffer through a
+/// channel instead, so both exit paths below can bound how long they wait
+/// for it (`PIPE_DRAIN_GRACE`) rather than joining unconditionally: if a
+/// descendant is still holding the pipe, `kill_and_reap` is called again
+/// (safe even though `child` itself is already reaped — a second `wait()`
+/// on an already-reaped PID just errors, ignored the same way every other
+/// best-effort cleanup in this module is) — it still reaches the
+/// descendant, since `spawn_in_own_process_group` put it in the same
+/// process group as `child`.
 fn wait_with_timeout(
     mut child: Child,
     timeout: Duration,
@@ -122,16 +150,33 @@ fn wait_with_timeout(
 ) -> io::Result<Output> {
     let mut stdout_pipe = child.stdout.take().expect("stdout was requested as piped");
     let mut stderr_pipe = child.stderr.take().expect("stderr was requested as piped");
-    let stdout_thread = std::thread::spawn(move || {
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stdout_pipe.read_to_end(&mut buf);
-        buf
+        let _ = stdout_tx.send(buf);
     });
-    let stderr_thread = std::thread::spawn(move || {
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stderr_pipe.read_to_end(&mut buf);
-        buf
+        let _ = stderr_tx.send(buf);
     });
+    // Bounded wait for both reader threads, re-killing the process group
+    // if a lingering descendant is still holding a pipe open past the
+    // grace period — `child` may already be reaped at this point, but the
+    // group kill still reaches the descendant regardless.
+    let drain = |child: &mut Child| -> (Vec<u8>, Vec<u8>) {
+        let stdout = match stdout_rx.recv_timeout(PIPE_DRAIN_GRACE) {
+            Ok(buf) => buf,
+            Err(_) => {
+                kill_and_reap(child);
+                stdout_rx.recv_timeout(PIPE_DRAIN_GRACE).unwrap_or_default()
+            }
+        };
+        let stderr = stderr_rx.recv_timeout(PIPE_DRAIN_GRACE).unwrap_or_default();
+        (stdout, stderr)
+    };
 
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -143,8 +188,7 @@ fn wait_with_timeout(
             if let Some(t) = stdin_thread {
                 let _ = t.join();
             }
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
+            drain(&mut child);
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("git command timed out after {timeout:?}"),
@@ -155,8 +199,7 @@ fn wait_with_timeout(
     if let Some(t) = stdin_thread {
         let _ = t.join();
     }
-    let stdout = stdout_thread.join().unwrap_or_default();
-    let stderr = stderr_thread.join().unwrap_or_default();
+    let (stdout, stderr) = drain(&mut child);
     Ok(Output {
         status,
         stdout,
@@ -3552,6 +3595,33 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "must not deadlock on a full pipe buffer: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn run_with_timeout_does_not_hang_on_a_descendant_that_outlives_the_direct_child() {
+        // External review, round 8: the direct child can exit successfully
+        // while a descendant it spawned (e.g. a hook backgrounding a
+        // process without closing inherited fds) still holds the piped
+        // stdout/stderr open -- read_to_end() in the reader thread then
+        // blocks forever waiting for an EOF only the descendant is
+        // preventing, and an unconditional `.join()` on that thread hangs
+        // right along with it, well past this call's own timeout. `sleep 5
+        // &` backgrounds a descendant that inherits the shell's piped
+        // stdout and shares its process group (so the fix's group-kill can
+        // actually reach it); the shell itself exits 0 almost immediately.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 5 & exit 0"]);
+        let started = Instant::now();
+        let result = run_with_timeout(cmd, Duration::from_millis(150));
+        assert!(
+            result.is_ok(),
+            "the direct child exited successfully: {result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "must not block on a descendant that outlives the direct child: {:?}",
             started.elapsed()
         );
     }
