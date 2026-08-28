@@ -692,7 +692,10 @@ fn run_sync(
         Err(err) => return SyncOutcome::Failed(err),
     };
 
-    let parent = current_head(&repo_root);
+    let parent = match resolve_parent(&repo_root) {
+        Ok(parent) => parent,
+        Err(err) => return SyncOutcome::Failed(err),
+    };
     let created_commit =
         match commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
             Ok(sha) => sha,
@@ -1364,6 +1367,17 @@ fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
 
 /// The current commit `HEAD` points at, or `None` for a branch with no
 /// commits yet (so the next commit is created as a root commit).
+///
+/// This `None` is ambiguous — `git rev-parse HEAD`'s failure looks
+/// identical (`output.status.success() == false`) whether the repository
+/// genuinely has no commits yet, or the command failed for any other
+/// reason (a timeout, a spawn failure, a corrupted ref) — confirmed
+/// empirically: a real empty repo exits with code 128 and "fatal: ambiguous
+/// argument 'HEAD': unknown revision", the same shape of failure
+/// `run_with_timeout` itself produces for a genuine timeout. That ambiguity
+/// is harmless at every call site *except* where `run_sync` first
+/// establishes the parent for a possible new commit — see `resolve_parent`,
+/// used there specifically instead of this function.
 fn current_head(repo_root: &Path) -> Option<String> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root).args(["rev-parse", "HEAD"]);
@@ -1372,6 +1386,40 @@ fn current_head(repo_root: &Path) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Like `current_head`, but distinguishes "no commits yet" from "the check
+/// itself failed" — self-review finding: `run_sync` treats `parent: None`
+/// as "build a root commit," which skips seeding the temporary index from
+/// any existing tree (`populate_temp_index`). If `current_head` merely
+/// failed *transiently* here (a wedged filesystem, a timeout on the
+/// simplest possible git read) on an otherwise non-empty repository, the
+/// resulting commit's tree would contain **only the checklist path** —
+/// silently dropping every other tracked file — and `verify_commit_scope`
+/// wouldn't catch it, since its own baseline is equally wrong under the
+/// same bad assumption. `git rev-parse --verify -q HEAD` exits with status
+/// **1** specifically for "no commits yet" (confirmed empirically, silent
+/// thanks to `-q`) — distinctly from 128 or a timeout for any other
+/// failure — so only that exact exit code is treated as `Ok(None)`;
+/// anything else becomes `Err`, a hard sync failure rather than a silent
+/// wrong assumption. Every other `current_head` call site keeps using that
+/// function unchanged — traced through each one and confirmed the
+/// ambiguity is harmless there (a transient failure only ever causes an
+/// unnecessary refusal or retry, never a silent wrong action), so this
+/// stays a narrow fix at the one genuinely dangerous call site rather than
+/// a signature change rippling through the whole module.
+fn resolve_parent(repo_root: &Path) -> Result<Option<String>, String> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["rev-parse", "--verify", "-q", "HEAD"]);
+    match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
+        Ok(output) if output.status.success() => Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        )),
+        Ok(output) if output.status.code() == Some(1) => Ok(None),
+        Ok(output) => Err(command_error("git rev-parse", &output)),
+        Err(err) => Err(format!("git rev-parse failed: {err}")),
+    }
 }
 
 /// The first line of a failed command's stderr, prefixed with which command
@@ -3346,6 +3394,45 @@ mod tests {
         let dir = unique_dir("not-a-repo-git-dir");
         fs::create_dir_all(&dir).unwrap();
         assert!(git_dir(&dir).is_none());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_parent_is_ok_none_for_a_genuinely_empty_repo() {
+        // Self-review finding: current_head's None is ambiguous between
+        // "no commits yet" and "the check itself failed" (both look like
+        // `output.status.success() == false`). resolve_parent must
+        // distinguish them -- confirmed here against a real empty repo,
+        // where `git rev-parse --verify -q HEAD` exits 1 specifically.
+        let work = unique_dir("repo-empty-resolve-parent").join("work");
+        fs::create_dir_all(&work).unwrap();
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+
+        assert_eq!(resolve_parent(&work), Ok(None));
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn resolve_parent_is_ok_some_for_a_normal_repo() {
+        let work = init_repo_without_remote();
+        let expected = current_head(&work).unwrap();
+
+        assert_eq!(resolve_parent(&work), Ok(Some(expected)));
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn resolve_parent_is_err_outside_a_repo() {
+        // Not "no commits yet" (exit 1) -- a completely different failure
+        // shape (128, "not a git repository") -- must not be silently
+        // treated the same as an empty repo.
+        let dir = unique_dir("not-a-repo-resolve-parent");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(resolve_parent(&dir).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 
