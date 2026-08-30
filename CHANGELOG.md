@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Three keypresses that used to do nothing at all now say why. Pressing a
+  number for a list that doesn't exist reports `No list 5: this document has
+  2 lists`; `s` on a note card reports that there's nothing to start; and
+  `space`/`enter` on a trailing note card — which normally pages forward,
+  but has nowhere to go there — says so instead of looking wedged.
 - Git-sync (`--git-sync`) now requires the branch to have an upstream set
   (`git push -u origin <branch>`, once) before it will push. Without one it
   used to fall back to a plain `git push`, which — depending on your git
