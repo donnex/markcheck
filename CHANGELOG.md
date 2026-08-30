@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer risks rewinding somebody else's commit
+  off the branch when a slow commit hook runs past markcheck's timeout. It
+  used to treat "the branch moved" as proof its own commit was what moved
+  it — which isn't true if another process (or a hook) committed during the
+  same moment — and could then undo that unrelated commit while cleaning up.
+  It now confirms the commit is genuinely its own, by both content and
+  ancestry, before touching anything; when it can't confirm that, the sync
+  is reported as failed and simply retried, leaving history alone.
 - Git-sync (`--git-sync`) no longer leaves the checklist file looking
   perpetually modified in `git status` after every toggle — it used to show
   up as both staged and not-staged changes, starting from the very first

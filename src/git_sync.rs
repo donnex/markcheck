@@ -611,7 +611,7 @@ fn run_sync(
     // ahead-of-upstream isn't the right test here — several of markcheck's
     // own commits can legitimately stack up while offline). External
     // review, round 7: this used to run only right before building a new
-    // commit, on the assumption that the `head_blob`-matches fast path
+    // commit, on the assumption that the `blob_bytes_at`-matches fast path
     // below is always "markcheck's own prior commit, always legitimate to
     // push" — false whenever an unrelated commit lands on top of that
     // prior commit without touching the checklist file at all: the
@@ -639,7 +639,7 @@ fn run_sync(
     // request being *fully* satisfied, though: if the commit hasn't reached
     // upstream yet (a prior push failed), there's still a push worth
     // retrying — see `ahead_of_upstream`'s doc comment for why this matters.
-    if head_blob(&repo_root, &relpath).as_deref() == Some(expected_content.as_bytes()) {
+    if blob_bytes_at(&repo_root, "HEAD", &relpath).as_deref() == Some(expected_content.as_bytes()) {
         if ahead_of_upstream(&repo_root) {
             return push(repo_dir, &current_head(&repo_root).unwrap_or_default());
         }
@@ -738,7 +738,7 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
 /// Whether the branch already has unpushed commits ahead of upstream that
 /// touch something *other* than `relpath` — checked in `run_sync` before
 /// either of its two paths that can push (building a new commit, or the
-/// `head_blob`-already-matches fast path's push of the existing `HEAD`),
+/// `blob_bytes_at`-already-matches fast path's push of the existing `HEAD`),
 /// never inside `retry_commit`'s own timed retry (a stale retry is instead
 /// abandoned outright — see its doc comment — rather than re-checked
 /// against this). Deliberately not a plain ahead-of-upstream check:
@@ -1014,8 +1014,15 @@ fn commit_via_temp_index(
         if let Some(reason) = repo_sync_blocked(repo_root) {
             return Err(reason);
         }
-        let created_commit =
-            commit_temp_index(repo_root, &temp_index, message, parent, PLUMBING_TIMEOUT)?;
+        let created_commit = commit_temp_index(
+            repo_root,
+            &temp_index,
+            message,
+            parent,
+            relpath,
+            blob,
+            PLUMBING_TIMEOUT,
+        )?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
         align_real_index_entry(repo_root, mode, blob, relpath);
         Ok(created_commit)
@@ -1132,18 +1139,54 @@ fn align_real_index_entry(repo_root: &Path, mode: &str, blob: &str, relpath: &st
 /// kills the whole process group, and a naive caller would report the
 /// commit as failed even though it had already succeeded. On a timeout
 /// specifically (never on an ordinary nonzero exit, which never leaves
-/// `HEAD` in doubt the way a killed process can), `HEAD` is re-resolved
-/// and compared against `parent`: if it moved, the commit is treated as
-/// having succeeded — returning that new `HEAD` exactly as the success
-/// path would, so the normal `verify_commit_scope` pipeline still runs
-/// against it (a hook that also misbehaved during that same timed-out run
-/// is still caught and undone normally). If `HEAD` didn't move, the
-/// commit genuinely never happened and the original timeout is reported.
+/// `HEAD` in doubt the way a killed process can), `HEAD` is re-resolved: if
+/// it moved past `parent`, the commit is treated as having succeeded —
+/// returning that new `HEAD` exactly as the success path would, so the
+/// normal `verify_commit_scope` pipeline still runs against it (a hook
+/// that also misbehaved during that same timed-out run is still caught and
+/// undone normally). If `HEAD` didn't move, the commit genuinely never
+/// happened and the original timeout is reported.
+///
+/// External review, round 9: `HEAD` moving past `parent` is not by itself
+/// proof that *our* commit is what moved it — another process can
+/// legitimately commit something else entirely during the same window
+/// (most plausibly while our own commit is genuinely still blocked in a
+/// slow hook, not actually done yet). Adopting that unrelated commit as
+/// `created_commit` would be worse than reporting a false failure: the
+/// scope check below would correctly flag it as out-of-scope (it never
+/// touched `relpath`) and undo it — and `undo_commit`'s compare-and-swap
+/// would succeed, because we handed it the *right* SHA for the *wrong*
+/// reason, rewinding a real, unrelated commit off the branch. `relpath`
+/// and `blob` (the exact content this call staged) are threaded through
+/// so the timeout branch can positively confirm ownership before trusting
+/// it, rather than inferring ownership from ref movement alone.
+///
+/// Ownership is confirmed by **three** checks, not one, because a content
+/// check and a lineage check each catch a case the other misses:
+///
+/// * `HEAD` moved past `parent` at all — the original round-4 check.
+/// * `relpath` at the new `HEAD` is exactly `blob`. Catches an unrelated
+///   commit made directly on `parent` (our own commit still blocked in a
+///   slow hook): it never touched `relpath`, so the blob there is still
+///   the old one.
+/// * the new `HEAD`'s parents are exactly `parent` (one parent equal to
+///   it, or none at all when `parent` is `None` and this is a root
+///   commit). Catches the mirror case the blob check alone cannot: *our*
+///   commit landed **and** an unrelated commit landed on top of it without
+///   touching `relpath`, which leaves our blob in place at `HEAD` and so
+///   passes the content check while still naming the wrong SHA.
+///
+/// A commit that landed but got raced this way is reported as a failure
+/// rather than adopted. That's a false negative — the commit really is
+/// there — but it is the safe direction: `run_sync` returns `Failed`, the
+/// next request retries from fresh state, and nothing is rewound.
 fn commit_temp_index(
     repo_root: &Path,
     temp_index: &Path,
     message: &str,
     parent: &Option<String>,
+    relpath: &str,
+    blob: &str,
     timeout: Duration,
 ) -> Result<String, String> {
     let mut cmd = Command::new("git");
@@ -1155,7 +1198,13 @@ fn commit_temp_index(
             .ok_or_else(|| "git-sync: could not resolve HEAD after commit".to_string()),
         Ok(output) => Err(command_error("git commit", &output)),
         Err(err) if err.kind() == io::ErrorKind::TimedOut => match current_head(repo_root) {
-            Some(head) if Some(&head) != parent.as_ref() => Ok(head),
+            Some(head)
+                if Some(&head) != parent.as_ref()
+                    && blob_at(repo_root, &head, relpath).as_deref() == Some(blob)
+                    && descends_directly_from(repo_root, &head, parent) =>
+            {
+                Ok(head)
+            }
             _ => Err(format!("git commit failed: {err}")),
         },
         Err(err) => Err(format!("git commit failed: {err}")),
@@ -1375,15 +1424,63 @@ fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), St
     Ok((mode.to_string(), path.to_string()))
 }
 
-/// `HEAD`'s current committed bytes for `relpath` (repo-root-relative), or
-/// `None` if the path has no HEAD entry yet (e.g. staged but never
-/// committed) or `git show` otherwise fails.
-fn head_blob(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
+/// `commit`'s committed bytes for `relpath` (repo-root-relative), or `None`
+/// if the path has no entry at `commit` (e.g. staged but never committed)
+/// or `git show` otherwise fails.
+fn blob_bytes_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<Vec<u8>> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
-        .args(["show", &format!("HEAD:{relpath}")]);
+        .args(["show", &format!("{commit}:{relpath}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output.status.success().then_some(output.stdout)
+}
+
+/// The blob SHA at `commit:relpath` (repo-root-relative), or `None` if that
+/// path doesn't exist at `commit` or `git rev-parse` otherwise fails —
+/// the object-identity counterpart to `blob_bytes_at`, which fetches content
+/// *bytes*; this fetches just the SHA, which is all a comparison against
+/// an already-known blob SHA needs (see `commit_temp_index`'s ownership
+/// check on a timeout).
+fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["rev-parse", &format!("{commit}:{relpath}")]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Whether `commit` is a direct child of `parent` — exactly one parent,
+/// equal to it — or, when `parent` is `None`, a root commit with no parents
+/// at all. Anything else (including a merge, or a commit one further step
+/// removed) is `false`, as is any `git` failure: this only ever *grants*
+/// trust, so failing closed leaves the caller reporting a failure rather
+/// than acting on an unverified SHA.
+///
+/// `git rev-list --parents -n 1 <commit>` prints `<sha> <parent>…` on one
+/// line — the same shape (and the same `split_whitespace` parsing)
+/// `range_has_unrelated_commits` already reads, just for a single commit.
+fn descends_directly_from(repo_root: &Path, commit: &str, parent: &Option<String>) -> bool {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["rev-list", "--parents", "-n", "1", commit]);
+    let Ok(output) = run_with_timeout(cmd, PLUMBING_TIMEOUT) else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(line) = stdout.lines().next() else {
+        return false;
+    };
+    let parents: Vec<&str> = line.split_whitespace().skip(1).collect();
+    match parent {
+        Some(expected) => parents == [expected.as_str()],
+        None => parents.is_empty(),
+    }
 }
 
 /// Writes `content` into the object database without touching the working
@@ -1510,7 +1607,7 @@ mod tests {
 
     /// Like `init_repo_with_remote`, but the tracked file is named
     /// `file_name` instead of the fixed `tracked.md` — for exercising the
-    /// git plumbing path (`index_entry`/`head_blob`/`stage_into_temp_index`)
+    /// git plumbing path (`index_entry`/`blob_bytes_at`/`stage_into_temp_index`)
     /// against unusual filenames.
     fn init_repo_with_remote_named(file_name: &str) -> (PathBuf, PathBuf) {
         let root = unique_dir("repo-named");
@@ -2930,7 +3027,7 @@ mod tests {
     fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commits() {
         // External review, round 7: the unrelated-unpushed-commits guard
         // used to run only right before building a *new* commit, on the
-        // assumption that the head_blob-matches fast path is always
+        // assumption that the blob_bytes_at-matches fast path is always
         // "markcheck's own prior commit, always legitimate to push." That's
         // false whenever an unrelated commit lands on top without touching
         // the checklist file at all: the checklist's blob at HEAD still
@@ -3180,7 +3277,7 @@ mod tests {
     fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
         // `repo_dir` (the file's own parent) isn't the repo root here,
         // exercising the plumbing commands' repo-root-relative path
-        // handling (`index_entry`/`head_blob`/`stage_blob`) rather than the
+        // handling (`index_entry`/`blob_bytes_at`/`stage_blob`) rather than the
         // CWD-relative handling `status`/`push` rely on.
         let root = unique_dir("repo-nested");
         let remote = root.join("remote.git");
@@ -3228,7 +3325,7 @@ mod tests {
     #[test]
     fn run_sync_handles_filenames_with_spaces_dashes_colons_and_unicode() {
         // External review: the git plumbing path (`index_entry`/
-        // `head_blob`/`stage_into_temp_index`) was never exercised against
+        // `blob_bytes_at`/`stage_into_temp_index`) was never exercised against
         // anything but a plain `tracked.md`. None of these need `--`
         // protection to matter in practice (every command that takes a
         // pathspec already uses it — see `run_sync`'s own doc comment) but
@@ -3336,6 +3433,7 @@ mod tests {
         let work = init_repo_without_remote();
         let temp_index = work.join(".git").join("scratch-test-index");
         let head = current_head(&work).unwrap();
+        let blob = hash_object(&work, "- [ ] one\n").unwrap();
         populate_temp_index(&work, &temp_index, &head).unwrap();
         assert!(
             commit_temp_index(
@@ -3343,6 +3441,8 @@ mod tests {
                 &temp_index,
                 "empty",
                 &Some(head.clone()),
+                "tracked.md",
+                &blob,
                 PLUMBING_TIMEOUT
             )
             .is_err()
@@ -3381,6 +3481,8 @@ mod tests {
             &temp_index,
             "reconciled despite timeout",
             &Some(parent.clone()),
+            "tracked.md",
+            &blob,
             Duration::from_millis(300),
         );
         let new_head = current_head(&work);
@@ -3425,6 +3527,8 @@ mod tests {
             &temp_index,
             "should not land",
             &Some(parent.clone()),
+            "tracked.md",
+            &blob,
             Duration::from_millis(300),
         );
         assert!(result.is_err(), "{result:?}");
@@ -3435,6 +3539,210 @@ mod tests {
         );
 
         let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_temp_index_does_not_adopt_an_unrelated_commit_after_a_timeout() {
+        // External review, round 9: HEAD moving past `parent` after a
+        // timeout used to be treated as proof "our commit succeeded" --
+        // but HEAD can move because something else entirely committed
+        // during the same window, not because our own git commit actually
+        // landed. A pre-commit hook that (after unsetting the inherited
+        // GIT_INDEX_FILE, standing in for a genuinely separate process
+        // rather than our own temp-index machinery) commits something
+        // unrelated to the *real* branch, then sleeps past the timeout,
+        // means our own temp-index commit never actually happens (blocked
+        // in pre-commit) -- HEAD moves, but not because of us.
+        //
+        // `--no-verify` on the nested commit is load-bearing, not tidiness:
+        // without it that commit runs `pre-commit` again, which commits
+        // again, recursively, so nothing ever lands, HEAD never moves, and
+        // the test neither reproduces the scenario nor exercises the
+        // ownership check (it would pass against the pre-fix code purely on
+        // the older `HEAD != parent` half). Verified by hand: with
+        // `--no-verify` HEAD does move to the unrelated commit while
+        // `HEAD:tracked.md` stays the *old* blob -- exactly the state the
+        // blob check exists to reject.
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\n\
+             echo unrelated > other.md\n\
+             env -u GIT_INDEX_FILE git add other.md\n\
+             env -u GIT_INDEX_FILE git commit -q --no-verify -m 'unrelated concurrent commit'\n\
+             sleep 2\n",
+        )
+        .unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let temp_index = work.join(".git").join("scratch-test-index-unrelated");
+        populate_temp_index(&work, &temp_index, &parent).unwrap();
+        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
+
+        let result = commit_temp_index(
+            &work,
+            &temp_index,
+            "should not adopt the unrelated commit",
+            &Some(parent.clone()),
+            "tracked.md",
+            &blob,
+            Duration::from_millis(300),
+        );
+
+        // Asserting the *message*, not just `is_err`, so this can't quietly
+        // start passing again for the old reason (the commit never landing
+        // at all) rather than for the ownership check rejecting it.
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|e| e.contains("git commit failed")),
+            "must not adopt the unrelated commit as its own: {result:?}"
+        );
+        let head_after = current_head(&work).unwrap();
+        assert_ne!(
+            head_after, parent,
+            "the unrelated commit must still exist, untouched"
+        );
+        let log = Command::new("git")
+            .current_dir(&work)
+            .args(["log", "--format=%s"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&log.stdout).contains("unrelated concurrent commit"),
+            "{}",
+            String::from_utf8_lossy(&log.stdout)
+        );
+
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_temp_index_does_not_adopt_a_commit_that_landed_on_top_of_its_own() {
+        // The mirror of the test above, and the case a content check alone
+        // cannot catch: *our* commit lands, and an unrelated commit lands on
+        // top of it before HEAD is re-resolved. That unrelated commit never
+        // touched `relpath`, so `blob_at(HEAD, relpath)` is still exactly
+        // our blob -- the blob check passes -- yet HEAD names the wrong
+        // commit. Adopting it would hand `verify_commit_scope` a SHA whose
+        // range contains the unrelated commit, and `undo_commit`'s
+        // compare-and-swap would then succeed and rewind *both* off the
+        // branch. The lineage check (`descends_directly_from`) is what
+        // rejects it.
+        //
+        // A `post-commit` hook is the natural driver: it only ever runs once
+        // the ref update is already durable, so our own commit really has
+        // landed by the time it commits on top. `--no-verify` on the nested
+        // commit avoids the hook recursing into itself, and the `read-tree
+        // HEAD` first is what makes this the *mirror* case rather than a
+        // second copy of the test above: the real index still holds the
+        // pre-sync `tracked.md` (nothing has run `align_real_index_entry`
+        // at this point), so committing it as-is would revert our blob and
+        // the content check would reject the commit for the wrong reason.
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("post-commit");
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\n\
+             env -u GIT_INDEX_FILE git read-tree HEAD\n\
+             echo unrelated > other.md\n\
+             env -u GIT_INDEX_FILE git add other.md\n\
+             env -u GIT_INDEX_FILE git commit -q --no-verify -m 'unrelated commit on top'\n\
+             sleep 2\n",
+        )
+        .unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let temp_index = work.join(".git").join("scratch-test-index-on-top");
+        populate_temp_index(&work, &temp_index, &parent).unwrap();
+        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
+
+        let result = commit_temp_index(
+            &work,
+            &temp_index,
+            "ours, then raced",
+            &Some(parent.clone()),
+            "tracked.md",
+            &blob,
+            Duration::from_millis(300),
+        );
+
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|e| e.contains("git commit failed")),
+            "must not adopt the commit that landed on top of ours: {result:?}"
+        );
+        // Both commits are still there, untouched -- refusing must never
+        // rewind anything, least of all the unrelated commit.
+        let log = Command::new("git")
+            .current_dir(&work)
+            .args(["log", "--format=%s"])
+            .output()
+            .unwrap();
+        let subjects = String::from_utf8_lossy(&log.stdout);
+        assert!(subjects.contains("unrelated commit on top"), "{subjects}");
+        assert!(subjects.contains("ours, then raced"), "{subjects}");
+        // The blob check alone would have passed here: our content really is
+        // what HEAD holds for the checklist path.
+        assert_eq!(
+            blob_at(&work, "HEAD", "tracked.md").as_deref(),
+            Some(blob.as_str()),
+            "test setup: the content check must be the one that would pass"
+        );
+
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn descends_directly_from_matches_only_a_direct_child() {
+        let work = init_repo_without_remote();
+        let root = current_head(&work).unwrap();
+        fs::write(work.join("other.md"), "second\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "second"]);
+        let second = current_head(&work).unwrap();
+        fs::write(work.join("third.md"), "third\n").unwrap();
+        run(&work, &["add", "third.md"]);
+        run(&work, &["commit", "-q", "-m", "third"]);
+        let third = current_head(&work).unwrap();
+
+        assert!(descends_directly_from(&work, &second, &Some(root.clone())));
+        assert!(
+            !descends_directly_from(&work, &third, &Some(root.clone())),
+            "a grandchild is not a direct child"
+        );
+        assert!(
+            descends_directly_from(&work, &root, &None),
+            "a root commit has no parents, matching parent: None"
+        );
+        assert!(
+            !descends_directly_from(&work, &second, &None),
+            "a commit with a parent must not match the root-commit case"
+        );
+        assert!(
+            !descends_directly_from(&work, "not-a-commit", &Some(root)),
+            "fails closed when git can't answer"
+        );
+
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
