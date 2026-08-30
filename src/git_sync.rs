@@ -914,24 +914,39 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 /// ride along. Targeting `expected_commit` explicitly closes this rather
 /// than merely re-narrowing it: the push can never publish more than that
 /// commit's own ancestry, no matter what the local branch has become by
-/// push-time. Falls back to a bare `git push` only when `upstream_parts`
-/// can't resolve a remote/branch to target explicitly (no upstream
-/// configured at all) — there's nothing to push instead in that case, and
-/// a bare push already reports a clear, git-native error for it.
+/// push-time.
+///
+/// When `upstream_parts` can't resolve a remote/branch to target — no
+/// upstream tracking configured for this branch — the push is **refused**
+/// rather than falling back to a bare `git push`. Deep review, reproduced
+/// empirically: that fallback was justified on the premise that a bare push
+/// "already reports a clear, git-native error" in this situation, which is
+/// false for an ordinary configuration. With a remote added but `-u` never
+/// used, and `push.default = current`, a bare push resolves a destination
+/// and **succeeds**, publishing the whole branch tip — every unpushed
+/// commit, not just `expected_commit`. That is exactly what targeting the
+/// commit explicitly exists to prevent, and it composes badly with
+/// `branch_has_unrelated_unpushed_commits`, which independently fails
+/// *closed* in the same configuration (its `@{u}..HEAD` range can't be
+/// resolved either, so it declines to refuse): both guards are off at once,
+/// and an unrelated local commit gets published by a checklist toggle.
+/// Refusing keeps the commit safely local, reuses the existing retry
+/// machinery, and gives the user a one-off action to take.
 fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("git-sync: refusing to push an unresolved commit".to_string());
     }
+    let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
+        return SyncOutcome::CommittedNotPushed {
+            message: "git-sync: no upstream configured for this branch; \
+                      run `git push -u` once"
+                .to_string(),
+            commit: expected_commit.to_string(),
+        };
+    };
     let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir);
-    match upstream_parts(repo_dir) {
-        Some((remote, branch_ref)) => {
-            cmd.args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
-        }
-        None => {
-            cmd.arg("push");
-        }
-    }
+    cmd.current_dir(repo_dir)
+        .args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
     let output = run_with_timeout(cmd, PUSH_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
@@ -2200,6 +2215,84 @@ mod tests {
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_never_publishes_unrelated_work_when_no_upstream_is_configured() {
+        // Deep review, reproduced empirically. Two fail-safe decisions that
+        // are each locally reasonable compose into the exact hazard
+        // `branch_has_unrelated_unpushed_commits` exists to prevent:
+        //
+        //   * that guard resolves `@{u}..HEAD`, which *fails* with no
+        //     upstream configured, and it deliberately fails closed
+        //     ("don't refuse") so a fresh repo's first commit isn't blocked;
+        //   * `push` used to fall back to a bare `git push` for the same
+        //     "no upstream" case, justified on the premise that a bare push
+        //     reports a clear error.
+        //
+        // With `push.default = current` a bare push resolves a destination
+        // and succeeds, so both guards were off at once and an unrelated
+        // local commit rode out with the checklist change. `push` now
+        // refuses instead.
+        let root = unique_dir("repo-no-upstream");
+        let remote = root.join("remote.git");
+        let work = root.join("work");
+        fs::create_dir_all(&remote).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        run(&remote, &["init", "--bare", "-q", "-b", "main"]);
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+        run(&work, &["config", "push.default", "current"]);
+        fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        run(&work, &["commit", "-q", "-m", "init"]);
+        // A remote, but deliberately no `-u`: `branch.main.remote` and
+        // `branch.main.merge` stay unset, so `upstream_parts` is `None` and
+        // `@{u}` can't be resolved.
+        run(
+            &work,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        assert!(
+            upstream_parts(&work).is_none(),
+            "test setup: no upstream must be configured"
+        );
+
+        // The user's own unrelated work-in-progress commit.
+        fs::write(work.join("other.md"), "unrelated work\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "unrelated local commit"]);
+
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let message = commit_message(&file_path, "Check \"one\"");
+        let outcome = run_sync(
+            &work,
+            &file_path,
+            "- [x] one\n",
+            &message,
+            &no_race("- [x] one\n"),
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
+                if message.contains("no upstream configured")),
+            "{outcome:?}"
+        );
+        // Nothing reached the remote at all -- it has no branches yet.
+        let branches = Command::new("git")
+            .current_dir(&remote)
+            .args(["branch", "--format=%(refname:short)"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
+            "the unrelated commit must never reach the remote: {:?}",
+            String::from_utf8_lossy(&branches.stdout)
+        );
+
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
