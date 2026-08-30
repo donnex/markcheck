@@ -2114,6 +2114,52 @@ mod tests {
     }
 
     #[test]
+    fn verify_commit_scope_names_the_stray_commit_when_the_undo_itself_fails() {
+        // The most alarming message in this module -- an out-of-scope commit
+        // that could *not* be rolled back, so it's still sitting on the
+        // branch and named for manual cleanup -- and it had no test. Forced
+        // deterministically by making `undo_commit`'s compare-and-swap fail:
+        // an unrelated commit lands on top of the one being verified, so
+        // update-ref refuses (correctly -- rewinding would take the
+        // concurrent commit with it), and verify_commit_scope has to report
+        // a violation it couldn't undo rather than one it did.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+
+        // Stands in for a commit a hook expanded beyond the checklist.
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        fs::write(work.join("other.md"), "hook-added\n").unwrap();
+        run(&work, &["add", "tracked.md", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "checklist plus hook spill"]);
+        let created_commit = current_head(&work).unwrap();
+
+        // Something else commits on top, so the CAS-guarded undo must refuse.
+        fs::write(work.join("third.md"), "concurrent\n").unwrap();
+        run(&work, &["add", "third.md"]);
+        run(&work, &["commit", "-q", "-m", "concurrent change"]);
+        let concurrent_commit = current_head(&work).unwrap();
+
+        let result = verify_commit_scope(&work, &Some(parent), "tracked.md", &created_commit);
+
+        let err = result.expect_err("an out-of-scope commit must be reported");
+        assert!(
+            err.contains("undoing the commit failed"),
+            "must say the rollback itself failed: {err}"
+        );
+        assert!(
+            err.contains(&created_commit),
+            "must name the stray commit for manual cleanup: {err}"
+        );
+        assert_eq!(
+            current_head(&work),
+            Some(concurrent_commit),
+            "nothing may be rewound when the undo refuses"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn undo_commit_refuses_to_rewind_a_commit_that_landed_after_the_one_being_undone() {
         // External review, round 4: the old undo_commit did a bare
         // `update-ref HEAD <parent>` with no compare-and-swap, so a commit
