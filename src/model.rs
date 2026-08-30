@@ -851,8 +851,9 @@ pub struct GitSyncState {
     /// `GitSync::detect` confirmed the file is in a git work tree). Never
     /// changes after that — unlike `last_at`, this isn't about a particular
     /// sync's timing, just whether the feature is active this session at
-    /// all. Drives the persistent git icon in the status bar
-    /// (`ui/statusbar.rs`), which is otherwise fully hidden.
+    /// all. Drives the persistent `⇅ git` section in the **title bar**
+    /// (`render_title_bar` in `ui/mod.rs`), which is otherwise absent
+    /// entirely — no icon, no text, no gap.
     pub active: bool,
     /// When a background git-sync last committed *and pushed*
     /// successfully. Drives the title-bar "Synced … ago" tag, the same way
