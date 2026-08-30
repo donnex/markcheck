@@ -174,9 +174,10 @@ fn main() -> anyhow::Result<()> {
     let mut git_sync = git_sync_requested
         .then(|| git_sync::GitSync::detect(&state.document.file_path))
         .flatten();
-    // Drives the persistent status-bar icon — set once here and never
-    // touched again; `GitSyncState::last_at`/`pending` handle the per-sync
-    // timing, this is just "is the feature on for this session at all".
+    // Drives the persistent `⇅ git` section in the title bar
+    // (`render_title_bar` in `ui/mod.rs`) — set once here and never touched
+    // again; `GitSyncState::last_at`/`pending` handle the per-sync timing,
+    // this is just "is the feature on for this session at all".
     state.git_sync.active = git_sync.is_some();
     // A prior session's commit can still be sitting local-only if it quit
     // (or crashed) before `retry_push_if_due` got a chance to push it, and
