@@ -198,16 +198,28 @@ impl AppState {
         self.maybe_auto_copy();
     }
 
+    /// Jump to list `index` (0-based). Out of range is reported rather than
+    /// ignored: only the `1`-`9` digit binding can ask for a list that
+    /// doesn't exist (every internal caller passes a bounds-checked index),
+    /// and pressing `5` in a two-list document used to clear the status bar
+    /// and do nothing at all — indistinguishable from the app being wedged.
     pub fn jump_to_list(&mut self, index: usize) {
-        if index < self.document.lists.len() {
-            self.current_list_index = index;
-            // Land on the first not-done item in the target list,
-            // falling back to its first item when all are done.
-            self.current_item_index = first_undone_index(&self.document.lists[index]).unwrap_or(0);
-            self.screen = Screen::Checklist;
-            self.reset_card_scroll();
-            self.maybe_auto_copy();
+        let count = self.document.lists.len();
+        if index >= count {
+            let plural = if count == 1 { "" } else { "s" };
+            self.set_error(format!(
+                "No list {}: this document has {count} list{plural}",
+                index + 1
+            ));
+            return;
         }
+        self.current_list_index = index;
+        // Land on the first not-done item in the target list,
+        // falling back to its first item when all are done.
+        self.current_item_index = first_undone_index(&self.document.lists[index]).unwrap_or(0);
+        self.screen = Screen::Checklist;
+        self.reset_card_scroll();
+        self.maybe_auto_copy();
     }
 
     /// All `(list_index, item_index)` whose text matches `query`, in document
@@ -823,9 +835,17 @@ impl AppState {
         let state = match kind {
             // Space/Enter can't toggle an info card, so page past it like
             // `l`/next instead of doing nothing — crossing into the
-            // next list at a list edge, per `navigate_forward`.
+            // next list at a list edge, per `navigate_forward`. On the very
+            // last card there's nowhere to page to, so say so rather than
+            // leaving the keypress looking broken.
             ItemKind::DisplayOnly => {
+                let before = (self.current_list_index, self.current_item_index);
                 self.navigate_forward();
+                if (self.current_list_index, self.current_item_index) == before {
+                    self.set_error(
+                        "Nothing to toggle: this is a note, and it's the last card".to_string(),
+                    );
+                }
                 return;
             }
             ItemKind::Checkbox(state) => state,
@@ -929,12 +949,19 @@ impl AppState {
     /// `s` toggles the *started* state: Started reverts to NotStarted,
     /// anything else (including Done) becomes Started. Never completes and
     /// never auto-advances — the cursor stays put on `Checklist`.
+    ///
+    /// An info card has no state to start, which is reported rather than
+    /// ignored — the same "your keypress did nothing, and here's why"
+    /// treatment `copy_current_code` and `open_current_link` already give.
     pub fn start_current(&mut self) {
         let Some(current) = self.current_item() else {
             return;
         };
         let state = match current.kind {
-            ItemKind::DisplayOnly => return,
+            ItemKind::DisplayOnly => {
+                self.set_error("Nothing to start: this card is a note, not a task".to_string());
+                return;
+            }
             ItemKind::Checkbox(state) => state,
         };
         let new_state = if state == TaskState::Started {

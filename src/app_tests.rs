@@ -1167,10 +1167,32 @@ fn navigate_next_stops_on_display_only_items() {
 }
 
 #[test]
-fn jump_to_list_out_of_range_is_ignored() {
+fn jump_to_list_out_of_range_reports_instead_of_moving() {
+    // Deep review: this used to be a silent no-op, against the UI-feedback
+    // rule -- pressing `5` in a two-list document cleared the status bar
+    // and did nothing else, which reads exactly like a wedged app.
     let mut state = AppState::new(two_list_document());
     state.jump_to_list(5);
-    assert_eq!(state.current_list_index, 0);
+    assert_eq!(state.current_list_index, 0, "the cursor must not move");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No list 6: this document has 2 lists")
+    );
+    assert!(state.status_is_error, "sticky, error-colored");
+}
+
+#[test]
+fn jump_to_list_out_of_range_message_is_singular_for_one_list() {
+    let mut state = AppState::new(document_with_lists(vec![List {
+        title: "Only".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]));
+    state.jump_to_list(3);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No list 4: this document has 1 list")
+    );
 }
 
 #[test]
@@ -3140,7 +3162,10 @@ fn start_current_is_a_no_op_when_no_current_item() {
 }
 
 #[test]
-fn start_current_is_a_no_op_on_a_display_only_card() {
+fn start_current_reports_instead_of_going_silent_on_a_display_only_card() {
+    // Deep review: `s` on an info card used to return with no message at
+    // all, unlike every neighbouring action (`y`, `o`, `}`/`{`, `R`), which
+    // all explain a no-op.
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -3156,6 +3181,32 @@ fn start_current_is_a_no_op_on_a_display_only_card() {
         ItemKind::Checkbox(TaskState::NotStarted),
         "the checkbox item must be untouched"
     );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Nothing to start: this card is a note, not a task")
+    );
+    assert!(state.status_is_error, "sticky, error-colored");
+}
+
+#[test]
+fn toggle_current_reports_on_a_display_only_card_with_nowhere_to_advance() {
+    // The info-card toggle pages forward instead of doing nothing -- but on
+    // the very last card there is nowhere to page to, which was the one
+    // remaining silent no-op in this group.
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false), display_only(2)],
+    }]);
+    let mut state = AppState::new(document);
+    state.current_item_index = 1; // the trailing info card
+    state.toggle_current();
+    assert_eq!(state.current_item_index, 1, "nowhere to advance to");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Nothing to toggle: this is a note, and it's the last card")
+    );
+    assert!(state.status_is_error, "sticky, error-colored");
 }
 
 #[test]
