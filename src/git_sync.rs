@@ -317,6 +317,43 @@ pub struct GitSync {
     last_spawn_was_retry: bool,
 }
 
+/// Locks `latest_requested_hash`, tolerating a poisoned mutex rather than
+/// propagating the panic. The guarded value is a plain `[u8; 32]` — a
+/// content digest, overwritten wholesale on every write — so there is no
+/// multi-field invariant a panicking holder could have left half-updated,
+/// which is the only thing poisoning is there to warn about. Tolerating it
+/// matters because one of the two lock sites is on the **main** thread
+/// (`GitSync::request`): an `unwrap()` there turns a background worker's
+/// panic into a TUI crash, several frames after the fact and with no
+/// connection to what the user was doing.
+fn lock_hash(hash: &Mutex<[u8; 32]>) -> std::sync::MutexGuard<'_, [u8; 32]> {
+    hash.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Runs a sync operation, converting a panic into a reportable
+/// `SyncOutcome::Failed` instead of letting the worker thread die silently.
+///
+/// `GitSync.busy` is cleared **only** when `poll` receives an outcome, and
+/// the receiver never reports `Disconnected` (the struct holds its own
+/// sender clone), so a worker that panics before sending leaves `busy` stuck
+/// `true` forever: every later `request` coalesces into `pending` and never
+/// spawns, `retry_push_if_due` returns immediately, and quitting burns the
+/// full `wait_for_git_sync` budget — git-sync silently, permanently dead
+/// with nothing on screen to say so. Guaranteeing an outcome is always sent
+/// keeps that failure loud and recoverable.
+///
+/// Not reachable by any known path — `run_sync` and `retry_commit` return
+/// `Result`-shaped failures throughout, and the one `unwrap` they relied on
+/// (a poisoned `latest_requested_hash`) is handled by `lock_hash` above.
+/// This is the backstop for the unknown ones, so it has no test of its own;
+/// forcing a panic through it would mean adding a panic to production code
+/// purely to observe it.
+fn run_reporting_panics(op: impl FnOnce() -> SyncOutcome) -> SyncOutcome {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(op)).unwrap_or(SyncOutcome::Failed(
+        "git-sync: internal error (sync worker panicked)".to_string(),
+    ))
+}
+
 impl GitSync {
     /// Confirms `file_path`'s directory is inside a git work tree and, if
     /// so, returns a `GitSync` ready to accept requests. `None` when it
@@ -357,7 +394,7 @@ impl GitSync {
     /// that a newer one now exists, even though that newer one won't
     /// itself start running until the current one finishes.
     pub fn request(&mut self, sync: PendingSync) {
-        *self.latest_requested_hash.lock().unwrap() = sync.content_hash;
+        *lock_hash(&self.latest_requested_hash) = sync.content_hash;
         if self.busy {
             self.pending = Some(sync);
             return;
@@ -373,14 +410,16 @@ impl GitSync {
         let sender = self.sender.clone();
         let latest_requested_hash = Arc::clone(&self.latest_requested_hash);
         std::thread::spawn(move || {
-            let message = commit_message(&file_path, &sync.description);
-            let outcome = run_sync(
-                &repo_dir,
-                &file_path,
-                &sync.content,
-                &message,
-                &latest_requested_hash,
-            );
+            let outcome = run_reporting_panics(|| {
+                let message = commit_message(&file_path, &sync.description);
+                run_sync(
+                    &repo_dir,
+                    &file_path,
+                    &sync.content,
+                    &message,
+                    &latest_requested_hash,
+                )
+            });
             let _ = sender.send(outcome);
         });
     }
@@ -394,7 +433,7 @@ impl GitSync {
         let repo_dir = self.repo_dir.clone();
         let sender = self.sender.clone();
         std::thread::spawn(move || {
-            let outcome = retry_commit(&repo_dir, &commit);
+            let outcome = run_reporting_panics(|| retry_commit(&repo_dir, &commit));
             let _ = sender.send(outcome);
         });
     }
@@ -695,7 +734,7 @@ fn run_sync(
     // `latest_requested_hash` — committing `expected_content` regardless
     // would otherwise silently resurrect a file the user just deleted.
     match fs::read(file_path) {
-        Ok(bytes) if hash_bytes(&bytes) == *latest_requested_hash.lock().unwrap() => {}
+        Ok(bytes) if hash_bytes(&bytes) == *lock_hash(latest_requested_hash) => {}
         _ => {
             return SyncOutcome::Failed(
                 "git-sync: file changed since this request was queued; edit or toggle again to sync the current content"
@@ -1743,6 +1782,35 @@ mod tests {
     fn detect_finds_a_repo() {
         let work = init_repo_without_remote();
         assert!(GitSync::detect(&work.join("tracked.md")).is_some());
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_poisoned_latest_hash_does_not_take_down_the_main_thread() {
+        // Deep review: `request` runs on the main (TUI) thread and takes the
+        // same lock a background worker holds. An `unwrap()` there turns any
+        // worker panic into a TUI crash, several frames later and with no
+        // connection to what the user was doing. The guarded value is a
+        // plain digest with no invariant to protect, so a poisoned lock is
+        // recovered rather than propagated.
+        let work = init_repo_without_remote();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+
+        let hash = Arc::clone(&sync.latest_requested_hash);
+        let poisoner = std::thread::spawn(move || {
+            let _guard = hash.lock().unwrap();
+            panic!("poison the mutex");
+        });
+        assert!(poisoner.join().is_err(), "the poisoning thread must panic");
+        assert!(sync.latest_requested_hash.is_poisoned());
+
+        // Must not panic, and must still record the request.
+        sync.request(pending_sync("- [x] one\n", "after poisoning"));
+        assert_eq!(
+            *lock_hash(&sync.latest_requested_hash),
+            hash_bytes(b"- [x] one\n")
+        );
+
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
