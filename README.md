@@ -391,7 +391,7 @@ markcheck", so `git log`/`git blame` stay useful across hosts. A failed
 commit (diverged history, mid-merge, …) is reported as a red status-bar
 message — `markcheck` never attempts to resolve it for you (no auto
 `git pull --rebase`), so fix it in a terminal as usual. A commit that
-succeeds but fails to *push* (offline, no upstream configured, …) is
+succeeds but fails to *push* (offline, expired credentials, …) is
 reported separately (`Git commit saved locally; push failed, will retry`) —
 nothing is lost, and `markcheck` retries the push on its own every 30
 seconds, on the next sync of any kind, and once more right at startup, so
@@ -442,6 +442,17 @@ wasn't requested or the file isn't in a repo.
 `--git-sync` only activates when the file's directory is confirmed to be
 inside a git work tree at startup; on a file that isn't in a repo, the flag
 (or a `git_sync_paths` match) simply has no effect.
+
+**The branch needs an upstream.** Git-sync pushes the exact commit it just
+made, to the branch's configured upstream — so a branch that's never had
+one set is committed to locally and reported as ``git-sync: no upstream
+configured for this branch; run `git push -u` once``. Do that once per
+branch (`git push -u origin <branch>`) and syncing proceeds normally from
+then on; the commits made in the meantime go out with the next one. It
+deliberately won't fall back to a plain `git push` here, because that sends
+the whole branch — including any unrelated local commits — which is exactly
+what the unrelated-work check above exists to prevent, and that check can't
+run without an upstream to compare against either.
 
 Each commit runs from a private, temporary git index — never your real one —
 so a `git add`ed-but-not-yet-committed file of yours can never ride along
