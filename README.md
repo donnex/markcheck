@@ -454,6 +454,20 @@ the whole branch — including any unrelated local commits — which is exactly
 what the unrelated-work check above exists to prevent, and that check can't
 run without an upstream to compare against either.
 
+**Requirements.** Git-sync shells out to `git`, so it needs `git` on
+`PATH`; it's developed and tested against modern git (2.40+) and uses only
+long-standing plumbing, so anything from **git 2.0** onward should work.
+No specific older version is verified in CI.
+
+**Git-sync runs the repository's commit hooks.** That's deliberate — it's
+why commits are made with a real `git commit` rather than assembled by hand,
+so `pre-commit`/`commit-msg`/`post-commit` and `commit.gpgsign` all behave
+as they would if you'd committed yourself. It does mean that opening a
+checklist with `--git-sync` inside a repository you don't trust executes
+that repository's hooks. The scope check below bounds what a hook can get
+*committed*; it can't bound what a hook can *run*. Treat `--git-sync` in an
+untrusted repo the same way you'd treat running `git commit` in one.
+
 Each commit runs from a private, temporary git index — never your real one —
 so a `git add`ed-but-not-yet-committed file of yours can never ride along
 into a markcheck commit. That index still runs the repository's normal
