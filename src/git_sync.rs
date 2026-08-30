@@ -641,7 +641,24 @@ fn run_sync(
     // retrying — see `ahead_of_upstream`'s doc comment for why this matters.
     if blob_bytes_at(&repo_root, "HEAD", &relpath).as_deref() == Some(expected_content.as_bytes()) {
         if ahead_of_upstream(&repo_root) {
-            return push(repo_dir, &current_head(&repo_root).unwrap_or_default());
+            // An unresolvable `HEAD` is a hard failure here, never a
+            // default — the same reasoning `resolve_parent` applies at the
+            // other call site where `current_head`'s ambiguous `None` would
+            // otherwise become a silent wrong action. This used to be
+            // `current_head(...).unwrap_or_default()`, and the default of a
+            // `String` is `""`, which `push` then formats into the refspec
+            // `<remote> :<branch>` — git's *delete a remote ref* form.
+            // Confirmed empirically: that deletes the branch and exits 0,
+            // so the sync reports `Synced` while the branch is gone. (A bare
+            // remote refuses to delete its own `HEAD` branch by default, so
+            // only branches other than the remote's default were exposed —
+            // which is every topic branch.)
+            let Some(head) = current_head(&repo_root) else {
+                return SyncOutcome::Failed(
+                    "git-sync: could not resolve HEAD before pushing".to_string(),
+                );
+            };
+            return push(repo_dir, &head);
         }
         return SyncOutcome::Skipped;
     }
@@ -872,10 +889,21 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 /// Pushes `expected_commit` — explicitly, as `<remote>
 /// <expected_commit>:<upstream-branch>` rather than a bare `git push` —
 /// translating the result into a `SyncOutcome`. A failure here is always
-/// `CommittedNotPushed`, never `Failed`: by the time this is called,
-/// either a commit was just made or `HEAD` was already confirmed to hold
-/// the desired content — either way, a local commit exists and the only
-/// thing to retry is the push itself.
+/// `CommittedNotPushed`, never `Failed`, with one carve-out below: by the
+/// time this is called, either a commit was just made or `HEAD` was already
+/// confirmed to hold the desired content — either way, a local commit
+/// exists and the only thing to retry is the push itself.
+///
+/// The carve-out is an **empty** `expected_commit`, which is rejected
+/// outright as `Failed` (the one case where no local commit can be claimed,
+/// since there's no SHA naming one). This is defence in depth, not a
+/// reachable path: every caller resolves a real SHA first. It exists because
+/// the consequence of getting here with `""` is severe and silent — the
+/// refspec below would become `<remote> :<branch>`, git's *delete a remote
+/// ref* form, which succeeds and reports `Synced` while deleting the branch.
+/// A caller that regressed into passing an unresolved SHA (as `run_sync`'s
+/// fast path once did, via `unwrap_or_default()`) must fail loudly rather
+/// than delete anything.
 ///
 /// External review, round 5: both of this function's callers
 /// (`push_if_head_unchanged`, `retry_commit`) verify `HEAD ==
@@ -891,6 +919,9 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 /// configured at all) — there's nothing to push instead in that case, and
 /// a bare push already reports a clear, git-native error for it.
 fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
+    if expected_commit.is_empty() {
+        return SyncOutcome::Failed("git-sync: refusing to push an unresolved commit".to_string());
+    }
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_dir);
     match upstream_parts(repo_dir) {
@@ -1581,6 +1612,37 @@ mod tests {
         assert!(status.success(), "git {args:?} failed in {dir:?}");
     }
 
+    /// Like `init_repo_with_remote`, but the checklist lives on a **topic**
+    /// branch while the remote's own `HEAD` stays on `main`. Every other
+    /// git-sync test works on `main`, which is exactly the branch a bare
+    /// remote protects (`receive.denyDeleteCurrent` refuses to delete its
+    /// current branch by default) — so a refspec-level mistake that deletes
+    /// or clobbers the target ref is invisible there and only observable on
+    /// a branch like this one, which is also the shape of every real topic
+    /// branch. Returns `(work, remote, branch)`.
+    fn init_repo_with_remote_on_a_topic_branch() -> (PathBuf, PathBuf, String) {
+        let root = unique_dir("repo-topic-branch");
+        let remote = root.join("remote.git");
+        let work = root.join("work");
+        fs::create_dir_all(&remote).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        run(&remote, &["init", "--bare", "-q", "-b", "main"]);
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+        fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        run(&work, &["commit", "-q", "-m", "init"]);
+        run(
+            &work,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        run(&work, &["push", "-q", "-u", "origin", "main"]);
+        run(&work, &["checkout", "-q", "-b", "topic"]);
+        run(&work, &["push", "-q", "-u", "origin", "topic"]);
+        (work, remote, "topic".to_string())
+    }
+
     /// A repo with one committed file (`tracked.md`), ready for tests to
     /// dirty and sync. `origin` is a bare remote already set as upstream, so
     /// `git push` (no explicit remote/branch args) has somewhere to go.
@@ -2066,6 +2128,75 @@ mod tests {
             String::from_utf8_lossy(&remote_log.stdout).contains("markcheck commit"),
             "{}",
             String::from_utf8_lossy(&remote_log.stdout)
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn push_refuses_an_empty_commit_instead_of_deleting_the_remote_branch() {
+        // Deep review, critical finding. `<remote> :<branch>` is git's
+        // *delete a remote ref* refspec, so an empty `expected_commit`
+        // formatted into `{expected_commit}:{branch_ref}` doesn't fail — it
+        // deletes the branch and exits 0, which `push` would then report as
+        // `Synced`. Reproduced directly against git before the fix. The
+        // reachable route was `run_sync`'s fast path, which used to write
+        // `current_head(...).unwrap_or_default()`; this test guards `push`
+        // itself, so no future caller can reintroduce it from a different
+        // direction.
+        let (work, remote, branch) = init_repo_with_remote_on_a_topic_branch();
+
+        let outcome = push(&work, "");
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unresolved commit")),
+            "{outcome:?}"
+        );
+        let branches = Command::new("git")
+            .current_dir(&remote)
+            .args(["branch", "--format=%(refname:short)"])
+            .output()
+            .unwrap();
+        let branches = String::from_utf8_lossy(&branches.stdout);
+        assert!(
+            branches.lines().any(|b| b == branch),
+            "the remote branch must still exist: {branches:?}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_commits_and_pushes_on_a_non_default_branch() {
+        // Every other git-sync test runs on `main`, which a bare remote
+        // refuses to delete out from under itself — masking any refspec
+        // mistake. A topic branch has no such protection and is the shape
+        // of every real branch this project's own workflow uses.
+        let (work, remote, branch) = init_repo_with_remote_on_a_topic_branch();
+        let file_path = work.join("tracked.md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let message = commit_message(&file_path, "Check \"one\"");
+
+        assert_eq!(
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] one\n",
+                &message,
+                &no_race("- [x] one\n")
+            ),
+            SyncOutcome::Synced
+        );
+
+        let show = Command::new("git")
+            .current_dir(&remote)
+            .args(["show", &format!("{branch}:tracked.md")])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&show.stdout),
+            "- [x] one\n",
+            "the topic branch must carry the change, not be deleted or left behind"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();

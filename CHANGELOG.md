@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) can no longer delete the branch it was meant to
+  push to. If the one `git` command that reads the current commit happened
+  to fail (a timeout, a wedged filesystem), the push was built with an empty
+  commit id, which git reads as "delete this branch on the remote" — it
+  succeeded, and markcheck reported it as a successful sync. Branches other
+  than the remote's default one were at risk, which is to say any topic
+  branch. Git-sync now reports a failure and retries instead, and refuses to
+  push at all unless it has a real commit to name.
 - Git-sync (`--git-sync`) no longer risks rewinding somebody else's commit
   off the branch when a slow commit hook runs past markcheck's timeout. It
   used to treat "the branch moved" as proof its own commit was what moved
