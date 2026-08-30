@@ -510,15 +510,38 @@ impl GitSync {
 
 /// Commit messages are kept to one line and capped here so a long task
 /// title (the usual source of `change_desc`) can't produce an unwieldy
-/// `git log` entry; the file-name prefix is always kept intact and only
-/// the description is cut, with a trailing `…` marking the cut.
+/// `git log` entry; the description is what gets cut, with a trailing `…`
+/// marking the cut, and the file-name prefix is kept intact — unless the
+/// file name is itself long enough to blow the cap on its own, in which
+/// case it's cut too (see `MAX_FILE_NAME_LEN`).
 const MAX_COMMIT_MESSAGE_LEN: usize = 80;
+
+/// The smallest description budget worth leaving room for, so a truncated
+/// message still says *something* about the change instead of degenerating
+/// to a bare ellipsis.
+const MIN_DESC_LEN: usize = 8;
+
+/// How much of the file name the prefix may use. Without this bound,
+/// `budget` below saturates to 0 for a file name of ~79 characters or more
+/// and the result is `<prefix>…` — *longer* than `MAX_COMMIT_MESSAGE_LEN`,
+/// which is the one property that constant exists to guarantee. Accounts
+/// for the prefix's own `": "` plus a minimum description and its ellipsis.
+const MAX_FILE_NAME_LEN: usize = MAX_COMMIT_MESSAGE_LEN - (2 + MIN_DESC_LEN + 1);
 
 fn commit_message(file_path: &Path, change_desc: &str) -> String {
     let file_name = file_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "checklist".to_string());
+    let file_name = if file_name.chars().count() > MAX_FILE_NAME_LEN {
+        let kept: String = file_name
+            .chars()
+            .take(MAX_FILE_NAME_LEN.saturating_sub(1))
+            .collect();
+        format!("{kept}\u{2026}")
+    } else {
+        file_name
+    };
     let prefix = format!("{file_name}: ");
     let full = format!("{prefix}{change_desc}");
     if full.chars().count() <= MAX_COMMIT_MESSAGE_LEN {
@@ -4261,6 +4284,38 @@ mod tests {
         assert_eq!(message.chars().count(), 80);
         assert!(message.ends_with('\u{2026}'));
         assert!(!message.ends_with("\u{2026}\""));
+    }
+
+    #[test]
+    fn commit_message_stays_within_the_cap_for_a_very_long_file_name() {
+        // Deep review: the file-name prefix used to be kept whole
+        // unconditionally, so a long enough name saturated the description
+        // budget to 0 and produced `<prefix>…` -- longer than
+        // MAX_COMMIT_MESSAGE_LEN, the one thing the constant guarantees.
+        for name_len in [MAX_FILE_NAME_LEN - 1, MAX_FILE_NAME_LEN, 79, 100, 200] {
+            let name = format!("{}.md", "x".repeat(name_len));
+            let message = commit_message(
+                Path::new(&format!("/a/b/{name}")),
+                "Check \"a task with a reasonably long title\"",
+            );
+            assert!(
+                message.chars().count() <= MAX_COMMIT_MESSAGE_LEN,
+                "name_len {name_len}: {} chars: {message:?}",
+                message.chars().count()
+            );
+            assert!(
+                message.contains(": "),
+                "the prefix separator survives: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn commit_message_keeps_an_ordinary_file_name_intact() {
+        // The clamp above must only ever engage for pathological names --
+        // a normal checklist file name is untouched.
+        let message = commit_message(Path::new("/a/b/deployment-runbook.md"), "Check \"x\"");
+        assert!(message.starts_with("deployment-runbook.md: "), "{message}");
     }
 
     #[test]
