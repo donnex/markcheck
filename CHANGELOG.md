@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Git-sync (`--git-sync`) now requires the branch to have an upstream set
+  (`git push -u origin <branch>`, once) before it will push. Without one it
+  used to fall back to a plain `git push`, which — depending on your git
+  config — could quietly succeed and send the *whole* branch, unrelated
+  local commits included, precisely because the "refuse to publish unrelated
+  work" guard also can't do its job without an upstream to compare against.
+  Your commits are still made locally either way; set the upstream once and
+  they go out on the next sync.
 - Git-sync (`--git-sync`) now refuses to sync (rather than pushing
   everything) if the branch already has local commits unrelated to the
   checklist that haven't reached the remote yet — `git push` always sends
