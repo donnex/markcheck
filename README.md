@@ -117,6 +117,7 @@ markcheck --no-nerd-font runbook.md   # plain-Unicode icons
 markcheck --no-mouse runbook.md       # leave terminal text selection alone
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
+markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --new runbook.md            # create a starter checklist, then open it
 markcheck --version                   # print the version and build's git commit
@@ -151,11 +152,15 @@ TOML, or an unrecognized key — a likely typo) **is** an error: `markcheck`
 refuses to start and reports the problem, rather than silently ignoring a
 setting you asked for.
 
+Each of the four boolean settings has a flag in both directions, so a config
+value can always be overridden for a single run: `--no-nerd-font`,
+`--no-mouse`, `--primary`/`--no-primary`, and `--auto-copy`/`--no-auto-copy`.
+
 `git_sync_paths` is the odd one out: a list of path prefixes rather than a
 plain default. A file whose path starts with one of them gets git-sync
 turned on automatically, the same as passing `--git-sync` for that one run.
 `--git-sync` and `git_sync_paths` are additive (either one turns it on),
-unlike the other four flags, where a passed flag simply overrides the
+unlike the four booleans above, where a passed flag simply overrides the
 config value.
 
 ## Markdown
