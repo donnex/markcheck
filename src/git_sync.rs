@@ -48,7 +48,18 @@ const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 /// `Command::new("git").arg(...)` yields `&mut Command`, borrowing a
 /// temporary, which can't be handed to a function expecting an owned one.
 fn run_with_timeout(mut cmd: Command, timeout: Duration) -> io::Result<Output> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // stdin is nulled rather than inherited: markcheck owns the terminal
+    // while these run, and no plumbing command here has anything to read.
+    // Hardening rather than a fix for an observed failure — an attempt to
+    // demonstrate a credential-prompt hang under a PTY did *not* reproduce,
+    // because `spawn_in_own_process_group` leaves the child in a background
+    // process group where a terminal read fails instead of blocking. But
+    // that outcome depends on process-group and signal details rather than
+    // on anything stated here, and `git` seeing an immediate EOF is both
+    // predictable and the conventional choice.
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let child = spawn_in_own_process_group(cmd)?;
     wait_with_timeout(child, timeout, None)
 }
@@ -226,9 +237,21 @@ fn kill_and_reap(child: &mut Child) {
     // option at all on a platform without process groups.
     #[cfg(unix)]
     {
+        // All three streams explicitly nulled. `status()` would otherwise
+        // *inherit* markcheck's, and markcheck owns the terminal — in raw
+        // mode, on the alternate screen. `/bin/kill` writes to stderr when
+        // the target group is already gone (`/bin/kill: (-1234): No such
+        // process`, verified), which would land in the middle of the
+        // rendered UI, where ratatui's diff renderer won't necessarily
+        // repaint over it. That race is narrow, but the rule is general and
+        // free: **any** `Command` spawned while the TUI owns the terminal
+        // must set its stdio explicitly, as `main.rs`'s `open_link` does.
         let _ = Command::new("kill")
             .args(["-KILL", "--"])
             .arg(format!("-{}", child.id()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status();
     }
     let _ = child.kill();
