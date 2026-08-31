@@ -66,9 +66,15 @@ struct Cli {
     /// Also copy to the X11 PRIMARY selection (middle-click paste) (config: primary = true)
     #[arg(long)]
     primary: bool,
+    /// Don't copy to the X11 PRIMARY selection, overriding `primary = true` in the config
+    #[arg(long, conflicts_with = "primary")]
+    no_primary: bool,
     /// Auto-copy an item's code to the clipboard when navigating to it (config: auto_copy = true)
     #[arg(long)]
     auto_copy: bool,
+    /// Don't auto-copy on navigation, overriding `auto_copy = true` in the config
+    #[arg(long, conflicts_with = "auto_copy")]
+    no_auto_copy: bool,
     /// Commit and push this file's changes after every toggle, when it's inside a
     /// git repo (config: git_sync_paths matches this file's path)
     #[arg(long)]
@@ -142,16 +148,12 @@ fn main() -> anyhow::Result<()> {
     if created_new {
         state.set_status("Created new checklist".to_string());
     }
-    let nerd_font = if cli.no_nerd_font {
-        false
-    } else {
-        config.nerd_font.unwrap_or(true)
-    };
+    let nerd_font = resolve_flag(false, cli.no_nerd_font, config.nerd_font, true);
     if !nerd_font {
         state.icons = IconSet::unicode();
     }
-    state.clipboard_primary = cli.primary || config.primary.unwrap_or(false);
-    state.auto_copy = cli.auto_copy || config.auto_copy.unwrap_or(false);
+    state.clipboard_primary = resolve_flag(cli.primary, cli.no_primary, config.primary, false);
+    state.auto_copy = resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false);
     // Pick the richest color representation the terminal supports.
     state.palette = model::Palette::detect();
     // Reload-from-disk is a convenience feature, not core functionality:
@@ -199,11 +201,7 @@ fn main() -> anyhow::Result<()> {
         });
     }
 
-    let mouse = if cli.no_mouse {
-        false
-    } else {
-        config.mouse.unwrap_or(true)
-    };
+    let mouse = resolve_flag(false, cli.no_mouse, config.mouse, true);
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     if mouse {
@@ -221,6 +219,30 @@ fn main() -> anyhow::Result<()> {
         &mut git_sync,
         mouse,
     )
+}
+
+/// Resolves one boolean setting from its CLI flags and its config value:
+/// an explicitly-passed flag always wins, then the config file, then the
+/// built-in default. `cli_on`/`cli_off` are the positive and negative flags;
+/// pass `false` for one a setting doesn't have.
+///
+/// Shared by all four booleans so they cannot drift apart again. Deep
+/// review, round 2: `primary` and `auto_copy` were `cli.x || config.x`,
+/// which can only ever turn a setting *on* — so `primary = true` in the
+/// config could not be disabled for a single run, with no `--no-primary` to
+/// reach for, while README stated (twice) that a passed flag always
+/// overrides its config value. `nerd_font`/`mouse` already had this shape;
+/// now all four do, and the README's claim is true as written.
+///
+/// clap enforces `conflicts_with` on each pair, so both can never be set.
+fn resolve_flag(cli_on: bool, cli_off: bool, config: Option<bool>, default: bool) -> bool {
+    if cli_on {
+        return true;
+    }
+    if cli_off {
+        return false;
+    }
+    config.unwrap_or(default)
 }
 
 /// Whether a configured `git_sync_paths` entry (`prefix`) covers
@@ -543,7 +565,37 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{editor_line_args, git_sync_path_matches, resolve_editor, resolve_opener};
+    use super::{
+        editor_line_args, git_sync_path_matches, resolve_editor, resolve_flag, resolve_opener,
+    };
+
+    #[test]
+    fn resolve_flag_prefers_an_explicit_flag_then_config_then_the_default() {
+        // Flag/config precedence had no test at all, which is how `primary`
+        // and `auto_copy` came to be `cli || config` -- turnable on but never
+        // off -- while README claimed a passed flag always overrides.
+        // clap's `conflicts_with` rules out both flags at once, so the
+        // (true, true) row isn't reachable and isn't asserted.
+        for default in [false, true] {
+            // No flag passed: the config wins, else the default.
+            assert_eq!(resolve_flag(false, false, None, default), default);
+            assert!(resolve_flag(false, false, Some(true), default));
+            assert!(!resolve_flag(false, false, Some(false), default));
+
+            // A passed flag beats the config in *both* directions -- the
+            // half that used to be missing.
+            for config in [None, Some(false), Some(true)] {
+                assert!(
+                    resolve_flag(true, false, config, default),
+                    "the positive flag must win over {config:?}"
+                );
+                assert!(
+                    !resolve_flag(false, true, config, default),
+                    "the negative flag must win over {config:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn opener_prefers_browser_then_platform_default() {

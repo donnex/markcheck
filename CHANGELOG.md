@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--no-primary` and `--no-auto-copy`, so a config file that switches those
+  on can be overridden for a single run. Previously they could only be
+  turned *on* from the command line: with `auto_copy = true` in your config
+  there was no way to run without it short of editing the config, despite
+  the README saying a passed flag always wins. All four boolean settings now
+  have a flag in both directions.
+
 ### Changed
 
 - Three keypresses that used to do nothing at all now say why. Pressing a
