@@ -877,17 +877,27 @@ fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> boo
 /// sends a commit's whole ancestry regardless of what any single commit's
 /// net effect on the tree looks like).
 ///
-/// `git rev-list --parents <range>` gives every commit in the range and its
-/// parent count in one call; a commit with more than one parent (a merge)
-/// is treated as unrelated unconditionally — refusing outright rather than
-/// attempting a combined-diff interpretation of what a merge itself
-/// touched, which has genuine edge cases (conflict resolutions, content
-/// changed only during the merge) that could misjudge it either way. Each
-/// remaining (single-parent or root) commit is checked with `git diff-tree
-/// --root ... <sha>` — `--root` is required for a root commit to show
-/// anything at all (confirmed empirically: without it, `diff-tree` on a
-/// zero-parent commit prints nothing) and is a no-op for an ordinary commit
-/// (still diffs against its own first parent).
+/// Two subprocesses total, regardless of how many commits are in the range.
+/// `git rev-list --parents <range>` gives every commit and its parent count
+/// in one call; a commit with more than one parent (a merge) is treated as
+/// unrelated unconditionally — refusing outright rather than attempting a
+/// combined-diff interpretation of what a merge itself touched, which has
+/// genuine edge cases (conflict resolutions, content changed only during the
+/// merge) that could misjudge it either way. The remaining (single-parent or
+/// root) commits then go to **one** `git diff-tree --root ... --stdin` for
+/// the whole range. `--root` is required for a root commit to show anything
+/// at all (confirmed empirically: without it, `diff-tree` on a zero-parent
+/// commit prints nothing) and is a no-op for an ordinary commit (still diffs
+/// against its own first parent).
+///
+/// Deep review, round 2: this used to spawn one `diff-tree` **per commit**,
+/// each through `run_with_timeout`'s subprocess plus two reader threads —
+/// on every sync request, over `@{u}..HEAD`, a range that grows without
+/// bound while the remote is unreachable (and markcheck's design
+/// deliberately lets its own commits stack up while offline). Measured at
+/// 200 unpushed commits: 0.503s and ~400 thread spawns per toggle, versus
+/// 0.017s for the batched form. Both shapes are "any" predicates over the
+/// same range, so only the order of evaluation changes, not the verdict.
 ///
 /// Returns `Err` (rather than failing open or closed itself) on any `git`
 /// failure, leaving that decision to each caller: `branch_has_unrelated_
@@ -912,36 +922,50 @@ fn range_has_unrelated_commits(
     if !output.status.success() {
         return Err(command_error("git rev-list", &output));
     }
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
+    // Pass 1: the commit list, plus merge detection from the parent count.
+    // A merge short-circuits before any diff is needed at all.
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let mut shas = String::new();
+    for line in listing.lines() {
         let mut tokens = line.split_whitespace();
         let Some(sha) = tokens.next() else { continue };
         if tokens.count() > 1 {
             return Ok(true);
         }
-        let mut diff_cmd = Command::new("git");
-        diff_cmd.current_dir(repo_root).args([
-            "diff-tree",
-            "--root",
-            "--no-commit-id",
-            "--name-only",
-            "-r",
-            "-z",
-            sha,
-        ]);
-        let diff_output = run_with_timeout(diff_cmd, PLUMBING_TIMEOUT)
-            .map_err(|err| format!("git diff-tree failed: {err}"))?;
-        if !diff_output.status.success() {
-            return Err(command_error("git diff-tree", &diff_output));
-        }
-        if diff_output
-            .stdout
-            .split(|&b| b == 0)
-            .any(|path| !path.is_empty() && path != relpath.as_bytes())
-        {
-            return Ok(true);
-        }
+        shas.push_str(sha);
+        shas.push('\n');
     }
-    Ok(false)
+    if shas.is_empty() {
+        return Ok(false);
+    }
+
+    // Pass 2: one `diff-tree` for the whole range, fed the SHA list on
+    // stdin, rather than one subprocess per commit.
+    //
+    // `--no-commit-id` matters beyond tidiness: without it the output
+    // interleaves commit ids with paths in the same NUL-separated stream,
+    // and telling them apart would mean guessing that a 40-hex field is an
+    // id — which a file legitimately named 40 hex characters would defeat.
+    // With it, every field is a path, so there is nothing to disambiguate.
+    let mut diff_cmd = Command::new("git");
+    diff_cmd.current_dir(repo_root).args([
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        "-z",
+        "--stdin",
+    ]);
+    let diff_output = run_with_timeout_and_stdin(diff_cmd, PLUMBING_TIMEOUT, &shas)
+        .map_err(|err| format!("git diff-tree failed: {err}"))?;
+    if !diff_output.status.success() {
+        return Err(command_error("git diff-tree", &diff_output));
+    }
+    Ok(diff_output
+        .stdout
+        .split(|&b| b == 0)
+        .any(|path| !path.is_empty() && path != relpath.as_bytes()))
 }
 
 /// Resolves `(remote, upstream-branch-ref)` for the current branch via its
@@ -3634,6 +3658,60 @@ mod tests {
             current_head(&work).unwrap(),
             head_before,
             "no checklist commit should have been created on top"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn range_has_unrelated_commits_reads_a_whole_batched_range_correctly() {
+        // The per-commit `diff-tree` calls are now one batched `--stdin`
+        // call, so the parser sees every commit's paths in a single NUL
+        // stream instead of one clean response per commit. Exercise it over
+        // a range deliberately mixing shapes: checklist-only commits, a
+        // multi-file commit, and a root commit (via the `base: None` call
+        // shape `verify_commit_scope` uses).
+        let work = init_repo_without_remote();
+
+        // A run of checklist-only commits -- nothing unrelated yet.
+        let root = current_head(&work).unwrap();
+        for n in 1..=5 {
+            fs::write(work.join("tracked.md"), format!("- [x] {n}\n")).unwrap();
+            run(&work, &["commit", "-q", "-am", &format!("check {n}")]);
+        }
+        let checklist_only_tip = current_head(&work).unwrap();
+        assert_eq!(
+            range_has_unrelated_commits(&work, Some(&root), &checklist_only_tip, "tracked.md"),
+            Ok(false),
+            "a long run of checklist-only commits is not unrelated work"
+        );
+
+        // The root commit itself only touched tracked.md, so the full
+        // ancestry (base: None, which needs `--root` to show anything) is
+        // still clean.
+        assert_eq!(
+            range_has_unrelated_commits(&work, None, &checklist_only_tip, "tracked.md"),
+            Ok(false),
+            "the root commit must be diffed, and it only touched the checklist"
+        );
+
+        // One commit touching two paths anywhere in the range flips it.
+        fs::write(work.join("tracked.md"), "- [x] six\n").unwrap();
+        fs::write(work.join("other.md"), "unrelated\n").unwrap();
+        run(&work, &["add", "tracked.md", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "two files at once"]);
+        let mixed_tip = current_head(&work).unwrap();
+        assert_eq!(
+            range_has_unrelated_commits(&work, Some(&root), &mixed_tip, "tracked.md"),
+            Ok(true),
+            "a multi-file commit anywhere in the batch must be caught"
+        );
+
+        // And an empty range short-circuits before the batched call.
+        assert_eq!(
+            range_has_unrelated_commits(&work, Some(&mixed_tip), &mixed_tip, "tracked.md"),
+            Ok(false),
+            "an empty range has nothing to diff"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
