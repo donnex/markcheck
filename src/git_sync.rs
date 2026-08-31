@@ -265,6 +265,20 @@ pub enum SyncOutcome {
     /// content if something else has moved `HEAD` in the meantime (see
     /// `retry_commit`).
     CommittedNotPushed { message: String, commit: String },
+    /// A push retry (`retry_commit`) gave up because the commit it was
+    /// retrying is no longer `HEAD` — something else committed on top since
+    /// the failed push, so replaying this specific retry would be pointless
+    /// at best. Whatever superseded it gets its own sync opportunity through
+    /// the normal request path, so nothing is lost.
+    ///
+    /// A dedicated variant rather than reusing `Skipped`: the two mean
+    /// genuinely different things to the retry state (`Skipped` must leave a
+    /// still-valid retry armed; this one must clear it), and disambiguating
+    /// them used to need an out-of-band `last_spawn_was_retry` flag read at
+    /// `poll` time. Carrying it in the outcome is what lets `apply_outcome`
+    /// be a total `match` — which is the point, since the missing arm in the
+    /// old one is exactly how the `Failed` retry storm survived.
+    RetryAbandoned,
     /// `git status`/`commit` failed (nothing was committed); the message is
     /// the first line of the failing command's stderr.
     Failed(String),
@@ -308,13 +322,6 @@ pub struct GitSync {
     /// file changed because of something outside git-sync entirely, which
     /// nothing will ever correct" — see `run_sync`'s staleness check.
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
-    /// Whether the background operation whose outcome `poll` is currently
-    /// processing was a push retry (`spawn_retry`) rather than a fresh
-    /// content-based sync (`spawn`) — set right before each spawn, read by
-    /// `poll` to disambiguate `SyncOutcome::Skipped`, which both a retry
-    /// abandoning itself and an ordinary no-op sync can produce (see
-    /// `poll`'s doc comment).
-    last_spawn_was_retry: bool,
 }
 
 /// Locks `latest_requested_hash`, tolerating a poisoned mutex rather than
@@ -378,7 +385,6 @@ impl GitSync {
             pending: None,
             retry: None,
             latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
-            last_spawn_was_retry: false,
         })
     }
 
@@ -404,7 +410,6 @@ impl GitSync {
 
     fn spawn(&mut self, sync: PendingSync) {
         self.busy = true;
-        self.last_spawn_was_retry = false;
         let repo_dir = self.repo_dir.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
@@ -429,7 +434,6 @@ impl GitSync {
     /// — see `retry_commit`.
     fn spawn_retry(&mut self, commit: String) {
         self.busy = true;
-        self.last_spawn_was_retry = true;
         let repo_dir = self.repo_dir.clone();
         let sender = self.sender.clone();
         std::thread::spawn(move || {
@@ -440,40 +444,60 @@ impl GitSync {
 
     /// Drains the channel non-blockingly; call once per frame regardless of
     /// input, like `FileWatcher::poll_changed`. Returns the outcome of a
-    /// completed sync, if one just finished, and kicks off a queued
-    /// request that arrived while busy. Also updates the push-retry state
-    /// (see `retry_push_if_due`) from the outcome: `Synced` clears a prior
-    /// pending retry, `CommittedNotPushed` (re)arms one, and a retry
-    /// attempt's own `Skipped` — external review, round 7 — clears it too,
-    /// rather than leaving a retry armed forever for a commit `retry_commit`
-    /// has already concluded is stale. Without this, `self.retry`'s
-    /// timestamp is never refreshed once abandonment starts, so
-    /// `retry_push_if_due`'s backoff check stays permanently elapsed and
-    /// fires a fresh (equally-abandoned) retry attempt on every subsequent
-    /// call, not just every `PUSH_RETRY_INTERVAL`. An *ordinary* sync's
-    /// `Skipped` (nothing to do) must not clear a still-valid armed retry
-    /// for an unrelated earlier commit, though — `last_spawn_was_retry`
-    /// disambiguates the two, since `retry_commit`'s only `Skipped` return
-    /// is precisely "the retried commit is no longer `HEAD`."
+    /// completed sync, if one just finished, updates the push-retry state
+    /// from it (`apply_outcome`), and kicks off a queued request that
+    /// arrived while busy.
     pub fn poll(&mut self) -> Option<SyncOutcome> {
         let outcome = self.receiver.try_recv().ok();
         if let Some(outcome) = &outcome {
             self.busy = false;
-            match outcome {
-                SyncOutcome::Synced => self.retry = None,
-                SyncOutcome::CommittedNotPushed { commit, .. } => {
-                    self.retry = Some((commit.clone(), Instant::now()));
-                }
-                SyncOutcome::Skipped if self.last_spawn_was_retry => {
-                    self.retry = None;
-                }
-                SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::Failed(_) => {}
-            }
+            self.apply_outcome(outcome);
             if let Some(sync) = self.pending.take() {
                 self.spawn(sync);
             }
         }
         outcome
+    }
+
+    /// Folds one completed outcome into the push-retry state — the single
+    /// place `self.retry` is written, and deliberately a **total** `match`
+    /// with no catch-all arm, so adding a `SyncOutcome` variant is a compile
+    /// error rather than a silent no-op.
+    ///
+    /// That totality is the point. Deep review, round 2: `Failed` used to
+    /// fall into a catch-all that did nothing, which left an armed retry
+    /// holding its *original* timestamp. `retry_push_if_due`'s backoff check
+    /// then stayed permanently elapsed, so a retry spawned on every ~100ms
+    /// frame forever — measured at 98 `git` subprocesses in 10 seconds, with
+    /// no way out, since nothing in that state can produce a different
+    /// outcome. This is the same defect round 7 fixed for the abandoned-retry
+    /// case; it survived here because that fix patched one arm instead of
+    /// closing the hole. Every arm below now either clears the retry or
+    /// restarts its backoff.
+    fn apply_outcome(&mut self, outcome: &SyncOutcome) {
+        match outcome {
+            // Pushed successfully — nothing left to retry.
+            SyncOutcome::Synced => self.retry = None,
+            // The commit is local-only; arm (or re-arm) the retry, with the
+            // backoff starting from now.
+            SyncOutcome::CommittedNotPushed { commit, .. } => {
+                self.retry = Some((commit.clone(), Instant::now()));
+            }
+            // The retried commit is no longer HEAD — that specific retry is
+            // pointless now, and whatever superseded it syncs on its own.
+            SyncOutcome::RetryAbandoned => self.retry = None,
+            // Still unpushed, so keep the retry armed — but restart the
+            // backoff, or a persistently failing retry fires every frame.
+            SyncOutcome::Failed(_) => {
+                if let Some((_, last_attempt)) = &mut self.retry {
+                    *last_attempt = Instant::now();
+                }
+            }
+            // Ordinary no-ops from a content sync. They say nothing about an
+            // unrelated earlier commit's retry, so leave it exactly as it is
+            // — clearing here would strand a commit that still needs pushing.
+            SyncOutcome::Skipped | SyncOutcome::SkippedUntracked => {}
+        }
     }
 
     /// Re-attempts a previously failed push, if one is due: call once per
@@ -1070,7 +1094,7 @@ fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
         Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
     };
     if current_head(&repo_root).as_deref() != Some(expected_commit) {
-        return SyncOutcome::Skipped;
+        return SyncOutcome::RetryAbandoned;
     }
     push(repo_dir, expected_commit)
 }
@@ -2740,7 +2764,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(outcome, Some(SyncOutcome::Skipped), "{outcome:?}");
+        assert_eq!(outcome, Some(SyncOutcome::RetryAbandoned), "{outcome:?}");
         assert!(
             sync.retry.is_none(),
             "the stale retry must be cleared, not left armed forever"
@@ -2749,6 +2773,94 @@ mod tests {
         // And retry_push_if_due is now a genuine no-op -- no second spawn.
         sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL * 2);
         assert!(!sync.busy, "nothing left to retry");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn apply_outcome_covers_every_variant_s_effect_on_the_retry_state() {
+        // `apply_outcome` is the single writer of `self.retry` and is a
+        // total match on purpose. This is the matrix that pins each arm --
+        // `Failed` being the cell that was missing, and the reason a
+        // permanently-failing retry used to fire on every frame.
+        let work = init_repo_without_remote();
+        let commit = current_head(&work).unwrap();
+        let armed = |sync: &mut GitSync, at: Instant| sync.retry = Some((commit.clone(), at));
+
+        // Synced: nothing left to push.
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        armed(&mut sync, Instant::now());
+        sync.apply_outcome(&SyncOutcome::Synced);
+        assert!(sync.retry.is_none(), "Synced clears the retry");
+
+        // RetryAbandoned: that specific commit is superseded.
+        armed(&mut sync, Instant::now());
+        sync.apply_outcome(&SyncOutcome::RetryAbandoned);
+        assert!(sync.retry.is_none(), "an abandoned retry clears it");
+
+        // CommittedNotPushed: (re)arms, with the backoff restarted.
+        let old = Instant::now() - PUSH_RETRY_INTERVAL * 4;
+        armed(&mut sync, old);
+        sync.apply_outcome(&SyncOutcome::CommittedNotPushed {
+            message: "nope".to_string(),
+            commit: commit.clone(),
+        });
+        let (_, at) = sync.retry.clone().expect("still armed");
+        assert!(at > old, "CommittedNotPushed restarts the backoff");
+
+        // Failed: stays armed (the commit is still unpushed) but the backoff
+        // restarts, so it can't fire again on the very next frame.
+        armed(&mut sync, old);
+        sync.apply_outcome(&SyncOutcome::Failed("boom".to_string()));
+        let (_, at) = sync.retry.clone().expect("Failed keeps the retry armed");
+        assert!(
+            at > old,
+            "Failed must restart the backoff, not leave it stale"
+        );
+
+        // Ordinary no-ops say nothing about an unrelated armed retry.
+        for outcome in [SyncOutcome::Skipped, SyncOutcome::SkippedUntracked] {
+            armed(&mut sync, old);
+            sync.apply_outcome(&outcome);
+            let (_, at) = sync.retry.clone().expect("left armed");
+            assert_eq!(at, old, "{outcome:?} must leave an unrelated retry alone");
+        }
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_failed_retry_does_not_fire_again_on_the_very_next_frame() {
+        // Deep review, round 2, reproduced against the real binary: once the
+        // repository becomes unresolvable, `retry_commit` returns `Failed`.
+        // That arm used to leave the retry's timestamp untouched, so the
+        // backoff check stayed permanently elapsed and a retry spawned on
+        // every ~100ms event-loop frame -- 98 `git` subprocesses in 10
+        // seconds, indefinitely, with no outcome able to break the loop.
+        let work = init_repo_without_remote();
+        let commit = current_head(&work).unwrap();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        let last_attempt = Instant::now() - PUSH_RETRY_INTERVAL * 2;
+        sync.retry = Some((commit, last_attempt));
+
+        // A retry comes due and fails (the repo is gone).
+        sync.retry_push_if_due(Instant::now());
+        assert!(sync.busy, "a retry should have spawned");
+        sync.busy = false;
+        sync.apply_outcome(&SyncOutcome::Failed(
+            "git rev-parse: not a git repository".to_string(),
+        ));
+
+        // The whole point: the next frame must be a no-op, not another spawn.
+        sync.retry_push_if_due(Instant::now());
+        assert!(
+            !sync.busy,
+            "a failed retry must respect the backoff instead of firing every frame"
+        );
+        assert!(
+            sync.retry.is_some(),
+            "the commit is still unpushed, so the retry stays armed for later"
+        );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -2774,7 +2886,7 @@ mod tests {
 
         let outcome = retry_commit(&work, &stale_commit);
 
-        assert_eq!(outcome, SyncOutcome::Skipped);
+        assert_eq!(outcome, SyncOutcome::RetryAbandoned);
         assert_eq!(
             current_head(&work).unwrap(),
             newer_commit,
