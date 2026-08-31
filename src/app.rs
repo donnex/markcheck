@@ -822,7 +822,10 @@ impl AppState {
         match clipboard::copy_specific(text, self.clipboard_primary) {
             CopyOutcome::CopiedSystem => self.set_status("Copied to clipboard".to_string()),
             CopyOutcome::CopiedOsc52 => self.set_status("Sent to clipboard (OSC 52)".to_string()),
-            // copy_specific only ever copies or fails outright.
+            CopyOutcome::TooLarge => self.set_error(
+                "Not copied: this command is too large for the terminal clipboard".to_string(),
+            ),
+            // copy_specific only ever copies, is too large, or fails outright.
             _ => self.set_error("Copy failed: no clipboard available".to_string()),
         }
     }
@@ -1621,6 +1624,9 @@ impl AppState {
             CopyOutcome::Ambiguous(n) => {
                 self.set_error(format!("Not copied: item has {n} code candidates"))
             }
+            CopyOutcome::TooLarge => self.set_error(
+                "Not copied: this command is too large for the terminal clipboard".to_string(),
+            ),
             CopyOutcome::Failed => {
                 self.set_error("Copy failed: no clipboard available".to_string())
             }
