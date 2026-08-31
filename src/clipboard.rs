@@ -26,6 +26,13 @@ pub enum CopyOutcome {
     Ambiguous(usize),
     /// No clipboard backend usable at all.
     Failed,
+    /// The text is too large for the OSC 52 fallback (see
+    /// `OSC52_MAX_BASE64_BYTES`). Distinct from `Failed` because the cause
+    /// and the remedy are different: the clipboard is fine, the payload just
+    /// won't fit through a terminal escape sequence. Reporting this as
+    /// `Failed` told the user their clipboard was unavailable and pointed
+    /// them at a setup that was working.
+    TooLarge,
 }
 
 /// Fenced code blocks take priority; inline spans are the fallback.
@@ -66,6 +73,11 @@ fn copy_text(text: &str, primary: bool) -> CopyOutcome {
     }
     // Fallback: emit OSC 52 for the clipboard, and for PRIMARY too when
     // requested. Success of the clipboard write decides the outcome.
+    if osc52_sequence(text, 'c').is_none() {
+        // Too big for the escape sequence — say so rather than blaming the
+        // clipboard, which we never even got to try through this path.
+        return CopyOutcome::TooLarge;
+    }
     let clipboard_ok = emit_osc52(text, 'c');
     if primary {
         let _ = emit_osc52(text, 'p');
@@ -188,6 +200,32 @@ mod tests {
             osc52_sequence("hello", 'p').unwrap(),
             "\x1b]52;p;aGVsbG8=\x07"
         );
+    }
+
+    #[test]
+    fn an_oversized_payload_is_reported_as_too_large_not_as_a_missing_clipboard() {
+        // Deep review, round 2: an over-cap payload collapsed into
+        // `Failed`, which the UI renders as "no clipboard available" --
+        // telling the user to fix a clipboard that was working, for a
+        // command that simply won't fit through an OSC 52 escape.
+        //
+        // Only reachable where arboard is unavailable (a headless host), so
+        // this drives `copy_text`'s fallback path directly. In a session
+        // *with* a working system clipboard the copy succeeds first and this
+        // never applies, hence the tolerance for `CopiedSystem` here.
+        let huge = "x".repeat(OSC52_MAX_BASE64_BYTES);
+        assert!(
+            osc52_sequence(&huge, 'c').is_none(),
+            "test setup: payload must exceed the cap once base64-encoded"
+        );
+        match copy_text(&huge, false) {
+            CopyOutcome::TooLarge => {}
+            CopyOutcome::CopiedSystem => {
+                // A real clipboard was available and took it; the OSC 52
+                // fallback under test was never reached.
+            }
+            other => panic!("expected TooLarge, got {other:?}"),
+        }
     }
 
     #[test]
