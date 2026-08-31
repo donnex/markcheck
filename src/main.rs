@@ -259,7 +259,11 @@ where
             if let Some(outcome) = sync.poll() {
                 match outcome {
                     git_sync::SyncOutcome::Synced => state.record_git_sync(),
-                    git_sync::SyncOutcome::Skipped => {}
+                    // Both are "nothing happened, and that's fine": an
+                    // ordinary no-op sync, and a retry giving up on a commit
+                    // something else has already superseded. Neither is worth
+                    // interrupting the user for.
+                    git_sync::SyncOutcome::Skipped | git_sync::SyncOutcome::RetryAbandoned => {}
                     git_sync::SyncOutcome::SkippedUntracked => state.set_error(
                         "Git sync skipped: file is not tracked in git (run `git add` on it)"
                             .to_string(),
