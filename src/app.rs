@@ -1161,19 +1161,39 @@ impl AppState {
     }
 
     /// Shared reload body for [`reload_if_changed`] and [`force_reload`]:
-    /// parses the file fresh and swaps it in on success. `file_mtime`/
-    /// `file_size` (reload-optimization only, per `reload_if_changed`'s
-    /// unchanged-check) are always refreshed to the just-observed disk
-    /// state, so a still-broken file isn't re-parsed on every watcher tick.
+    /// parses the file fresh and swaps it in on success.
+    ///
+    /// `file_mtime`/`file_size` (reload-optimization only, per
+    /// `reload_if_changed`'s unchanged-check) are refreshed on **every**
+    /// branch to the just-observed disk state, so a file we decline to load
+    /// isn't re-parsed on every watcher tick.
+    ///
     /// `file_content_hash` — the write-conflict-detection fingerprint
-    /// `disk_content_diverged` compares against — is only advanced on a
-    /// successful parse: if it were updated unconditionally, a transient
-    /// malformed intermediate save (common with editors that write in
-    /// stages) would get recorded as the current disk revision even though
-    /// the in-memory document still shows the last good content, silently
-    /// masking the divergence a later write would otherwise catch.
+    /// `disk_content_diverged` compares against — is advanced **only on the
+    /// branch that actually adopts the new content**. The rule is "the
+    /// fingerprint names the revision the in-memory document came from," and
+    /// both non-adopting branches must therefore leave it pinned:
+    ///
+    /// * a failed parse (a transient malformed intermediate save, common
+    ///   with editors that write in stages);
+    /// * a successful parse with **no checklist items**, which is declined
+    ///   because `AppState` requires at least one list.
+    ///
+    /// Deep review, round 2, reproduced end-to-end: the second case used to
+    /// fall through to a shared tail that advanced the fingerprint anyway.
+    /// The in-memory document was then the *old* one while the fingerprint
+    /// claimed disk was current, so `disk_content_diverged` returned false
+    /// and the next toggle wrote stale content straight over whatever the
+    /// user had just put in the file — silently, with no error and nothing
+    /// to undo. Keeping it pinned makes that write correctly report
+    /// "File changed on disk — reloaded; change not saved, please retry".
     fn reload_from_disk(&mut self, modified: SystemTime, size: u64, was_deleted: bool) -> bool {
-        let reloaded = match parser::parse_document(self.document.file_path.clone()) {
+        // Refreshed on every path below, including the two that decline to
+        // load; only the fingerprint distinguishes them.
+        self.file_mtime = Some(modified);
+        self.file_size = Some(size);
+
+        match parser::parse_document(self.document.file_path.clone()) {
             Ok(new_document) if !new_document.lists.is_empty() => {
                 self.remap_position(&new_document);
                 self.document = new_document;
@@ -1190,24 +1210,29 @@ impl AppState {
                 };
                 self.set_status(msg);
                 self.last_update_at = Some(SystemTime::now());
+                // The only branch that adopted the new content, so the only
+                // one that may advance the fingerprint.
+                self.file_content_hash = current_content_hash(&self.document.file_path);
                 true
             }
+            // Parsed, but nothing to work through. Sticky (`set_error`, not
+            // `set_status`): this describes a state that persists until the
+            // file gains tasks again, and an ephemeral message would expire
+            // long before the user next reaches for a key — which is exactly
+            // how the silent overwrite above went unnoticed.
             Ok(_) => {
-                self.set_status("Reload skipped: file has no checklist items".to_string());
+                self.set_error(
+                    "Reload skipped: file has no checklist items — changes cannot be saved \
+                     until it has tasks again"
+                        .to_string(),
+                );
                 false
             }
             Err(err) => {
                 self.set_error(format!("Reload failed: {err}"));
-                self.file_mtime = Some(modified);
-                self.file_size = Some(size);
-                return false;
+                false
             }
-        };
-
-        self.file_mtime = Some(modified);
-        self.file_size = Some(size);
-        self.file_content_hash = current_content_hash(&self.document.file_path);
-        reloaded
+        }
     }
 
     /// Queues a git-sync request for an edit that happened *outside*

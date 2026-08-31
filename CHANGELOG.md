@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Editing an open checklist down to nothing — clearing it out to start over,
+  say — can no longer cost you that edit. markcheck declines to load a file
+  with no tasks in it (there'd be nothing to show), but it used to record
+  that file as the version it was holding, so the next toggle happily wrote
+  its own stale copy straight over your rewrite, with no warning. It now
+  keeps the toggle from saving and tells you why, and the notice that the
+  file has no tasks stays on screen instead of fading after a few seconds.
 - Git-sync (`--git-sync`) can no longer delete the branch it was meant to
   push to. If the one `git` command that reads the current commit happened
   to fail (a timeout, a wedged filesystem), the push was built with an empty

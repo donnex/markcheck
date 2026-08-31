@@ -2707,9 +2707,92 @@ fn reload_skips_when_new_content_has_no_lists() {
     state.reload_if_changed();
 
     assert_eq!(state.current_list().title, "List 1");
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Reload skipped: file has no checklist items")),
+        "{:?}",
+        state.status_message
+    );
+    assert!(
+        state.status_is_error,
+        "sticky, not ephemeral: the condition persists until the file has tasks again, \
+         and an expiring message is how the overwrite below went unnoticed"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn skipped_reload_does_not_advance_the_write_conflict_fingerprint() {
+    // Deep review, round 2, reproduced end-to-end against the real binary.
+    // The "parsed fine, but no checklist items" branch declined to adopt the
+    // new document -- correctly, since AppState requires at least one list --
+    // but still advanced `file_content_hash` to the new on-disk content. The
+    // in-memory document was then the *old* one while the fingerprint said
+    // disk was current, so `disk_content_diverged` went blind and the next
+    // write overwrote the user's file with stale content, silently.
+    //
+    // Exactly the invariant `failed_reload_does_not_advance_the_write_conflict_fingerprint`
+    // pins for the sibling (failed-parse) branch.
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    let good_hash = state.file_content_hash;
+
+    touch_with_new_mtime(
+        &path,
+        "Rewritten from scratch. Still drafting, no tasks yet.\n",
+    );
+
+    assert!(
+        !state.reload_if_changed(),
+        "a document with no lists is not a real reload"
+    );
     assert_eq!(
-        state.status_message.as_deref(),
-        Some("Reload skipped: file has no checklist items")
+        state.current_list().items.len(),
+        1,
+        "last good document kept in memory"
+    );
+    assert_eq!(
+        state.file_content_hash, good_hash,
+        "fingerprint must stay pinned to the content the in-memory document came from"
+    );
+    assert!(
+        state.disk_content_diverged(),
+        "the rewritten file must still read as diverged from what markcheck knows"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_write_after_a_skipped_reload_is_refused_and_leaves_the_file_alone() {
+    // The behavioural half of the test above, and what a user would actually
+    // report: rewrite an open checklist into something with no tasks, then
+    // toggle. The toggle must be refused, and the rewrite must survive
+    // byte-for-byte rather than being replaced by markcheck's stale copy.
+    let path = write_real_file("## Tasks\n\n- [ ] alpha\n- [ ] beta\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    let rewritten = "# Runbook\n\nRewritten from scratch. No tasks yet -- still drafting.\n";
+    touch_with_new_mtime(&path, rewritten);
+    state.reload_if_changed();
+
+    state.toggle_current();
+
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        rewritten,
+        "the user's rewrite must survive the toggle untouched"
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("File changed on disk")),
+        "the refusal must be reported: {:?}",
+        state.status_message
     );
 
     fs::remove_file(&path).ok();
