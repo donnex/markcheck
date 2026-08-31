@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer spins if the repository disappears out
+  from under it — moved, deleted, or on a network share that dropped. With a
+  push already waiting to be retried, it would retry many times a second,
+  forever, burning CPU and flashing an error, with nothing able to stop it.
+  A failed retry now waits out the normal 30-second backoff like any other,
+  and picks up where it left off once the repository is back.
 - Editing an open checklist down to nothing — clearing it out to start over,
   say — can no longer cost you that edit. markcheck declines to load a file
   with no tasks in it (there'd be nothing to show), but it used to record
