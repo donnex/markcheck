@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Toggling a task in a file that uses classic Mac (CR-only) line endings now
+  actually saves. Every task was treated as being on the same line, so the
+  writes overwrote each other and nothing reached the file — while the app
+  showed the task as done, so there was no sign anything had gone wrong.
+- A file that mixes CRLF and LF line endings no longer has all of them
+  rewritten to CRLF on the first toggle. Each line now keeps the ending it
+  was written with, so a toggle changes the one checkbox and nothing else —
+  which also keeps git-sync's commits down to the line that actually changed.
 - Git-sync (`--git-sync`) no longer spins if the repository disappears out
   from under it — moved, deleted, or on a network share that dropped. With a
   push already waiting to be retried, it would retry many times a second,
