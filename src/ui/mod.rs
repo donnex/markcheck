@@ -683,8 +683,6 @@ mod tests {
             has_default_list: false,
             lists,
             raw_lines: vec![],
-            uses_crlf: false,
-            trailing_newline: true,
         };
         let mut state = AppState::new(document);
         // Plain Unicode so assertions don't depend on Nerd Font glyphs.

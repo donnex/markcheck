@@ -40,29 +40,20 @@ fn set_task_marker(line: &mut String, target: &str) {
     }
 }
 
-/// Joins `lines` back into a single string using `document`'s original line
-/// ending (`\r\n` if it was CRLF-authored — `raw_lines`/`str::lines()` strip
-/// the `\r`, so it must be rejoined explicitly or every line ending would
-/// silently flip to LF on the first toggle) and only reattaching a final
-/// trailing newline when the source actually had one (`str::lines()` drops
-/// that distinction too — rejoining unconditionally would silently add a
-/// newline to a file that never had one).
-fn join_lines(lines: &[String], document: &Document) -> String {
-    let newline = if document.uses_crlf { "\r\n" } else { "\n" };
-    let mut contents = lines.join(newline);
-    if document.trailing_newline {
-        contents.push_str(newline);
-    }
-    contents
+/// Rejoins `lines` into the file's exact bytes. Each line carries its own
+/// terminator (see `Document::raw_lines`), so this is a plain concatenation
+/// — every line ending, and the presence or absence of a final one, comes
+/// straight from the source rather than from a whole-file assumption.
+fn join_lines(lines: &[String]) -> String {
+    lines.concat()
 }
 
 /// The document's current content exactly as it stands in memory — no
-/// checkbox mutation — reconstructed with its original line endings and
-/// trailing-newline state. Used to capture the expected git-sync snapshot
-/// for a change that already landed on disk outside `write_back` (e.g. an
-/// external editor edit picked up by a reload).
+/// checkbox mutation. Used to capture the expected git-sync snapshot for a
+/// change that already landed on disk outside `write_back` (e.g. an external
+/// editor edit picked up by a reload).
 pub fn document_contents(document: &Document) -> String {
-    join_lines(&document.raw_lines, document)
+    join_lines(&document.raw_lines)
 }
 
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
@@ -93,7 +84,7 @@ pub fn write_back(document: &Document) -> io::Result<String> {
             }
         }
     }
-    let contents = join_lines(&lines, document);
+    let contents = join_lines(&lines);
 
     // Read the source permissions before touching anything. Any error —
     // including NotFound — aborts before writing, so a deleted file is never
@@ -399,7 +390,6 @@ mod tests {
         let document = parse_document(path.clone()).unwrap();
         assert!(document.lists.is_empty());
         assert!(document.raw_lines.is_empty());
-        assert!(!document.trailing_newline);
 
         write_back(&document).unwrap();
 
@@ -416,7 +406,10 @@ mod tests {
         let no_trailing_newline = "## S\n\n- [ ] `task`";
         let path = write_temp_file(no_trailing_newline);
         let mut document = parse_document(path.clone()).unwrap();
-        assert!(!document.trailing_newline, "source has no final newline");
+        assert!(
+            !document.raw_lines.last().unwrap().ends_with('\n'),
+            "source has no final newline"
+        );
 
         document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
         write_back(&document).unwrap();
@@ -433,7 +426,10 @@ mod tests {
         let with_trailing_newline = "## S\n\n- [ ] `task`\n";
         let path = write_temp_file(with_trailing_newline);
         let mut document = parse_document(path.clone()).unwrap();
-        assert!(document.trailing_newline, "source has a final newline");
+        assert!(
+            document.raw_lines.last().unwrap().ends_with('\n'),
+            "source has a final newline"
+        );
 
         document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
         write_back(&document).unwrap();
@@ -445,6 +441,69 @@ mod tests {
     }
 
     #[test]
+    fn a_toggle_changes_one_marker_and_no_other_byte_for_any_line_ending() {
+        // Deep review, round 2. The old whole-file `uses_crlf` flag was only
+        // ever right for an all-LF or all-CRLF file:
+        //
+        //   * CR-only: `str::lines()` doesn't split on a lone `\r`, so every
+        //     item landed on `raw_lines[0]` and the per-item writes clobbered
+        //     each other -- the toggle was silently discarded entirely.
+        //   * mixed: one CRLF anywhere rewrote *every* line to CRLF, so a
+        //     one-marker change produced a whole-file diff (and, under
+        //     git-sync, an automatically pushed whole-file commit).
+        //
+        // Each line now carries its own terminator, so the guarantee README
+        // states -- only the checkbox changes -- holds for all four.
+        for (name, source, expected) in [
+            (
+                "LF",
+                "## S\n\n- [ ] alpha\n- [ ] beta\n",
+                "## S\n\n- [x] alpha\n- [ ] beta\n",
+            ),
+            (
+                "CRLF",
+                "## S\r\n\r\n- [ ] alpha\r\n- [ ] beta\r\n",
+                "## S\r\n\r\n- [x] alpha\r\n- [ ] beta\r\n",
+            ),
+            (
+                "CR-only",
+                "## S\r\r- [ ] alpha\r- [ ] beta\r",
+                "## S\r\r- [x] alpha\r- [ ] beta\r",
+            ),
+            (
+                "mixed",
+                "## S\r\n\r\n- [ ] alpha\n- [ ] beta\r\n",
+                "## S\r\n\r\n- [x] alpha\n- [ ] beta\r\n",
+            ),
+            (
+                "no final newline",
+                "## S\n\n- [ ] alpha\n- [ ] beta",
+                "## S\n\n- [x] alpha\n- [ ] beta",
+            ),
+        ] {
+            let path = write_temp_file(source);
+            let mut document = parse_document(path.clone()).unwrap();
+            let alpha = document
+                .lists
+                .iter_mut()
+                .flat_map(|list| list.items.iter_mut())
+                .find(|i| i.display_text == "alpha")
+                .unwrap_or_else(|| panic!("{name}: alpha must parse as an item"));
+            alpha.kind = ItemKind::Checkbox(TaskState::Done);
+
+            write_back(&document).unwrap();
+
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                expected,
+                "{name}: exactly one marker may change, every other byte \
+                 (terminators included) must be identical"
+            );
+            fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
     fn round_trip_preserves_crlf_line_endings() {
         // A file authored with CRLF line endings must keep them after a
         // toggle — write_back must not silently flip the whole file to LF
@@ -452,7 +511,10 @@ mod tests {
         let crlf_example = EXAMPLE.replace('\n', "\r\n");
         let path = write_temp_file(&crlf_example);
         let mut document = parse_document(path.clone()).unwrap();
-        assert!(document.uses_crlf, "CRLF source must be detected");
+        assert!(
+            document.raw_lines.iter().all(|l| l.ends_with("\r\n")),
+            "CRLF source must keep every CRLF ending"
+        );
 
         let item = document
             .lists

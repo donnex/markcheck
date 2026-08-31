@@ -304,18 +304,21 @@ pub struct Document {
     /// Used to suppress the above-cards list heading for it.
     pub has_default_list: bool,
     pub lists: Vec<List>,
+    /// The source file's lines, each **including its own terminator**
+    /// (`\r\n`, `\n`, or a lone `\r`; the final line has none if the file
+    /// didn't end with one). Produced by
+    /// `parser::split_lines_keeping_endings` and indexed by
+    /// `Item::line_number`; `writer::write_back` edits one line's checkbox
+    /// and rejoins by plain concatenation, so every other byte — every
+    /// terminator included — round-trips exactly as authored.
+    ///
+    /// This replaced a pair of whole-file `uses_crlf`/`trailing_newline`
+    /// flags. Those could only describe one ending for the entire file, so a
+    /// file mixing CRLF and LF had every line rewritten to CRLF on the first
+    /// toggle, and they were derived from `str::lines()`, which disagrees
+    /// with CommonMark about lone-`\r` endings — see
+    /// `split_lines_keeping_endings` for what that cost.
     pub raw_lines: Vec<String>,
-    /// True when the source file used `\r\n` line endings (detected once at
-    /// parse time from the presence of any `\r\n` in the raw source).
-    /// `raw_lines`/`str::lines()` strip the `\r`, so `write_back` needs this
-    /// to rejoin with the file's original terminator instead of always `\n`.
-    pub uses_crlf: bool,
-    /// True when the source file's last byte was a newline (detected once at
-    /// parse time). `raw_lines`/`str::lines()` drop the trailing terminator
-    /// entirely, so `write_back` needs this to know whether to add one back
-    /// — otherwise a file with no final newline would silently gain one on
-    /// its first toggle.
-    pub trailing_newline: bool,
 }
 
 impl Document {
@@ -1336,8 +1339,6 @@ mod tests {
             file_path: PathBuf::from("test.md"),
             title: None,
             has_default_list: false,
-            uses_crlf: false,
-            trailing_newline: true,
             lists: vec![
                 List {
                     title: "A".to_string(),

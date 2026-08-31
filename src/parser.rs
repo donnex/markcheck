@@ -7,10 +7,89 @@ use crate::model::{
     BodySpan, Document, Item, ItemKind, LineNumber, List, SubHeading, TaskState, TextStyle,
 };
 
+/// Splits `raw` into lines, **keeping each line's own terminator** on the
+/// end of it, using CommonMark's definition of a line ending: `\r\n`, a
+/// lone `\n`, or a lone `\r`. A final line with no terminator is returned
+/// as-is; an empty input yields no lines at all.
+///
+/// This is the project's single line model, shared by `raw_lines` (which
+/// `writer::write_back` indexes by `Item::line_number` and rejoins), by the
+/// `[/]` pre-scan, and by `LineCounter`. Deep review, round 2: it used to be
+/// `str::lines()`, which splits only on `\n` and strips a trailing `\r`,
+/// while pulldown-cmark follows CommonMark and *also* breaks on a lone `\r`.
+/// On a CR-only file the two disagreed completely — pulldown saw N list
+/// items, `raw_lines` was a single element, and `LineCounter` (finding no
+/// `\n`) gave every item `line_number == 1`, so `write_back`'s per-item
+/// writes all landed on the same physical line and clobbered each other.
+/// Reproduced: every toggle was silently discarded, with the UI showing the
+/// task done and the file never changing.
+///
+/// Keeping the terminator on each line is what also retired the old
+/// whole-file `uses_crlf`/`trailing_newline` flags: a mixed-ending file now
+/// round-trips every line exactly as authored, instead of the single flag
+/// rewriting all of them to whichever ending appeared first.
+pub(crate) fn split_lines_keeping_endings(raw: &str) -> Vec<&str> {
+    let bytes = raw.as_bytes();
+    let mut lines = Vec::new();
+    let (mut start, mut i) = (0, 0);
+    while i < bytes.len() {
+        // `\r`/`\n` are ASCII, and no UTF-8 continuation byte can equal
+        // them, so every index here is already a char boundary.
+        match bytes[i] {
+            b'\n' => {
+                lines.push(&raw[start..=i]);
+                i += 1;
+                start = i;
+            }
+            b'\r' => {
+                let end = if bytes.get(i + 1) == Some(&b'\n') {
+                    i + 2
+                } else {
+                    i + 1
+                };
+                lines.push(&raw[start..end]);
+                i = end;
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    if start < bytes.len() {
+        lines.push(&raw[start..]);
+    }
+    lines
+}
+
+/// Number of CommonMark line endings in `s` — the counting half of
+/// [`split_lines_keeping_endings`], kept consistent with it so a byte offset
+/// and a `raw_lines` index always agree about which line they name.
+fn count_line_endings(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    let (mut count, mut i) = (0, 0);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' => {
+                count += 1;
+                i += 1;
+            }
+            b'\r' => {
+                count += 1;
+                i += if bytes.get(i + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
+            }
+            _ => i += 1,
+        }
+    }
+    count
+}
+
 /// Converts byte offsets into 1-indexed line numbers by counting preceding
-/// newlines. Amortizes to O(n) total across the many non-decreasing offsets
-/// pulldown-cmark's single-pass event stream naturally produces, instead
-/// of the O(n) per call / O(n·m) total of rescanning from byte 0
+/// line endings. Amortizes to O(n) total across the many non-decreasing
+/// offsets pulldown-cmark's single-pass event stream naturally produces,
+/// instead of the O(n) per call / O(n·m) total of rescanning from byte 0
 /// every time. Falls back to a full rescan if a query ever goes backwards,
 /// so it stays correct even if that assumption doesn't hold in some case.
 struct LineCounter {
@@ -28,10 +107,19 @@ impl LineCounter {
             self.offset = 0;
             self.line = 1;
         }
-        self.line += source[self.offset..target]
-            .chars()
-            .filter(|&c| c == '\n')
-            .count();
+        // Guard the one way incremental counting could disagree with a full
+        // rescan: if the previous offset landed *between* a `\r` and its
+        // `\n`, that pair would be counted once here and once there. Skip
+        // the orphaned `\n` so a CRLF is always counted exactly once.
+        let mut from = self.offset;
+        if from > 0
+            && from < target
+            && source.as_bytes()[from - 1] == b'\r'
+            && source.as_bytes()[from] == b'\n'
+        {
+            from += 1;
+        }
+        self.line += count_line_endings(&source[from..target]);
         self.offset = target;
         self.line
     }
@@ -63,8 +151,8 @@ fn extract_started_markers(raw: &str) -> (String, std::collections::HashSet<Line
     // syntax) is never rewritten — this scan runs on raw text, before
     // pulldown-cmark has identified any fence boundaries itself.
     let mut fence: Option<(char, usize)> = None;
-    let processed = raw
-        .split_inclusive('\n')
+    let processed = split_lines_keeping_endings(raw)
+        .into_iter()
         .enumerate()
         .map(|(index, line)| {
             if let Some((fence_char, fence_len)) = fence {
@@ -230,9 +318,13 @@ pub fn parse_document(path: PathBuf) -> anyhow::Result<Document> {
 }
 
 fn parse_source(raw: &str, path: PathBuf) -> Document {
-    let raw_lines: Vec<String> = raw.lines().map(str::to_string).collect();
-    let uses_crlf = raw.contains("\r\n");
-    let trailing_newline = raw.ends_with('\n');
+    // Lines keep their own terminators — see `split_lines_keeping_endings`.
+    // `write_back` indexes this by `Item::line_number` and rejoins by plain
+    // concatenation, so every line round-trips exactly as authored.
+    let raw_lines: Vec<String> = split_lines_keeping_endings(raw)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
 
     // A leading UTF-8 BOM defeats ATX heading recognition (CommonMark
     // requires `#`/`##` to start the line) and would otherwise silently lose
@@ -653,8 +745,6 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
         has_default_list,
         lists,
         raw_lines,
-        uses_crlf,
-        trailing_newline,
     }
 }
 
@@ -1222,7 +1312,7 @@ mod tests {
         // The BOM is stripped only for parsing; write-back must reproduce
         // the original bytes (including the BOM) untouched.
         let document = parse("\u{FEFF}# Title\n\n## S\n\n- [ ] `a`\n");
-        assert_eq!(document.raw_lines[0], "\u{FEFF}# Title");
+        assert_eq!(document.raw_lines[0], "\u{FEFF}# Title\n");
     }
 
     // --- LineCounter (offset_to_line perf refactor) ---
@@ -1844,21 +1934,71 @@ second
     }
 
     #[test]
-    fn uses_crlf_detects_crlf_and_lf_sources() {
-        let lf_source = "## S\n\n- [ ] `alpha`\n";
-        assert!(!parse(lf_source).uses_crlf);
-
-        let crlf_source = "## S\r\n\r\n- [ ] `alpha`\r\n";
-        assert!(parse(crlf_source).uses_crlf);
+    fn raw_lines_keep_each_line_s_own_terminator() {
+        // Replaces the old whole-file `uses_crlf`/`trailing_newline` flags:
+        // the terminator travels with the line, so a file mixing endings
+        // keeps each one rather than having them all rewritten to whichever
+        // appeared first.
+        assert_eq!(
+            parse("## S\n\n- [ ] `alpha`\n").raw_lines,
+            vec!["## S\n", "\n", "- [ ] `alpha`\n"]
+        );
+        assert_eq!(
+            parse("## S\r\n\r\n- [ ] `alpha`\r\n").raw_lines,
+            vec!["## S\r\n", "\r\n", "- [ ] `alpha`\r\n"]
+        );
+        // A final line with no terminator keeps not having one.
+        assert_eq!(
+            parse("## S\n\n- [ ] `alpha`").raw_lines,
+            vec!["## S\n", "\n", "- [ ] `alpha`"]
+        );
+        // Mixed endings survive individually.
+        assert_eq!(
+            parse("## S\r\n\r\n- [ ] a\n- [ ] b\r\n").raw_lines,
+            vec!["## S\r\n", "\r\n", "- [ ] a\n", "- [ ] b\r\n"]
+        );
+        // An empty file has no lines at all.
+        assert!(parse("").raw_lines.is_empty());
     }
 
     #[test]
-    fn trailing_newline_detects_presence_and_absence() {
-        let with_newline = "## S\n\n- [ ] `alpha`\n";
-        assert!(parse(with_newline).trailing_newline);
+    fn split_lines_keeping_endings_handles_every_commonmark_ending() {
+        assert_eq!(split_lines_keeping_endings(""), Vec::<&str>::new());
+        assert_eq!(split_lines_keeping_endings("a"), vec!["a"]);
+        assert_eq!(split_lines_keeping_endings("a\n"), vec!["a\n"]);
+        assert_eq!(split_lines_keeping_endings("a\r\n"), vec!["a\r\n"]);
+        // A lone `\r` is a line ending per CommonMark — `str::lines()`
+        // disagrees, which is the whole reason this function exists.
+        assert_eq!(split_lines_keeping_endings("a\rb"), vec!["a\r", "b"]);
+        assert_eq!(
+            split_lines_keeping_endings("a\rb\nc\r\n"),
+            vec!["a\r", "b\n", "c\r\n"]
+        );
+        // Concatenating the pieces always reproduces the input exactly.
+        for src in ["", "a", "a\n\n\r\n\rb", "x\r\ny\rz\n", "日本\r\n語\n"] {
+            assert_eq!(split_lines_keeping_endings(src).concat(), src, "{src:?}");
+        }
+    }
 
-        let without_newline = "## S\n\n- [ ] `alpha`";
-        assert!(!parse(without_newline).trailing_newline);
+    #[test]
+    fn cr_only_line_endings_give_each_item_its_own_line_number() {
+        // Deep review, round 2: `str::lines()` doesn't break on a lone `\r`,
+        // so a CR-only file collapsed to one `raw_lines` entry while
+        // pulldown-cmark saw three list items — every item got
+        // `line_number == 1`, and `write_back`'s per-item writes then
+        // clobbered each other on that single line, silently discarding
+        // every toggle.
+        let document = parse("## S\r\r- [ ] alpha\r- [ ] beta\r- [ ] gamma\r");
+        let items = &document.lists[0].items;
+        assert_eq!(items.len(), 3);
+        let lines: Vec<_> = items.iter().map(|i| i.line_number).collect();
+        assert_eq!(lines, vec![3, 4, 5], "distinct, in document order");
+        for item in items {
+            assert!(
+                document.raw_lines[item.line_number - 1].contains("[ ]"),
+                "line_number must index the line the item is actually on"
+            );
+        }
     }
 
     #[test]
