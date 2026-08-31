@@ -10,6 +10,26 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Job-level, not step-level: this is a property of *this repository's
+    # tests*, not of one invocation, and every step that executes the test
+    # binaries needs it. `cargo llvm-cov` re-runs the whole suite and is easy
+    # to miss precisely because it has no "test" in its name -- it used to
+    # run the PTY tests fully parallel, i.e. in exactly the configuration the
+    # comment below documents as unreliable, so an intermittent failure would
+    # surface at a step labelled "coverage >= 97%" and read as a coverage
+    # regression that wasn't one.
+    #
+    # RUST_TEST_THREADS=1: the PTY tests each spawn a real subprocess (some
+    # with their own background commit+push thread, polling a bare remote for
+    # it to land), and full default parallelism on GitHub's shared runners
+    # starved that background thread's scheduling badly enough to blow even a
+    # 90s poll deadline. Diagnostic timing showed the git operations
+    # themselves are fast (~19ms) even in CI -- it's pure self-contention
+    # from many concurrent PTY-spawning tests, not slow git commands. Serial
+    # execution confirmed fast (~5s for the five git-sync tests alone) and
+    # reliable. Local dev is unaffected (this only applies inside CI).
+    env:
+      RUST_TEST_THREADS: 1
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -39,20 +59,8 @@ jobs:
       - name: Build
         run: cargo build --locked
 
-      # RUST_TEST_THREADS=1: the PTY tests each spawn a real subprocess
-      # (some with their own background commit+push thread, polling a bare
-      # remote for it to land), and full default parallelism on GitHub's
-      # shared runners starved that background thread's scheduling badly
-      # enough to blow even a 90s poll deadline. Diagnostic timing showed
-      # the git operations themselves are fast (~19ms) even in CI — it's
-      # pure self-contention from many concurrent PTY-spawning tests, not
-      # slow git commands. Serial execution confirmed fast (~5s for the
-      # five git-sync tests alone) and reliable. Local dev is unaffected
-      # (this only applies inside CI).
       - name: cargo test
         run: cargo test --locked
-        env:
-          RUST_TEST_THREADS: 1
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
