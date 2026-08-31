@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Copying a very large command on a machine with no system clipboard (over
+  SSH, say) now says the command is too large for the terminal clipboard,
+  instead of reporting that no clipboard is available — which pointed at a
+  setup that was working fine.
 - Toggling a task in a file that uses classic Mac (CR-only) line endings now
   actually saves. Every task was treated as being on the same line, so the
   writes overwrote each other and nothing reached the file — while the app
