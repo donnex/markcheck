@@ -114,9 +114,12 @@ runtime the first time either fallback is hit.
 ```sh
 markcheck runbook.md
 markcheck --no-nerd-font runbook.md   # plain-Unicode icons
+markcheck --nerd-font runbook.md      # ...or force them back on, if your config disables them
 markcheck --no-mouse runbook.md       # leave terminal text selection alone
+markcheck --mouse runbook.md          # ...or force it back on, if your config disables it
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
+markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --new runbook.md            # create a starter checklist, then open it
 markcheck --version                   # print the version and build's git commit
@@ -138,10 +141,10 @@ All keys are optional; a flag passed on the command line always overrides
 its config value.
 
 ```toml
-nerd_font = true    # false = --no-nerd-font
-mouse = true        # false = --no-mouse
-primary = false     # true  = --primary
-auto_copy = false   # true  = --auto-copy
+nerd_font = true    # false = --no-nerd-font, true = --nerd-font
+mouse = true        # false = --no-mouse,     true = --mouse
+primary = false     # true  = --primary,      false = --no-primary
+auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths
 ```
 
@@ -151,11 +154,16 @@ TOML, or an unrecognized key — a likely typo) **is** an error: `markcheck`
 refuses to start and reports the problem, rather than silently ignoring a
 setting you asked for.
 
+Each of the four boolean settings has a flag in both directions, so a config
+value can always be overridden for a single run:
+`--nerd-font`/`--no-nerd-font`, `--mouse`/`--no-mouse`,
+`--primary`/`--no-primary`, and `--auto-copy`/`--no-auto-copy`.
+
 `git_sync_paths` is the odd one out: a list of path prefixes rather than a
 plain default. A file whose path starts with one of them gets git-sync
 turned on automatically, the same as passing `--git-sync` for that one run.
 `--git-sync` and `git_sync_paths` are additive (either one turns it on),
-unlike the other four flags, where a passed flag simply overrides the
+unlike the four booleans above, where a passed flag simply overrides the
 config value.
 
 ## Markdown

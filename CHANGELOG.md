@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--nerd-font`, `--mouse`, `--no-primary` and `--no-auto-copy`, so every
+  boolean setting can now be overridden for a single run in *both*
+  directions, whichever way your config file sets it. Previously each
+  setting had only one flag: `primary`/`auto_copy` could be turned on but
+  not off, and `nerd_font`/`mouse` off but not on — so with, say,
+  `nerd_font = false` in your config there was no way to get Nerd Font
+  glyphs back for one run short of editing the config, despite the README
+  saying a passed flag always wins. It now does.
+
 ### Changed
 
 - Three keypresses that used to do nothing at all now say why. Pressing a
