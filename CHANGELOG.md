@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer discards a version of the checklist you staged while a
+  background sync was running. If you ran `git add` on the file (or your
+  editor did) mid-sync, markcheck's index bookkeeping afterwards replaced
+  your staged version with its own. Your file's contents were never
+  affected, but the staging had to be redone; it is now left alone whenever
+  the entry changed after the sync began.
 - Git-sync now refuses to push when it *cannot tell* whether the branch has
   unrelated unpushed commits, instead of treating an unanswerable check as
   an all-clear. Previously any git failure during that check — a timeout on

@@ -1395,6 +1395,10 @@ fn commit_via_temp_index(
         std::process::id(),
         crate::writer::random_suffix()
     ));
+    // What the real index holds for this path *before* any of the work
+    // below runs — the baseline `align_real_index_entry` compares against so
+    // it never overwrites something the user staged in the meantime.
+    let index_before = index_blob(repo_root, relpath);
     let result = (|| {
         if let Some(head) = parent {
             populate_temp_index(repo_root, &temp_index, head)?;
@@ -1422,7 +1426,7 @@ fn commit_via_temp_index(
             PLUMBING_TIMEOUT,
         )?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
-        align_real_index_entry(repo_root, mode, blob, relpath);
+        align_real_index_entry(repo_root, mode, blob, relpath, index_before.as_deref());
         Ok(created_commit)
     })();
     let _ = std::fs::remove_file(&temp_index);
@@ -1506,11 +1510,54 @@ fn stage_into_temp_index(
 /// succeeded by the time this runs, so a failure here (this is local
 /// bookkeeping only, not part of the commit's correctness) is not worth
 /// reporting as a sync failure.
-fn align_real_index_entry(repo_root: &Path, mode: &str, blob: &str, relpath: &str) {
+/// External review, round 10: this write used to be unconditional, which
+/// makes it the one place the real index is mutated without first checking
+/// that the entry still belongs to markcheck. If the user stages a *newer*
+/// version of the checklist while the background sync is running (`git add`
+/// from another terminal, or an IDE doing it for them), overwriting the
+/// entry silently discards their staged version. The working tree is
+/// untouched either way, so this is staging loss rather than content loss —
+/// but it is exactly the kind of unrelated state the temporary-index design
+/// exists to protect, and the target path shouldn't be the one exception
+/// that ignores it. `expected_entry` is the blob the real index held when
+/// this sync began: matching means markcheck is still realigning its own
+/// entry, and any mismatch means someone else has staged something since
+/// and it is theirs to keep.
+fn align_real_index_entry(
+    repo_root: &Path,
+    mode: &str,
+    blob: &str,
+    relpath: &str,
+    expected_entry: Option<&str>,
+) {
+    if index_blob(repo_root, relpath).as_deref() != expected_entry {
+        return;
+    }
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
         .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath]);
     let _ = run_with_timeout(cmd, PLUMBING_TIMEOUT);
+}
+
+/// The blob SHA the **real** index currently holds for `relpath`, or `None`
+/// when it has no entry for it (or the lookup fails). `git ls-files --stage`
+/// prints `<mode> <object> <stage>\t<path>`, so the object is the second
+/// whitespace-separated field of the part before the tab; `-z` keeps a path
+/// containing a newline or a quotable character intact, as `index_entry`
+/// already relies on.
+fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["ls-files", "--stage", "-z", "--"])
+        .arg(relpath);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let record = output.stdout.split(|&b| b == 0).find(|r| !r.is_empty())?;
+    let record = String::from_utf8_lossy(record);
+    let (info, _path) = record.split_once('\t')?;
+    info.split_whitespace().nth(1).map(str::to_string)
 }
 
 /// `GIT_INDEX_FILE=<temp_index> git commit -m <message>`: commits the
@@ -5021,6 +5068,59 @@ mod tests {
             unpushed_history(&work, None, "x.md"),
             Ok(UnpushedHistory::Safe)
         );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    // --- Real-index realignment (round 10) ---
+
+    #[test]
+    fn align_real_index_entry_leaves_a_newer_staged_version_alone() {
+        // External review, round 10: this write was unconditional, so a
+        // `git add` of the checklist from another terminal (or an IDE) while
+        // the background sync ran had its staged version silently replaced.
+        // The working tree is untouched either way, so it is staging loss
+        // rather than content loss — but it is exactly the unrelated state
+        // the temporary-index design exists to protect.
+        let (work, _remote) = init_repo_with_remote();
+        let before = index_blob(&work, "tracked.md");
+        assert!(before.is_some(), "test setup: the file is tracked");
+
+        // The user stages a newer version while the sync is in flight.
+        fs::write(work.join("tracked.md"), "- [x] staged by the user\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        let user_staged = index_blob(&work, "tracked.md").unwrap();
+        assert_ne!(Some(&user_staged), before.as_ref(), "test setup");
+
+        // markcheck finishes and would realign to its own committed blob.
+        let committed = hash_object(&work, "- [x] committed by markcheck\n").unwrap();
+        align_real_index_entry(&work, "100644", &committed, "tracked.md", before.as_deref());
+
+        assert_eq!(
+            index_blob(&work, "tracked.md"),
+            Some(user_staged),
+            "the user's staged version must survive untouched"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn align_real_index_entry_still_realigns_its_own_untouched_entry() {
+        // The case the realignment exists for: nothing else staged the path,
+        // so the entry is markcheck's to advance. Without this, `git status`
+        // shows the file as both staged and unstaged after every toggle.
+        let (work, _remote) = init_repo_with_remote();
+        let before = index_blob(&work, "tracked.md");
+
+        let committed = hash_object(&work, "- [x] committed by markcheck\n").unwrap();
+        align_real_index_entry(&work, "100644", &committed, "tracked.md", before.as_deref());
+
+        assert_eq!(
+            index_blob(&work, "tracked.md"),
+            Some(committed),
+            "an untouched entry is still advanced to the committed blob"
+        );
+
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
