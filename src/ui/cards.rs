@@ -1513,7 +1513,7 @@ fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let (total_done, total_all) = state.document.checkbox_stats();
     for list in &state.document.lists {
-        let (done, total) = list_stats_line(list);
+        let (done, total) = list.checkbox_stats();
         // Defence in depth for the same defect `advance_to_next_incomplete_list`
         // fixes: this screen *asserts* completion, so every row must be able to
         // contradict it rather than rubber-stamp a green check over its own
@@ -1538,10 +1538,6 @@ fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.push(Line::from("Press  R  to reset · h to review · q to quit"));
 
     completion_card(frame, area, "All Tasks Complete", state.palette.done, lines);
-}
-
-fn list_stats_line(list: &List) -> (usize, usize) {
-    list.checkbox_stats()
 }
 
 /// A dim rule line used as a divider on the completion screens.
