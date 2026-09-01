@@ -1266,7 +1266,7 @@ fn code_block_lines(block: &str, width: usize, code_bg: Color) -> Vec<Line<'stat
     out.push(Line::styled(format!("┌{}┐", "─".repeat(box_w + 2)), style).left_aligned());
     out.push(blank());
     for c in &chunks {
-        let pad = box_w.saturating_sub(c.chars().count());
+        let pad = box_w.saturating_sub(display_width(c));
         out.push(Line::styled(format!("│ {c}{} │", " ".repeat(pad)), style).left_aligned());
     }
     out.push(blank());
@@ -1347,24 +1347,70 @@ fn wrap_tokens(tokens: &[Token], width: usize, code_bg: Color) -> Vec<Line<'stat
     lines
 }
 
-/// Hard-wraps a single line to `width` by character count (no word
-/// breaking), used for fenced code where original layout matters.
+/// Display width of `text` in terminal cells, via ratatui's own width-aware
+/// measurement (`unicode-width` underneath) rather than a character count —
+/// so an East Asian wide character counts as the two cells it actually
+/// occupies. `Span::raw` borrows a `&str`, so this doesn't allocate.
+///
+/// Used by the fenced-code-block box, where a character count is not merely
+/// imprecise but visibly wrong: the box is drawn by padding content out to a
+/// fixed inner width, so measuring a wide-character row as half its real
+/// width pushes the closing `│` past the card's inner edge, where it is
+/// clipped away and the box renders open on that row. Deep review, round 3,
+/// reproduced against ratatui's `TestBackend`.
+///
+/// Deliberately *not* applied to `wrap_text`/`wrap_tokens`: those feed the
+/// exact line counts that all card scroll clamping depends on, and their
+/// char-count wrapping is a documented cosmetic limitation (prose wrapping a
+/// little early) rather than a broken frame. Changing them is a larger
+/// regression surface for a much smaller payoff.
+fn display_width(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
+/// Display width of a single character, without allocating —
+/// `char::encode_utf8` writes into a stack buffer.
+fn char_width(ch: char) -> usize {
+    let mut buf = [0u8; 4];
+    display_width(ch.encode_utf8(&mut buf))
+}
+
+/// Hard-wraps a single line to `width` **display cells** (no word breaking),
+/// used for fenced code where original layout matters.
 fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     if text.is_empty() {
         return vec![String::new()];
     }
-    let chars: Vec<char> = text.chars().collect();
-    chars
-        .chunks(width)
-        .map(|c| c.iter().collect::<String>())
-        .collect()
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    for ch in text.chars() {
+        let ch_width = char_width(ch);
+        // A glyph wider than the whole line still has to land somewhere, so
+        // only break when something is already on the line — otherwise an
+        // over-wide character on an empty line would never make progress.
+        if current_width + ch_width > width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 /// Greedy word wrap on character counts, hard-splitting overlong words.
 /// Used instead of ratatui's internal wrapping so line counts are exact
 /// for scroll clamping. Known limitation: counts chars, not display
-/// width, so wide glyphs may wrap a little early.
+/// width, so wide glyphs may wrap a little early. That stays a cosmetic
+/// imprecision here — prose just breaks sooner than it had to. The fenced
+/// code box does *not* get to share it, since padding to a fixed inner
+/// width turns the same mis-measurement into a visibly broken frame; see
+/// `display_width`, which `code_block_lines`/`hard_wrap` use instead.
 fn wrap_text(text: &str, width: u16) -> Vec<String> {
     let width = width.max(1) as usize;
     let mut lines = Vec::new();
@@ -1604,6 +1650,67 @@ mod tests {
     #[test]
     fn wrap_empty_text_yields_single_empty_line() {
         assert_eq!(wrap_text("", 10), vec![String::new()]);
+    }
+
+    /// Renders `block` as a fenced code box at `width` and returns the
+    /// painted rows, so assertions see real terminal cells — the only level
+    /// at which a wide-character width bug is visible, since the offending
+    /// row has the *same* character count either way.
+    fn code_box_rows(block: &str, width: u16) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::widgets::Paragraph;
+
+        let lines = code_block_lines(block, width as usize, Color::DarkGray);
+        let mut terminal = Terminal::new(TestBackend::new(width, lines.len() as u16)).unwrap();
+        terminal
+            .draw(|f| f.render_widget(Paragraph::new(lines), f.area()))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(width as usize)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .collect()
+    }
+
+    #[test]
+    fn code_block_box_closes_on_rows_with_wide_characters() {
+        // Deep review, round 3, reproduced via TestBackend. The box pads
+        // content out to a fixed inner width using a *character* count, so
+        // a row of East Asian wide characters (2 cells each) came out wider
+        // than the border rows above and below it and the closing `│` was
+        // pushed off the row and clipped — the box rendered open.
+        for block in ["abcde", "日本語テスト", "mixed 日本 text"] {
+            let rows = code_box_rows(block, 24);
+            for row in &rows {
+                assert!(
+                    row.trim_end().ends_with('│')
+                        || row.trim_end().ends_with('┐')
+                        || row.trim_end().ends_with('┘'),
+                    "every box row must close its right edge, got {row:?} for {block:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hard_wrap_breaks_on_display_width_not_character_count() {
+        // Six wide characters are 12 cells, so they can't share an 8-cell
+        // line the way six ASCII characters can.
+        assert_eq!(hard_wrap("abcdefgh", 8), vec!["abcdefgh".to_string()]);
+        assert_eq!(
+            hard_wrap("日本語テスト", 8),
+            vec!["日本語テ".to_string(), "スト".to_string()],
+            "four wide characters fill an 8-cell line exactly"
+        );
+        // A glyph wider than the whole line still makes progress.
+        assert_eq!(
+            hard_wrap("日本", 1),
+            vec!["日".to_string(), "本".to_string()]
+        );
+        assert_eq!(hard_wrap("", 4), vec![String::new()]);
     }
 
     fn body_item(body: Vec<BodySpan>, blocks: Vec<&str>, display: &str) -> Item {
@@ -2107,7 +2214,7 @@ mod tests {
     }
 
     #[test]
-    fn hard_wrap_splits_by_char_width() {
+    fn hard_wrap_splits_ascii_at_the_line_width() {
         assert_eq!(
             hard_wrap("abcdef", 4),
             vec!["abcd".to_string(), "ef".to_string()]
