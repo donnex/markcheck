@@ -1317,10 +1317,32 @@ impl AppState {
 
     /// From a finished list, jump to the next list that still has
     /// incomplete work (landing on its first not-done item), skipping any
-    /// already-complete lists in between. If none remain, show the
-    /// all-complete summary.
+    /// already-complete lists in between; wrap back to an *earlier*
+    /// incomplete list when nothing follows, and show the all-complete
+    /// summary only when the document genuinely has no unfinished task left.
+    ///
+    /// Deep review, round 3, reproduced: the search used to run forward only
+    /// (`next_incomplete_list_after` is `(from + 1..len)`), so completing the
+    /// *last* list while an earlier one was untouched fell straight through
+    /// to `AllComplete`. The summary then asserted "All Tasks Complete" over
+    /// a body that contradicted it — an untouched list listed as `0 / 1`,
+    /// directly above `Total: 1 / 2 tasks`. Confirming nothing was missed is
+    /// the entire point of a pilot-style checklist, so claiming completion
+    /// while a whole list is untouched is the one thing this screen must
+    /// never do. Wrapping matches `Tab`'s existing document-wide behaviour;
+    /// the sibling `Shift-L` path (`jump_to_next_incomplete_list`) already
+    /// distinguished the two cases correctly via
+    /// `no_further_incomplete_list_message`.
+    ///
+    /// The current list is complete whenever this runs (that is what put the
+    /// `ListComplete` screen up, and `toggle_item` demotes the screen if a
+    /// task is un-done from the overview), so next-then-previous covers every
+    /// other list and `None` really does mean "everything is done".
     fn advance_to_next_incomplete_list(&mut self) {
-        match self.next_incomplete_list_after(self.current_list_index) {
+        let target = self
+            .next_incomplete_list_after(self.current_list_index)
+            .or_else(|| self.prev_incomplete_list_before(self.current_list_index));
+        match target {
             Some(index) => self.jump_to_list(index),
             None => self.screen = Screen::AllComplete,
         }

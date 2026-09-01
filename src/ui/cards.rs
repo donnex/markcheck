@@ -1468,11 +1468,18 @@ fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
     let (total_done, total_all) = state.document.checkbox_stats();
     for list in &state.document.lists {
         let (done, total) = list_stats_line(list);
+        // Defence in depth for the same defect `advance_to_next_incomplete_list`
+        // fixes: this screen *asserts* completion, so every row must be able to
+        // contradict it rather than rubber-stamp a green check over its own
+        // numbers. A row here should be unreachable while incomplete; if one
+        // ever is again, it says so loudly instead of hiding behind the icon.
+        let (marker, marker_style) = if done == total {
+            (icons.done, Style::default().fg(state.palette.done))
+        } else {
+            (icons.pending, Style::default().fg(state.palette.error))
+        };
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} ", icons.done),
-                Style::default().fg(state.palette.done),
-            ),
+            Span::styled(format!("{marker} "), marker_style),
             Span::raw(format!(" {}  {done} / {total}", list.title)),
         ]));
     }
