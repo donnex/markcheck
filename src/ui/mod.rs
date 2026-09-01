@@ -674,6 +674,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn all_complete_card_does_not_green_check_an_unfinished_list() {
+        // Defence in depth for the round-3 defect where `AllComplete` could
+        // be reached with work outstanding: this screen asserts completion,
+        // so each row must reflect its *own* list rather than a hardcoded
+        // done marker that rubber-stamps a green check over `0 / 1`.
+        let mut state = state_with(vec![
+            List {
+                title: "Alpha".to_string(),
+                banner: None,
+                items: vec![checkbox(1, "a", false)],
+            },
+            List {
+                title: "Beta".to_string(),
+                banner: None,
+                items: vec![checkbox(2, "b", true)],
+            },
+        ]);
+        state.screen = crate::model::Screen::AllComplete;
+
+        let rows = buffer_rows(&mut state, 100, 24);
+        // The completion card's own rows carry the `done / total` counter,
+        // which distinguishes them from the overview's list rows.
+        let alpha = rows
+            .iter()
+            .find(|r| r.contains("Alpha") && r.contains("0 / 1"))
+            .expect("unfinished list has a summary row");
+        let beta = rows
+            .iter()
+            .find(|r| r.contains("Beta") && r.contains("1 / 1"))
+            .expect("finished list has a summary row");
+
+        assert!(
+            !alpha.contains('☑'),
+            "an unfinished list must not be marked done: {alpha:?}"
+        );
+        assert!(
+            beta.contains('☑'),
+            "a finished list still reads as done: {beta:?}"
+        );
+    }
+
     fn state_with(lists: Vec<List>) -> AppState {
         let document = Document {
             file_path: PathBuf::from("render-test.md"),

@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The "All Tasks Complete" screen no longer appears while a list still has
+  unfinished tasks. Finishing the *last* list while an earlier one was
+  untouched jumped straight to the completion summary — which then listed
+  that untouched list as `0 / 1` and a total of `1 / 2` under a heading
+  claiming everything was done. It now moves you to the unfinished list
+  instead, and only claims completion when nothing is left anywhere.
 - Opening a checklist with `--git-sync` no longer commits and pushes changes
   you hadn't committed yet. If you edited the file in an editor and left the
   change uncommitted, simply opening it in `markcheck` — no toggle, nothing
