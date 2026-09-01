@@ -780,6 +780,79 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
 }
 
 #[test]
+fn git_sync_does_not_commit_uncommitted_changes_just_because_the_file_was_opened() {
+    // Deep review, round 3. Startup asks git-sync to catch up a pending
+    // push; that used to be expressed as an ordinary *content* request
+    // carrying the file's current disk bytes, which satisfies every
+    // `run_sync` guard by construction. So opening a checklist that had
+    // ordinary uncommitted editor changes committed and pushed them --
+    // no toggle, no keypress but the quit -- under the message
+    // `Catch up a pending push`, which doesn't describe them at all.
+    //
+    // The unit tests around `catch_up_push` can't cover this: the function
+    // didn't exist before the fix, so only driving the real binary
+    // exercises the startup path that actually regressed.
+    let _guard = git_sync_test_guard();
+    let root = unique_path("gitsync-open-only");
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    // The user edits the checklist in an editor and leaves it uncommitted —
+    // ordinary work in progress, nothing to do with markcheck.
+    let edited = "## Work\n\n- [x] `alpha`\n- [ ] `beta`\n";
+    write_file(&path, edited);
+
+    // Open it and quit. Both tasks stay incomplete, so `q` exits directly
+    // rather than raising the reset-before-quit prompt.
+    let ok = drive_args(&path, &["--git-sync"], &[], &[Step::Key("q")]);
+    assert!(ok, "binary should exit successfully with --git-sync");
+
+    // The catch-up runs on a background thread the quit path waits on, so
+    // give a would-be commit ample room to appear before concluding it
+    // didn't: poll for several seconds and require it stays absent.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        for dir in [&work, &remote] {
+            let out = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(["log", "--format=%s", "main"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                "init",
+                "opening a checklist must never commit or publish anything, in {dir:?}"
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        edited,
+        "the uncommitted edit stays exactly as the user left it"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn git_sync_paths_config_auto_activates_without_the_flag() {
     // git_sync_paths shares main.rs's flag-merge logic with the other config
     // keys, but it's additive (OR'd with --git-sync) rather than a plain

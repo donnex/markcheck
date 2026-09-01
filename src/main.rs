@@ -11,7 +11,6 @@ mod ui;
 mod watcher;
 mod writer;
 
-use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
@@ -184,21 +183,13 @@ fn main() -> anyhow::Result<()> {
     // A prior session's commit can still be sitting local-only if it quit
     // (or crashed) before `retry_push_if_due` got a chance to push it, and
     // without another checklist edit nothing else would ever prompt a retry
-    // — see the `CommittedNotPushed` doc comment in git_sync.rs. Requesting
-    // a sync of the file's current content here is a no-op commit-wise
-    // (content already matches HEAD in the common case) but still runs
-    // run_sync's ahead-of-upstream check, so a leftover unpushed commit
-    // gets one more chance to go out right at startup.
-    if let (Some(sync), Ok(content)) = (
-        git_sync.as_mut(),
-        fs::read_to_string(&state.document.file_path),
-    ) {
-        let content_hash = model::hash_bytes(content.as_bytes());
-        sync.request(model::PendingSync {
-            content,
-            content_hash,
-            description: "Catch up a pending push".to_string(),
-        });
+    // — see the `CommittedNotPushed` doc comment in git_sync.rs. This asks
+    // for a **push only**: it can never create a commit, which is what
+    // expressing it as an ordinary content request used to do (see
+    // `catch_up_push`, which reproduced committing and publishing a user's
+    // uncommitted editor changes purely from opening the file).
+    if let Some(sync) = git_sync.as_mut() {
+        sync.request_catch_up_push();
     }
 
     let mouse = resolve_flag(false, cli.no_mouse, config.mouse, true);

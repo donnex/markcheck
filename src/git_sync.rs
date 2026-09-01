@@ -465,6 +465,29 @@ impl GitSync {
         });
     }
 
+    /// Asks the background worker to push a commit an earlier session left
+    /// local-only — see `catch_up_push`, which this is the only caller of.
+    /// Called once by `main.rs` when git-sync activates, so a leftover
+    /// unpushed commit gets a chance to go out without waiting for the user
+    /// to make another checklist edit (a commit that already matches the
+    /// desired content never triggers a `request` on its own).
+    ///
+    /// Deliberately **not** a `request`: this must never be able to create a
+    /// commit, which is exactly what expressing it as one used to do.
+    pub fn request_catch_up_push(&mut self) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        let repo_dir = self.repo_dir.clone();
+        let file_path = self.file_path.clone();
+        let sender = self.sender.clone();
+        std::thread::spawn(move || {
+            let outcome = run_reporting_panics(|| catch_up_push(&repo_dir, &file_path));
+            let _ = sender.send(outcome);
+        });
+    }
+
     /// Drains the channel non-blockingly; call once per frame regardless of
     /// input, like `FileWatcher::poll_changed`. Returns the outcome of a
     /// completed sync, if one just finished, updates the push-retry state
@@ -845,20 +868,29 @@ fn run_sync(
 /// attempted (and its real failure reason reported) rather than the sync
 /// going quiet with no explanation.
 fn ahead_of_upstream(repo_root: &Path) -> bool {
+    commits_ahead_of_upstream(repo_root).unwrap_or(1) > 0
+}
+
+/// How many commits `HEAD` is ahead of its upstream, or `None` when the
+/// question can't be answered at all (no upstream configured, detached
+/// `HEAD`, any other `git rev-list` failure).
+///
+/// Split out of `ahead_of_upstream` so the two callers can choose opposite
+/// failure directions from the same one subprocess. `ahead_of_upstream`
+/// folds `None` into "assume yes" because it runs *after* a change the user
+/// just made, where going quiet would hide a real problem.
+/// `catch_up_push` needs the opposite: it runs unprompted at startup, so it
+/// must act only on a positively-known unpushed commit and stay silent
+/// otherwise, rather than nagging about a missing upstream on every launch.
+fn commits_ahead_of_upstream(repo_root: &Path) -> Option<u64> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
         .args(["rev-list", "--count", "@{u}..HEAD"]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT);
-    match output {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .parse::<u64>()
-                .unwrap_or(1)
-                > 0
-        }
-        _ => true,
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    if !output.status.success() {
+        return None;
     }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
 /// Whether the branch already has unpushed commits ahead of upstream that
@@ -1144,6 +1176,66 @@ fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
         return SyncOutcome::RetryAbandoned;
     }
     push(repo_dir, expected_commit)
+}
+
+/// Pushes a commit an earlier session left local-only, and **never builds a
+/// commit of its own** — the startup counterpart to `retry_commit`'s timed
+/// retry, run once by `main.rs` when git-sync activates.
+///
+/// Deep review, round 3, reproduced end-to-end. Startup used to express this
+/// as an ordinary `GitSync::request` carrying the file's *current disk
+/// content* as `expected_content`, described as `Catch up a pending push`.
+/// That defeats every guard `run_sync` has, by construction: `status` is
+/// non-empty, `HEAD`'s blob differs, and the staleness check compares disk
+/// against `latest_requested_hash` — which that same request had just set to
+/// that same content. So a checklist with ordinary uncommitted edits (made
+/// in an editor, no markcheck involvement) was committed *and pushed* purely
+/// by opening the file and quitting, under a message describing a push
+/// catch-up rather than the change it actually published. Publishing is not
+/// undoable the way a local commit is, and nothing about opening a viewer
+/// should publish anything.
+///
+/// So this path only ever pushes. It also fails **closed** throughout —
+/// unlike `run_sync`, which fails open in several places because it runs
+/// after a change the user just made, where silence would hide a problem.
+/// Nothing has happened here, so every unanswerable question means "do
+/// nothing, quietly": no upstream, no commits, an unreadable count, all
+/// return `Skipped`. The one thing worth reporting is an untracked file,
+/// which `run_sync` would have reported at startup before this change and
+/// which means git-sync can never do anything at all for this file.
+fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir)
+        .args(["rev-parse", "--show-toplevel"]);
+    let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
+        Ok(output) if output.status.success() => {
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
+        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
+    };
+    if let Some(reason) = repo_sync_blocked(&repo_root) {
+        return SyncOutcome::Failed(reason);
+    }
+    // Positively-known unpushed commits only — see `commits_ahead_of_upstream`.
+    if commits_ahead_of_upstream(&repo_root).is_none_or(|ahead| ahead == 0) {
+        return SyncOutcome::Skipped;
+    }
+    let Ok((_mode, relpath)) = index_entry(repo_dir, file_path) else {
+        return SyncOutcome::SkippedUntracked;
+    };
+    // The same refusal `run_sync` makes: an explicit-SHA push still sends the
+    // commit's whole ancestry, so unrelated unpushed work must not ride along.
+    if branch_has_unrelated_unpushed_commits(&repo_root, &relpath) {
+        return SyncOutcome::Failed(
+            "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
+                .to_string(),
+        );
+    }
+    let Some(head) = current_head(&repo_root) else {
+        return SyncOutcome::Skipped;
+    };
+    push(repo_dir, &head)
 }
 
 /// Populates a fresh temporary index from `parent` (or leaves it empty for
@@ -1780,6 +1872,16 @@ mod tests {
             .status()
             .expect("git command failed to run");
         assert!(status.success(), "git {args:?} failed in {dir:?}");
+    }
+
+    /// Trimmed stdout of a `git` command, for asserting on repository state.
+    fn git_stdout(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git command failed to run");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
     /// Like `init_repo_with_remote`, but the checklist lives on a **topic**
@@ -4725,5 +4827,169 @@ mod tests {
             "must not block on a descendant that outlives the direct child: {:?}",
             started.elapsed()
         );
+    }
+
+    // --- Startup catch-up push (`catch_up_push`) ---
+
+    #[test]
+    fn catch_up_push_never_commits_uncommitted_working_tree_changes() {
+        // Deep review, round 3, reproduced end-to-end against a real repo
+        // and bare remote before this fix. Startup expressed the catch-up
+        // as an ordinary content request carrying the file's *current disk
+        // bytes*, which satisfies every `run_sync` guard by construction --
+        // so merely opening a checklist that had ordinary uncommitted
+        // editor changes committed *and pushed* them, under the message
+        // `Catch up a pending push`. Opening a viewer must publish nothing.
+        let (work, remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+        let edited = "- [x] edited outside markcheck\n";
+        fs::write(&file, edited).unwrap();
+
+        let outcome = catch_up_push(&work, &file);
+
+        assert_eq!(
+            outcome,
+            SyncOutcome::Skipped,
+            "nothing was ahead of upstream, so there was nothing to do"
+        );
+        assert_eq!(
+            git_stdout(&work, &["log", "--format=%s", "main"]),
+            "init",
+            "no commit may be created"
+        );
+        assert_eq!(
+            git_stdout(&remote, &["log", "--format=%s", "main"]),
+            "init",
+            "nothing may reach the remote"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            edited,
+            "the uncommitted edit stays exactly as the user left it"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn catch_up_push_pushes_a_local_only_commit_without_committing_a_dirty_tree() {
+        // The case the startup hook exists for -- a prior session committed
+        // but quit before its push landed -- combined with the case above,
+        // to pin both halves at once: the existing commit goes out, and the
+        // unrelated uncommitted edit sitting next to it does not.
+        let (work, remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+        fs::write(&file, "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "tracked.md: Check \"one\""]);
+        // ... and then the user keeps editing, without committing.
+        let dirty = "- [x] one\n- [ ] two\n";
+        fs::write(&file, dirty).unwrap();
+
+        let outcome = catch_up_push(&work, &file);
+
+        assert_eq!(outcome, SyncOutcome::Synced);
+        assert_eq!(
+            git_stdout(&remote, &["log", "--format=%s", "main"]),
+            "tracked.md: Check \"one\"\ninit",
+            "the local-only commit reached the remote"
+        );
+        assert_eq!(
+            git_stdout(&work, &["log", "--format=%s", "main"]),
+            "tracked.md: Check \"one\"\ninit",
+            "and no second commit was created for the dirty tree"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), dirty);
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn catch_up_push_is_a_no_op_when_everything_is_already_pushed() {
+        let (work, remote) = init_repo_with_remote();
+
+        assert_eq!(
+            catch_up_push(&work, &work.join("tracked.md")),
+            SyncOutcome::Skipped
+        );
+        assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn catch_up_push_stays_silent_when_no_upstream_is_configured() {
+        // Fails closed, unlike `ahead_of_upstream`: nothing has happened
+        // here, so an unanswerable question means "do nothing, quietly"
+        // rather than nagging about the missing upstream on every launch.
+        let work = init_repo_without_remote();
+
+        assert_eq!(
+            catch_up_push(&work, &work.join("tracked.md")),
+            SyncOutcome::Skipped
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn catch_up_push_refuses_when_unrelated_commits_are_unpushed() {
+        // An explicit-SHA push still sends the commit's whole ancestry, so
+        // the same refusal `run_sync` makes has to apply here too.
+        let (work, remote) = init_repo_with_remote();
+        fs::write(work.join("other.txt"), "unrelated work\n").unwrap();
+        run(&work, &["add", "other.txt"]);
+        run(&work, &["commit", "-q", "-m", "unrelated"]);
+
+        let outcome = catch_up_push(&work, &work.join("tracked.md"));
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg)
+                if msg.contains("unrelated to this change")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(&remote, &["log", "--format=%s", "main"]),
+            "init",
+            "the unrelated commit must not be published"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn catch_up_push_reports_an_untracked_checklist() {
+        // Preserves what the old startup request reported: git-sync being
+        // permanently unable to do anything for this file is worth saying.
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("other.txt"), "unrelated work\n").unwrap();
+        run(&work, &["add", "other.txt"]);
+        run(&work, &["commit", "-q", "-m", "ahead"]);
+        let untracked = work.join("not-tracked.md");
+        fs::write(&untracked, "- [ ] one\n").unwrap();
+
+        assert_eq!(
+            catch_up_push(&work, &untracked),
+            SyncOutcome::SkippedUntracked
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn catch_up_push_refuses_while_the_repository_is_mid_merge() {
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "ahead"]);
+        let git_dir = work.join(".git");
+        fs::write(git_dir.join("MERGE_HEAD"), "deadbeef\n").unwrap();
+
+        let outcome = catch_up_push(&work, &work.join("tracked.md"));
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("a merge in progress")),
+            "{outcome:?}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 }
