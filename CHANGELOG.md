@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Opening a checklist with `--git-sync` no longer commits and pushes changes
+  you hadn't committed yet. If you edited the file in an editor and left the
+  change uncommitted, simply opening it in `markcheck` — no toggle, nothing
+  but quitting again — committed *and* published that edit, labelled `Catch
+  up a pending push`, which described nothing about it. Startup now only
+  ever retries pushing a commit an earlier session left behind, and can no
+  longer create one. Your uncommitted work stays yours to commit.
 - Copying a very large command on a machine with no system clipboard (over
   SSH, say) now says the command is too large for the terminal clipboard,
   instead of reporting that no clipboard is available — which pointed at a
