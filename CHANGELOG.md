@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A fenced command block containing wide characters (CJK, and other
+  double-width glyphs) no longer renders with its right-hand border missing.
+  The box was padded by counting characters rather than the cells they
+  actually occupy, so such a row overflowed its own frame and the closing
+  edge was clipped away.
 - The "All Tasks Complete" screen no longer appears while a list still has
   unfinished tasks. Finishing the *last* list while an earlier one was
   untouched jumped straight to the completion summary — which then listed
