@@ -756,7 +756,28 @@ fn run_sync(
     // far) *and* an unrelated commit has landed on the branch — see the
     // fast path's own comment below for why `status` can be non-empty
     // even once this older request is already satisfied at `HEAD`.
-    if branch_has_unrelated_unpushed_commits(&repo_root, &relpath) {
+    //
+    // Resolve the branch tip **once**, and ask every question below about
+    // that exact commit — this guard, the already-committed fast path, the
+    // push, and the parent a new commit is built on.
+    //
+    // External review, round 10: these used to re-resolve `HEAD`
+    // independently at each step, so this guard validated the range ending
+    // at one commit while the fast path pushed whatever `HEAD` had become by
+    // the time it ran, a few subprocesses later. A commit landing in that
+    // window was published without ever having been checked. Capturing the
+    // SHA closes it outright rather than narrowing it: `push` targets an
+    // explicit SHA, so the ancestry it can publish is exactly the range that
+    // was validated, no matter what `HEAD` does afterwards — no re-check and
+    // no retry path needed. `resolve_parent` rather than `current_head`
+    // because only it tells "no commits yet" apart from a failed lookup,
+    // which the commit path below depends on.
+    let tip = match resolve_parent(&repo_root) {
+        Ok(tip) => tip,
+        Err(err) => return SyncOutcome::Failed(err),
+    };
+
+    if branch_has_unrelated_unpushed_commits(&repo_root, tip.as_deref(), &relpath) {
         return SyncOutcome::Failed(
             "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
                 .to_string(),
@@ -771,26 +792,25 @@ fn run_sync(
     // request being *fully* satisfied, though: if the commit hasn't reached
     // upstream yet (a prior push failed), there's still a push worth
     // retrying — see `ahead_of_upstream`'s doc comment for why this matters.
-    if blob_bytes_at(&repo_root, "HEAD", &relpath).as_deref() == Some(expected_content.as_bytes()) {
-        if ahead_of_upstream(&repo_root) {
-            // An unresolvable `HEAD` is a hard failure here, never a
-            // default — the same reasoning `resolve_parent` applies at the
-            // other call site where `current_head`'s ambiguous `None` would
-            // otherwise become a silent wrong action. This used to be
-            // `current_head(...).unwrap_or_default()`, and the default of a
-            // `String` is `""`, which `push` then formats into the refspec
-            // `<remote> :<branch>` — git's *delete a remote ref* form.
-            // Confirmed empirically: that deletes the branch and exits 0,
-            // so the sync reports `Synced` while the branch is gone. (A bare
-            // remote refuses to delete its own `HEAD` branch by default, so
-            // only branches other than the remote's default were exposed —
-            // which is every topic branch.)
-            let Some(head) = current_head(&repo_root) else {
-                return SyncOutcome::Failed(
-                    "git-sync: could not resolve HEAD before pushing".to_string(),
-                );
-            };
-            return push(repo_dir, &head);
+    //
+    // Both the content check and the push name `tip` — the same SHA the
+    // guard above validated — so this path can only ever publish history
+    // that was actually checked. It used to read the blob at the symbolic
+    // `HEAD` and then separately re-resolve `HEAD` for the push, which are
+    // not guaranteed to be the same commit.
+    //
+    // A `tip` of `None` (no commits yet) simply isn't this path: there is no
+    // committed blob to match, so it falls through to build the first
+    // commit. That also subsumes the old unresolvable-`HEAD` failure here,
+    // which existed because `current_head(...).unwrap_or_default()` produced
+    // `""`, and `push` formats that into the refspec `<remote> :<branch>` —
+    // git's *delete a remote ref* form, which succeeds and reports `Synced`
+    // while the branch is gone. `push` still rejects an empty SHA outright.
+    if let Some(tip) = tip.as_deref()
+        && blob_bytes_at(&repo_root, tip, &relpath).as_deref() == Some(expected_content.as_bytes())
+    {
+        if ahead_of_upstream(&repo_root, tip) {
+            return push(repo_dir, tip);
         }
         return SyncOutcome::Skipped;
     }
@@ -841,10 +861,11 @@ fn run_sync(
         Err(err) => return SyncOutcome::Failed(err),
     };
 
-    let parent = match resolve_parent(&repo_root) {
-        Ok(parent) => parent,
-        Err(err) => return SyncOutcome::Failed(err),
-    };
+    // The same tip captured before the guards ran — not a fresh resolution,
+    // so the commit is built on exactly the history that was validated.
+    // `commit_via_temp_index` re-checks `HEAD == parent` immediately before
+    // committing and refuses if anything moved in between.
+    let parent = tip;
     let created_commit =
         match commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
             Ok(sha) => sha,
@@ -867,8 +888,8 @@ fn run_sync(
 /// tracking state, or any other `git rev-list` failure — so a push is
 /// attempted (and its real failure reason reported) rather than the sync
 /// going quiet with no explanation.
-fn ahead_of_upstream(repo_root: &Path) -> bool {
-    commits_ahead_of_upstream(repo_root).unwrap_or(1) > 0
+fn ahead_of_upstream(repo_root: &Path, tip: &str) -> bool {
+    commits_ahead_of_upstream(repo_root, tip).unwrap_or(1) > 0
 }
 
 /// How many commits `HEAD` is ahead of its upstream, or `None` when the
@@ -882,10 +903,10 @@ fn ahead_of_upstream(repo_root: &Path) -> bool {
 /// `catch_up_push` needs the opposite: it runs unprompted at startup, so it
 /// must act only on a positively-known unpushed commit and stay silent
 /// otherwise, rather than nagging about a missing upstream on every launch.
-fn commits_ahead_of_upstream(repo_root: &Path) -> Option<u64> {
+fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u64> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
-        .args(["rev-list", "--count", "@{u}..HEAD"]);
+        .args(["rev-list", "--count", &format!("@{{u}}..{tip}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
@@ -916,8 +937,22 @@ fn commits_ahead_of_upstream(repo_root: &Path) -> Option<u64> {
 /// the way `ahead_of_upstream` does would wrongly block every first-ever
 /// commit to a fresh repository and every sync where upstream tracking
 /// simply isn't set up.
-fn branch_has_unrelated_unpushed_commits(repo_root: &Path, relpath: &str) -> bool {
-    range_has_unrelated_commits(repo_root, Some("@{u}"), "HEAD", relpath).unwrap_or(false)
+/// Whether the unpushed range ending at `tip` contains commits touching
+/// anything but `relpath` — the guard that keeps a checklist toggle from
+/// publishing unrelated local work, since an explicit-SHA push still sends
+/// the commit's whole ancestry.
+///
+/// `tip` is the caller's captured branch tip, never the symbolic `HEAD`, so
+/// the range checked here is exactly the range that will be published.
+/// `None` means the branch has no commits at all, so there is nothing
+/// unpushed for anything to be unrelated to.
+fn branch_has_unrelated_unpushed_commits(
+    repo_root: &Path,
+    tip: Option<&str>,
+    relpath: &str,
+) -> bool {
+    let Some(tip) = tip else { return false };
+    range_has_unrelated_commits(repo_root, Some("@{u}"), tip, relpath).unwrap_or(false)
 }
 
 /// Whether any commit in `base..tip` — or, when `base` is `None`, in the
@@ -1217,8 +1252,19 @@ fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(&repo_root) {
         return SyncOutcome::Failed(reason);
     }
+    // Capture the tip **before** validating anything, and push that exact
+    // SHA. External review, round 10: this used to validate the range
+    // ending at the symbolic `HEAD` and then separately re-resolve `HEAD`
+    // for the push, so an unrelated commit landing between those two
+    // subprocesses was published without ever having been checked — the
+    // same defect as `run_sync`'s fast path, in the one path that runs
+    // unprompted at startup. Naming the SHA closes it: `push` targets an
+    // explicit commit, so what it can publish is exactly what was validated.
+    let Some(head) = current_head(&repo_root) else {
+        return SyncOutcome::Skipped;
+    };
     // Positively-known unpushed commits only — see `commits_ahead_of_upstream`.
-    if commits_ahead_of_upstream(&repo_root).is_none_or(|ahead| ahead == 0) {
+    if commits_ahead_of_upstream(&repo_root, &head).is_none_or(|ahead| ahead == 0) {
         return SyncOutcome::Skipped;
     }
     let Ok((_mode, relpath)) = index_entry(repo_dir, file_path) else {
@@ -1226,15 +1272,12 @@ fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     };
     // The same refusal `run_sync` makes: an explicit-SHA push still sends the
     // commit's whole ancestry, so unrelated unpushed work must not ride along.
-    if branch_has_unrelated_unpushed_commits(&repo_root, &relpath) {
+    if branch_has_unrelated_unpushed_commits(&repo_root, Some(&head), &relpath) {
         return SyncOutcome::Failed(
             "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
                 .to_string(),
         );
     }
-    let Some(head) = current_head(&repo_root) else {
-        return SyncOutcome::Skipped;
-    };
     push(repo_dir, &head)
 }
 
@@ -4827,6 +4870,73 @@ mod tests {
             "must not block on a descendant that outlives the direct child: {:?}",
             started.elapsed()
         );
+    }
+
+    // --- Captured-tip invariant (round 10) ---
+
+    #[test]
+    fn a_head_that_moves_after_the_tip_is_captured_cannot_broaden_the_push() {
+        // External review, round 10. `run_sync`'s fast path and
+        // `catch_up_push` both used to validate the unpushed range ending at
+        // the *symbolic* `HEAD`, then separately re-resolve `HEAD` to get a
+        // SHA for the push. Those are two different subprocesses, so a
+        // commit landing between them was published having never been
+        // checked. Both now capture the tip once and name that SHA at every
+        // step.
+        //
+        // The interleaving is reproduced deterministically by moving `HEAD`
+        // inside the window rather than by racing a real thread: what the
+        // fix guarantees is that the *validated* SHA and the *pushed* SHA
+        // are the same commit, which is exactly what this asserts.
+        let (work, remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "checklist"]);
+        let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+
+        // The guard passes for that tip: its unpushed range is checklist-only.
+        assert!(!branch_has_unrelated_unpushed_commits(
+            &work,
+            Some(&tip),
+            "tracked.md"
+        ));
+
+        // Now an unrelated commit lands — exactly what could happen between
+        // the two subprocesses in the old code.
+        fs::write(work.join("other.txt"), "unrelated\n").unwrap();
+        run(&work, &["add", "other.txt"]);
+        run(&work, &["commit", "-q", "-m", "unrelated"]);
+        let moved = git_stdout(&work, &["rev-parse", "HEAD"]);
+        assert_ne!(moved, tip, "test setup: HEAD must have moved");
+
+        // Pushing the captured tip publishes exactly the validated range.
+        assert_eq!(push(&work, &tip), SyncOutcome::Synced);
+        assert_eq!(
+            git_stdout(&remote, &["log", "--format=%s", "main"]),
+            "checklist\ninit",
+            "the unrelated commit must not reach the remote"
+        );
+
+        // And had the moved `HEAD` been what the guard was asked about, it
+        // would have refused — which is what makes checking one commit and
+        // pushing another unsafe in the first place.
+        assert!(branch_has_unrelated_unpushed_commits(
+            &work,
+            Some(&moved),
+            "tracked.md"
+        ));
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_tipless_branch_has_no_unrelated_unpushed_commits() {
+        // `None` means the branch has no commits at all, so there is nothing
+        // unpushed for anything to be unrelated to. Previously this question
+        // was asked about the symbolic `HEAD`, which simply errored on an
+        // empty repository and fell through to the same answer by accident.
+        let work = init_repo_without_remote();
+        assert!(!branch_has_unrelated_unpushed_commits(&work, None, "x.md"));
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     // --- Startup catch-up push (`catch_up_push`) ---
