@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync now refuses to push when it *cannot tell* whether the branch has
+  unrelated unpushed commits, instead of treating an unanswerable check as
+  an all-clear. Previously any git failure during that check — a timeout on
+  a large history, say — read exactly like "nothing unrelated here" and the
+  push went ahead. A branch with no upstream configured is still not treated
+  as a failure: committing proceeds as before, and the push declines with
+  its usual "run `git push -u` once" message.
 - Git-sync can no longer publish an unrelated commit that lands while it is
   deciding what to push. Both push paths checked that the branch had no
   unrelated unpushed work, then resolved the branch tip again a moment later

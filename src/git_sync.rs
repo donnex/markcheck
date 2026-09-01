@@ -777,11 +777,8 @@ fn run_sync(
         Err(err) => return SyncOutcome::Failed(err),
     };
 
-    if branch_has_unrelated_unpushed_commits(&repo_root, tip.as_deref(), &relpath) {
-        return SyncOutcome::Failed(
-            "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
-                .to_string(),
-        );
+    if let Some(refusal) = unpushed_history_blocks(&repo_root, tip.as_deref(), &relpath) {
+        return refusal;
     }
 
     // If HEAD already holds exactly this content, the commit half of this
@@ -937,22 +934,112 @@ fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u64> {
 /// the way `ahead_of_upstream` does would wrongly block every first-ever
 /// commit to a fresh repository and every sync where upstream tracking
 /// simply isn't set up.
+/// What the unpushed-history check could establish about `tip` — three
+/// genuinely different answers that a plain `bool` used to collapse into
+/// two.
+#[derive(Debug, PartialEq, Eq)]
+enum UnpushedHistory {
+    /// No upstream is configured, so there is no range to compare against.
+    /// **Not** a safety failure: the branch simply has no publication target
+    /// yet (a fresh repository, or one where `git push -u` was never run),
+    /// and `push` refuses on its own with a specific message. Committing may
+    /// proceed; publishing can't happen anyway.
+    NoUpstream,
+    /// Every unpushed commit touches only the checklist path.
+    Safe,
+    /// At least one unpushed commit touches something else.
+    ContainsUnrelated,
+}
+
 /// Whether the unpushed range ending at `tip` contains commits touching
 /// anything but `relpath` — the guard that keeps a checklist toggle from
 /// publishing unrelated local work, since an explicit-SHA push still sends
 /// the commit's whole ancestry.
 ///
 /// `tip` is the caller's captured branch tip, never the symbolic `HEAD`, so
-/// the range checked here is exactly the range that will be published.
-/// `None` means the branch has no commits at all, so there is nothing
-/// unpushed for anything to be unrelated to.
-fn branch_has_unrelated_unpushed_commits(
+/// the range checked is exactly the range that will be published. `None`
+/// means the branch has no commits at all, so there is nothing unpushed for
+/// anything to be unrelated to.
+///
+/// External review, round 10: this returned a `bool` built with
+/// `.unwrap_or(false)`, so *any* git failure — a `rev-list` timeout on a
+/// large history, a transiently unhealthy object database — became
+/// indistinguishable from "verified safe" and the caller went on to push.
+/// The asymmetry matters: a false refusal costs the user a retry, while a
+/// false clearance publishes someone else's commits. The reason it was
+/// written that way is real, though, and is why this isn't simply a
+/// `Result<bool, _>`: `@{u}` is legitimately unresolvable when no upstream
+/// exists, and failing closed on that would block every first-ever commit to
+/// a fresh repository. Separating that case out is what lets the genuine
+/// failures fail closed without taking the legitimate one down with them.
+fn unpushed_history(
     repo_root: &Path,
     tip: Option<&str>,
     relpath: &str,
-) -> bool {
-    let Some(tip) = tip else { return false };
-    range_has_unrelated_commits(repo_root, Some("@{u}"), tip, relpath).unwrap_or(false)
+) -> Result<UnpushedHistory, String> {
+    let Some(tip) = tip else {
+        return Ok(UnpushedHistory::Safe);
+    };
+    let Some(upstream) = resolve_upstream(repo_root)? else {
+        return Ok(UnpushedHistory::NoUpstream);
+    };
+    match range_has_unrelated_commits(repo_root, Some(&upstream), tip, relpath)? {
+        true => Ok(UnpushedHistory::ContainsUnrelated),
+        false => Ok(UnpushedHistory::Safe),
+    }
+}
+
+/// The commit the branch's upstream tracking ref points at. `Ok(None)` when
+/// there is no resolvable upstream — either none is configured, or one is
+/// configured whose tracking ref doesn't exist locally yet (a remote added
+/// but never fetched, or `branch.<name>.remote`/`.merge` set by hand).
+/// Confirmed empirically: `git rev-parse --verify -q @{u}` exits **1** for
+/// both, and 0 with the SHA when it resolves — the same exit-code
+/// distinction `resolve_parent` relies on, so any *other* failure (128, a
+/// timeout, a spawn error) becomes `Err` rather than being mistaken for
+/// "no upstream".
+///
+/// Resolving to a concrete SHA also means `unpushed_history`'s range walk
+/// names two real commits instead of the symbolic `@{u}`, matching the
+/// captured-tip rule the rest of this module now follows: `upstream_parts`
+/// reads the *config*, which can say an upstream exists while `@{u}` still
+/// won't resolve — precisely the case that made an earlier version of this
+/// check report a hard failure where "no upstream yet" was the truth.
+fn resolve_upstream(repo_root: &Path) -> Result<Option<String>, String> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["rev-parse", "--verify", "-q", "@{u}"]);
+    match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
+        Ok(output) if output.status.success() => Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        )),
+        Ok(output) if output.status.code() == Some(1) => Ok(None),
+        Ok(output) => Err(command_error("git rev-parse", &output)),
+        Err(err) => Err(format!("git rev-parse failed: {err}")),
+    }
+}
+
+/// The refusal message shared by both push-capable paths.
+const UNRELATED_COMMITS_REFUSAL: &str =
+    "git-sync: branch has unpushed commits unrelated to this change; push them manually first";
+
+/// Maps an `unpushed_history` answer to "may this path continue?", refusing
+/// on both an unrelated commit and an unanswerable check.
+fn unpushed_history_blocks(
+    repo_root: &Path,
+    tip: Option<&str>,
+    relpath: &str,
+) -> Option<SyncOutcome> {
+    match unpushed_history(repo_root, tip, relpath) {
+        Ok(UnpushedHistory::Safe) | Ok(UnpushedHistory::NoUpstream) => None,
+        Ok(UnpushedHistory::ContainsUnrelated) => {
+            Some(SyncOutcome::Failed(UNRELATED_COMMITS_REFUSAL.to_string()))
+        }
+        Err(err) => Some(SyncOutcome::Failed(format!(
+            "git-sync: could not verify the branch has no unrelated unpushed commits ({err}); \
+             not publishing"
+        ))),
+    }
 }
 
 /// Whether any commit in `base..tip` — or, when `base` is `None`, in the
@@ -1272,11 +1359,8 @@ fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     };
     // The same refusal `run_sync` makes: an explicit-SHA push still sends the
     // commit's whole ancestry, so unrelated unpushed work must not ride along.
-    if branch_has_unrelated_unpushed_commits(&repo_root, Some(&head), &relpath) {
-        return SyncOutcome::Failed(
-            "git-sync: branch has unpushed commits unrelated to this change; push them manually first"
-                .to_string(),
-        );
+    if let Some(refusal) = unpushed_history_blocks(&repo_root, Some(&head), &relpath) {
+        return refusal;
     }
     push(repo_dir, &head)
 }
@@ -4894,11 +4978,10 @@ mod tests {
         let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
 
         // The guard passes for that tip: its unpushed range is checklist-only.
-        assert!(!branch_has_unrelated_unpushed_commits(
-            &work,
-            Some(&tip),
-            "tracked.md"
-        ));
+        assert_eq!(
+            unpushed_history(&work, Some(&tip), "tracked.md"),
+            Ok(UnpushedHistory::Safe)
+        );
 
         // Now an unrelated commit lands — exactly what could happen between
         // the two subprocesses in the old code.
@@ -4919,11 +5002,10 @@ mod tests {
         // And had the moved `HEAD` been what the guard was asked about, it
         // would have refused — which is what makes checking one commit and
         // pushing another unsafe in the first place.
-        assert!(branch_has_unrelated_unpushed_commits(
-            &work,
-            Some(&moved),
-            "tracked.md"
-        ));
+        assert_eq!(
+            unpushed_history(&work, Some(&moved), "tracked.md"),
+            Ok(UnpushedHistory::ContainsUnrelated)
+        );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -4935,7 +5017,86 @@ mod tests {
         // was asked about the symbolic `HEAD`, which simply errored on an
         // empty repository and fell through to the same answer by accident.
         let work = init_repo_without_remote();
-        assert!(!branch_has_unrelated_unpushed_commits(&work, None, "x.md"));
+        assert_eq!(
+            unpushed_history(&work, None, "x.md"),
+            Ok(UnpushedHistory::Safe)
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    // --- Unpushed-history check: three answers, not two (round 10) ---
+
+    #[test]
+    fn an_unanswerable_history_check_refuses_instead_of_permitting_a_push() {
+        // External review, round 10: this check was `.unwrap_or(false)`, so
+        // any git failure — a `rev-list` timeout on a large history, a
+        // transiently unhealthy object database — read exactly like
+        // "verified safe" and the caller went on to push. A false refusal
+        // costs a retry; a false clearance publishes someone else's commits.
+        let (work, _remote) = init_repo_with_remote();
+        // A tip that doesn't exist: `rev-list` fails, so the question
+        // genuinely cannot be answered.
+        let bogus = "0".repeat(40);
+
+        assert!(
+            unpushed_history(&work, Some(&bogus), "tracked.md").is_err(),
+            "an unresolvable range must surface as an error, not a verdict"
+        );
+        let refusal = unpushed_history_blocks(&work, Some(&bogus), "tracked.md");
+        assert!(
+            matches!(&refusal, Some(SyncOutcome::Failed(msg)) if msg.contains("could not verify")),
+            "the caller must refuse to publish: {refusal:?}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_branch_without_an_upstream_is_not_a_verification_failure() {
+        // The legitimate case that stops this failing closed everywhere: a
+        // fresh repository has nothing to compare against, and refusing
+        // there would block every first-ever commit. Committing proceeds;
+        // `push` declines separately, with its own specific message.
+        let work = init_repo_without_remote();
+        let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+
+        assert_eq!(
+            unpushed_history(&work, Some(&tip), "tracked.md"),
+            Ok(UnpushedHistory::NoUpstream)
+        );
+        assert!(unpushed_history_blocks(&work, Some(&tip), "tracked.md").is_none());
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_configured_but_unfetched_upstream_still_counts_as_no_upstream() {
+        // Regression for a real mistake made while fixing the above: the
+        // no-upstream case was first detected via `upstream_parts`, which
+        // reads `branch.<name>.remote`/`.merge` *config*. Config can say an
+        // upstream exists while `@{u}` still doesn't resolve — a remote
+        // added but never fetched, or those keys set by hand — and treating
+        // that as an unanswerable check turned three passing tests into hard
+        // sync failures. Resolving `@{u}` itself is what tells them apart.
+        let work = init_repo_without_remote();
+        run(&work, &["config", "branch.main.remote", "origin"]);
+        run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+        let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+
+        assert!(
+            upstream_parts(&work).is_some(),
+            "test setup: the config claims an upstream exists"
+        );
+        assert_eq!(
+            resolve_upstream(&work),
+            Ok(None),
+            "but the tracking ref does not resolve"
+        );
+        assert_eq!(
+            unpushed_history(&work, Some(&tip), "tracked.md"),
+            Ok(UnpushedHistory::NoUpstream)
+        );
+
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
