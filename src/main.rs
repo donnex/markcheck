@@ -56,9 +56,15 @@ struct Cli {
     /// already exist and must end in .md)
     #[arg(long, value_name = "PATH", conflicts_with = "file")]
     new: Option<PathBuf>,
+    /// Use Nerd Font glyphs, overriding `nerd_font = false` in the config
+    #[arg(long, conflicts_with = "no_nerd_font")]
+    nerd_font: bool,
     /// Use plain Unicode symbols instead of Nerd Font glyphs (config: nerd_font = false)
     #[arg(long)]
     no_nerd_font: bool,
+    /// Enable mouse support, overriding `mouse = false` in the config
+    #[arg(long, conflicts_with = "no_mouse")]
+    mouse: bool,
     /// Disable mouse support (terminal text selection works without Shift) (config: mouse = false)
     #[arg(long)]
     no_mouse: bool,
@@ -147,12 +153,12 @@ fn main() -> anyhow::Result<()> {
     if created_new {
         state.set_status("Created new checklist".to_string());
     }
-    let nerd_font = resolve_flag(false, cli.no_nerd_font, config.nerd_font, true);
-    if !nerd_font {
+    let settings = Settings::resolve(&cli, &config);
+    if !settings.nerd_font {
         state.icons = IconSet::unicode();
     }
-    state.clipboard_primary = resolve_flag(cli.primary, cli.no_primary, config.primary, false);
-    state.auto_copy = resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false);
+    state.clipboard_primary = settings.primary;
+    state.auto_copy = settings.auto_copy;
     // Pick the richest color representation the terminal supports.
     state.palette = model::Palette::detect();
     // Reload-from-disk is a convenience feature, not core functionality:
@@ -192,7 +198,7 @@ fn main() -> anyhow::Result<()> {
         sync.request_catch_up_push();
     }
 
-    let mouse = resolve_flag(false, cli.no_mouse, config.mouse, true);
+    let mouse = settings.mouse;
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     if mouse {
@@ -212,6 +218,35 @@ fn main() -> anyhow::Result<()> {
     )
 }
 
+/// The four boolean settings, each resolved from its CLI flag pair and its
+/// config value. A struct rather than four inline `resolve_flag` calls in
+/// `main` purely so the *wiring* is testable: `resolve_flag` itself has been
+/// correct and well-tested throughout, and both times these settings
+/// regressed it was a call site passing the wrong thing — `cli.x ||
+/// config.x` in round 2, then a hardcoded `false` for `cli_on` in round 3 —
+/// which a test of the pure function cannot catch. `Settings::resolve` is
+/// the one place that mapping lives now, and `settings_resolve_*` drives it
+/// through real argv via `Cli::parse_from`, so a fifth setting added later
+/// gets the same coverage by construction.
+#[derive(Debug, PartialEq, Eq)]
+struct Settings {
+    nerd_font: bool,
+    mouse: bool,
+    primary: bool,
+    auto_copy: bool,
+}
+
+impl Settings {
+    fn resolve(cli: &Cli, config: &config::Config) -> Self {
+        Settings {
+            nerd_font: resolve_flag(cli.nerd_font, cli.no_nerd_font, config.nerd_font, true),
+            mouse: resolve_flag(cli.mouse, cli.no_mouse, config.mouse, true),
+            primary: resolve_flag(cli.primary, cli.no_primary, config.primary, false),
+            auto_copy: resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false),
+        }
+    }
+}
+
 /// Resolves one boolean setting from its CLI flags and its config value:
 /// an explicitly-passed flag always wins, then the config file, then the
 /// built-in default. `cli_on`/`cli_off` are the positive and negative flags;
@@ -222,8 +257,17 @@ fn main() -> anyhow::Result<()> {
 /// which can only ever turn a setting *on* — so `primary = true` in the
 /// config could not be disabled for a single run, with no `--no-primary` to
 /// reach for, while README stated (twice) that a passed flag always
-/// overrides its config value. `nerd_font`/`mouse` already had this shape;
-/// now all four do, and the README's claim is true as written.
+/// overrides its config value.
+///
+/// Deep review, round 3 finished the job. That fix routed all four through
+/// this function, but only *added* flags for two of them, and the docs were
+/// updated as though all four were done ("each of the four boolean settings
+/// has a flag in both directions"). `nerd_font`/`mouse` default to `true`
+/// and had only their negative flag, so `nerd_font = false` in the config
+/// still could not be overridden for a single run — the same defect in
+/// mirror image, with both `cli_on` arguments hardcoded to `false` at the
+/// call sites. `--nerd-font`/`--mouse` fill those in, so the claim is now
+/// true for all four.
 ///
 /// clap enforces `conflicts_with` on each pair, so both can never be set.
 fn resolve_flag(cli_on: bool, cli_off: bool, config: Option<bool>, default: bool) -> bool {
@@ -557,8 +601,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        editor_line_args, git_sync_path_matches, resolve_editor, resolve_flag, resolve_opener,
+        Cli, Settings, config, editor_line_args, git_sync_path_matches, resolve_editor,
+        resolve_flag, resolve_opener,
     };
+    use clap::Parser as _;
 
     #[test]
     fn resolve_flag_prefers_an_explicit_flag_then_config_then_the_default() {
@@ -585,6 +631,120 @@ mod tests {
                     "the negative flag must win over {config:?}"
                 );
             }
+        }
+    }
+
+    /// Resolve the settings from real argv plus a config, so the test
+    /// exercises clap's own parsing and the call sites together.
+    fn settings_from(flags: &[&str], config: config::Config) -> Settings {
+        let mut argv = vec!["markcheck", "checklist.md"];
+        argv.extend_from_slice(flags);
+        Settings::resolve(&Cli::parse_from(argv), &config)
+    }
+
+    fn config_all(value: bool) -> config::Config {
+        config::Config {
+            nerd_font: Some(value),
+            mouse: Some(value),
+            primary: Some(value),
+            auto_copy: Some(value),
+            git_sync_paths: None,
+        }
+    }
+
+    #[test]
+    fn settings_resolve_the_built_in_defaults_with_no_flags_and_no_config() {
+        assert_eq!(
+            settings_from(&[], config::Config::default()),
+            Settings {
+                nerd_font: true,
+                mouse: true,
+                primary: false,
+                auto_copy: false,
+            }
+        );
+    }
+
+    #[test]
+    fn settings_take_the_config_when_no_flag_is_passed() {
+        assert_eq!(
+            settings_from(&[], config_all(true)),
+            Settings {
+                nerd_font: true,
+                mouse: true,
+                primary: true,
+                auto_copy: true,
+            }
+        );
+        assert_eq!(
+            settings_from(&[], config_all(false)),
+            Settings {
+                nerd_font: false,
+                mouse: false,
+                primary: false,
+                auto_copy: false,
+            }
+        );
+    }
+
+    #[test]
+    fn every_setting_can_be_forced_on_over_a_config_that_disables_it() {
+        // Deep review, round 3: `nerd_font` and `mouse` had no positive
+        // flag at all and their `cli_on` argument was hardcoded `false`, so
+        // `nerd_font = false` in the config could not be overridden for a
+        // single run -- while README and CHANGELOG both claimed all four
+        // settings had a flag in both directions.
+        let settings = settings_from(
+            &["--nerd-font", "--mouse", "--primary", "--auto-copy"],
+            config_all(false),
+        );
+        assert_eq!(
+            settings,
+            Settings {
+                nerd_font: true,
+                mouse: true,
+                primary: true,
+                auto_copy: true,
+            },
+            "a passed flag must beat the config in the positive direction"
+        );
+    }
+
+    #[test]
+    fn every_setting_can_be_forced_off_over_a_config_that_enables_it() {
+        let settings = settings_from(
+            &[
+                "--no-nerd-font",
+                "--no-mouse",
+                "--no-primary",
+                "--no-auto-copy",
+            ],
+            config_all(true),
+        );
+        assert_eq!(
+            settings,
+            Settings {
+                nerd_font: false,
+                mouse: false,
+                primary: false,
+                auto_copy: false,
+            },
+            "a passed flag must beat the config in the negative direction"
+        );
+    }
+
+    #[test]
+    fn each_setting_s_two_flags_conflict() {
+        // clap enforcing this is what lets `resolve_flag` ignore the
+        // both-set row entirely.
+        for pair in [
+            ["--nerd-font", "--no-nerd-font"],
+            ["--mouse", "--no-mouse"],
+            ["--primary", "--no-primary"],
+            ["--auto-copy", "--no-auto-copy"],
+        ] {
+            let result = Cli::try_parse_from(["markcheck", "checklist.md", pair[0], pair[1]]);
+            assert!(result.is_err(), "{pair:?} must be rejected together");
         }
     }
 
