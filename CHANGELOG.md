@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync can no longer publish an unrelated commit that lands while it is
+  deciding what to push. Both push paths checked that the branch had no
+  unrelated unpushed work, then resolved the branch tip again a moment later
+  and pushed whatever they found — so a commit made in between (by you, an
+  IDE, or another tool) could be published without ever having been checked.
+  Each path now resolves the tip once and pushes that exact commit, so what
+  gets published is always what was verified.
 - A fenced command block containing wide characters (CJK, and other
   double-width glyphs) no longer renders with its right-hand border missing.
   The box was padded by counting characters rather than the cells they
