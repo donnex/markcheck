@@ -3322,11 +3322,13 @@ fn reload_reports_a_parse_error_and_keeps_the_last_good_document() {
 }
 
 #[test]
-fn advancing_past_the_last_list_with_an_earlier_incomplete_shows_all_complete() {
-    // advance_to_next_incomplete_list only searches *forward* from the
-    // current list; completing the last list while an earlier one is
-    // still incomplete has nowhere forward to go, so it falls through to
-    // AllComplete even though list 1 (index 0) isn't actually done.
+fn advancing_past_the_last_list_wraps_back_to_an_earlier_incomplete_list() {
+    // Deep review, round 3. advance_to_next_incomplete_list used to search
+    // *forward* only, so completing the last list while an earlier one was
+    // still untouched had nowhere forward to go and fell through to
+    // AllComplete -- a screen headed "All Tasks Complete" over a body
+    // reading `List 1  0 / 1` and `Total: 1 / 2 tasks`. It now wraps back
+    // to the earlier incomplete list instead.
     let document = document_with_lists(vec![
         List {
             title: "List 1".to_string(),
@@ -3344,6 +3346,39 @@ fn advancing_past_the_last_list_with_an_earlier_incomplete_shows_all_complete() 
     state.current_item_index = 0;
     state.toggle_current(); // completes list 2 -> ListComplete
     assert_eq!(state.screen, Screen::ListComplete);
+    state.handle_key(KeyCode::Char('l'));
+    assert_eq!(
+        state.screen,
+        Screen::Checklist,
+        "must not claim completion while a list is untouched"
+    );
+    assert_eq!(state.current_list_index, 0, "wrapped back to List 1");
+}
+
+#[test]
+fn advancing_shows_all_complete_only_when_every_list_is_done() {
+    // The other half of the rule above: once nothing is left anywhere,
+    // AllComplete is still exactly what should appear.
+    let document = document_with_lists(vec![
+        List {
+            title: "List 1".to_string(),
+            banner: None,
+            items: vec![checkbox(1, true)],
+        },
+        List {
+            title: "List 2".to_string(),
+            banner: None,
+            items: vec![checkbox(2, false)],
+        },
+    ]);
+    let mut state = AppState::new(document);
+    state.current_list_index = 1;
+    state.current_item_index = 0;
+    state.toggle_current(); // completes the only remaining work
+    assert_eq!(state.screen, Screen::AllComplete);
+
+    // And reaching it via the ListComplete `l` path agrees.
+    state.screen = Screen::ListComplete;
     state.handle_key(KeyCode::Char('l'));
     assert_eq!(state.screen, Screen::AllComplete);
 }
