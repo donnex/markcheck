@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync now ignores git environment variables inherited from wherever
+  you launched `markcheck`. With `GIT_DIR` or `GIT_WORK_TREE` exported — the
+  common bare dotfiles-repo setup, or anything run from a git hook,
+  `git rebase --exec` or `git bisect run` — git-sync could read one
+  repository and commit and push into a different one. An inherited
+  `GIT_INDEX_FILE` also made a tracked checklist look untracked. Every git
+  command it runs now resolves the repository from the checklist's own
+  directory and nothing else.
 - Git-sync no longer reports a failure when someone else edits the checklist
   in the moment between your toggle being saved and its commit being made.
   The queued commit described content the external edit had already

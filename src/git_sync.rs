@@ -319,6 +319,49 @@ fn race_point(point: RacePoint) {
 #[inline(always)]
 fn race_point(_point: RacePoint) {}
 
+/// Builds a `git` invocation rooted at `repo_dir`, with the ambient git
+/// environment neutralised.
+///
+/// Deep rounds 2, round 2. markcheck inherits its environment, and git reads
+/// several variables that redirect which repository a command operates on.
+/// Confirmed against real git: with `GIT_DIR` exported, `git log -1` run
+/// inside repository *a* reports *b*'s HEAD — refs and the object database
+/// come from the other repository while the work tree stays *a*, so
+/// markcheck would resolve the tip from one repository and commit and push
+/// into another. With `GIT_INDEX_FILE` exported, `ls-files --stage` for a
+/// perfectly tracked checklist returns nothing (so it is reported untracked)
+/// while `status` reports `D `/`??` — which the `??` prefix check does not
+/// even catch — and `align_real_index_entry` would write into the stray
+/// index.
+///
+/// None of that is exotic: git hooks set both, `git rebase --exec` and
+/// `git bisect run` inherit them, and exporting `GIT_DIR`/`GIT_WORK_TREE`
+/// for a bare dotfiles repository is a widely-used pattern.
+///
+/// Only variables that would make git act on a *different repository than
+/// the one containing the checklist* are removed. `GIT_CEILING_DIRECTORIES`
+/// is deliberately left alone: at worst it stops discovery, so git-sync
+/// simply does not activate, which is safe. Author/committer identity and
+/// config overrides are left alone too — those are the user's to set, and
+/// they do not change which repository is written.
+fn git_command(repo_dir: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_dir);
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+    ] {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 /// Result of one background commit+push attempt, delivered to the
 /// main loop via [`GitSync::poll`].
 #[derive(Debug, PartialEq, Eq)]
@@ -467,9 +510,8 @@ impl GitSync {
     /// feature, so this fails open rather than erroring out.
     pub fn detect(file_path: &Path) -> Option<GitSync> {
         let repo_dir = file_path.parent()?.to_path_buf();
-        let mut cmd = Command::new("git");
-        cmd.current_dir(&repo_dir)
-            .args(["rev-parse", "--is-inside-work-tree"]);
+        let mut cmd = git_command(&repo_dir);
+        cmd.args(["rev-parse", "--is-inside-work-tree"]);
         let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
         if !output.status.success() {
             return None;
@@ -773,9 +815,8 @@ fn run_sync(
     // path, sidestepping any ambiguity between CWD-relative and
     // repo-root-relative pathspec handling. Resolved first (before even
     // `status`) since every other check below needs it.
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
-        .args(["rev-parse", "--show-toplevel"]);
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["rev-parse", "--show-toplevel"]);
     let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => {
             PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -799,10 +840,8 @@ fn run_sync(
     // taken as "tracked and unchanged"** — see the index lookup below, which
     // is what actually settles trackedness. `status` is only trusted for the
     // question it can always answer: has anything changed.
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
-        .args(["status", "--porcelain", "--"])
-        .arg(file_path);
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["status", "--porcelain", "--"]).arg(file_path);
     let status = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) => output,
         Err(err) => return SyncOutcome::Failed(format!("git status failed: {err}")),
@@ -1023,9 +1062,8 @@ fn ahead_of_upstream(repo_root: &Path, tip: &str) -> bool {
 /// must act only on a positively-known unpushed commit and stay silent
 /// otherwise, rather than nagging about a missing upstream on every launch.
 fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u64> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-list", "--count", &format!("@{{u}}..{tip}")]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-list", "--count", &format!("@{{u}}..{tip}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
@@ -1128,9 +1166,8 @@ fn unpushed_history(
 /// won't resolve — precisely the case that made an earlier version of this
 /// check report a hard failure where "no upstream yet" was the truth.
 fn resolve_upstream(repo_root: &Path) -> Result<Option<String>, String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-parse", "--verify", "-q", "@{u}"]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-parse", "--verify", "-q", "@{u}"]);
     match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => Ok(Some(
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
@@ -1213,9 +1250,8 @@ fn range_has_unrelated_commits(
         Some(base) => format!("{base}..{tip}"),
         None => tip.to_string(),
     };
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-list", "--parents", &range]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-list", "--parents", &range]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git rev-list failed: {err}"))?;
     if !output.status.success() {
@@ -1246,8 +1282,8 @@ fn range_has_unrelated_commits(
     // and telling them apart would mean guessing that a 40-hex field is an
     // id — which a file legitimately named 40 hex characters would defeat.
     // With it, every field is a path, so there is nothing to disambiguate.
-    let mut diff_cmd = Command::new("git");
-    diff_cmd.current_dir(repo_root).args([
+    let mut diff_cmd = git_command(repo_root);
+    diff_cmd.args([
         "diff-tree",
         "--root",
         "--no-commit-id",
@@ -1286,8 +1322,8 @@ fn upstream_parts(repo_root: &Path) -> Option<(String, String)> {
 /// `git config --get <key>`, trimmed — `None` on any failure (key unset,
 /// not a repo, `git` itself failing to run).
 fn git_config(repo_root: &Path, key: &str) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root).args(["config", "--get", key]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["config", "--get", key]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output
         .status
@@ -1354,9 +1390,8 @@ fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
             commit: expected_commit.to_string(),
         };
     };
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
-        .args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
     let output = run_with_timeout(cmd, PUSH_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
@@ -1407,9 +1442,8 @@ fn push_if_head_unchanged(repo_dir: &Path, repo_root: &Path, expected_commit: &s
 /// gets its own sync opportunity through the normal request path, so
 /// nothing is lost by giving up on this specific stale retry.
 fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
-        .args(["rev-parse", "--show-toplevel"]);
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["rev-parse", "--show-toplevel"]);
     let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => {
             PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -1449,9 +1483,8 @@ fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 /// which `run_sync` would have reported at startup before this change and
 /// which means git-sync can never do anything at all for this file.
 fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
-        .args(["rev-parse", "--show-toplevel"]);
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["rev-parse", "--show-toplevel"]);
     let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => {
             PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -1578,9 +1611,8 @@ fn commit_via_temp_index(
 /// about to be replaced commits exactly as `parent` had it — never the real
 /// index's (possibly unrelated-staged-content-holding) state.
 fn populate_temp_index(repo_root: &Path, temp_index: &Path, parent: &str) -> Result<(), String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .env("GIT_INDEX_FILE", temp_index)
+    let mut cmd = git_command(repo_root);
+    cmd.env("GIT_INDEX_FILE", temp_index)
         .args(["read-tree", parent]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git read-tree failed: {err}"))?;
@@ -1602,10 +1634,15 @@ fn stage_into_temp_index(
     blob: &str,
     relpath: &str,
 ) -> Result<(), String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .env("GIT_INDEX_FILE", temp_index)
-        .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath]);
+    let mut cmd = git_command(repo_root);
+    cmd.env("GIT_INDEX_FILE", temp_index).args([
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        mode,
+        blob,
+        relpath,
+    ]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git update-index failed: {err}"))?;
     if !output.status.success() {
@@ -1661,9 +1698,8 @@ fn align_real_index_entry(
     if index_blob(repo_root, relpath).as_deref() != expected_entry {
         return;
     }
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["update-index", "--add", "--cacheinfo", mode, blob, relpath]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["update-index", "--add", "--cacheinfo", mode, blob, relpath]);
     let _ = run_with_timeout(cmd, PLUMBING_TIMEOUT);
 }
 
@@ -1718,9 +1754,8 @@ fn staged_target_would_be_lost(
 /// :<path>`), not `HEAD`'s. `None` when there is no staged entry or the read
 /// fails.
 fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["show", &format!(":{relpath}")]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["show", &format!(":{relpath}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output.status.success().then_some(output.stdout)
 }
@@ -1732,10 +1767,8 @@ fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
 /// containing a newline or a quotable character intact, as `index_entry`
 /// already relies on.
 fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["ls-files", "--stage", "-z", "--"])
-        .arg(relpath);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["ls-files", "--stage", "-z", "--"]).arg(relpath);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
@@ -1820,9 +1853,8 @@ fn commit_temp_index(
     blob: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .env("GIT_INDEX_FILE", temp_index)
+    let mut cmd = git_command(repo_root);
+    cmd.env("GIT_INDEX_FILE", temp_index)
         .args(["commit", "-m", message]);
     match run_with_timeout(cmd, timeout) {
         Ok(output) if output.status.success() => current_head(repo_root)
@@ -1921,9 +1953,8 @@ fn verify_commit_scope(
 fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
     // The commit's *own* first parent, not the parent captured before the
     // commit ran — see above.
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-list", "--parents", "-n", "1", created_commit]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-list", "--parents", "-n", "1", created_commit]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git rev-list failed: {err}"))?;
     if !output.status.success() {
@@ -1938,8 +1969,7 @@ fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
         .nth(1)
         .map(str::to_string);
 
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root);
+    let mut cmd = git_command(repo_root);
     match &first_parent {
         Some(sha) => {
             cmd.args(["update-ref", "HEAD", sha, created_commit]);
@@ -1966,9 +1996,8 @@ fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
 /// the first commit exists, so this works the same before and after the
 /// root-commit case `undo_commit` needs it for.
 fn current_branch_ref(repo_root: &Path) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["symbolic-ref", "-q", "HEAD"]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["symbolic-ref", "-q", "HEAD"]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output
         .status
@@ -1982,8 +2011,8 @@ fn current_branch_ref(repo_root: &Path) -> Option<String> {
 /// subdirectory) — `repo_sync_blocked` needs an absolute path to check for
 /// marker files regardless of which one `git` happened to hand back.
 fn git_dir(repo_root: &Path) -> Option<PathBuf> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root).args(["rev-parse", "--git-dir"]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-parse", "--git-dir"]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
@@ -2028,17 +2057,15 @@ fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
     if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
         return Some("git-sync: repository has a rebase in progress".to_string());
     }
-    let mut symbolic_ref_cmd = Command::new("git");
-    symbolic_ref_cmd
-        .current_dir(repo_root)
-        .args(["symbolic-ref", "-q", "HEAD"]);
+    let mut symbolic_ref_cmd = git_command(repo_root);
+    symbolic_ref_cmd.args(["symbolic-ref", "-q", "HEAD"]);
     let on_a_branch = run_with_timeout(symbolic_ref_cmd, PLUMBING_TIMEOUT)
         .is_ok_and(|output| output.status.success());
     if !on_a_branch {
         return Some("git-sync: repository is in a detached HEAD state".to_string());
     }
-    let mut ls_files_cmd = Command::new("git");
-    ls_files_cmd.current_dir(repo_root).args(["ls-files", "-u"]);
+    let mut ls_files_cmd = git_command(repo_root);
+    ls_files_cmd.args(["ls-files", "-u"]);
     let unmerged = run_with_timeout(ls_files_cmd, PLUMBING_TIMEOUT);
     match unmerged {
         Ok(output) if output.status.success() && !output.stdout.is_empty() => {
@@ -2052,9 +2079,8 @@ fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
 /// the index in one call (`git ls-files --stage --full-name`). Only called
 /// once `status` has already confirmed the path is tracked (not `??`).
 fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<Option<(String, String)>, String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
-        .args(["ls-files", "--stage", "--full-name", "-z", "--"])
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["ls-files", "--stage", "--full-name", "-z", "--"])
         .arg(file_path);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
         .map_err(|err| format!("git ls-files failed: {err}"))?;
@@ -2092,9 +2118,8 @@ fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<Option<(String, Stri
 /// if the path has no entry at `commit` (e.g. staged but never committed)
 /// or `git show` otherwise fails.
 fn blob_bytes_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<Vec<u8>> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["show", &format!("{commit}:{relpath}")]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["show", &format!("{commit}:{relpath}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output.status.success().then_some(output.stdout)
 }
@@ -2106,9 +2131,8 @@ fn blob_bytes_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<Vec<u8
 /// an already-known blob SHA needs (see `commit_temp_index`'s ownership
 /// check on a timeout).
 fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-parse", &format!("{commit}:{relpath}")]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-parse", &format!("{commit}:{relpath}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output
         .status
@@ -2127,9 +2151,8 @@ fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
 /// line — the same shape (and the same `split_whitespace` parsing)
 /// `range_has_unrelated_commits` already reads, just for a single commit.
 fn descends_directly_from(repo_root: &Path, commit: &str, parent: &Option<String>) -> bool {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-list", "--parents", "-n", "1", commit]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-list", "--parents", "-n", "1", commit]);
     let Ok(output) = run_with_timeout(cmd, PLUMBING_TIMEOUT) else {
         return false;
     };
@@ -2150,9 +2173,8 @@ fn descends_directly_from(repo_root: &Path, commit: &str, parent: &Option<String
 /// Writes `content` into the object database without touching the working
 /// tree or index, returning its blob SHA.
 fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["hash-object", "-w", "--stdin"]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["hash-object", "-w", "--stdin"]);
     let output = run_with_timeout_and_stdin(cmd, PLUMBING_TIMEOUT, content)
         .map_err(|err| format!("git hash-object failed: {err}"))?;
     if !output.status.success() {
@@ -2175,8 +2197,8 @@ fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
 /// establishes the parent for a possible new commit — see `resolve_parent`,
 /// used there specifically instead of this function.
 fn current_head(repo_root: &Path) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root).args(["rev-parse", "HEAD"]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-parse", "HEAD"]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output
         .status
@@ -2205,9 +2227,8 @@ fn current_head(repo_root: &Path) -> Option<String> {
 /// stays a narrow fix at the one genuinely dangerous call site rather than
 /// a signature change rippling through the whole module.
 fn resolve_parent(repo_root: &Path) -> Result<Option<String>, String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root)
-        .args(["rev-parse", "--verify", "-q", "HEAD"]);
+    let mut cmd = git_command(repo_root);
+    cmd.args(["rev-parse", "--verify", "-q", "HEAD"]);
     match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => Ok(Some(
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
@@ -5660,6 +5681,212 @@ mod tests {
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn git_invocations_ignore_an_ambient_git_environment() {
+        // Deep rounds 2, round 2. markcheck inherits its environment, and a
+        // handful of git variables redirect which *repository* a command
+        // acts on. This test has two halves: the first proves the hazard is
+        // real against actual git, the second proves every variable that
+        // causes it is explicitly removed.
+        //
+        // The ambient case can't be reproduced by setting the variable on
+        // the process, because `std::env::set_var` is process-global and
+        // would race every other test in this binary — and setting it on the
+        // built `Command` instead would simply override the removal being
+        // tested. So the hazard is demonstrated on a deliberately poisoned
+        // command, and the defence structurally.
+        let root = unique_dir("ambient-env");
+        let (a, b) = (root.join("a"), root.join("b"));
+        for dir in [&a, &b] {
+            fs::create_dir_all(dir).unwrap();
+            run(dir, &["init", "-q", "-b", "main"]);
+            run(dir, &["config", "user.email", "test@example.com"]);
+            run(dir, &["config", "user.name", "test"]);
+            fs::write(dir.join("f.md"), "x\n").unwrap();
+            run(dir, &["add", "f.md"]);
+        }
+        run(&a, &["commit", "-q", "-m", "a init"]);
+        run(&b, &["commit", "-q", "-m", "b init"]);
+
+        // The hazard: GIT_DIR makes a command run *inside* a report b's HEAD,
+        // so refs and objects come from the wrong repository entirely.
+        let mut poisoned = Command::new("git");
+        poisoned
+            .current_dir(&a)
+            .env("GIT_DIR", b.join(".git"))
+            .args(["log", "-1", "--format=%s"]);
+        let out = run_with_timeout(poisoned, PLUMBING_TIMEOUT).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "b init",
+            "test premise: an ambient GIT_DIR really does redirect the repository"
+        );
+
+        // The defence: every variable that can do that is removed.
+        let cmd = git_command(&a);
+        let removed: Vec<String> = cmd
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_NAMESPACE",
+            "GIT_PREFIX",
+        ] {
+            assert!(
+                removed.iter().any(|k| k == var),
+                "{var} must be neutralised on every git invocation"
+            );
+        }
+        // Identity and discovery limits are deliberately *not* touched.
+        for var in ["GIT_AUTHOR_NAME", "GIT_CEILING_DIRECTORIES"] {
+            assert!(
+                !removed.iter().any(|k| k == var),
+                "{var} is the user's to set and must be left alone"
+            );
+        }
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // --- Hostile repository shapes (deep rounds 2, round 2) ---
+
+    #[test]
+    fn run_sync_works_when_the_checklist_lives_in_a_subdirectory() {
+        // `repo_dir` is the checklist's own parent, so for anything but a
+        // root-level checklist it differs from `repo_root`. Several plumbing
+        // commands run in one and take root-relative paths from the other.
+        let (work, remote) = init_repo_with_remote();
+        let sub = work.join("docs").join("runbooks");
+        fs::create_dir_all(&sub).unwrap();
+        let file = sub.join("list.md");
+        fs::write(&file, "- [ ] one\n").unwrap();
+        run(&work, &["add", "docs/runbooks/list.md"]);
+        run(&work, &["commit", "-q", "-m", "add nested checklist"]);
+        run(&work, &["push", "-q", "origin", "main"]);
+
+        let expected = "- [x] one\n";
+        fs::write(&file, expected).unwrap();
+        let outcome = run_sync(
+            &sub,
+            &file,
+            expected,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(expected),
+            None,
+        );
+
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+        assert_eq!(
+            git_stdout(&remote, &["show", "HEAD:docs/runbooks/list.md"]),
+            expected.trim_end(),
+            "the nested path must be committed at its repo-root-relative location"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_works_inside_a_linked_worktree() {
+        // A linked worktree's `.git` is a *file*, and `rev-parse --git-dir`
+        // points at `.git/worktrees/<name>` — which is where its MERGE_HEAD
+        // and the temp index have to live, not the main repo's git dir.
+        let (work, remote) = init_repo_with_remote();
+        let linked = work.parent().unwrap().join("linked");
+        run(
+            &work,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "wt",
+                linked.to_str().unwrap(),
+                "main",
+            ],
+        );
+        run(&linked, &["config", "user.email", "test@example.com"]);
+        run(&linked, &["config", "user.name", "test"]);
+        run(&linked, &["push", "-q", "-u", "origin", "wt"]);
+        assert!(
+            linked.join(".git").is_file(),
+            "test setup: a linked worktree's .git is a file"
+        );
+
+        let file = linked.join("tracked.md");
+        let expected = "- [x] one\n";
+        fs::write(&file, expected).unwrap();
+        let outcome = run_sync(
+            &linked,
+            &file,
+            expected,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(expected),
+            None,
+        );
+
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+        assert_eq!(
+            git_stdout(&remote, &["show", "wt:tracked.md"]),
+            expected.trim_end()
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn detect_and_sync_cope_with_a_shallow_clone() {
+        // A shallow clone has grafted history: `rev-list` over a range that
+        // reaches the graft boundary behaves differently, and the
+        // unrelated-history guard walks exactly such a range.
+        let (origin, remote) = init_repo_with_remote();
+        for n in 1..=3 {
+            fs::write(origin.join("tracked.md"), format!("- [ ] {n}\n")).unwrap();
+            run(&origin, &["commit", "-q", "-am", &format!("edit {n}")]);
+        }
+        run(&origin, &["push", "-q", "origin", "main"]);
+
+        let shallow = origin.parent().unwrap().join("shallow");
+        run(
+            origin.parent().unwrap(),
+            &[
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                remote.to_str().unwrap(),
+                shallow.to_str().unwrap(),
+            ],
+        );
+        run(&shallow, &["config", "user.email", "test@example.com"]);
+        run(&shallow, &["config", "user.name", "test"]);
+
+        let file = shallow.join("tracked.md");
+        let expected = "- [x] shallow\n";
+        fs::write(&file, expected).unwrap();
+        let outcome = run_sync(
+            &shallow,
+            &file,
+            expected,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(expected),
+            None,
+        );
+
+        assert_eq!(
+            outcome,
+            SyncOutcome::Synced,
+            "a shallow clone must still sync: {outcome:?}"
+        );
+
+        fs::remove_dir_all(origin.parent().unwrap()).ok();
     }
 
     // --- Captured-tip invariant (round 10) ---
