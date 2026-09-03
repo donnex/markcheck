@@ -102,15 +102,21 @@ fn run_with_timeout_and_stdin(
     let mut child = spawn_in_own_process_group(cmd)?;
     let mut stdin_pipe = child.stdin.take().expect("stdin was requested as piped");
     let stdin_data = stdin_data.to_owned();
-    let stdin_thread = std::thread::spawn(move || {
+    // Reports completion through a channel rather than a `JoinHandle`, for
+    // exactly the reason the stdout/stderr readers do — see
+    // `wait_with_timeout`, which bounds how long it waits for this.
+    let (stdin_done_tx, stdin_done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
         // Errors ignored: a write failure here (e.g. the child exited
         // early) surfaces as a non-success exit status instead, which the
         // caller already checks.
         let _ = stdin_pipe.write_all(stdin_data.as_bytes());
         // `stdin_pipe` drops here, closing the write end so the child sees
         // EOF on its stdin rather than hanging waiting for more.
+        drop(stdin_pipe);
+        let _ = stdin_done_tx.send(());
     });
-    wait_with_timeout(child, timeout, Some(stdin_thread))
+    wait_with_timeout(child, timeout, Some(stdin_done_rx))
 }
 
 /// How long to wait for the stdout/stderr reader threads to finish once
@@ -157,7 +163,7 @@ const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
 fn wait_with_timeout(
     mut child: Child,
     timeout: Duration,
-    stdin_thread: Option<std::thread::JoinHandle<()>>,
+    stdin_done: Option<mpsc::Receiver<()>>,
 ) -> io::Result<Output> {
     let mut stdout_pipe = child.stdout.take().expect("stdout was requested as piped");
     let mut stderr_pipe = child.stderr.take().expect("stderr was requested as piped");
@@ -173,27 +179,29 @@ fn wait_with_timeout(
         let _ = stderr_pipe.read_to_end(&mut buf);
         let _ = stderr_tx.send(buf);
     });
-    // Bounded wait for both reader threads. Deliberately does **not** kill
-    // the process group to force an EOF, which is what it used to do. Deep
-    // round 2: by the time this runs the child has always been reaped —
-    // `try_wait` reaps it on the success path, `kill_and_reap` on the
-    // timeout path — so its PID is no longer ours and the OS is free to
-    // recycle it. `kill -KILL -- -<pid>` on a recycled PID signals an
-    // unrelated process group, which is a far worse outcome than the
-    // truncated output it was trying to avoid. Nothing is lost on the
-    // timeout path (the group was killed moments earlier anyway); on the
-    // success path a descendant still holding the pipe now means we return
-    // whatever arrived within the grace, rather than SIGKILLing something we
-    // no longer own. The reader threads are detached and exit on their own
-    // once the descendant finally closes the pipe.
-    // `PIPE_DRAIN_GRACE` is the budget for draining *both* pipes, not each
-    // of them: waiting the full grace on stdout and then again on stderr
-    // would double the bound, which is what the round-8 regression test
-    // caught the moment the group kill above stopped cutting the first wait
-    // short.
-    let drain = || -> (Vec<u8>, Vec<u8>) {
+    // One bounded teardown once the child is gone: wait for the stdin
+    // writer, then drain both pipes, all inside a *single* `PIPE_DRAIN_GRACE`
+    // budget rather than one each — three separate grace periods would
+    // silently treble the bound this constant exists to impose.
+    //
+    // Deliberately does **not** kill the process group to force an EOF,
+    // which is what it used to do. Deep round 2: by the time this runs the
+    // child has always been reaped — `try_wait` reaps it on the success
+    // path, `kill_and_reap` on the timeout path — so its PID is no longer
+    // ours and the OS is free to recycle it. `kill -KILL -- -<pid>` on a
+    // recycled PID signals an unrelated process group, a far worse outcome
+    // than the truncated output it was avoiding, and it killed a descendant
+    // of a command that had *succeeded*. Nothing is lost on the timeout path
+    // (the group was killed moments earlier anyway); on the success path a
+    // lingering descendant just means returning whatever arrived within the
+    // budget. The reader and writer threads are detached and exit on their
+    // own once it finally closes the pipes.
+    let finish = |stdin_done: &Option<mpsc::Receiver<()>>| -> (Vec<u8>, Vec<u8>) {
         let deadline = Instant::now() + PIPE_DRAIN_GRACE;
         let left = || deadline.saturating_duration_since(Instant::now());
+        if let Some(rx) = stdin_done {
+            let _ = rx.recv_timeout(left());
+        }
         let stdout = stdout_rx.recv_timeout(left()).unwrap_or_default();
         let stderr = stderr_rx.recv_timeout(left()).unwrap_or_default();
         (stdout, stderr)
@@ -206,10 +214,7 @@ fn wait_with_timeout(
         }
         if Instant::now() >= deadline {
             kill_and_reap(&mut child);
-            if let Some(t) = stdin_thread {
-                let _ = t.join();
-            }
-            drain();
+            finish(&stdin_done);
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("git command timed out after {timeout:?}"),
@@ -217,10 +222,7 @@ fn wait_with_timeout(
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    if let Some(t) = stdin_thread {
-        let _ = t.join();
-    }
-    let (stdout, stderr) = drain();
+    let (stdout, stderr) = finish(&stdin_done);
     Ok(Output {
         status,
         stdout,
@@ -5203,6 +5205,42 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "must not block on a descendant that outlives the direct child: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn run_with_timeout_and_stdin_does_not_hang_when_a_descendant_holds_stdin() {
+        // Deep round 2, the mirror of round 8's stdout/stderr fix on the
+        // other pipe. `git` can hand the inherited stdin read end to a
+        // descendant; if one holds it open after `git` exits, nothing drains
+        // the write and `write_all` never returns. The old unconditional
+        // `join()` on that thread then blocked forever — well past this
+        // call's own timeout, on the *success* path where no group kill ever
+        // came to free it.
+        //
+        // Getting a descendant to *actually* hold stdin takes care: POSIX
+        // shells assign `/dev/null` to a background job's stdin, so the
+        // obvious `sleep 5 &` inherits nothing and the write sails through
+        // (verified — it does not reproduce). Duplicating the descriptor
+        // first and redirecting from the copy is an explicit redirection,
+        // which overrides that default; measured blocking the write for the
+        // full 5s. The payload is far larger than a pipe buffer so the write
+        // genuinely blocks rather than fitting in one go.
+        let payload = "x".repeat(1024 * 1024);
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exec 3<&0; sleep 5 <&3 & exit 0"]);
+
+        let started = Instant::now();
+        let result = run_with_timeout_and_stdin(cmd, Duration::from_millis(150), &payload);
+
+        assert!(
+            result.is_ok(),
+            "the direct child exited successfully: {result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "must not block on a descendant holding stdin: {:?}",
             started.elapsed()
         );
     }
