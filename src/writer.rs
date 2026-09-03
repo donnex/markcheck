@@ -57,12 +57,25 @@ pub(crate) enum LockOutcome {
 /// not covered before either.
 ///
 /// Stale locks are taken over rather than honoured forever, or a crash while
-/// holding one would wedge every future write. Removing then re-creating is
-/// safe against two instances both deciding to take over: `create_new` is
-/// atomic, so exactly one wins and the other sees `AlreadyExists` and backs
-/// off.
+/// holding one would wedge every future write. Taking over means removing
+/// then re-creating, which is **not** atomic — deep rounds 2, round 4
+/// corrected an earlier claim here that it was. If two instances both judge
+/// a lock stale, one can `remove_file` the other's freshly created lock and
+/// create its own on top, leaving both believing they hold it.
+///
+/// That is narrowed rather than eliminated, because delete-then-create
+/// cannot be made atomic: each guard writes a unique token and only ever
+/// removes a lock file still containing *its own*, and the takeover path
+/// reads back what it wrote before trusting it. So the damaging half — one
+/// instance deleting a lock another currently holds, or clearing it on drop
+/// — cannot happen, and the residual is a brief window in which two
+/// takeovers of the *same abandoned* lock can both succeed. This is an
+/// advisory lock layered over an existing content check, not a mutex.
 pub(crate) struct WriteLock {
     path: PathBuf,
+    /// Unique per guard, written into the lock file. Ownership is checked
+    /// against it before this guard ever removes the file.
+    token: String,
 }
 
 impl WriteLock {
@@ -84,7 +97,11 @@ impl WriteLock {
                 // reports `Busy`, which is the correct answer for it.
                 let _ = fs::remove_file(&path);
                 match Self::try_create(&path) {
-                    Ok(lock) => LockOutcome::Acquired(lock),
+                    // Read back before trusting it: another instance racing
+                    // the same takeover may have removed this one and
+                    // written its own between the create and now.
+                    Ok(lock) if lock.still_ours() => LockOutcome::Acquired(lock),
+                    Ok(_) => LockOutcome::Busy,
                     Err(err) if err.kind() == io::ErrorKind::AlreadyExists => LockOutcome::Busy,
                     Err(_) => LockOutcome::Unavailable,
                 }
@@ -95,21 +112,33 @@ impl WriteLock {
 
     fn try_create(path: &Path) -> io::Result<WriteLock> {
         use std::io::Write;
+        let token = format!("markcheck {} {:x}", std::process::id(), random_suffix());
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)?;
-        // Contents are purely diagnostic — nothing reads them back.
-        let _ = writeln!(file, "markcheck pid {}", std::process::id());
+        file.write_all(token.as_bytes())?;
+        file.sync_all()?;
         Ok(WriteLock {
             path: path.to_path_buf(),
+            token,
         })
+    }
+
+    /// Whether the lock file still holds this guard's own token.
+    fn still_ours(&self) -> bool {
+        fs::read_to_string(&self.path).is_ok_and(|held| held == self.token)
     }
 }
 
 impl Drop for WriteLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        // Only ever remove a lock still holding this guard's token. If
+        // another instance took the file over in the meantime, it is theirs
+        // and deleting it would silently strip their mutual exclusion.
+        if self.still_ours() {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -421,6 +450,43 @@ mod tests {
         );
 
         let _ = fs::remove_file(lock_path(&path));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn dropping_a_guard_never_removes_a_lock_someone_else_now_holds() {
+        // Deep rounds 2, round 4. The takeover path removes the stale lock
+        // and then creates its own, which is not atomic: if two instances
+        // both judge a lock stale, one can `remove_file` the *other's*
+        // freshly created lock and create its own on top, leaving both
+        // believing they hold it. The guard's `Drop` then compounds it by
+        // removing whatever file is at the path, whoever it belongs to.
+        //
+        // Forced deterministically here by performing the takeover by hand
+        // between the acquire and the drop.
+        let path = write_temp_file(EXAMPLE);
+        let lock_file = lock_path(&path);
+
+        let mine = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+        assert!(matches!(mine, LockOutcome::Acquired(_)));
+
+        // Another instance takes over, as the stale path would.
+        fs::remove_file(&lock_file).unwrap();
+        fs::write(&lock_file, "markcheck pid 999999\n").unwrap();
+
+        drop(mine);
+
+        assert!(
+            lock_file.exists(),
+            "dropping a guard must not delete a lock another instance now holds"
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_file).unwrap(),
+            "markcheck pid 999999\n",
+            "and certainly must not replace its contents"
+        );
+
+        let _ = fs::remove_file(&lock_file);
         fs::remove_file(&path).ok();
     }
 
