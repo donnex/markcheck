@@ -418,6 +418,14 @@ branch has unpushed commits unrelated to this change; push them manually
 first`. Push those yourself, then the next toggle syncs normally. (Several
 of *markcheck's own* commits accumulating while offline is fine and
 expected — this only refuses for commits that aren't the checklist file.)
+If git-sync cannot *determine* whether the branch has unrelated unpushed
+commits — a git command failing or timing out while it inspects history —
+it refuses to publish rather than assuming the branch is clean: `Git sync
+failed: git-sync: could not verify the branch has no unrelated unpushed
+commits (...); not publishing`. Being unable to prove the branch is safe is
+not the same as proving it is. (A branch with simply no upstream configured
+is *not* this case — that's benign, and reported separately below.)
+
 That check only runs before markcheck's own commit is made; if something
 else commits to the branch in the brief window after that but before the
 push, markcheck won't push it either — it reports `Git commit saved
