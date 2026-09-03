@@ -1034,6 +1034,30 @@ impl AppState {
         fail_msg: &str,
         change_desc: &str,
     ) -> bool {
+        // Held across the divergence check *and* the write below, which is
+        // what turns two separate operations into one compare-and-swap.
+        // Without it both instances can pass the check and both rename, and
+        // the second silently discards the first's toggle — the hash check
+        // narrows that window a great deal but cannot close it on its own.
+        //
+        // `Unavailable` proceeds unlocked on purpose: this is a safety net
+        // over an already-existing check, so a machine with no writable temp
+        // directory must not lose the ability to save at all. The guard is
+        // bound for the rest of the function and released on return.
+        let _write_lock =
+            match writer::WriteLock::acquire(&self.document.file_path, writer::STALE_LOCK_AFTER) {
+                writer::LockOutcome::Acquired(lock) => Some(lock),
+                writer::LockOutcome::Unavailable => None,
+                writer::LockOutcome::Busy => {
+                    self.apply_snapshot(pre_state);
+                    self.set_error(
+                        "Another markcheck is saving this file — change not saved, please retry"
+                            .to_string(),
+                    );
+                    return false;
+                }
+            };
+
         if self.disk_content_diverged() {
             self.apply_snapshot(pre_state);
             self.force_reload();
