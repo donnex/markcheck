@@ -270,6 +270,55 @@ fn kill_and_reap(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// A named point inside a sync where a test can interleave a real
+/// concurrent git process.
+///
+/// Every review of this module has made the same observation: its race tests
+/// construct the repository state *before* invoking the function, which pins
+/// the resulting invariant but never exercises the actual check → race → use
+/// ordering. These points close that gap. In production every one of them
+/// compiles to nothing (`race_point` has an empty `cfg(not(test))` body), so
+/// this costs the shipped binary literally nothing.
+///
+/// Hooks are **thread-local** on purpose. Tests run in parallel in one
+/// process, and they drive `run_sync`/`catch_up_push` directly on their own
+/// thread, so a thread-local registry gives each test an isolated view; a
+/// global one would have tests firing each other's hooks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RacePoint {
+    /// After the unpushed-history guard has cleared the captured tip, and
+    /// before anything acts on that verdict.
+    AfterHistoryValidation,
+    /// Immediately before a commit is built from the temporary index.
+    BeforeCommit,
+    /// Immediately before the real index is realigned to the new commit.
+    BeforeIndexAlignment,
+    /// Immediately before `git push` runs.
+    BeforePush,
+}
+
+#[cfg(test)]
+thread_local! {
+    static RACE_HOOKS: std::cell::RefCell<
+        std::collections::HashMap<RacePoint, Box<dyn Fn()>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Runs whatever this thread has installed at `point`, if anything.
+#[cfg(test)]
+fn race_point(point: RacePoint) {
+    // The hook is taken out of the map while it runs, so a hook that itself
+    // reaches a sync point can't recurse into itself.
+    let hook = RACE_HOOKS.with(|h| h.borrow_mut().remove(&point));
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn race_point(_point: RacePoint) {}
+
 /// Result of one background commit+push attempt, delivered to the
 /// main loop via [`GitSync::poll`].
 #[derive(Debug, PartialEq, Eq)]
@@ -835,6 +884,7 @@ fn run_sync(
     if let Some(refusal) = unpushed_history_blocks(&repo_root, tip.as_deref(), &relpath) {
         return refusal;
     }
+    race_point(RacePoint::AfterHistoryValidation);
 
     // If HEAD already holds exactly this content, the commit half of this
     // request was already satisfied by an earlier sync (e.g. it sat
@@ -1291,6 +1341,7 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 /// Refusing keeps the commit safely local, reuses the existing retry
 /// machinery, and gives the user a one-off action to take.
 fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
+    race_point(RacePoint::BeforePush);
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("git-sync: refusing to push an unresolved commit".to_string());
     }
@@ -1435,6 +1486,7 @@ fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(refusal) = unpushed_history_blocks(&repo_root, Some(&head), &relpath) {
         return refusal;
     }
+    race_point(RacePoint::AfterHistoryValidation);
     push(repo_dir, &head)
 }
 
@@ -1489,6 +1541,7 @@ fn commit_via_temp_index(
         if let Some(reason) = repo_sync_blocked(repo_root) {
             return Err(reason);
         }
+        race_point(RacePoint::BeforeCommit);
         let created_commit = commit_temp_index(
             repo_root,
             &temp_index,
@@ -1499,6 +1552,7 @@ fn commit_via_temp_index(
             PLUMBING_TIMEOUT,
         )?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
+        race_point(RacePoint::BeforeIndexAlignment);
         align_real_index_entry(repo_root, mode, blob, relpath, index_before.as_deref());
         Ok(created_commit)
     })();
@@ -1819,7 +1873,7 @@ fn verify_commit_scope(
     if !has_unrelated {
         return Ok(());
     }
-    match undo_commit(repo_root, parent, created_commit) {
+    match undo_commit(repo_root, created_commit) {
         Ok(()) => Err(
             "git-sync: a commit hook modified files beyond the checklist; sync aborted".to_string(),
         ),
@@ -1841,36 +1895,67 @@ fn verify_commit_scope(
 /// `created_commit` (another process committed on top before this undo
 /// ran), the update-ref itself fails instead of silently rewinding that
 /// concurrent commit out of the branch's history.
-fn undo_commit(
-    repo_root: &Path,
-    parent: &Option<String>,
-    created_commit: &str,
-) -> Result<(), String> {
-    let (args, description): (Vec<&str>, &str) = match parent {
-        Some(sha) => (
-            vec!["update-ref", "HEAD", sha, created_commit],
-            "git update-ref",
-        ),
+///
+/// **It rewinds exactly one commit — markcheck's own — and never the
+/// captured `parent`.** Deep round 3, reproduced with the race harness: this
+/// used to reset the branch straight back to `parent`, which discards
+/// *everything* between. A commit landing in the window between
+/// `commit_via_temp_index`'s `HEAD == parent` re-check and `git commit`
+/// itself becomes an **ancestor** of `created_commit`, so the
+/// compare-and-swap above still passes — it only guards against the branch
+/// moving *past* our commit — and the reset dropped that foreign commit off
+/// the branch entirely. Observed directly: a concurrent `unrelated` commit
+/// left the branch reading `init` alone, surviving only as a dangling
+/// object.
+///
+/// The graph cannot distinguish that from a `pre-commit` hook making nested
+/// commits of its own, and it does not need to: markcheck did not create
+/// those either. The module's rule is that markcheck never moves `HEAD`
+/// across a commit it did not make, and resetting to `created_commit`'s own
+/// first parent is what actually honours it. The cost is that hook-made
+/// commits now survive an aborted sync instead of being swept away with it —
+/// which is the right trade, and the user is told (`verify_commit_scope`'s
+/// error names the commit), and the next sync's unpushed-history guard
+/// refuses with a clear message until they deal with it.
+fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
+    // The commit's *own* first parent, not the parent captured before the
+    // commit ran — see above.
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["rev-list", "--parents", "-n", "1", created_commit]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
+        .map_err(|err| format!("git rev-list failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git rev-list", &output));
+    }
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let first_parent = listing
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .nth(1)
+        .map(str::to_string);
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root);
+    match &first_parent {
+        Some(sha) => {
+            cmd.args(["update-ref", "HEAD", sha, created_commit]);
+        }
+        // A root commit has no parent to move back to, so the branch ref is
+        // deleted outright, returning to the "no commits yet" state.
         None => {
             let branch_ref = current_branch_ref(repo_root).ok_or_else(|| {
                 "git-sync: could not resolve branch ref to undo root commit".to_string()
             })?;
-            let mut cmd = Command::new("git");
-            cmd.current_dir(repo_root)
-                .args(["update-ref", "-d", &branch_ref, created_commit]);
-            return match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
-                Ok(output) if output.status.success() => Ok(()),
-                Ok(output) => Err(command_error("git update-ref", &output)),
-                Err(err) => Err(format!("git update-ref failed: {err}")),
-            };
+            cmd.args(["update-ref", "-d", &branch_ref, created_commit]);
         }
-    };
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root).args(&args);
+    }
     match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => Err(command_error(description, &output)),
-        Err(err) => Err(format!("{description} failed: {err}")),
+        Ok(output) => Err(command_error("git update-ref", &output)),
+        Err(err) => Err(format!("git update-ref failed: {err}")),
     }
 }
 
@@ -2685,7 +2770,6 @@ mod tests {
         // the undo) would be silently rewound along with it. The
         // CAS-guarded update-ref must refuse instead.
         let work = init_repo_without_remote();
-        let parent = current_head(&work).unwrap();
 
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
         run(&work, &["commit", "-q", "-am", "to be undone"]);
@@ -2696,7 +2780,7 @@ mod tests {
         run(&work, &["commit", "-q", "-m", "concurrent change"]);
         let concurrent_commit = current_head(&work).unwrap();
 
-        let result = undo_commit(&work, &Some(parent), &created_commit);
+        let result = undo_commit(&work, &created_commit);
         assert!(result.is_err(), "{result:?}");
         assert_eq!(
             current_head(&work),
@@ -2729,7 +2813,7 @@ mod tests {
         run(&work, &["commit", "-q", "-m", "concurrent change"]);
         let concurrent_commit = current_head(&work).unwrap();
 
-        let result = undo_commit(&work, &None, &created_commit);
+        let result = undo_commit(&work, &created_commit);
         assert!(result.is_err(), "{result:?}");
         assert_eq!(
             current_head(&work),
@@ -4309,10 +4393,24 @@ mod tests {
             result.is_err_and(|e| e.contains("hook modified files beyond the checklist")),
             "the revert-cancelled unrelated commit must still be caught"
         );
+        // Deep round 3 changed what "undo" means here. It used to reset
+        // straight back to `parent`, sweeping away every commit in between —
+        // but markcheck did not create those either, and the same reset is
+        // what discarded a genuinely concurrent commit that landed in the
+        // window before `git commit` (see `undo_commit`). Only markcheck's
+        // own commit is rewound now; the hook's nested commits survive, are
+        // named in the reported error, and the next sync's unpushed-history
+        // guard refuses until the user deals with them.
+        let nested = git_stdout(&work, &["rev-parse", &format!("{created_commit}^")]);
         assert_eq!(
             current_head(&work).unwrap(),
+            nested,
+            "exactly one commit — markcheck's own — is rewound"
+        );
+        assert_ne!(
+            current_head(&work).unwrap(),
             parent,
-            "the whole chain must be undone, not just the checklist commit"
+            "the commits markcheck did not create are deliberately left in place"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
@@ -5373,6 +5471,194 @@ mod tests {
 
             fs::remove_dir_all(work.parent().unwrap()).ok();
         }
+    }
+
+    /// Installs a hook at `point` for this thread, removing it on drop so a
+    /// test can never leak one into whatever runs next on the same thread.
+    struct RaceHook;
+
+    impl RaceHook {
+        fn at(point: RacePoint, hook: impl Fn() + 'static) -> RaceHook {
+            RACE_HOOKS.with(|h| h.borrow_mut().insert(point, Box::new(hook)));
+            RaceHook
+        }
+    }
+
+    impl Drop for RaceHook {
+        fn drop(&mut self) {
+            RACE_HOOKS.with(|h| h.borrow_mut().clear());
+        }
+    }
+
+    fn racer_sha_probe(work: &Path) -> String {
+        fs::read_to_string(work.join(".racer-sha")).unwrap_or_default()
+    }
+
+    /// Commits an unrelated file in `work` — the concurrent writer every
+    /// interleaving test below races against.
+    fn commit_unrelated(work: &Path, name: &str) -> String {
+        fs::write(work.join(name), "unrelated\n").unwrap();
+        run(work, &["add", name]);
+        run(work, &["commit", "-q", "-m", "unrelated"]);
+        git_stdout(work, &["rev-parse", "HEAD"])
+    }
+
+    // --- Genuine check-then-race-then-use interleavings (round 3) ---
+
+    #[test]
+    fn an_unrelated_commit_landing_after_validation_is_not_published_by_the_fast_path() {
+        // The ordering every previous review asked for and none of the tests
+        // actually exercised: the guard clears the branch, *then* an
+        // unrelated commit lands, *then* the push runs. Before the
+        // captured-tip work this published the unrelated commit; the hook
+        // makes that ordering deterministic instead of hoping for a race.
+        let (work, remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+        let content = "- [x] one\n";
+        // Commit the content but leave it unpushed, so the branch is ahead
+        // of upstream and `HEAD` already holds exactly what is being synced.
+        fs::write(&file, content).unwrap();
+        run(&work, &["commit", "-q", "-am", "checklist"]);
+        let validated = git_stdout(&work, &["rev-parse", "HEAD"]);
+        // A further uncommitted edit keeps `git status` non-empty, which is
+        // what carries the request past the nothing-to-do short-circuit and
+        // into the already-committed fast path.
+        fs::write(&file, "- [x] one\n- [ ] two\n").unwrap();
+
+        let racer = work.clone();
+        let _hook = RaceHook::at(RacePoint::AfterHistoryValidation, move || {
+            commit_unrelated(&racer, "other.txt");
+        });
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            content,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(content),
+            None,
+        );
+
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+        assert_eq!(
+            git_stdout(&remote, &["rev-parse", "main"]),
+            validated,
+            "the remote must hold exactly the validated tip, not the commit that raced in"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
+        // Same interleaving through the startup path, which runs unprompted
+        // and so is the one where publishing something unchecked is worst.
+        let (work, remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "checklist"]);
+        let validated = git_stdout(&work, &["rev-parse", "HEAD"]);
+
+        let racer = work.clone();
+        let _hook = RaceHook::at(RacePoint::AfterHistoryValidation, move || {
+            commit_unrelated(&racer, "other.txt");
+        });
+
+        let outcome = catch_up_push(&work, &work.join("tracked.md"));
+
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+        assert_eq!(
+            git_stdout(&remote, &["rev-parse", "main"]),
+            validated,
+            "catch-up must publish only the tip it validated"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_commit_landing_before_ours_is_detected_rather_than_built_on_stale_state() {
+        // HEAD moves between the guards and the commit itself. The temp
+        // index was seeded from the old parent, so committing anyway would
+        // produce a tree that silently reverts the commit that raced in.
+        let (work, _remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+        let content = "- [x] one\n";
+        fs::write(&file, content).unwrap();
+
+        let racer = work.clone();
+        let _hook = RaceHook::at(RacePoint::BeforeCommit, move || {
+            let sha = commit_unrelated(&racer, "other.txt");
+            fs::write(racer.join(".racer-sha"), &sha).unwrap();
+        });
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            content,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(content),
+            None,
+        );
+
+        // The commit is aborted either way; what matters is that the commit
+        // markcheck did *not* make is still on the branch afterwards.
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(_)),
+            "the sync must not succeed on a superseded parent: {outcome:?}"
+        );
+        let unrelated = racer_sha_probe(&work);
+        assert_eq!(
+            git_stdout(&work, &["log", "--format=%s", "main"]),
+            "unrelated\ninit",
+            "the commit that raced in must still be on the branch"
+        );
+        assert_eq!(
+            git_stdout(&work, &["rev-parse", "HEAD"]),
+            unrelated,
+            "HEAD must be the concurrent commit, not rewound past it"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_version_staged_during_the_sync_survives_index_alignment() {
+        // Round 10's guard, finally tested as the race it defends against
+        // rather than by pre-staging before the call.
+        let (work, _remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+        let content = "- [x] one\n";
+        fs::write(&file, content).unwrap();
+
+        let racer = work.clone();
+        let _hook = RaceHook::at(RacePoint::BeforeIndexAlignment, move || {
+            fs::write(racer.join("tracked.md"), "- [ ] staged mid-sync\n").unwrap();
+            run(&racer, &["add", "tracked.md"]);
+        });
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            content,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(content),
+            None,
+        );
+
+        assert!(
+            matches!(
+                outcome,
+                SyncOutcome::Synced | SyncOutcome::CommittedNotPushed { .. }
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            staged_bytes(&work, "tracked.md").as_deref(),
+            Some(&b"- [ ] staged mid-sync\n"[..]),
+            "a version staged during the sync must not be overwritten by the realignment"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     // --- Captured-tip invariant (round 10) ---
