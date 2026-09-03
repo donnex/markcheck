@@ -1042,6 +1042,12 @@ impl AppState {
             );
             return false;
         }
+        // The content this write is about to replace. `disk_content_diverged`
+        // just confirmed the file on disk still hashes to this, so it is the
+        // pre-write working-tree content — which is what git-sync's
+        // staged-target guard compares the index against. Captured before
+        // the write, since the field is overwritten a few lines below.
+        let previous_content_hash = self.file_content_hash;
         let Ok(content) = writer::write_back(&self.document) else {
             self.apply_snapshot(pre_state);
             self.set_error(fail_msg.to_string());
@@ -1056,6 +1062,7 @@ impl AppState {
         self.git_sync.pending = Some(PendingSync {
             content,
             content_hash,
+            previous_content_hash,
             description: change_desc.to_string(),
         });
         true
@@ -1252,6 +1259,13 @@ impl AppState {
         self.git_sync.pending = Some(PendingSync {
             content,
             content_hash,
+            // markcheck wrote nothing here — the editor did, and the reload
+            // has already adopted it. So the content this request would
+            // replace *is* the content it carries, and the staged-target
+            // guard's question becomes "does the index hold exactly what is
+            // in the working tree?", which is the right test for this path
+            // too: anything else is a snapshot only the index holds.
+            previous_content_hash: Some(content_hash),
             description: format!("Edited in {editor}"),
         });
     }

@@ -446,6 +446,7 @@ impl GitSync {
                     &sync.content,
                     &message,
                     &latest_requested_hash,
+                    sync.previous_content_hash,
                 )
             });
             let _ = sender.send(outcome);
@@ -677,6 +678,7 @@ fn run_sync(
     expected_content: &str,
     message: &str,
     latest_requested_hash: &Mutex<[u8; 32]>,
+    previous_content_hash: Option<[u8; 32]>,
 ) -> SyncOutcome {
     // All plumbing commands run from the repo root with a root-relative
     // path, sidestepping any ambiguity between CWD-relative and
@@ -851,6 +853,22 @@ fn run_sync(
                     .to_string(),
             );
         }
+    }
+
+    // Refuse if committing the working tree would drop a staged version of
+    // the checklist that exists nowhere else. Checked here, after the fast
+    // path (which never builds a commit, so it can't lose anything) and
+    // before any commit is constructed.
+    let head_blob = tip
+        .as_deref()
+        .and_then(|t| blob_at(&repo_root, t, &relpath));
+    if staged_target_would_be_lost(
+        &repo_root,
+        &relpath,
+        head_blob.as_deref(),
+        previous_content_hash,
+    ) {
+        return SyncOutcome::Failed(STAGED_TARGET_REFUSAL.to_string());
     }
 
     let blob = match hash_object(&repo_root, expected_content) {
@@ -1539,6 +1557,64 @@ fn align_real_index_entry(
     let _ = run_with_timeout(cmd, PLUMBING_TIMEOUT);
 }
 
+/// The refusal message for a checklist whose staged version would be lost.
+const STAGED_TARGET_REFUSAL: &str = "git-sync: the checklist has staged changes that differ from the file on disk; \
+     committing would drop them — commit or unstage them first";
+
+/// Whether committing the working tree would discard a staged snapshot of
+/// the checklist that exists nowhere else.
+///
+/// External review, round 11, reproduced end-to-end. The commit is built
+/// from the working tree, and `align_real_index_entry` afterwards points the
+/// real index at it — so if the index was holding a *different* version of
+/// the checklist, that version is neither committed nor still staged. It
+/// survives only as a dangling blob, reachable through no ordinary git
+/// workflow. Verified: a staged blob's unique content was absent from the
+/// resulting commit and unreferenced by anything afterwards.
+///
+/// This is deliberately **not** "refuse whenever the target is staged".
+/// Staged content equal to what markcheck loaded is wholly contained in what
+/// is about to be committed — the toggle is the only difference — so nothing
+/// is lost, and refusing there would break two ordinary workflows for no
+/// safety gain: staging the checklist before running markcheck, and `git
+/// add`ing a brand-new checklist that has never been committed. Only a
+/// staged snapshot that differs from the pre-write working tree is at risk,
+/// and that is exactly what this returns true for.
+///
+/// Fails **closed**: if the staged bytes can't be read, or the request
+/// carries no pre-write hash to compare against, safety can't be
+/// established and the sync refuses — the same rule `unpushed_history`
+/// follows.
+fn staged_target_would_be_lost(
+    repo_root: &Path,
+    relpath: &str,
+    head_blob: Option<&str>,
+    previous_content_hash: Option<[u8; 32]>,
+) -> bool {
+    let index = index_blob(repo_root, relpath);
+    if index.as_deref() == head_blob {
+        return false; // nothing staged for this path
+    }
+    let Some(previous) = previous_content_hash else {
+        return true;
+    };
+    match staged_bytes(repo_root, relpath) {
+        Some(bytes) => hash_bytes(&bytes) != previous,
+        None => true,
+    }
+}
+
+/// The checklist's staged content — stage 0 of the **real** index (`git show
+/// :<path>`), not `HEAD`'s. `None` when there is no staged entry or the read
+/// fails.
+fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .args(["show", &format!(":{relpath}")]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    output.status.success().then_some(output.stdout)
+}
+
 /// The blob SHA the **real** index currently holds for `relpath`, or `None`
 /// when it has no entry for it (or the lookup fails). `git ls-files --stage`
 /// prints `<mode> <object> <stage>\t<path>`, so the object is the second
@@ -2162,10 +2238,21 @@ mod tests {
         Mutex::new(hash_bytes(content.as_bytes()))
     }
 
+    /// The pre-write content hash for a test whose staged checklist matches
+    /// the content being synced — the ordinary "staged, nothing lost" case,
+    /// which the guard must let through.
+    fn staged_matches(content: &str) -> Option<[u8; 32]> {
+        Some(hash_bytes(content.as_bytes()))
+    }
+
     fn pending_sync(content: &str, description: &str) -> PendingSync {
         PendingSync {
             content: content.to_string(),
             content_hash: hash_bytes(content.as_bytes()),
+            // These tests drive `GitSync`'s request/coalescing machinery, not
+            // the staged-target guard; none of them stage the checklist, so
+            // the guard short-circuits before this is consulted.
+            previous_content_hash: None,
             description: description.to_string(),
         }
     }
@@ -2226,7 +2313,8 @@ mod tests {
                 &untracked,
                 "- [ ] new\n",
                 "should not commit",
-                &no_race("- [ ] new\n")
+                &no_race("- [ ] new\n"),
+                None,
             ),
             SyncOutcome::SkippedUntracked
         );
@@ -2250,7 +2338,8 @@ mod tests {
                 &work.join("tracked.md"),
                 "- [ ] one\n",
                 "no changes",
-                &no_race("- [ ] one\n")
+                &no_race("- [ ] one\n"),
+                None,
             ),
             SyncOutcome::Skipped
         );
@@ -2270,7 +2359,8 @@ mod tests {
                 &file_path,
                 "- [x] one\n",
                 &message,
-                &no_race("- [x] one\n")
+                &no_race("- [x] one\n"),
+                None,
             ),
             SyncOutcome::Synced
         );
@@ -2308,7 +2398,8 @@ mod tests {
                 &file_path,
                 "- [x] one\n",
                 &message,
-                &no_race("- [x] one\n")
+                &no_race("- [x] one\n"),
+                None,
             ),
             SyncOutcome::Synced
         );
@@ -2338,6 +2429,7 @@ mod tests {
             "- [x] one\n",
             "Check \"one\"",
             &no_race("- [x] one\n"),
+            None,
         );
         // The commit itself succeeded (nothing was lost); only the push
         // failed, which is why this is `CommittedNotPushed` rather than
@@ -2704,7 +2796,8 @@ mod tests {
                 &file_path,
                 "- [x] one\n",
                 &message,
-                &no_race("- [x] one\n")
+                &no_race("- [x] one\n"),
+                None,
             ),
             SyncOutcome::Synced
         );
@@ -2779,6 +2872,7 @@ mod tests {
             "- [x] one\n",
             &message,
             &no_race("- [x] one\n"),
+            None,
         );
 
         assert!(
@@ -3337,6 +3431,7 @@ mod tests {
             "- [x] A\n",
             &message,
             &no_race("- [x] A\n"),
+            None,
         );
         assert!(
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("file changed since this request was queued")),
@@ -3384,6 +3479,7 @@ mod tests {
             "- [x] one\n",
             &message,
             &no_race("- [x] one\n"),
+            None,
         );
         assert!(
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("file changed since this request was queued")),
@@ -3421,7 +3517,8 @@ mod tests {
                 &file_path,
                 "- [x] A\n",
                 &stale_message,
-                &no_race("- [x] A\n")
+                &no_race("- [x] A\n"),
+                None,
             ),
             SyncOutcome::Failed(_)
         ));
@@ -3433,6 +3530,7 @@ mod tests {
             "- [x] A\n- [x] B\n",
             &fresh_message,
             &no_race("- [x] A\n- [x] B\n"),
+            None,
         );
         assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
 
@@ -3469,7 +3567,8 @@ mod tests {
                 &file_path,
                 "- [x] one\n",
                 &message,
-                &no_race("- [x] one\n")
+                &no_race("- [x] one\n"),
+                None,
             ),
             SyncOutcome::Synced
         );
@@ -3535,6 +3634,7 @@ mod tests {
             "- [x] one\n",
             &message,
             &no_race("- [x] one\n"),
+            None,
         );
 
         assert!(
@@ -3615,6 +3715,7 @@ mod tests {
             "- [x] one\n",
             &message,
             &no_race("- [x] one\n"),
+            staged_matches("- [x] one\n"),
         );
 
         assert!(
@@ -3670,6 +3771,7 @@ mod tests {
             "- [x] resolved\n",
             "should not commit",
             &no_race("- [x] resolved\n"),
+            None,
         );
         assert!(matches!(outcome, SyncOutcome::Failed(_)), "{outcome:?}");
 
@@ -3705,7 +3807,14 @@ mod tests {
 
         let first_message = commit_message(&file_path, "Check \"A\"");
         assert_eq!(
-            run_sync(&work, &file_path, "- [x] A\n", &first_message, &latest),
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] A\n",
+                &first_message,
+                &latest,
+                None
+            ),
             SyncOutcome::Synced
         );
 
@@ -3716,7 +3825,8 @@ mod tests {
                 &file_path,
                 "- [x] A\n- [x] B\n",
                 &second_message,
-                &latest
+                &latest,
+                None,
             ),
             SyncOutcome::Synced
         );
@@ -3761,7 +3871,8 @@ mod tests {
                 &file_path,
                 "- [ ] one\n",
                 "already committed",
-                &no_race("- [ ] one\n")
+                &no_race("- [ ] one\n"),
+                None,
             ),
             SyncOutcome::Skipped
         );
@@ -3790,6 +3901,7 @@ mod tests {
             "- [ ] one\n",
             "already committed",
             &no_race("- [ ] one\n"),
+            None,
         );
         assert!(
             matches!(outcome, SyncOutcome::CommittedNotPushed { .. }),
@@ -3821,6 +3933,7 @@ mod tests {
             "- [x] one\n",
             &message,
             &no_race("- [x] one\n"),
+            None,
         );
 
         assert!(
@@ -3887,6 +4000,7 @@ mod tests {
             "- [x] one\n",
             "Catch up a pending push",
             &no_race("- [x] one\n"),
+            None,
         );
 
         assert!(
@@ -3947,6 +4061,7 @@ mod tests {
             "- [x] one\n",
             &message,
             &no_race("- [x] one\n"),
+            None,
         );
 
         assert!(
@@ -4045,6 +4160,7 @@ mod tests {
             "- [x] one\n",
             "already committed",
             &no_race("- [x] one\n"),
+            None,
         );
 
         assert!(
@@ -4119,6 +4235,7 @@ mod tests {
             "- [x] one\n",
             &commit_message(&file_path, "Check \"one\""),
             &no_race("- [x] one\n"),
+            None,
         );
         assert!(matches!(first, SyncOutcome::CommittedNotPushed { .. }));
 
@@ -4132,6 +4249,7 @@ mod tests {
             "- [x] one\n- [x] two\n",
             &commit_message(&file_path, "Check \"two\""),
             &no_race("- [x] one\n- [x] two\n"),
+            None,
         );
         assert!(
             matches!(second, SyncOutcome::CommittedNotPushed { .. }),
@@ -4179,7 +4297,8 @@ mod tests {
                 &file_path,
                 "- [x] one\n",
                 &message,
-                &no_race("- [x] one\n")
+                &no_race("- [x] one\n"),
+                None,
             ),
             SyncOutcome::Synced
         );
@@ -4237,7 +4356,8 @@ mod tests {
                     &file_path,
                     "- [x] one\n",
                     &message,
-                    &no_race("- [x] one\n")
+                    &no_race("- [x] one\n"),
+                    None,
                 ),
                 SyncOutcome::Synced,
                 "file name: {file_name:?}"
@@ -5068,6 +5188,131 @@ mod tests {
             unpushed_history(&work, None, "x.md"),
             Ok(UnpushedHistory::Safe)
         );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    // --- Staged-target guard (round 11) ---
+
+    #[test]
+    fn run_sync_refuses_when_a_staged_checklist_version_would_be_dropped() {
+        // External review, round 11, reproduced end-to-end before this
+        // guard: the commit is built from the working tree and the real
+        // index is realigned to it afterwards, so a staged snapshot that
+        // differs from the working tree is neither committed nor still
+        // staged — it survives only as a dangling blob, reachable through no
+        // ordinary git workflow.
+        let (work, remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+
+        // The user stages a version carrying work that exists only in the index...
+        fs::write(&file, "- [ ] one\n- [ ] IMPORTANT\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        let staged = index_blob(&work, "tracked.md").unwrap();
+
+        // ...then keeps editing, so the working tree no longer has it.
+        let pre_write = "- [ ] one\n- [ ] later\n";
+        fs::write(&file, pre_write).unwrap();
+
+        // markcheck toggles a task, writing the post-toggle content to disk.
+        let expected = "- [x] one\n- [ ] later\n";
+        fs::write(&file, expected).unwrap();
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            expected,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(expected),
+            staged_matches(pre_write),
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("staged changes")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            index_blob(&work, "tracked.md").as_deref(),
+            Some(staged.as_str()),
+            "the staged version must still be staged"
+        );
+        assert_eq!(
+            git_stdout(&work, &["log", "--format=%s", "main"]),
+            "init",
+            "no commit may be built"
+        );
+        assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn run_sync_proceeds_when_the_staged_checklist_matches_the_working_tree() {
+        // The deliberately permitted case: staging the checklist and *then*
+        // toggling loses nothing, because everything staged is already
+        // contained in the content about to be committed. Refusing here
+        // would break an ordinary workflow for no safety gain — which is why
+        // this guard is not "refuse whenever the target is staged".
+        let (work, remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+
+        let pre_write = "- [ ] one\n- [ ] extra\n";
+        fs::write(&file, pre_write).unwrap();
+        run(&work, &["add", "tracked.md"]);
+
+        // An unrelated staged file must survive this untouched, as always.
+        fs::write(work.join("other.txt"), "unrelated staged\n").unwrap();
+        run(&work, &["add", "other.txt"]);
+        let other_staged = index_blob(&work, "other.txt");
+
+        let expected = "- [x] one\n- [ ] extra\n";
+        fs::write(&file, expected).unwrap();
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            expected,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(expected),
+            staged_matches(pre_write),
+        );
+
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+        assert_eq!(
+            git_stdout(&remote, &["show", "HEAD:tracked.md"]),
+            expected.trim_end(),
+            "the commit carries exactly the toggled content, staged work included"
+        );
+        assert_eq!(
+            index_blob(&work, "other.txt"),
+            other_staged,
+            "an unrelated staged file is still untouched"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn staged_target_guard_fails_closed_without_a_pre_write_hash() {
+        // Safety can't be established without something to compare the
+        // staged bytes against, so the guard refuses — the same rule
+        // `unpushed_history` follows for an unanswerable check.
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [ ] one\n- [ ] staged\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        let head = git_stdout(&work, &["rev-parse", "HEAD:tracked.md"]);
+
+        assert!(
+            staged_target_would_be_lost(&work, "tracked.md", Some(&head), None),
+            "no pre-write hash means the staged version cannot be cleared as safe"
+        );
+        // ...and an unstaged path is never at risk regardless.
+        assert!(!staged_target_would_be_lost(
+            &work,
+            "other-untouched.md",
+            None,
+            None
+        ));
+
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
