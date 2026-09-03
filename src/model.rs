@@ -894,6 +894,19 @@ pub struct GitSyncState {
 pub struct PendingSync {
     pub content: String,
     pub content_hash: [u8; 32],
+    /// The file's content **before** this change was written — i.e. what
+    /// markcheck had loaded and is about to replace. `None` when it couldn't
+    /// be established (the file was unreadable at load).
+    ///
+    /// Used by `git_sync`'s staged-target guard, and nothing else. If the
+    /// checklist has staged changes in git's index, committing the working
+    /// tree replaces that index entry, so a staged snapshot that differs
+    /// from the working tree would be dropped without ever reaching a
+    /// commit. Comparing the staged bytes against *this* hash is what tells
+    /// the two cases apart: staged content equal to what markcheck loaded is
+    /// wholly contained in the content about to be committed (nothing is
+    /// lost), while anything else is a snapshot only the index is holding.
+    pub previous_content_hash: Option<[u8; 32]>,
     pub description: String,
 }
 

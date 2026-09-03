@@ -418,6 +418,15 @@ branch has unpushed commits unrelated to this change; push them manually
 first`. Push those yourself, then the next toggle syncs normally. (Several
 of *markcheck's own* commits accumulating while offline is fine and
 expected — this only refuses for commits that aren't the checklist file.)
+If the checklist itself has **staged changes** that differ from the file on
+disk, git-sync refuses rather than committing: `Git sync failed: git-sync:
+the checklist has staged changes that differ from the file on disk;
+committing would drop them — commit or unstage them first`. Committing the
+working tree would replace that staged version in the index, leaving it in
+no commit and no longer staged. Staging the checklist and *then* toggling is
+fine and syncs normally — everything you staged is already part of what gets
+committed; only a staged version you have since edited away is at risk.
+
 If git-sync cannot *determine* whether the branch has unrelated unpushed
 commits — a git command failing or timing out while it inspects history —
 it refuses to publish rather than assuming the branch is clean: `Git sync
