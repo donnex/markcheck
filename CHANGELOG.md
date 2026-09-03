@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer drops a staged version of the checklist. If you had
+  `git add`ed the checklist and then edited it further, the automatic commit
+  was built from the working tree and the index was repointed at it — so the
+  version you staged ended up in no commit and no longer staged, recoverable
+  only as a dangling object. Git-sync now refuses in that case and tells you
+  to commit or unstage it first. Staging and then toggling still syncs
+  normally, since nothing is lost there.
 - Git-sync no longer discards a version of the checklist you staged while a
   background sync was running. If you ran `git add` on the file (or your
   editor did) mid-sync, markcheck's index bookkeeping afterwards replaced
