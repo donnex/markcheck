@@ -358,7 +358,8 @@ pub enum SyncOutcome {
     /// A dedicated variant rather than reusing `Skipped`: the two mean
     /// genuinely different things to the retry state (`Skipped` must leave a
     /// still-valid retry armed; this one must clear it), and disambiguating
-    /// them used to need an out-of-band `last_spawn_was_retry` flag read at
+    /// them used to need an out-of-band `last_spawn_was_retry` flag (long since
+    /// removed) read at
     /// `poll` time. Carrying it in the outcome is what lets `apply_outcome`
     /// be a total `match` — which is the point, since the missing arm in the
     /// old one is exactly how the `Failed` retry storm survived.
@@ -792,12 +793,12 @@ fn run_sync(
     }
 
     // Scoped to exactly this one file (`--`), so there's at most one
-    // porcelain line to interpret: absent (nothing changed vs. HEAD),
-    // `?? ` (untracked), or any other two-letter code (a real change to
-    // commit). Distinguishing untracked from unchanged — rather than the
-    // single `--untracked-files=no` check this used to be, which folded
-    // both into the same silent no-op — is what lets an untracked file be
-    // reported below instead of a sync that quietly never does anything.
+    // porcelain line to interpret: absent, `?? ` (untracked), or any other
+    // two-letter code (a real change to commit). A leading `??` is taken as
+    // untracked here because it is unambiguous, but **empty output is not
+    // taken as "tracked and unchanged"** — see the index lookup below, which
+    // is what actually settles trackedness. `status` is only trusted for the
+    // question it can always answer: has anything changed.
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_dir)
         .args(["status", "--porcelain", "--"])
@@ -843,7 +844,7 @@ fn run_sync(
     // Refuse if the branch already has unpushed history that touches
     // something other than this file, rather than publishing it as a side
     // effect — checked before *both* branches below that can push (see
-    // `branch_has_unrelated_unpushed_commits`'s doc comment for why plain
+    // `unpushed_history`'s doc comment for why plain
     // ahead-of-upstream isn't the right test here — several of markcheck's
     // own commits can legitimately stack up while offline). External
     // review, round 7: this used to run only right before building a new
@@ -1334,7 +1335,7 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 /// and **succeeds**, publishing the whole branch tip — every unpushed
 /// commit, not just `expected_commit`. That is exactly what targeting the
 /// commit explicitly exists to prevent, and it composes badly with
-/// `branch_has_unrelated_unpushed_commits`, which independently fails
+/// the unrelated-history guard, which independently fails
 /// *closed* in the same configuration (its `@{u}..HEAD` range can't be
 /// resolved either, so it declines to refuse): both guards are off at once,
 /// and an unrelated local commit gets published by a checklist toggle.
@@ -1372,7 +1373,7 @@ fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 
 /// Pushes `expected_commit` (the commit `run_sync` just made and verified),
 /// but only if `HEAD` still equals it — external review, round 4:
-/// `branch_has_unrelated_unpushed_commits` only ever ran as a snapshot
+/// the unrelated-history guard (`unpushed_history`) only ever ran as a snapshot
 /// *before* the commit, so a commit landing on the branch after
 /// verification but before this point (another markcheck instance, a
 /// human, an IDE) would otherwise get pushed right alongside markcheck's
@@ -2826,7 +2827,7 @@ mod tests {
 
     #[test]
     fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verification() {
-        // External review, round 4: branch_has_unrelated_unpushed_commits
+        // External review, round 4: the unrelated-history guard
         // only ever runs as a snapshot before markcheck's own commit — a
         // commit landing on the branch after that commit was made and
         // verified, but before the push actually runs, would otherwise get
@@ -2961,7 +2962,7 @@ mod tests {
     fn run_sync_never_publishes_unrelated_work_when_no_upstream_is_configured() {
         // Deep review, reproduced empirically. Two fail-safe decisions that
         // are each locally reasonable compose into the exact hazard
-        // `branch_has_unrelated_unpushed_commits` exists to prevent:
+        // `unpushed_history` exists to prevent:
         //
         //   * that guard resolves `@{u}..HEAD`, which *fails* with no
         //     upstream configured, and it deliberately fails closed
