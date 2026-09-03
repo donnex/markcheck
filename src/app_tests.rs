@@ -115,6 +115,66 @@ fn two_list_document_first_list_almost_done() -> Document {
 // --- Started / in-progress task state ---
 
 #[test]
+fn a_write_is_refused_while_another_instance_holds_the_write_lock() {
+    // Deep round 4. `commit_write` checks that the file on disk still hashes
+    // to what was last seen and *then* replaces it. Those are two
+    // operations, so two markcheck instances could both pass the check and
+    // both rename, and the second silently discarded the first's toggle.
+    // The advisory lock spans both, turning them into one compare-and-swap.
+    use crate::writer::{LockOutcome, STALE_LOCK_AFTER, WriteLock};
+
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let path = document.file_path.clone();
+    let mut state = AppState::new(document);
+
+    // Stand in for the other instance being mid-write.
+    let held = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+    assert!(
+        matches!(held, LockOutcome::Acquired(_)),
+        "test setup: the lock must be free to begin with"
+    );
+
+    state.toggle_current();
+
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("Another markcheck")),
+        "the refusal must be reported, not silent: {:?}",
+        state.status_message
+    );
+    assert_eq!(
+        state.current_item().unwrap().kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "the in-memory toggle must be rolled back, not left diverged from disk"
+    );
+    assert!(
+        state.take_git_sync_request().is_none(),
+        "a refused write must not queue a git-sync request"
+    );
+
+    // Once the other instance is done, the same toggle goes through.
+    drop(held);
+    state.toggle_current();
+    assert_eq!(
+        state.current_item().unwrap().kind,
+        ItemKind::Checkbox(TaskState::Done),
+        "the write must succeed once the lock is free"
+    );
+    assert!(
+        state.take_git_sync_request().is_some(),
+        "and the successful write queues its sync request as usual"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn start_current_marks_started_without_advancing() {
     let mut state = AppState::new(two_list_document());
     state.start_current();

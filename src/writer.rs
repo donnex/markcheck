@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use crate::model::{Document, ItemKind, TaskState};
 
@@ -17,6 +18,121 @@ pub(crate) fn random_suffix() -> u64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
     RandomState::new().build_hasher().finish()
+}
+
+/// How long a lock file may sit before it is treated as abandoned. The
+/// guarded region is a hash check plus an atomic rename — milliseconds — so
+/// anything this old belongs to a process that died holding it.
+pub(crate) const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
+
+/// What `WriteLock::acquire` managed to do.
+pub(crate) enum LockOutcome {
+    /// Held until the returned guard drops.
+    Acquired(WriteLock),
+    /// Another markcheck instance is inside its own check-and-write.
+    Busy,
+    /// The lock itself is unusable here (no writable temp directory, say).
+    /// The caller proceeds **unlocked**: this is a safety net over an
+    /// already-existing content check, not a gate that may deny writes.
+    Unavailable,
+}
+
+/// An advisory lock covering a checklist's read-check-then-write sequence.
+///
+/// `AppState::commit_write` verifies the file on disk still hashes to what
+/// was last seen and *then* replaces it. Those are two operations, so two
+/// markcheck instances could both pass the check and both rename, and the
+/// second silently discards the first's toggle. The content hash narrows
+/// that window a great deal but cannot close it, because it is not a
+/// compare-and-swap. Holding this across both makes it one.
+///
+/// **Deliberately in the temp directory, not beside the checklist.** A
+/// sibling lock file lands inside the user's repository, where a
+/// `git add -A` pre-commit hook can sweep it into a commit — which
+/// `verify_commit_scope` would then correctly abort the sync over. Keying a
+/// temp-dir path by the digest of the canonical checklist path keeps it
+/// entirely out of git's way. The trade is that it only serialises
+/// instances that share a temp directory: same machine, same user. Two
+/// machines writing one file over a network share are not covered, and were
+/// not covered before either.
+///
+/// Stale locks are taken over rather than honoured forever, or a crash while
+/// holding one would wedge every future write. Removing then re-creating is
+/// safe against two instances both deciding to take over: `create_new` is
+/// atomic, so exactly one wins and the other sees `AlreadyExists` and backs
+/// off.
+pub(crate) struct WriteLock {
+    path: PathBuf,
+}
+
+impl WriteLock {
+    /// Acquires the lock for `target`, treating an existing lock older than
+    /// `stale_after` as abandoned. The threshold is a parameter rather than
+    /// a constant read internally so tests can force the takeover path
+    /// without manipulating file timestamps — the same shape as
+    /// `retry_push_if_due(now)` and `commit_temp_index(timeout)`.
+    pub(crate) fn acquire(target: &Path, stale_after: Duration) -> LockOutcome {
+        let Some(path) = lock_path(target) else {
+            return LockOutcome::Unavailable;
+        };
+        match Self::try_create(&path) {
+            Ok(lock) => LockOutcome::Acquired(lock),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                if !is_stale(&path, stale_after) {
+                    return LockOutcome::Busy;
+                }
+                // Abandoned: clear it and make exactly one attempt to take
+                // over. A loser of that race sees `AlreadyExists` again and
+                // reports `Busy`, which is the correct answer for it.
+                let _ = fs::remove_file(&path);
+                match Self::try_create(&path) {
+                    Ok(lock) => LockOutcome::Acquired(lock),
+                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => LockOutcome::Busy,
+                    Err(_) => LockOutcome::Unavailable,
+                }
+            }
+            Err(_) => LockOutcome::Unavailable,
+        }
+    }
+
+    fn try_create(path: &Path) -> io::Result<WriteLock> {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        // Contents are purely diagnostic — nothing reads them back.
+        let _ = writeln!(file, "markcheck pid {}", std::process::id());
+        Ok(WriteLock {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for WriteLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Where `target`'s lock lives: one file per checklist, named by the digest
+/// of its path so two different checklists never share a lock and the name
+/// can't collide with anything the user owns.
+fn lock_path(target: &Path) -> Option<PathBuf> {
+    let digest = crate::model::hash_bytes(target.as_os_str().as_encoded_bytes());
+    let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    Some(std::env::temp_dir().join(format!("markcheck-write-lock-{name}")))
+}
+
+/// Whether the lock at `path` is old enough to be considered abandoned. A
+/// lock whose age can't be determined is treated as **live**, so an
+/// unreadable timestamp never licenses stealing a lock somebody holds.
+fn is_stale(path: &Path, stale_after: Duration) -> bool {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= stale_after)
 }
 
 /// Replaces the task checkbox on the line with `target`, leaving everything
@@ -244,6 +360,89 @@ mod tests {
         let path = crate::test_support::unique_temp_path("writer", "", Some("md"));
         fs::write(&path, contents).unwrap();
         path
+    }
+
+    // --- Advisory write lock (deep round 4) ---
+
+    #[test]
+    fn a_second_acquire_is_busy_until_the_first_guard_drops() {
+        let path = write_temp_file(EXAMPLE);
+
+        let first = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+        assert!(matches!(first, LockOutcome::Acquired(_)));
+        assert!(
+            matches!(
+                WriteLock::acquire(&path, STALE_LOCK_AFTER),
+                LockOutcome::Busy
+            ),
+            "a second instance must not get in while the first holds it"
+        );
+
+        drop(first);
+        assert!(
+            matches!(
+                WriteLock::acquire(&path, STALE_LOCK_AFTER),
+                LockOutcome::Acquired(_)
+            ),
+            "releasing the guard must free the lock"
+        );
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn the_lock_file_is_removed_when_the_guard_drops() {
+        let path = write_temp_file(EXAMPLE);
+        let lock_file = lock_path(&path).unwrap();
+
+        {
+            let _held = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+            assert!(lock_file.exists(), "the lock file exists while held");
+        }
+        assert!(!lock_file.exists(), "and is cleaned up on drop");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_abandoned_lock_is_taken_over_rather_than_honoured_forever() {
+        // A crash while holding the lock would otherwise wedge every future
+        // write. Forced through the threshold parameter rather than by
+        // manipulating file timestamps.
+        let path = write_temp_file(EXAMPLE);
+        let leaked = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+        assert!(matches!(leaked, LockOutcome::Acquired(_)));
+        std::mem::forget(leaked); // simulate a process dying while holding it
+
+        assert!(
+            matches!(
+                WriteLock::acquire(&path, Duration::ZERO),
+                LockOutcome::Acquired(_)
+            ),
+            "a lock past the staleness threshold must be taken over"
+        );
+
+        let _ = fs::remove_file(lock_path(&path).unwrap());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn two_checklists_do_not_share_a_lock() {
+        let a = write_temp_file(EXAMPLE);
+        let b = write_temp_file(EXAMPLE);
+
+        let held_a = WriteLock::acquire(&a, STALE_LOCK_AFTER);
+        assert!(matches!(held_a, LockOutcome::Acquired(_)));
+        assert!(
+            matches!(
+                WriteLock::acquire(&b, STALE_LOCK_AFTER),
+                LockOutcome::Acquired(_)
+            ),
+            "a different checklist must not be blocked by this one"
+        );
+
+        fs::remove_file(&a).ok();
+        fs::remove_file(&b).ok();
     }
 
     #[test]

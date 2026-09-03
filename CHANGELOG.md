@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two copies of `markcheck` open on the same checklist can no longer lose a
+  toggle. Both could previously check that the file was unchanged and then
+  both save, with the second overwriting the first's change. Saving is now
+  serialised between instances on the same machine; if another instance is
+  mid-save you get `Another markcheck is saving this file — change not
+  saved, please retry` rather than a silently lost toggle.
 - Git-sync can no longer remove a commit it didn't make. When a sync had to
   be rolled back — because a commit hook changed files beyond the checklist,
   or because another process committed at exactly the wrong moment — it
