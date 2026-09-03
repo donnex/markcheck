@@ -1901,8 +1901,24 @@ fn verify_commit_scope(
     relpath: &str,
     created_commit: &str,
 ) -> Result<(), String> {
+    // A verification that *cannot be performed* is not the same as one that
+    // passed, and it leaves the commit sitting on the branch. Deep rounds 2,
+    // round 3: this used to be a bare `?`, so the user saw only the raw git
+    // failure ("git rev-list: fatal: ...") with nothing to say a commit had
+    // been made and kept — while the neighbouring undo-failed arm is careful
+    // to name exactly that. The commit is deliberately *not* undone here:
+    // whether it is in scope is precisely what could not be established, and
+    // rewinding a possibly-fine commit is the worse guess.
     let has_unrelated =
-        range_has_unrelated_commits(repo_root, parent.as_deref(), created_commit, relpath)?;
+        match range_has_unrelated_commits(repo_root, parent.as_deref(), created_commit, relpath) {
+            Ok(has_unrelated) => has_unrelated,
+            Err(err) => {
+                return Err(format!(
+                    "git-sync: could not verify what commit {created_commit} changed ({err}); \
+                 it was made and left on the branch — check it before pushing"
+                ));
+            }
+        };
     if !has_unrelated {
         return Ok(());
     }
@@ -5755,6 +5771,28 @@ mod tests {
         }
 
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_unverifiable_commit_scope_says_the_commit_was_left_behind() {
+        // Deep rounds 2, round 3. When the scope check itself fails, the
+        // commit has already been made and stays on the branch. The old bare
+        // `?` reported only the raw git error, so the user was told the sync
+        // failed with no hint that a commit now exists — unlike the
+        // undo-failed path, which names it.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let bogus = "0".repeat(40);
+
+        let result = verify_commit_scope(&work, &Some(parent), "tracked.md", &bogus);
+
+        let err = result.expect_err("an unresolvable commit cannot be verified");
+        assert!(
+            err.contains(&bogus) && err.contains("left on the branch"),
+            "the message must name the commit and say it survived: {err}"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     // --- Hostile repository shapes (deep rounds 2, round 2) ---
