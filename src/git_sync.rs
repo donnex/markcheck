@@ -305,6 +305,20 @@ pub enum SyncOutcome {
     /// `git status`/`commit` failed (nothing was committed); the message is
     /// the first line of the failing command's stderr.
     Failed(String),
+    /// A **push retry** (`retry_commit`) failed outright — as opposed to
+    /// `Failed`, which is a *content* sync failing. The two are separated
+    /// because they say opposite things about the armed retry, and
+    /// `apply_outcome` needs to treat them differently: a retry's own
+    /// failure must restart its backoff (or a permanently failing retry
+    /// fires on every frame), while a content sync's failure must leave the
+    /// backoff alone (or repeated unrelated failures push the retry's turn
+    /// out indefinitely and a pushable commit never goes out).
+    ///
+    /// Produced by mapping `retry_commit`'s `Failed` in `spawn_retry`, so
+    /// there is one place the distinction is made rather than a flag read
+    /// back at `poll` time — the same reasoning that made `RetryAbandoned`
+    /// its own variant instead of an out-of-band `last_spawn_was_retry`.
+    RetryFailed(String),
 }
 
 /// Drives commit+push for one file on a background thread, so a slow or
@@ -461,7 +475,13 @@ impl GitSync {
         let repo_dir = self.repo_dir.clone();
         let sender = self.sender.clone();
         std::thread::spawn(move || {
-            let outcome = run_reporting_panics(|| retry_commit(&repo_dir, &commit));
+            // Everything this path can report as an outright failure is a
+            // *retry's* failure, including a panic backstop — mapped once,
+            // here, so `apply_outcome` never has to ask where it came from.
+            let outcome = match run_reporting_panics(|| retry_commit(&repo_dir, &commit)) {
+                SyncOutcome::Failed(msg) => SyncOutcome::RetryFailed(msg),
+                other => other,
+            };
             let _ = sender.send(outcome);
         });
     }
@@ -533,13 +553,20 @@ impl GitSync {
             // The retried commit is no longer HEAD — that specific retry is
             // pointless now, and whatever superseded it syncs on its own.
             SyncOutcome::RetryAbandoned => self.retry = None,
-            // Still unpushed, so keep the retry armed — but restart the
-            // backoff, or a persistently failing retry fires every frame.
-            SyncOutcome::Failed(_) => {
+            // The retry itself failed: still unpushed, so keep it armed —
+            // but restart the backoff, or a persistently failing retry fires
+            // every frame.
+            SyncOutcome::RetryFailed(_) => {
                 if let Some((_, last_attempt)) = &mut self.retry {
                     *last_attempt = Instant::now();
                 }
             }
+            // A *content* sync failed. That says nothing about an armed
+            // retry for an earlier commit, so its backoff is left exactly as
+            // it is — deep round 1: restarting it here let repeated
+            // unrelated failures (an unrelated-commits refusal on every
+            // toggle, say) postpone a perfectly pushable commit forever.
+            SyncOutcome::Failed(_) => {}
             // Ordinary no-ops from a content sync. They say nothing about an
             // unrelated earlier commit's retry, so leave it exactly as it is
             // — clearing here would strand a commit that still needs pushing.
@@ -3225,15 +3252,28 @@ mod tests {
         let (_, at) = sync.retry.clone().expect("still armed");
         assert!(at > old, "CommittedNotPushed restarts the backoff");
 
-        // Failed: stays armed (the commit is still unpushed) but the backoff
-        // restarts, so it can't fire again on the very next frame.
+        // RetryFailed: the retry's *own* failure. Stays armed (the commit is
+        // still unpushed) and restarts the backoff, so it can't fire again on
+        // the very next frame.
+        armed(&mut sync, old);
+        sync.apply_outcome(&SyncOutcome::RetryFailed("boom".to_string()));
+        let (_, at) = sync
+            .retry
+            .clone()
+            .expect("RetryFailed keeps the retry armed");
+        assert!(
+            at > old,
+            "RetryFailed must restart the backoff, not leave it stale"
+        );
+
+        // Failed: a *content* sync's failure. It says nothing about an armed
+        // retry for an earlier commit, so the backoff must be left alone --
+        // restarting it here let repeated unrelated failures starve a
+        // perfectly pushable commit.
         armed(&mut sync, old);
         sync.apply_outcome(&SyncOutcome::Failed("boom".to_string()));
         let (_, at) = sync.retry.clone().expect("Failed keeps the retry armed");
-        assert!(
-            at > old,
-            "Failed must restart the backoff, not leave it stale"
-        );
+        assert_eq!(at, old, "Failed must leave the retry's backoff alone");
 
         // Ordinary no-ops say nothing about an unrelated armed retry.
         for outcome in [SyncOutcome::Skipped, SyncOutcome::SkippedUntracked] {
@@ -3242,6 +3282,38 @@ mod tests {
             let (_, at) = sync.retry.clone().expect("left armed");
             assert_eq!(at, old, "{outcome:?} must leave an unrelated retry alone");
         }
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn an_unrelated_content_failure_does_not_starve_an_armed_retry() {
+        // Deep round 1. `apply_outcome`'s `Failed` arm restarted the backoff
+        // for *any* failure, but only a failure of the retry itself says
+        // anything about the retry. A content sync that keeps failing for
+        // its own reasons — an unrelated-commits refusal on every toggle,
+        // say — pushed the armed retry's clock forward each time, so a
+        // commit that was perfectly pushable never got its turn.
+        let work = init_repo_without_remote();
+        let commit = current_head(&work).unwrap();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+
+        let due = Instant::now() - PUSH_RETRY_INTERVAL * 4;
+        sync.retry = Some((commit.clone(), due));
+        sync.apply_outcome(&SyncOutcome::Failed("unrelated content sync".to_string()));
+
+        let (_, at) = sync.retry.clone().expect("still armed");
+        assert_eq!(
+            at, due,
+            "a content sync's failure must leave the retry's backoff alone"
+        );
+
+        // The retry's *own* failure is the one that must restart it, or a
+        // permanently failing retry fires on every frame.
+        sync.retry = Some((commit, due));
+        sync.apply_outcome(&SyncOutcome::RetryFailed("retry blew up".to_string()));
+        let (_, at) = sync.retry.clone().expect("still armed");
+        assert!(at > due, "a failed retry restarts its own backoff");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
@@ -3264,7 +3336,9 @@ mod tests {
         sync.retry_push_if_due(Instant::now());
         assert!(sync.busy, "a retry should have spawned");
         sync.busy = false;
-        sync.apply_outcome(&SyncOutcome::Failed(
+        // `spawn_retry` maps a retry's failure to `RetryFailed`, which is
+        // the arm that owns the backoff restart.
+        sync.apply_outcome(&SyncOutcome::RetryFailed(
             "git rev-parse: not a git repository".to_string(),
         ));
 
