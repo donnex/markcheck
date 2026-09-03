@@ -1237,6 +1237,17 @@ impl AppState {
                 // snapshots no longer apply cleanly.
                 self.undo_stack.clear();
                 self.redo_stack.clear();
+                // And for exactly the same reason, any git-sync request still
+                // waiting to be drained. It carries the precise content a
+                // previous write put on disk, which this reload has just
+                // replaced — `run_sync` would correctly refuse to commit it
+                // ("file changed since this request was queued"), but that
+                // surfaces as a git-sync *error* for a situation where
+                // nothing went wrong. The content it described is gone; the
+                // request describing it should go with it. The new content
+                // deliberately queues nothing of its own: an external edit
+                // markcheck didn't make is not something it commits.
+                self.git_sync.pending = None;
                 let msg = if was_deleted {
                     "File restored — reloaded".to_string()
                 } else {

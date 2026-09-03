@@ -3558,3 +3558,41 @@ fn is_safe_link_only_checks_the_scheme_prefix_not_the_rest_of_the_url() {
     assert!(is_safe_link("http://example.com\n--some-option"));
     assert!(is_safe_link("http://example.com\rSet-Cookie: x"));
 }
+
+#[test]
+fn an_external_reload_drops_a_queued_git_sync_request() {
+    // Deep rounds 2, round 1. A toggle queues a sync carrying the exact
+    // content it just wrote. If an external edit lands and is reloaded
+    // before the main loop drains that request, the queued content is no
+    // longer what is on disk — `run_sync` then correctly refuses it with
+    // "file changed since this request was queued", but the user sees a
+    // git-sync error for a situation where nothing actually went wrong.
+    //
+    // The reload already treats an external edit as a hard boundary for
+    // undo/redo, for the same reason: state captured against the old
+    // revision no longer applies. A queued sync request is exactly that.
+    let path = unique_temp_path();
+    fs::write(&path, "## L\n\n- [ ] alpha\n- [ ] beta\n").unwrap();
+    let document = crate::parser::parse_document(path.clone()).unwrap();
+    let mut state = AppState::new(document);
+
+    state.toggle_current();
+    assert!(
+        state.git_sync.pending.is_some(),
+        "test setup: the toggle must have queued a sync request"
+    );
+
+    // Somebody else rewrites the file, and the watcher picks it up.
+    touch_with_new_mtime(&path, "## L\n\n- [ ] alpha\n- [x] beta\n");
+    assert!(
+        state.reload_if_changed(),
+        "the external edit must be adopted"
+    );
+
+    assert!(
+        state.git_sync.pending.is_none(),
+        "a request describing content that is no longer on disk must not survive the reload"
+    );
+
+    fs::remove_file(&path).ok();
+}
