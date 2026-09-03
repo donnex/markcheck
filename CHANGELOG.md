@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer reports a failure when someone else edits the checklist
+  in the moment between your toggle being saved and its commit being made.
+  The queued commit described content the external edit had already
+  replaced, so it was correctly refused — but shown as a git-sync error for
+  a situation where nothing had gone wrong. The stale request is now
+  discarded quietly when the external change is picked up.
 - Two copies of `markcheck` open on the same checklist can no longer lose a
   toggle. Both could previously check that the file was unchanged and then
   both save, with the second overwriting the first's change. Saving is now
