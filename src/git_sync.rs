@@ -5795,6 +5795,81 @@ mod tests {
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
+    // --- Two concurrent syncs in one repository (deep rounds 2, round 4) ---
+
+    #[test]
+    fn a_second_sync_committing_mid_flight_cannot_revert_the_first() {
+        // The realistic multi-process shape: two markcheck instances open on
+        // *different* checklists in the *same* repository. The write lock
+        // serialises writes per file, and `GitSync` serialises syncs within
+        // one process — neither does anything across processes, so two
+        // `run_sync` calls really can interleave here.
+        //
+        // The danger is that both seed a temp index from the same tip: the
+        // loser's tree then reverts the winner's file. The racer here is a
+        // complete second `run_sync`, not a bare `git commit`, so the whole
+        // pipeline participates.
+        let (work, _remote) = init_repo_with_remote();
+        let a = work.join("a.md");
+        let b = work.join("b.md");
+        fs::write(&a, "- [ ] a\n").unwrap();
+        fs::write(&b, "- [ ] b\n").unwrap();
+        run(&work, &["add", "a.md", "b.md"]);
+        run(&work, &["commit", "-q", "-m", "add both checklists"]);
+        run(&work, &["push", "-q", "origin", "main"]);
+
+        // The other instance finishes its whole sync while ours is mid-commit.
+        let racer_dir = work.clone();
+        let racer_a = a.clone();
+        let _hook = RaceHook::at(RacePoint::BeforeCommit, move || {
+            fs::write(&racer_a, "- [x] a\n").unwrap();
+            let outcome = run_sync(
+                &racer_dir,
+                &racer_a,
+                "- [x] a\n",
+                "a.md: Check \"a\"",
+                &no_race("- [x] a\n"),
+                None,
+            );
+            assert!(
+                matches!(
+                    outcome,
+                    SyncOutcome::Synced | SyncOutcome::CommittedNotPushed { .. }
+                ),
+                "the other instance's sync should land: {outcome:?}"
+            );
+        });
+
+        fs::write(&b, "- [x] b\n").unwrap();
+        let outcome = run_sync(
+            &work,
+            &b,
+            "- [x] b\n",
+            "b.md: Check \"b\"",
+            &no_race("- [x] b\n"),
+            None,
+        );
+
+        // Ours must not succeed on a tree seeded from the superseded tip.
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(_)),
+            "the losing sync must refuse, not commit a reverting tree: {outcome:?}"
+        );
+        // And the winner's work must be intact, both in history and on disk.
+        assert_eq!(
+            git_stdout(&work, &["show", "HEAD:a.md"]),
+            "- [x] a",
+            "the other instance's commit must survive untouched"
+        );
+        assert_eq!(
+            git_stdout(&work, &["log", "--format=%s", "-1", "main"]),
+            "a.md: Check \"a\"",
+            "and must still be the branch tip"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
     // --- Hostile repository shapes (deep rounds 2, round 2) ---
 
     #[test]
