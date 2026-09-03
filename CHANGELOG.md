@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A git-sync commit waiting to be pushed is no longer held up indefinitely
+  by unrelated sync failures. If something else kept failing on every
+  toggle — a refusal to publish unrelated commits, say — each failure reset
+  the waiting push's retry timer, so it never came due. The retry timer is
+  now only reset by the retry itself failing.
 - Git-sync no longer drops a staged version of the checklist. If you had
   `git add`ed the checklist and then edited it further, the automatic commit
   was built from the working tree and the index was repointed at it — so the

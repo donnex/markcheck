@@ -332,6 +332,12 @@ where
                     git_sync::SyncOutcome::Failed(msg) => {
                         state.set_error(format!("Git sync failed: {msg}"))
                     }
+                    // A retry of an already-made commit failed. The commit is
+                    // still safely local and still armed, so say so rather
+                    // than implying the change was lost.
+                    git_sync::SyncOutcome::RetryFailed(msg) => {
+                        state.set_error(format!("Git push retry failed, will retry: {msg}"))
+                    }
                 }
             }
             // Not gated on the outcome above: a retry can come due on a
