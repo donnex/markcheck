@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync can no longer remove a commit it didn't make. When a sync had to
+  be rolled back — because a commit hook changed files beyond the checklist,
+  or because another process committed at exactly the wrong moment — it
+  rewound the branch all the way to where it started, taking any commit that
+  had landed in between with it. It now rewinds only its own commit and
+  leaves everything else on the branch, reporting what it found.
 - Git-sync now tells you when the checklist isn't tracked by git even if
   your git configuration hides that. With `status.showUntrackedFiles = no`,
   or when the checklist matches a `.gitignore` rule, git-sync saw nothing to
