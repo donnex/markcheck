@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync now tells you when the checklist isn't tracked by git even if
+  your git configuration hides that. With `status.showUntrackedFiles = no`,
+  or when the checklist matches a `.gitignore` rule, git-sync saw nothing to
+  do and stayed quiet — so it looked like it was working while it could
+  never commit anything. It now reports `file is not tracked in git` in
+  those cases too.
 - A git-sync commit waiting to be pushed is no longer held up indefinitely
   by unrelated sync failures. If something else kept failing on every
   toggle — a refusal to publish unrelated commits, say — each failure reset

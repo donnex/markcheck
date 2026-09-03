@@ -763,19 +763,33 @@ fn run_sync(
     if status.stdout.starts_with(b"??") {
         return SyncOutcome::SkippedUntracked;
     }
-    if status.stdout.is_empty() {
-        return SyncOutcome::Skipped;
-    }
 
     // The path relative to the repo root (required by the plumbing commands
     // below, several of which don't share `status`/`commit`/`push`'s
     // CWD-relative pathspec handling) plus the file's tracked mode, in one
     // call. Safe to read from the real index now that repo_sync_blocked has
     // already confirmed there's no unmerged (conflicted) entry for it.
+    //
+    // Deliberately resolved **before** the empty-status short-circuit below.
+    // Deep round 2: `git status` is not a reliable untrackedness oracle, and
+    // is silent about an untracked file in two ordinary configurations —
+    // `status.showUntrackedFiles=no`, and the checklist matching a
+    // `.gitignore` rule (both confirmed). Either one produced empty output,
+    // which the short-circuit read as "nothing to do" and reported as
+    // `Skipped` — silently, forever, which is exactly the "git-sync can
+    // never do anything and looks like a bug" case `SkippedUntracked` exists
+    // to surface. The index is the authority on whether a path is tracked,
+    // so trackedness is settled here first and `status` is left to answer
+    // only the question it can: has anything changed.
     let (mode, relpath) = match index_entry(repo_dir, file_path) {
-        Ok(entry) => entry,
+        Ok(Some(entry)) => entry,
+        Ok(None) => return SyncOutcome::SkippedUntracked,
         Err(err) => return SyncOutcome::Failed(err),
     };
+
+    if status.stdout.is_empty() {
+        return SyncOutcome::Skipped;
+    }
 
     // Refuse if the branch already has unpushed history that touches
     // something other than this file, rather than publishing it as a side
@@ -1411,8 +1425,10 @@ fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     if commits_ahead_of_upstream(&repo_root, &head).is_none_or(|ahead| ahead == 0) {
         return SyncOutcome::Skipped;
     }
-    let Ok((_mode, relpath)) = index_entry(repo_dir, file_path) else {
-        return SyncOutcome::SkippedUntracked;
+    let relpath = match index_entry(repo_dir, file_path) {
+        Ok(Some((_mode, relpath))) => relpath,
+        Ok(None) => return SyncOutcome::SkippedUntracked,
+        Err(err) => return SyncOutcome::Failed(err),
     };
     // The same refusal `run_sync` makes: an explicit-SHA push still sends the
     // commit's whole ancestry, so unrelated unpushed work must not ride along.
@@ -1949,7 +1965,7 @@ fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
 /// The file's tracked mode and its path relative to the repo root, read from
 /// the index in one call (`git ls-files --stage --full-name`). Only called
 /// once `status` has already confirmed the path is tracked (not `??`).
-fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), String> {
+fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<Option<(String, String)>, String> {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_dir)
         .args(["ls-files", "--stage", "--full-name", "-z", "--"])
@@ -1968,11 +1984,13 @@ fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), St
     // itself is harmless to `split_once('\t')` since the single separator
     // tab is always the leftmost one (the `<mode> <object> <stage>` prefix
     // before it never itself contains a tab).
-    let record = output
-        .stdout
-        .split(|&b| b == 0)
-        .find(|r| !r.is_empty())
-        .ok_or_else(|| "git ls-files: no index entry for file".to_string())?;
+    // No record at all means the path simply isn't in the index — the file
+    // is untracked. That is a normal answer, not a failure, and the caller
+    // needs it separated from "the lookup itself went wrong": `git status`
+    // cannot be trusted to report untrackedness on its own (see `run_sync`).
+    let Some(record) = output.stdout.split(|&b| b == 0).find(|r| !r.is_empty()) else {
+        return Ok(None);
+    };
     let record = String::from_utf8_lossy(record);
     let (info, path) = record
         .split_once('\t')
@@ -1981,7 +1999,7 @@ fn index_entry(repo_dir: &Path, file_path: &Path) -> Result<(String, String), St
         .split_whitespace()
         .next()
         .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
-    Ok((mode.to_string(), path.to_string()))
+    Ok(Some((mode.to_string(), path.to_string())))
 }
 
 /// `commit`'s committed bytes for `relpath` (repo-root-relative), or `None`
@@ -4468,8 +4486,29 @@ mod tests {
     fn index_entry_reports_failure_outside_a_git_repo() {
         let dir = unique_dir("not-a-repo-index-entry");
         fs::create_dir_all(&dir).unwrap();
+        // Outside a repository `ls-files` itself fails, which is a genuine
+        // error — distinct from the `Ok(None)` that means "this repo simply
+        // has no index entry for that path".
         assert!(index_entry(&dir, &dir.join("nope.md")).is_err());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn index_entry_reports_an_absent_path_as_untracked_not_an_error() {
+        // The other half of the three-way result: inside a healthy repo, a
+        // path with no index entry is untracked. `run_sync` depends on that
+        // distinction, since `git status` cannot be trusted to report
+        // untrackedness on its own.
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("untracked.md"), "- [ ] new\n").unwrap();
+
+        assert_eq!(index_entry(&work, &work.join("untracked.md")), Ok(None));
+        assert!(matches!(
+            index_entry(&work, &work.join("tracked.md")),
+            Ok(Some(_))
+        ));
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     #[test]
@@ -5284,6 +5323,56 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_untracked_checklist_is_reported_even_when_git_status_stays_silent() {
+        // Deep round 2. `git status --porcelain -- <file>` prints nothing for
+        // an untracked file in two ordinary configurations, so the
+        // empty-output short-circuit reported `Skipped` and git-sync sat
+        // silent forever — the exact "looks like a bug" case
+        // `SkippedUntracked` was introduced to surface. Both confirmed
+        // against real git before this test was written.
+        for (label, configure) in [
+            (
+                "status.showUntrackedFiles=no",
+                &["config", "status.showUntrackedFiles", "no"][..],
+            ),
+            (
+                "gitignored",
+                &["config", "core.excludesFile", ".ignore"][..],
+            ),
+        ] {
+            let (work, _remote) = init_repo_with_remote();
+            run(&work, configure);
+            if label == "gitignored" {
+                fs::write(work.join(".ignore"), "untracked.md\n").unwrap();
+            }
+            let untracked = work.join("untracked.md");
+            fs::write(&untracked, "- [ ] new\n").unwrap();
+
+            // Precondition: status really is silent about it here.
+            assert_eq!(
+                git_stdout(&work, &["status", "--porcelain", "--", "untracked.md"]),
+                "",
+                "{label}: test setup expects git status to say nothing"
+            );
+
+            assert_eq!(
+                run_sync(
+                    &work,
+                    &untracked,
+                    "- [ ] new\n",
+                    "should not commit",
+                    &no_race("- [ ] new\n"),
+                    None,
+                ),
+                SyncOutcome::SkippedUntracked,
+                "{label}: an untracked checklist must still be reported"
+            );
+
+            fs::remove_dir_all(work.parent().unwrap()).ok();
+        }
     }
 
     // --- Captured-tip invariant (round 10) ---
