@@ -173,19 +173,29 @@ fn wait_with_timeout(
         let _ = stderr_pipe.read_to_end(&mut buf);
         let _ = stderr_tx.send(buf);
     });
-    // Bounded wait for both reader threads, re-killing the process group
-    // if a lingering descendant is still holding a pipe open past the
-    // grace period — `child` may already be reaped at this point, but the
-    // group kill still reaches the descendant regardless.
-    let drain = |child: &mut Child| -> (Vec<u8>, Vec<u8>) {
-        let stdout = match stdout_rx.recv_timeout(PIPE_DRAIN_GRACE) {
-            Ok(buf) => buf,
-            Err(_) => {
-                kill_and_reap(child);
-                stdout_rx.recv_timeout(PIPE_DRAIN_GRACE).unwrap_or_default()
-            }
-        };
-        let stderr = stderr_rx.recv_timeout(PIPE_DRAIN_GRACE).unwrap_or_default();
+    // Bounded wait for both reader threads. Deliberately does **not** kill
+    // the process group to force an EOF, which is what it used to do. Deep
+    // round 2: by the time this runs the child has always been reaped —
+    // `try_wait` reaps it on the success path, `kill_and_reap` on the
+    // timeout path — so its PID is no longer ours and the OS is free to
+    // recycle it. `kill -KILL -- -<pid>` on a recycled PID signals an
+    // unrelated process group, which is a far worse outcome than the
+    // truncated output it was trying to avoid. Nothing is lost on the
+    // timeout path (the group was killed moments earlier anyway); on the
+    // success path a descendant still holding the pipe now means we return
+    // whatever arrived within the grace, rather than SIGKILLing something we
+    // no longer own. The reader threads are detached and exit on their own
+    // once the descendant finally closes the pipe.
+    // `PIPE_DRAIN_GRACE` is the budget for draining *both* pipes, not each
+    // of them: waiting the full grace on stdout and then again on stderr
+    // would double the bound, which is what the round-8 regression test
+    // caught the moment the group kill above stopped cutting the first wait
+    // short.
+    let drain = || -> (Vec<u8>, Vec<u8>) {
+        let deadline = Instant::now() + PIPE_DRAIN_GRACE;
+        let left = || deadline.saturating_duration_since(Instant::now());
+        let stdout = stdout_rx.recv_timeout(left()).unwrap_or_default();
+        let stderr = stderr_rx.recv_timeout(left()).unwrap_or_default();
         (stdout, stderr)
     };
 
@@ -199,7 +209,7 @@ fn wait_with_timeout(
             if let Some(t) = stdin_thread {
                 let _ = t.join();
             }
-            drain(&mut child);
+            drain();
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("git command timed out after {timeout:?}"),
@@ -210,7 +220,7 @@ fn wait_with_timeout(
     if let Some(t) = stdin_thread {
         let _ = t.join();
     }
-    let (stdout, stderr) = drain(&mut child);
+    let (stdout, stderr) = drain();
     Ok(Output {
         status,
         stdout,
@@ -5195,6 +5205,47 @@ mod tests {
             "must not block on a descendant that outlives the direct child: {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn a_successful_command_does_not_kill_a_descendant_it_no_longer_owns() {
+        // Deep round 2. The pipe drain used to kill the process group when a
+        // reader hadn't finished within the grace period. But by then the
+        // child has always been reaped — `try_wait` on success — so its PID
+        // is no longer ours and the OS may have recycled it; the group kill
+        // could land on an unrelated process group. It also killed a
+        // descendant of a command that had *succeeded*, which markcheck has
+        // no business doing.
+        //
+        // `sleep 3` outlives PIPE_DRAIN_GRACE (2s) while holding the
+        // inherited stdout, so it is exactly the case that used to trigger
+        // the kill; the marker proves it ran to completion instead.
+        let dir = unique_dir("descendant-survives");
+        fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("descendant-finished");
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(format!(
+            "(sleep 3; touch {}) & exit 0",
+            marker.to_str().unwrap()
+        ));
+
+        let started = Instant::now();
+        let result = run_with_timeout(cmd, Duration::from_millis(150));
+        assert!(result.is_ok(), "the direct child exited successfully");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "must stay bounded: {:?}",
+            started.elapsed()
+        );
+
+        // Give the descendant time to finish on its own.
+        std::thread::sleep(Duration::from_secs(4).saturating_sub(started.elapsed()));
+        assert!(
+            marker.exists(),
+            "a descendant of a successful command must not be killed"
+        );
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     // --- Captured-tip invariant (round 10) ---
