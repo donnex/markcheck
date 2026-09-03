@@ -72,9 +72,7 @@ impl WriteLock {
     /// without manipulating file timestamps — the same shape as
     /// `retry_push_if_due(now)` and `commit_temp_index(timeout)`.
     pub(crate) fn acquire(target: &Path, stale_after: Duration) -> LockOutcome {
-        let Some(path) = lock_path(target) else {
-            return LockOutcome::Unavailable;
-        };
+        let path = lock_path(target);
         match Self::try_create(&path) {
             Ok(lock) => LockOutcome::Acquired(lock),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
@@ -118,10 +116,10 @@ impl Drop for WriteLock {
 /// Where `target`'s lock lives: one file per checklist, named by the digest
 /// of its path so two different checklists never share a lock and the name
 /// can't collide with anything the user owns.
-fn lock_path(target: &Path) -> Option<PathBuf> {
+fn lock_path(target: &Path) -> PathBuf {
     let digest = crate::model::hash_bytes(target.as_os_str().as_encoded_bytes());
     let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    Some(std::env::temp_dir().join(format!("markcheck-write-lock-{name}")))
+    std::env::temp_dir().join(format!("markcheck-write-lock-{name}"))
 }
 
 /// Whether the lock at `path` is old enough to be considered abandoned. A
@@ -393,7 +391,7 @@ mod tests {
     #[test]
     fn the_lock_file_is_removed_when_the_guard_drops() {
         let path = write_temp_file(EXAMPLE);
-        let lock_file = lock_path(&path).unwrap();
+        let lock_file = lock_path(&path);
 
         {
             let _held = WriteLock::acquire(&path, STALE_LOCK_AFTER);
@@ -422,7 +420,7 @@ mod tests {
             "a lock past the staleness threshold must be taken over"
         );
 
-        let _ = fs::remove_file(lock_path(&path).unwrap());
+        let _ = fs::remove_file(lock_path(&path));
         fs::remove_file(&path).ok();
     }
 
