@@ -753,6 +753,55 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// The `examples/` files double as manual-test fixtures and as the
+    /// user-facing demonstration of every supported piece of Markdown, so a
+    /// change that stops one of them parsing is a real regression. The
+    /// periodic documentation review asks for exactly this confirmation, and
+    /// it was a manual step until this test existed.
+    ///
+    /// Round-tripping is the strong half: `write_back` reassembles the file
+    /// from `raw_lines` by plain concatenation, so parsing an example and
+    /// reassembling it must reproduce the original bytes exactly. Anything
+    /// else means a toggle would silently rewrite unrelated parts of a real
+    /// user's checklist.
+    #[test]
+    fn every_example_file_parses_and_round_trips_byte_for_byte() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let mut checked = 0;
+        for entry in fs::read_dir(&dir).expect("examples/ must exist") {
+            let path = entry.expect("readable entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            // README.md indexes the examples; it isn't a checklist itself.
+            if path.file_name().and_then(|n| n.to_str()) == Some("README.md") {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).expect("readable example");
+            let document = parse_document(path.clone())
+                .unwrap_or_else(|err| panic!("{} must parse: {err}", path.display()));
+            assert_eq!(
+                crate::writer::document_contents(&document),
+                raw,
+                "{} must round-trip byte for byte",
+                path.display()
+            );
+            assert!(
+                !document.lists.is_empty(),
+                "{} must yield at least one list, or it demonstrates nothing",
+                path.display()
+            );
+            checked += 1;
+        }
+        // Without this the whole test passes vacuously if `examples/` is
+        // renamed or emptied — the defect class this suite has already been
+        // bitten by (DESIGN.md, "Recurring defect classes", 11).
+        assert!(
+            checked >= 5,
+            "expected the full set of example checklists, walked {checked}"
+        );
+    }
+
     const EXAMPLE: &str = "\
 ## Prepare workspace
 
