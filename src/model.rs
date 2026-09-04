@@ -913,6 +913,24 @@ pub struct PendingSync {
     /// (`core.autocrlf`, a `.gitattributes` `text` setting) applies to both
     /// sides. A digest could only ever be compared against the raw staged
     /// bytes, which under such a filter never match.
+    ///
+    /// It is a second full copy of the checklist, and that was weighed
+    /// rather than overlooked — external review of `8a405dd` raised it. The
+    /// document is already held as `raw_lines: Vec<String>`, whose per-line
+    /// `String` headers make it larger than the flat text, and `content`
+    /// beside this is a full copy too, so this takes the retained content
+    /// from two copies to three rather than doubling the process. A
+    /// `PendingSync` also lives only between a write and the sync draining
+    /// it, not for the session.
+    ///
+    /// The alternative — capturing the git blob SHA at write time and
+    /// keeping only that — needs `hash-object --path` run against the
+    /// repository, which means `app.rs` reaching into git during
+    /// `commit_write`, at exactly the moment it is holding the write lock.
+    /// That trades a copy of a checklist-sized string for a subprocess
+    /// inside the critical section, and risks reintroducing the correctness
+    /// bug this field exists to fix. Not worth it at the sizes this
+    /// application is for.
     pub previous_content: Option<String>,
     pub description: String,
 }
