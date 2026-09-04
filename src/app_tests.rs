@@ -3699,3 +3699,39 @@ fn an_external_reload_disarms_a_pending_input_chord() {
 
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn a_change_between_parse_and_construction_is_not_recorded_as_already_seen() {
+    // Deep rounds 3, round 5. The fingerprint now comes from the document,
+    // but `mtime`/`size` are still taken by a stat *after* the caller has
+    // read and parsed the file. If the file changed in between, that stat
+    // describes content the document is not — and since `reload_if_changed`
+    // short-circuits on mtime+size, the external change then looks *already
+    // seen* and is never loaded. The stale content sits in the UI until
+    // something else touches the file.
+    //
+    // The reload path doesn't have this: its stat is taken before the read,
+    // which errs the safe way (a change during the read is noticed next
+    // tick). Only construction stats afterwards.
+    let path = unique_temp_path();
+    fs::write(&path, "## L\n\n- [ ] alpha\n").unwrap();
+    let document = crate::parser::parse_document(path.clone()).unwrap();
+
+    // The file grows before the state records what it saw.
+    let newer = "## L\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n";
+    fs::write(&path, newer).unwrap();
+
+    let mut state = AppState::new(document);
+
+    assert!(
+        state.reload_if_changed(),
+        "a change that landed before construction must still be picked up"
+    );
+    assert_eq!(
+        state.current_list().items.len(),
+        3,
+        "and the newer content must actually be loaded"
+    );
+
+    fs::remove_file(&path).ok();
+}

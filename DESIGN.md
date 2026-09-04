@@ -390,6 +390,76 @@ pub fn reload_if_changed(&mut self) {
 
 ---
 
+## Recurring defect classes
+
+Every deep review of this project has found new bugs, and by round three of
+the third pass a pattern was unmistakable: the same *shapes* keep coming
+back, usually in code written to fix an earlier instance of the same shape.
+This list is the audit trail turned into a checklist, so a future review
+starts from what has already bitten us instead of rediscovering it. Each
+entry names the shape, what it cost, and what to grep for.
+
+1. **Symbolic identity re-derived instead of captured.** Asking git the same
+   question twice — `HEAD` for a check and `HEAD` again for the action — is
+   asking about two different commits. Cost: the fast path and the startup
+   catch-up published commits they had never validated. Cure: resolve once,
+   name that SHA everywhere. *Look for:* the same query issued twice, a
+   literal `"HEAD"` anywhere but a capture.
+
+2. **Two reads of one file assumed to describe each other.** The same shape
+   for the filesystem. Cost: the content fingerprint described a revision
+   the in-memory document wasn't, so the next write silently overwrote a
+   newer edit; and a stat taken after a parse made an external change look
+   already seen. Cure: derive from the bytes you already have
+   (`Document.raw_lines` concatenates to its own source), or cross-check.
+
+3. **Failure collapsed into a verdict.** `unwrap_or`, `.ok()`, and an
+   ambiguous `None` turn "couldn't tell" into "fine". Cost: an unanswerable
+   history check read as "nothing unrelated here" and published; an empty
+   `rev-list` read as a root commit, whose undo path *deletes the branch*.
+   Cure: three states, not two — and pick the fail direction per caller,
+   since refusing is the consequential action for some and pushing is for
+   others. *Look for:* every `unwrap_or`/`.ok()` on a fallible git call.
+
+4. **One question answered from two sources.** Cost: `push` read the
+   *config* for "is there an upstream?" while the guard resolved `@{u}`;
+   when they disagreed the guard stood down and the push published unrelated
+   work. Cure: one authority per question.
+
+5. **Acting on something no longer yours.** Cost: a group kill aimed at a
+   reaped (possibly recycled) PID; a rollback that rewound commits markcheck
+   never made; a lock guard deleting another instance's lock; a realignment
+   overwriting a version the user had staged. Cure: check ownership
+   immediately before the destructive step, and prefer leaving a mess you
+   can report over destroying something you can't restore.
+
+6. **Unbounded waits.** Cost: `join()` on a pipe thread that a lingering
+   descendant kept alive forever, defeating the timeout on every subprocess.
+   Cure: bound every wait, and spend one budget across a teardown rather
+   than one per step. *Look for:* `join()`, `recv()`, `read_to_end`.
+
+7. **Superseded state left live.** Cost: a stale retry timestamp firing
+   every frame; a queued sync request describing content that no longer
+   existed; an armed input chord pointed at a card the user never chose.
+   Cure: whatever a reload invalidates, clear it in the same place.
+
+8. **Ambient environment trusted.** Cost: an inherited `GIT_DIR` made
+   git-sync read one repository and commit into another. Cure: neutralise
+   what redirects the target; leave what is the user's to set.
+
+9. **Tools asked questions they cannot answer.** Cost: `git status` was the
+   untracked oracle, and it says nothing at all for a gitignored file or
+   under `status.showUntrackedFiles=no` — so git-sync sat silent forever.
+   Cure: ask the component that actually knows (here, the index).
+
+10. **Superseded prose left in present tense.** Not a runtime bug, but the
+    same failure mode in documentation, and it caused real confusion: this
+    document described a bare `git push` for several rounds after the code
+    had stopped doing that. Cure: when behaviour changes, rewrite the
+    paragraph that described it rather than appending a newer one below.
+
+---
+
 ## Git Sync (`src/git_sync.rs`)
 
 Auto-commits and pushes the checklist file after a write-back, when it lives in a git repo — so a list stays in sync across hosts that already share it via git. Off by default; activated per-file by `--git-sync` (forces it for this invocation) or a `git_sync_paths` prefix list in the config file (below). "After a write-back," not "after every one": requests that arrive while a sync is already running coalesce into a single commit rather than one apiece — see "Background thread, not the UI thread" below.
