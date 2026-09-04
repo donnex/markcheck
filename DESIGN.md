@@ -458,6 +458,38 @@ entry names the shape, what it cost, and what to grep for.
     had stopped doing that. Cure: when behaviour changes, rewrite the
     paragraph that described it rather than appending a newer one below.
 
+11. **A test that pins an outcome but not its cause.** Cost: both
+    `undo_commit` compare-and-swap tests asserted only `result.is_err()`
+    alongside an unchanged `HEAD`. That pair is satisfied by *any* failure,
+    so an `undo_commit` gutted to return `Err` unconditionally passed both —
+    they proved the branch was intact without proving the CAS is what kept it
+    intact. Cure: assert on the reason (here, that the message came from
+    `update-ref`), not just the outcome. See "Verifying the guards" below for
+    how these were found.
+
+### Verifying the guards
+
+The safety guards in `git_sync.rs` and `writer.rs` are the code most likely
+to rot silently: they only run on paths that normal use never reaches, so a
+guard that stopped working would not show up in ordinary testing. Class 11
+above is what that rot looks like from the test side.
+
+The check is mutation testing, and it needs no tooling beyond a script that
+edits one function, runs `cargo test`, and restores the file. Disable a guard
+so it permits everything — `verify_commit_scope` returning `Ok(())`,
+`unpushed_history_blocks` returning `None`, `git_command` skipping its
+`env_remove` loop, `owner_is_gone` returning `true` — and the suite *must*
+fail. A mutant that survives is a guard nothing actually pins, which is the
+same as not having the guard at all.
+
+Ten such mutations were run in the fourth pass, covering every git-sync guard
+and every `WriteLock` invariant, including subtle ones that model real
+regressions rather than wholesale deletion (reverting `parse_first_parent` to
+the ambiguity that let an unreadable listing read as a root commit and delete
+the branch). All ten were caught, by 2–8 tests each. Re-run this after
+changing a guard, and prefer it to a coverage number: coverage proves a line
+executed, a surviving mutant proves nothing was checking what it did.
+
 ---
 
 ## Git Sync (`src/git_sync.rs`)
