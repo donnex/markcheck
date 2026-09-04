@@ -3652,3 +3652,50 @@ fn the_fingerprint_describes_the_loaded_document_not_a_later_read() {
 
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn an_external_reload_disarms_a_pending_input_chord() {
+    // Deep rounds 3, round 4. `clear_pending_chords` exists because a mouse
+    // click between the two halves of a chord left it armed against
+    // whatever the click had just selected. A reload does the same thing by
+    // a different route: `remap_position` can move the cursor, so a digit
+    // pressed after `o` would open a link belonging to a card the user was
+    // never looking at.
+    let path = unique_temp_path();
+    fs::write(
+        &path,
+        "## L\n\n- [ ] see [a](https://example.com/a) and [b](https://example.com/b)\n- [ ] beta\n",
+    )
+    .unwrap();
+    let document = crate::parser::parse_document(path.clone()).unwrap();
+    let mut state = AppState::new(document);
+
+    // `o` on a multi-link card arms the digit prompt.
+    state.handle_key(KeyCode::Char('o'));
+    assert!(
+        state.pending_open_link,
+        "test setup: the digit prompt must be armed"
+    );
+
+    // The file changes underneath and the reload is adopted.
+    touch_with_new_mtime(
+        &path,
+        "## L\n\n- [ ] plain first task\n- [ ] see [c](https://example.com/c)\n",
+    );
+    assert!(state.reload_if_changed(), "the reload must be adopted");
+
+    assert!(
+        !state.pending_open_link,
+        "a reload must disarm the chord rather than leave it pointed at new content"
+    );
+    assert!(!state.pending_g, "and the same for a pending gg");
+
+    // The consequence: the digit is no longer read as a link choice.
+    state.handle_key(KeyCode::Char('2'));
+    assert!(
+        state.take_link_open_request().is_none(),
+        "the digit must not open a link on a card the user never chose from"
+    );
+
+    fs::remove_file(&path).ok();
+}

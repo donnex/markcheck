@@ -1258,6 +1258,17 @@ impl AppState {
                 // deliberately queues nothing of its own: an external edit
                 // markcheck didn't make is not something it commits.
                 self.git_sync.pending = None;
+                // Any half-finished input chord goes too. `remap_position`
+                // above can move the cursor to a different card, and an
+                // armed `o` prompt or pending `gg` would then act against
+                // content the user never chose it for — the same hazard
+                // `clear_pending_chords` exists to prevent when a mouse
+                // click lands between the two halves, arriving here by a
+                // different route. The numbered link list the user was
+                // reading is gone; the digit they type next must not be
+                // read as a choice from it.
+                self.pending_g = false;
+                self.pending_open_link = false;
                 let msg = if was_deleted {
                     "File restored — reloaded".to_string()
                 } else {
