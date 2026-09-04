@@ -2860,7 +2860,17 @@ mod tests {
         let concurrent_commit = current_head(&work).unwrap();
 
         let result = undo_commit(&work, &created_commit);
-        assert!(result.is_err(), "{result:?}");
+        // Naming the *reason*, not just `is_err`: a bare `is_err` is satisfied
+        // by any failure at all, so it still passes against an `undo_commit`
+        // that never reaches the compare-and-swap — verified by mutation, an
+        // unconditional `Err` at the top of the function passes a bare
+        // `is_err` here. Requiring the message to come from `update-ref` pins
+        // that the CAS ran and that *it* is what refused.
+        let message = result.expect_err("the undo must refuse");
+        assert!(
+            message.contains("update-ref"),
+            "must fail at the compare-and-swap, not before reaching it: {message}"
+        );
         assert_eq!(
             current_head(&work),
             Some(concurrent_commit),
@@ -2893,7 +2903,13 @@ mod tests {
         let concurrent_commit = current_head(&work).unwrap();
 
         let result = undo_commit(&work, &created_commit);
-        assert!(result.is_err(), "{result:?}");
+        // Same reasoning as the test above: pin that the refusal came from the
+        // compare-and-swap rather than from anything earlier.
+        let message = result.expect_err("the undo must refuse");
+        assert!(
+            message.contains("update-ref"),
+            "must fail at the compare-and-swap, not before reaching it: {message}"
+        );
         assert_eq!(
             current_head(&work),
             Some(concurrent_commit),
