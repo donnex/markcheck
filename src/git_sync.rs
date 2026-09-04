@@ -1977,13 +1977,12 @@ fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
         return Err(command_error("git rev-list", &output));
     }
     let listing = String::from_utf8_lossy(&output.stdout);
-    let first_parent = listing
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .split_whitespace()
-        .nth(1)
-        .map(str::to_string);
+    let first_parent = parse_first_parent(&listing).ok_or_else(|| {
+        format!(
+            "git-sync: could not read commit {created_commit}'s parents; \
+             refusing to rewind the branch"
+        )
+    })?;
 
     let mut cmd = git_command(repo_root);
     match &first_parent {
@@ -2004,6 +2003,30 @@ fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
         Ok(output) => Err(command_error("git update-ref", &output)),
         Err(err) => Err(format!("git update-ref failed: {err}")),
     }
+}
+
+/// The first parent in a `git rev-list --parents -n 1 <commit>` listing:
+/// `Some(None)` for a root commit, `Some(Some(sha))` otherwise, and `None`
+/// when the output says nothing at all.
+///
+/// That last distinction is the whole point, and its absence was a real
+/// defect. `undo_commit` used `.lines().next().unwrap_or_default()`, so an
+/// **empty** listing produced no parent — indistinguishable from a genuine
+/// root commit, whose undo path *deletes the branch ref* rather than moving
+/// it back one commit. Deep rounds 3, round 1: this is the same ambiguous
+/// `None` that `resolve_parent` exists to eliminate for `current_head`,
+/// recurring here.
+///
+/// It is reachable, not theoretical: the pipe drain returns empty output
+/// when a lingering descendant holds a pipe past `PIPE_DRAIN_GRACE`, while
+/// the command's own exit status is still success — so an unreadable
+/// listing could delete the branch. Refusing to rewind is the safe answer;
+/// the commit stays and the next sync reports on it.
+fn parse_first_parent(listing: &str) -> Option<Option<String>> {
+    let mut fields = listing.split_whitespace();
+    // The commit itself is always the first field when there is any output.
+    fields.next()?;
+    Some(fields.next().map(str::to_string))
 }
 
 /// The branch `HEAD` symbolically points at (e.g. `refs/heads/main`),
@@ -5865,6 +5888,58 @@ mod tests {
             git_stdout(&work, &["log", "--format=%s", "-1", "main"]),
             "a.md: Check \"a\"",
             "and must still be the branch tip"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn parse_first_parent_tells_a_root_commit_from_unreadable_output() {
+        // Deep rounds 3, round 1. `undo_commit` collapsed both into "no
+        // parent", and its no-parent path *deletes the branch ref* rather
+        // than moving it back one commit. An empty listing is reachable: the
+        // pipe drain returns empty output when a descendant holds a pipe
+        // past PIPE_DRAIN_GRACE, while the command's exit status is still
+        // success — so an unreadable listing could have deleted the branch.
+        assert_eq!(
+            parse_first_parent(""),
+            None,
+            "no output at all must not read as a root commit"
+        );
+        assert_eq!(parse_first_parent("   \n"), None, "nor whitespace only");
+        assert_eq!(
+            parse_first_parent("abc123\n"),
+            Some(None),
+            "a lone commit really is a root commit"
+        );
+        assert_eq!(
+            parse_first_parent("abc123 def456\n"),
+            Some(Some("def456".to_string()))
+        );
+        assert_eq!(
+            parse_first_parent("abc123 def456 789abc\n"),
+            Some(Some("def456".to_string())),
+            "a merge's *first* parent is the one to rewind to"
+        );
+    }
+
+    #[test]
+    fn undo_commit_rewinds_one_commit_and_keeps_the_branch() {
+        // The ordinary case the guard above must not disturb: a commit with
+        // a parent moves the branch back exactly one commit, and the branch
+        // itself survives.
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "to be undone"]);
+        let created = current_head(&work).unwrap();
+
+        undo_commit(&work, &created).expect("undo should succeed");
+
+        assert_eq!(current_head(&work).as_deref(), Some(parent.as_str()));
+        assert!(
+            current_branch_ref(&work).is_some(),
+            "the branch ref must still exist, not be deleted"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
