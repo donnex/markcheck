@@ -1,7 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::process::{Command, Stdio};
 
 use crate::model::{Document, ItemKind, TaskState};
 
@@ -20,17 +20,14 @@ pub(crate) fn random_suffix() -> u64 {
     RandomState::new().build_hasher().finish()
 }
 
-/// How long a lock file may sit before it is treated as abandoned. The
-/// guarded region is a hash check plus an atomic rename — milliseconds — so
-/// anything this old belongs to a process that died holding it.
-pub(crate) const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
-
 /// What `WriteLock::acquire` managed to do.
 pub(crate) enum LockOutcome {
     /// Held until the returned guard drops.
     Acquired(WriteLock),
-    /// Another markcheck instance is inside its own check-and-write.
-    Busy,
+    /// Another markcheck instance is inside its own check-and-write. Carries
+    /// the lock's path so the message can name it: recovery is manual in the
+    /// one case this refuses forever (see `acquire`).
+    Busy(PathBuf),
     /// The lock itself is unusable here (no writable temp directory, say).
     /// The caller proceeds **unlocked**: this is a safety net over an
     /// already-existing content check, not a gate that may deny writes.
@@ -56,21 +53,23 @@ pub(crate) enum LockOutcome {
 /// machines writing one file over a network share are not covered, and were
 /// not covered before either.
 ///
-/// Stale locks are taken over rather than honoured forever, or a crash while
-/// holding one would wedge every future write. Taking over means removing
-/// then re-creating, which is **not** atomic — deep rounds 2, round 4
-/// corrected an earlier claim here that it was. If two instances both judge
-/// a lock stale, one can `remove_file` the other's freshly created lock and
-/// create its own on top, leaving both believing they hold it.
+/// **Recovery is by proven death, never by elapsed time.** External review
+/// of `d885c88`: the previous version treated a lock older than 30 seconds
+/// as abandoned, which meant a *live* holder could be displaced simply for
+/// being slow — a stalled `sync_all`, a FUSE or network filesystem, storage
+/// under recovery. Both instances then entered the critical section and the
+/// second write silently won, which is precisely the loss this lock exists
+/// to prevent; the unique token stopped one from deleting the other's file
+/// but never stopped both from writing. Age is no longer consulted at all.
+/// A lock is only recovered when its recorded owner is *demonstrably* gone,
+/// and anything else — owner alive, owner unknowable, file unreadable —
+/// refuses. That fails closed in the one direction that matters.
 ///
-/// That is narrowed rather than eliminated, because delete-then-create
-/// cannot be made atomic: each guard writes a unique token and only ever
-/// removes a lock file still containing *its own*, and the takeover path
-/// reads back what it wrote before trusting it. So the damaging half — one
-/// instance deleting a lock another currently holds, or clearing it on drop
-/// — cannot happen, and the residual is a brief window in which two
-/// takeovers of the *same abandoned* lock can both succeed. This is an
-/// advisory lock layered over an existing content check, not a mutex.
+/// The cost is the honest one: if the owning process died and its PID was
+/// recycled by an unrelated live process, the lock is honoured forever and
+/// saving stays blocked. The refusal names the file so it can be removed by
+/// hand. That is strictly better than the alternative it replaces, where the
+/// same uncertainty silently permitted two writers.
 pub(crate) struct WriteLock {
     path: PathBuf,
     /// Unique per guard, written into the lock file. Ownership is checked
@@ -79,30 +78,30 @@ pub(crate) struct WriteLock {
 }
 
 impl WriteLock {
-    /// Acquires the lock for `target`, treating an existing lock older than
-    /// `stale_after` as abandoned. The threshold is a parameter rather than
-    /// a constant read internally so tests can force the takeover path
-    /// without manipulating file timestamps — the same shape as
-    /// `retry_push_if_due(now)` and `commit_temp_index(timeout)`.
-    pub(crate) fn acquire(target: &Path, stale_after: Duration) -> LockOutcome {
+    /// Acquires the lock for `target`. An existing lock is honoured unless
+    /// its owner can be *shown* to be gone — see the type's doc comment for
+    /// why elapsed time is no longer part of that decision.
+    pub(crate) fn acquire(target: &Path) -> LockOutcome {
         let path = lock_path(target);
         match Self::try_create(&path) {
             Ok(lock) => LockOutcome::Acquired(lock),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                if !is_stale(&path, stale_after) {
-                    return LockOutcome::Busy;
+                if !owner_is_gone(&path) {
+                    return LockOutcome::Busy(path);
                 }
-                // Abandoned: clear it and make exactly one attempt to take
-                // over. A loser of that race sees `AlreadyExists` again and
-                // reports `Busy`, which is the correct answer for it.
+                // The owner is gone. Clear it and make exactly one attempt to
+                // take over; a loser of that race sees `AlreadyExists` again
+                // and reports `Busy`, which is the correct answer for it.
                 let _ = fs::remove_file(&path);
                 match Self::try_create(&path) {
-                    // Read back before trusting it: another instance racing
-                    // the same takeover may have removed this one and
-                    // written its own between the create and now.
+                    // Read back before trusting it: another instance
+                    // recovering the same dead owner may have removed this
+                    // one and written its own between the create and now.
                     Ok(lock) if lock.still_ours() => LockOutcome::Acquired(lock),
-                    Ok(_) => LockOutcome::Busy,
-                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => LockOutcome::Busy,
+                    Ok(_) => LockOutcome::Busy(path),
+                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                        LockOutcome::Busy(path)
+                    }
                     Err(_) => LockOutcome::Unavailable,
                 }
             }
@@ -151,15 +150,37 @@ fn lock_path(target: &Path) -> PathBuf {
     std::env::temp_dir().join(format!("markcheck-write-lock-{name}"))
 }
 
-/// Whether the lock at `path` is old enough to be considered abandoned. A
-/// lock whose age can't be determined is treated as **live**, so an
-/// unreadable timestamp never licenses stealing a lock somebody holds.
-fn is_stale(path: &Path, stale_after: Duration) -> bool {
-    fs::metadata(path)
-        .and_then(|meta| meta.modified())
+/// Whether the process that wrote the lock at `path` is **demonstrably** no
+/// longer running. Anything short of proof — an unreadable or unparseable
+/// lock, a liveness check that cannot be run — answers `false`, so the lock
+/// is honoured. Only a definite "that process does not exist" recovers it.
+///
+/// `ps -p <pid>` rather than `kill -0`: `kill` cannot distinguish "no such
+/// process" from "not permitted to signal it", so a lock held by another
+/// user's markcheck would look dead and be stolen. `ps` answers regardless
+/// of ownership, and exists on both platforms this project supports.
+fn owner_is_gone(path: &Path) -> bool {
+    let Some(pid) = fs::read_to_string(path)
         .ok()
-        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .is_some_and(|age| age >= stale_after)
+        .and_then(|token| token.split_whitespace().nth(1).map(str::to_string))
+    else {
+        return false;
+    };
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    match Command::new("ps")
+        .args(["-p", &pid, "-o", "pid="])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        // A clean non-zero exit is `ps` reporting no such process.
+        Ok(status) => !status.success(),
+        // `ps` could not be run, so nothing was demonstrated.
+        Err(_) => false,
+    }
 }
 
 /// Replaces the task checkbox on the line with `target`, leaving everything
@@ -389,31 +410,100 @@ mod tests {
         path
     }
 
-    // --- Advisory write lock (deep round 4) ---
+    // --- Advisory write lock ---
+
+    /// Writes a lock file by hand claiming to be held by `pid`.
+    fn plant_lock(target: &Path, pid: u32) -> PathBuf {
+        let path = lock_path(target);
+        fs::write(&path, format!("markcheck {pid} deadbeef")).unwrap();
+        path
+    }
+
+    /// A PID that has certainly exited: spawned, waited for, and reaped.
+    fn a_dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
 
     #[test]
     fn a_second_acquire_is_busy_until_the_first_guard_drops() {
         let path = write_temp_file(EXAMPLE);
 
-        let first = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+        let first = WriteLock::acquire(&path);
         assert!(matches!(first, LockOutcome::Acquired(_)));
         assert!(
-            matches!(
-                WriteLock::acquire(&path, STALE_LOCK_AFTER),
-                LockOutcome::Busy
-            ),
+            matches!(WriteLock::acquire(&path), LockOutcome::Busy(_)),
             "a second instance must not get in while the first holds it"
         );
 
         drop(first);
         assert!(
-            matches!(
-                WriteLock::acquire(&path, STALE_LOCK_AFTER),
-                LockOutcome::Acquired(_)
-            ),
+            matches!(WriteLock::acquire(&path), LockOutcome::Acquired(_)),
             "releasing the guard must free the lock"
         );
 
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_live_owner_is_never_displaced_however_long_it_holds_the_lock() {
+        // External review of `d885c88`. Recovery used to be a pure age test,
+        // so a *live* holder could be displaced simply for being slow — a
+        // stalled `sync_all`, a FUSE or network filesystem, storage under
+        // recovery. Both instances then entered the critical section and the
+        // second write silently won, which is exactly the loss this lock
+        // exists to prevent. The unique token stopped one from deleting the
+        // other's file; it never stopped both from writing.
+        //
+        // Our own PID is the one process guaranteed to be alive here. No
+        // sleeping is needed to make the point any more, which is itself the
+        // fix: elapsed time is no longer part of the decision.
+        let path = write_temp_file(EXAMPLE);
+        let lock_file = plant_lock(&path, std::process::id());
+
+        assert!(
+            matches!(WriteLock::acquire(&path), LockOutcome::Busy(_)),
+            "a lock whose owner is alive must be honoured regardless of its age"
+        );
+        assert!(lock_file.exists(), "and must not have been taken over");
+
+        let _ = fs::remove_file(&lock_file);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_lock_whose_owner_has_died_is_recovered() {
+        // The other half: a crash while holding the lock must not wedge every
+        // future write. Recovery is immediate once the owner is *shown* to be
+        // gone, rather than waiting out a timeout.
+        let path = write_temp_file(EXAMPLE);
+        plant_lock(&path, a_dead_pid());
+
+        assert!(
+            matches!(WriteLock::acquire(&path), LockOutcome::Acquired(_)),
+            "a lock left behind by a dead process must be recoverable"
+        );
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_unreadable_owner_is_treated_as_alive() {
+        // Fails closed: anything short of proof that the owner is gone
+        // honours the lock. Silently permitting a second writer on an
+        // unparseable lock is the failure this whole change is about.
+        let path = write_temp_file(EXAMPLE);
+        let lock_file = lock_path(&path);
+        fs::write(&lock_file, "not a token at all").unwrap();
+
+        assert!(
+            matches!(WriteLock::acquire(&path), LockOutcome::Busy(_)),
+            "an unparseable lock must be honoured, not stolen"
+        );
+
+        let _ = fs::remove_file(&lock_file);
         fs::remove_file(&path).ok();
     }
 
@@ -423,7 +513,7 @@ mod tests {
         let lock_file = lock_path(&path);
 
         {
-            let _held = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+            let _held = WriteLock::acquire(&path);
             assert!(lock_file.exists(), "the lock file exists while held");
         }
         assert!(!lock_file.exists(), "and is cleaned up on drop");
@@ -432,47 +522,18 @@ mod tests {
     }
 
     #[test]
-    fn an_abandoned_lock_is_taken_over_rather_than_honoured_forever() {
-        // A crash while holding the lock would otherwise wedge every future
-        // write. Forced through the threshold parameter rather than by
-        // manipulating file timestamps.
-        let path = write_temp_file(EXAMPLE);
-        let leaked = WriteLock::acquire(&path, STALE_LOCK_AFTER);
-        assert!(matches!(leaked, LockOutcome::Acquired(_)));
-        std::mem::forget(leaked); // simulate a process dying while holding it
-
-        assert!(
-            matches!(
-                WriteLock::acquire(&path, Duration::ZERO),
-                LockOutcome::Acquired(_)
-            ),
-            "a lock past the staleness threshold must be taken over"
-        );
-
-        let _ = fs::remove_file(lock_path(&path));
-        fs::remove_file(&path).ok();
-    }
-
-    #[test]
     fn dropping_a_guard_never_removes_a_lock_someone_else_now_holds() {
-        // Deep rounds 2, round 4. The takeover path removes the stale lock
-        // and then creates its own, which is not atomic: if two instances
-        // both judge a lock stale, one can `remove_file` the *other's*
-        // freshly created lock and create its own on top, leaving both
-        // believing they hold it. The guard's `Drop` then compounds it by
-        // removing whatever file is at the path, whoever it belongs to.
-        //
-        // Forced deterministically here by performing the takeover by hand
-        // between the acquire and the drop.
+        // Recovery removes then re-creates, which is not atomic, so a guard
+        // must never delete a file it no longer owns.
         let path = write_temp_file(EXAMPLE);
         let lock_file = lock_path(&path);
 
-        let mine = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+        let mine = WriteLock::acquire(&path);
         assert!(matches!(mine, LockOutcome::Acquired(_)));
 
-        // Another instance takes over, as the stale path would.
+        // Another instance takes over, as the recovery path would.
         fs::remove_file(&lock_file).unwrap();
-        fs::write(&lock_file, "markcheck pid 999999\n").unwrap();
+        fs::write(&lock_file, "markcheck 999999 cafe").unwrap();
 
         drop(mine);
 
@@ -482,7 +543,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(&lock_file).unwrap(),
-            "markcheck pid 999999\n",
+            "markcheck 999999 cafe",
             "and certainly must not replace its contents"
         );
 
@@ -495,13 +556,10 @@ mod tests {
         let a = write_temp_file(EXAMPLE);
         let b = write_temp_file(EXAMPLE);
 
-        let held_a = WriteLock::acquire(&a, STALE_LOCK_AFTER);
+        let held_a = WriteLock::acquire(&a);
         assert!(matches!(held_a, LockOutcome::Acquired(_)));
         assert!(
-            matches!(
-                WriteLock::acquire(&b, STALE_LOCK_AFTER),
-                LockOutcome::Acquired(_)
-            ),
+            matches!(WriteLock::acquire(&b), LockOutcome::Acquired(_)),
             "a different checklist must not be blocked by this one"
         );
 

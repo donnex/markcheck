@@ -121,7 +121,7 @@ fn a_write_is_refused_while_another_instance_holds_the_write_lock() {
     // operations, so two markcheck instances could both pass the check and
     // both rename, and the second silently discarded the first's toggle.
     // The advisory lock spans both, turning them into one compare-and-swap.
-    use crate::writer::{LockOutcome, STALE_LOCK_AFTER, WriteLock};
+    use crate::writer::{LockOutcome, WriteLock};
 
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
@@ -132,7 +132,7 @@ fn a_write_is_refused_while_another_instance_holds_the_write_lock() {
     let mut state = AppState::new(document);
 
     // Stand in for the other instance being mid-write.
-    let held = WriteLock::acquire(&path, STALE_LOCK_AFTER);
+    let held = WriteLock::acquire(&path);
     assert!(
         matches!(held, LockOutcome::Acquired(_)),
         "test setup: the lock must be free to begin with"
