@@ -55,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer leaks a couple of threads and file handles per commit
+  when a repository's hooks start a background process. Over a long session
+  against such a repository this could accumulate until the process ran out
+  of file handles; syncing now costs nothing that isn't released.
+
 - Git-sync no longer publishes unrelated local commits when your branch has
   upstream *settings* but no remote-tracking ref yet — configured by hand,
   or pruned. The check that refuses to publish unrelated work saw no

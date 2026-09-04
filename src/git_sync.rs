@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read, Write as _};
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
@@ -25,6 +25,54 @@ const PLUMBING_TIMEOUT: Duration = Duration::from_secs(10);
 /// meaningfully longer than the plumbing commands above.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Scratch files backing one subprocess run's stdout, stderr, and (when the
+/// command is fed anything) stdin. Removed on drop, on every path — success,
+/// failure, timeout, or an early `?` return.
+///
+/// **In the temp directory, never beside the checklist**, for the same
+/// reason `writer::WriteLock`'s file is: anything written inside the user's
+/// repository can be swept into a commit by a `git add -A` hook, which
+/// `verify_commit_scope` would then correctly abort the sync over.
+struct ScratchFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl ScratchFiles {
+    fn new() -> Self {
+        ScratchFiles { paths: Vec::new() }
+    }
+
+    /// A fresh, empty file owned by this run. `create_new` so an existing
+    /// name is never clobbered or reused, and 0600 on unix because git's
+    /// output routinely names branches and absolute repository paths, which
+    /// have no business being world-readable in a shared temp directory.
+    fn create(&mut self, purpose: &str) -> io::Result<(PathBuf, fs::File)> {
+        let path = std::env::temp_dir().join(format!(
+            "markcheck-git-{purpose}-{}-{:x}",
+            std::process::id(),
+            crate::writer::random_suffix()
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
+        self.paths.push(path.clone());
+        Ok((path, file))
+    }
+}
+
+impl Drop for ScratchFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 /// Runs `cmd` to completion, killing it and returning a
 /// [`io::ErrorKind::TimedOut`] error if it hasn't finished within
 /// `timeout`. `Command::output()` has no timeout of its own — it blocks
@@ -35,198 +83,91 @@ const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 /// the child process entirely (Rust neither kills child processes on drop
 /// nor joins/kills detached threads on exit).
 ///
-/// stdout/stderr are drained on their own threads for the whole run, not
-/// just read after the child exits: `try_wait`-polling without doing this
-/// risks the classic pipe-deadlock — if the child writes enough output to
-/// fill the OS pipe buffer, it blocks on that write, `try_wait` never
-/// returns, and nothing would ever unblock the child, if fake output
-/// weren't already being drained in the background.
-///
 /// Takes an owned `Command` rather than `&mut Command` (unlike
 /// `Command::output`) so call sites build it as a local variable first
 /// instead of chaining off `Command::new` directly — a builder chain like
 /// `Command::new("git").arg(...)` yields `&mut Command`, borrowing a
 /// temporary, which can't be handed to a function expecting an owned one.
-fn run_with_timeout(mut cmd: Command, timeout: Duration) -> io::Result<Output> {
-    // stdin is nulled rather than inherited: markcheck owns the terminal
-    // while these run, and no plumbing command here has anything to read.
-    // Hardening rather than a fix for an observed failure — an attempt to
-    // demonstrate a credential-prompt hang under a PTY did *not* reproduce,
-    // because `spawn_in_own_process_group` leaves the child in a background
-    // process group where a terminal read fails instead of blocking. But
-    // that outcome depends on process-group and signal details rather than
-    // on anything stated here, and `git` seeing an immediate EOF is both
-    // predictable and the conventional choice.
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = spawn_in_own_process_group(cmd)?;
-    wait_with_timeout(child, timeout, None)
+fn run_with_timeout(cmd: Command, timeout: Duration) -> io::Result<Output> {
+    run_with_optional_stdin(cmd, timeout, None)
 }
 
-/// Spawns `cmd` as the leader of a new process group (its own PID doubling
-/// as the group ID) on Unix — plain on other platforms, where this is a
-/// best-effort feature (see `kill_and_reap`). Matters because `git` itself
-/// can spawn its own subprocesses (a credential helper, `ssh` for a remote
-/// push, a commit hook's own children) that inherit the piped stdout/
-/// stderr file descriptors this module sets up: killing only the direct
-/// `git` child on timeout would leave those grandchildren running and
-/// still holding those descriptors open, which would block
-/// `wait_with_timeout`'s reader threads until the grandchildren happen to
-/// exit on their own — precisely the hang this whole mechanism exists to
-/// prevent. Killing the whole group (`kill_and_reap`) reaches all of them.
-fn spawn_in_own_process_group(mut cmd: Command) -> io::Result<Child> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    cmd.spawn()
-}
-
-/// Like `run_with_timeout`, but also writes `stdin_data` to the child's
-/// stdin on its own thread before waiting — needed by `hash_object`, the
-/// one call site that feeds git anything over stdin. Writing on a separate
-/// thread (rather than writing then waiting, sequentially) matters for the
-/// same reason draining stdout/stderr on their own threads does: a large
-/// enough write could block on a full pipe buffer just as easily as a
-/// large enough child-produced output could.
+/// Like `run_with_timeout`, but feeds `stdin_data` to the child — needed by
+/// `hash_object`, the one call site that gives git anything on stdin.
 fn run_with_timeout_and_stdin(
-    mut cmd: Command,
+    cmd: Command,
     timeout: Duration,
     stdin_data: &str,
 ) -> io::Result<Output> {
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = spawn_in_own_process_group(cmd)?;
-    let mut stdin_pipe = child.stdin.take().expect("stdin was requested as piped");
-    let stdin_data = stdin_data.to_owned();
-    // Reports completion through a channel rather than a `JoinHandle`, for
-    // exactly the reason the stdout/stderr readers do — see
-    // `wait_with_timeout`, which bounds how long it waits for this.
-    let (stdin_done_tx, stdin_done_rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        // Errors ignored: a write failure here (e.g. the child exited
-        // early) surfaces as a non-success exit status instead, which the
-        // caller already checks.
-        let _ = stdin_pipe.write_all(stdin_data.as_bytes());
-        // `stdin_pipe` drops here, closing the write end so the child sees
-        // EOF on its stdin rather than hanging waiting for more.
-        drop(stdin_pipe);
-        let _ = stdin_done_tx.send(());
-    });
-    wait_with_timeout(child, timeout, Some(stdin_done_rx))
+    run_with_optional_stdin(cmd, timeout, Some(stdin_data))
 }
 
-/// How long to wait for the stdout/stderr reader threads to finish once
-/// `child` itself is known to be gone (exited on its own, or just killed on
-/// timeout) — deliberately much shorter than `PLUMBING_TIMEOUT`/
-/// `PUSH_TIMEOUT`, since this is only ever bounding a *lingering
-/// descendant* holding the pipe open, not real work. See `wait_with_timeout`
-/// for why this exists at all.
-const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
-
-/// Shared core of `run_with_timeout`/`run_with_timeout_and_stdin`: drains
-/// `child`'s stdout/stderr on their own threads for the whole run (not just
-/// after it exits — `try_wait`-polling without doing this risks the classic
-/// pipe deadlock, where a child that fills the OS pipe buffer blocks on
-/// that write and `try_wait` never returns, with nothing left to drain it),
-/// polls `try_wait` until the child exits or `timeout` elapses, and kills
-/// the child on timeout rather than merely giving up on waiting for it —
-/// `Command::output()`/a bare `wait()` do neither, so a hung `git`
-/// subprocess (broken SSH, a stuck credential helper, a hanging commit
-/// hook, a wedged network transport) would otherwise block the sync worker
-/// thread forever, and quitting markcheck while one is hung would orphan
-/// the child process entirely (Rust neither kills child processes on drop
-/// nor joins/kills detached threads on exit).
+/// Shared core of both: redirect the child's three streams to scratch
+/// **files**, poll until it exits or the timeout expires, then read the
+/// output back.
 ///
-/// External review, round 8: the reader threads used to hand back their
-/// buffer through a plain `JoinHandle`, joined unconditionally once `child`
-/// was known to be gone — but `git` can spawn its own children (a
-/// credential helper, `ssh`, a hook's own children) that inherit the piped
-/// stdout/stderr file descriptors, and a hook that backgrounds one of those
-/// without closing them leaves the pipe's write end open even after `git`
-/// itself has exited. `read_to_end()` in the reader thread then blocks
-/// forever waiting for an EOF that only the lingering descendant is
-/// preventing, and an unconditional `.join()` waits right along with it —
-/// hanging the whole operation *after* the timeout above should have
-/// already bounded it. The reader threads now send their buffer through a
-/// channel instead, so both exit paths below can bound how long they wait
-/// for it (`PIPE_DRAIN_GRACE`) rather than joining unconditionally: if a
-/// descendant is still holding the pipe, `kill_and_reap` is called again
-/// (safe even though `child` itself is already reaped — a second `wait()`
-/// on an already-reaped PID just errors, ignored the same way every other
-/// best-effort cleanup in this module is) — it still reaches the
-/// descendant, since `spawn_in_own_process_group` put it in the same
-/// process group as `child`.
-fn wait_with_timeout(
-    mut child: Child,
+/// **Files rather than pipes, and that is the whole point.** The previous
+/// version piped stdout/stderr and drained each on its own detached thread,
+/// with a third thread writing stdin. Threads were unavoidable there
+/// because a pipe has a small fixed buffer: a child that outproduces it
+/// blocks mid-write, `try_wait` never returns, and nothing arrives to
+/// unblock it unless something is draining concurrently — the classic pipe
+/// deadlock.
+///
+/// That design produced three separate defects across earlier reviews, all
+/// the same shape. `git` hands its descriptors to whatever it spawns — a
+/// credential helper, `ssh`, a commit hook and *its* children — so a
+/// descendant outliving `git` itself keeps the pipes open, and a thread
+/// blocked in `read_to_end` waits for an EOF only that descendant can send.
+/// Round 8 fixed the stdout/stderr hang, deep round 2 the mirror-image
+/// stdin hang, and pass 5 measured what the bounded-wait fix left behind:
+/// two threads and two descriptors leaked per call, held for as long as the
+/// descendant lives, at +44 threads over 20 calls.
+///
+/// A file has no buffer to fill, so the child never blocks on a write and
+/// nothing has to drain concurrently. No reader threads, no writer thread,
+/// no drain budget, and a lingering descendant is simply harmless: it goes
+/// on writing to an unlinked inode that the OS reclaims when it exits. This
+/// removes the entire class rather than the latest instance of it — the
+/// three fixes above are all subsumed here, which is why it is worth
+/// touching code this carefully tuned.
+///
+/// Failing to create a scratch file returns the error rather than falling
+/// back to pipes or discarding output: git-sync reports a failed sync,
+/// which is the fail-closed answer this module takes everywhere else.
+fn run_with_optional_stdin(
+    mut cmd: Command,
     timeout: Duration,
-    stdin_done: Option<mpsc::Receiver<()>>,
+    stdin_data: Option<&str>,
 ) -> io::Result<Output> {
-    let mut stdout_pipe = child.stdout.take().expect("stdout was requested as piped");
-    let mut stderr_pipe = child.stderr.take().expect("stderr was requested as piped");
-    let (stdout_tx, stdout_rx) = mpsc::channel();
-    let (stderr_tx, stderr_rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut buf);
-        let _ = stdout_tx.send(buf);
-    });
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buf);
-        let _ = stderr_tx.send(buf);
-    });
-    // One bounded teardown once the child is gone: wait for the stdin
-    // writer, then drain both pipes, all inside a *single* `PIPE_DRAIN_GRACE`
-    // budget rather than one each — three separate grace periods would
-    // silently treble the bound this constant exists to impose.
-    //
-    // Deliberately does **not** kill the process group to force an EOF,
-    // which is what it used to do. Deep round 2: by the time this runs the
-    // child has always been reaped — `try_wait` reaps it on the success
-    // path, `kill_and_reap` on the timeout path — so its PID is no longer
-    // ours and the OS is free to recycle it. `kill -KILL -- -<pid>` on a
-    // recycled PID signals an unrelated process group, a far worse outcome
-    // than the truncated output it was avoiding, and it killed a descendant
-    // of a command that had *succeeded*. Nothing is lost on the timeout path
-    // (the group was killed moments earlier anyway); on the success path a
-    // lingering descendant just means returning whatever arrived within the
-    // budget. The reader and writer threads are detached and exit on their
-    // own once it finally closes the pipes.
-    //
-    // That last sentence is the whole residual, so it is worth stating
-    // precisely rather than leaving it sounding free. Until the descendant
-    // closes the pipes those threads stay blocked in `read_to_end`, each
-    // holding a pipe read end: measured at +2 threads and 2 file descriptors
-    // per call, so a `pre-commit` hook that daemonises something on every
-    // commit accumulates them for as long as that daemon lives. The cost is
-    // bounded by the descendant's lifetime, not by ours, and a descendant
-    // that exits promptly reclaims everything — which is what
-    // `a_lingering_descendant_costs_threads_only_while_it_lives` pins.
-    //
-    // Not fixed rather than not noticed. Interrupting a thread blocked in a
-    // blocking `read` needs the descriptor closed underneath it, and the
-    // thread owns it; doing this properly means non-blocking reads or
-    // `waitid(WNOWAIT)` to delay the reap so the group kill stays safe, and
-    // both need `libc`/`nix` — a new dependency, which this project has
-    // ruled out. The alternative within std is redirecting to temp files
-    // instead of pipes, which removes the leak entirely but rewrites the
-    // subprocess core for every command to fix a narrow case. Left as a
-    // documented trade-off; revisit if a dependency ever becomes acceptable.
-    let finish = |stdin_done: &Option<mpsc::Receiver<()>>| -> (Vec<u8>, Vec<u8>) {
-        let deadline = Instant::now() + PIPE_DRAIN_GRACE;
-        let left = || deadline.saturating_duration_since(Instant::now());
-        if let Some(rx) = stdin_done {
-            let _ = rx.recv_timeout(left());
-        }
-        let stdout = stdout_rx.recv_timeout(left()).unwrap_or_default();
-        let stderr = stderr_rx.recv_timeout(left()).unwrap_or_default();
-        (stdout, stderr)
-    };
+    let mut scratch = ScratchFiles::new();
 
+    match stdin_data {
+        Some(data) => {
+            let (path, mut file) = scratch.create("stdin")?;
+            file.write_all(data.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            // Reopened read-only: the child needs to read what was just
+            // written, from the start.
+            cmd.stdin(Stdio::from(fs::File::open(&path)?));
+        }
+        // Nulled rather than inherited: markcheck owns the terminal while
+        // these run, and no command here has anything to read. `git` seeing
+        // an immediate EOF is the predictable, conventional choice — a
+        // credential helper cannot sit waiting on a prompt nobody will
+        // answer.
+        None => {
+            cmd.stdin(Stdio::null());
+        }
+    }
+
+    let (stdout_path, stdout_file) = scratch.create("stdout")?;
+    let (stderr_path, stderr_file) = scratch.create("stderr")?;
+    cmd.stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+
+    let mut child = spawn_in_own_process_group(cmd)?;
     let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -234,7 +175,6 @@ fn wait_with_timeout(
         }
         if Instant::now() >= deadline {
             kill_and_reap(&mut child);
-            finish(&stdin_done);
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("git command timed out after {timeout:?}"),
@@ -242,12 +182,38 @@ fn wait_with_timeout(
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    let (stdout, stderr) = finish(&stdin_done);
+
+    // Read after the child is known to be gone. A descendant still holding
+    // the descriptors may append after this point; that output is missed,
+    // exactly as it was missed when the drain budget expired before, but
+    // now it costs nothing to miss it.
     Ok(Output {
         status,
-        stdout,
-        stderr,
+        stdout: fs::read(&stdout_path).unwrap_or_default(),
+        stderr: fs::read(&stderr_path).unwrap_or_default(),
     })
+}
+
+/// Spawns `cmd` as the leader of a new process group (its own PID doubling
+/// as the group ID) on Unix — plain on other platforms, where this is a
+/// best-effort feature (see `kill_and_reap`). Matters because `git` itself
+/// can spawn its own subprocesses (a credential helper, `ssh` for a remote
+/// push, a commit hook's own children): killing only the direct `git` child
+/// on timeout would leave those grandchildren running indefinitely, still
+/// doing whatever wedged the command in the first place. Killing the whole
+/// group (`kill_and_reap`) reaches all of them.
+///
+/// This used to matter for a second reason — those grandchildren inherited
+/// the piped stdout/stderr and could hang the reader threads — which no
+/// longer applies now that output goes to files. Reaping the whole group on
+/// timeout is still the right thing on its own merits.
+fn spawn_in_own_process_group(mut cmd: Command) -> io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn()
 }
 
 /// Kills `child` and reaps it (`wait`, discarding the result) so it never
@@ -2075,11 +2041,14 @@ fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
 /// `None` that `resolve_parent` exists to eliminate for `current_head`,
 /// recurring here.
 ///
-/// It is reachable, not theoretical: the pipe drain returns empty output
-/// when a lingering descendant holds a pipe past `PIPE_DRAIN_GRACE`, while
-/// the command's own exit status is still success — so an unreadable
-/// listing could delete the branch. Refusing to rewind is the safe answer;
-/// the commit stays and the next sync reports on it.
+/// It is reachable, not theoretical. When output was piped, a drain that
+/// timed out against a lingering descendant returned empty output while the
+/// command's own exit status was still success; output now goes to a file,
+/// which removes that particular route, but not the premise. A scratch file
+/// that cannot be read back still yields empty output beside a successful
+/// status, and `git` is under no obligation to have written anything.
+/// Refusing to rewind is the safe answer either way; the commit stays and
+/// the next sync reports on it.
 fn parse_first_parent(listing: &str) -> Option<Option<String>> {
     let mut fields = listing.split_whitespace();
     // The commit itself is always the first field when there is any output.
@@ -5434,11 +5403,14 @@ mod tests {
 
     #[test]
     fn run_with_timeout_kills_a_process_writing_enough_output_to_fill_a_pipe() {
-        // Regression guard for the pipe-deadlock hazard `wait_with_timeout`'s
-        // doc comment describes: without draining stdout on its own thread
-        // for the whole run, a child writing more than the OS pipe buffer
-        // (~64KB on Linux) would block on that write, `try_wait` would
-        // never return, and this call would hang regardless of `timeout`.
+        // Regression guard for the deadlock that made this module use
+        // pipes-plus-threads in the first place: a child writing more than
+        // the OS pipe buffer (~64KB on Linux) blocks mid-write, `try_wait`
+        // never returns, and the call hangs regardless of `timeout` unless
+        // something drains concurrently. Redirecting to a file is what makes
+        // that impossible now — a file has no buffer to fill — so this keeps
+        // guarding the same hazard against a different implementation. Five
+        // million bytes is far past any pipe buffer.
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "yes | head -c 5000000; sleep 5"]);
         let started = Instant::now();
@@ -5454,29 +5426,30 @@ mod tests {
         );
     }
 
-    /// Pass 5, round 3. The success path deliberately does not kill the
-    /// process group (a reaped PID may have been recycled — see
-    /// `wait_with_timeout`), so a descendant holding the inherited pipes
-    /// leaves the two reader threads blocked in `read_to_end`, each holding
-    /// a descriptor. Measured: +2 threads per call, ~44 over 20 calls.
+    /// A descendant outliving the direct child must now cost **nothing**.
     ///
-    /// That cost is real but *bounded by the descendant's lifetime*, and
-    /// that boundedness is the property worth pinning — if it ever became
-    /// permanent, a long session against a repository whose hooks daemonise
-    /// something would climb toward the descriptor limit. Here the
-    /// descendants exit on their own and everything is reclaimed.
+    /// This measured a real leak when output was piped: the two reader
+    /// threads stayed blocked in `read_to_end` waiting for an EOF only the
+    /// descendant could send, holding a descriptor each — +2 per call, +44
+    /// over 20 calls, for as long as the descendant lived. The test then
+    /// pinned that the cost was at least *bounded* by that lifetime.
+    ///
+    /// Redirecting to scratch files removed the threads outright, so the
+    /// assertion is now the stronger one: run the exact case that used to
+    /// leak, twenty times, while the descendants are all still alive, and
+    /// the thread count must not move at all.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_lingering_descendant_costs_threads_only_while_it_lives() {
+    fn a_lingering_descendant_costs_nothing() {
         let threads = || {
             std::fs::read_dir("/proc/self/task")
                 .map(|d| d.count())
                 .unwrap_or(0)
         };
 
-        // Warm up with a child that leaves nothing behind, so lazily-created
-        // runtime threads exist before the baseline is taken and are not
-        // mistaken for leakage.
+        // Warm up first: the first calls create lazily-spawned runtime
+        // threads that never go away, which would otherwise be counted as
+        // leakage from the calls under test.
         for _ in 0..3 {
             let mut cmd = Command::new("sh");
             cmd.args(["-c", "exit 0"]);
@@ -5485,41 +5458,30 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
         let baseline = threads();
 
-        // The shell exits immediately, so this takes the *success* path
-        // where no group kill happens; the backgrounded descendant inherits
-        // the pipes and outlives PIPE_DRAIN_GRACE, so the two reader threads
-        // are still blocked when the call returns.
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "sleep 5 & exit 0"]);
-        let result = run_with_timeout(cmd, Duration::from_millis(500));
-        assert!(result.is_ok(), "the direct child exits successfully");
-
-        let while_held = threads();
-        assert!(
-            while_held > baseline,
-            "test is not exercising the case it claims: the descendant should \
-             still be holding the pipes here (baseline {baseline}, now {while_held})"
-        );
-
-        // The actual property: this costs threads and descriptors only while
-        // the descendant lives. Once it exits, the blocked reads see EOF and
-        // the threads finish, so the cost is bounded by the descendant rather
-        // than accumulating for the rest of the session.
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while threads() > baseline && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(100));
+        // Each shell exits immediately — the success path, where no group
+        // kill happens — while leaving a descendant that holds the inherited
+        // stdout and stderr for far longer than the whole loop takes.
+        for _ in 0..20 {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "sleep 30 & exit 0"]);
+            let result = run_with_timeout(cmd, Duration::from_millis(500));
+            assert!(result.is_ok(), "the direct child exits successfully");
         }
-        // Asserted against the peak, not only the baseline: `cargo test` runs
-        // these in parallel by default, so an unrelated test spawning threads
-        // could hold the absolute count above `baseline` through no fault of
-        // this code. Dropping below the peak is the part that is genuinely
-        // this call's doing, and cannot happen unless the reader threads
-        // finished.
-        let settled = threads();
+
+        // A small tolerance rather than strict equality, because `cargo test`
+        // runs these in parallel and an unrelated test spawning a worker
+        // between the two samples would otherwise fail this for something
+        // that has nothing to do with the code under test. It still
+        // discriminates the regression by a wide margin: the piped design
+        // leaked two threads per call, so these twenty calls would sit ~40
+        // above the baseline rather than within a handful of it.
+        let after = threads();
+        let grown = after.saturating_sub(baseline);
         assert!(
-            settled < while_held,
-            "threads must be reclaimed once the descendant lets go: baseline \
-             {baseline}, peak {while_held}, still {settled} after waiting"
+            grown < 10,
+            "20 calls whose descendants are all still holding the inherited \
+             descriptors must not cost threads: baseline {baseline}, now \
+             {after} (+{grown}); the piped design leaked about 40 here"
         );
     }
 
@@ -5596,9 +5558,13 @@ mod tests {
         // descendant of a command that had *succeeded*, which markcheck has
         // no business doing.
         //
-        // `sleep 3` outlives PIPE_DRAIN_GRACE (2s) while holding the
-        // inherited stdout, so it is exactly the case that used to trigger
-        // the kill; the marker proves it ran to completion instead.
+        // `sleep 3` holds the inherited stdout well past the point the old
+        // drain would have given up and killed the group, so it is exactly
+        // the case that used to trigger the kill; the marker proves it ran
+        // to completion instead. Still worth keeping now that output goes to
+        // a file and nothing waits on a drain at all: the property under
+        // test is that a *succeeded* command never kills what it spawned,
+        // which no implementation should be free to break.
         let dir = unique_dir("descendant-survives");
         fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("descendant-finished");
@@ -6040,10 +6006,10 @@ mod tests {
     fn parse_first_parent_tells_a_root_commit_from_unreadable_output() {
         // Deep rounds 3, round 1. `undo_commit` collapsed both into "no
         // parent", and its no-parent path *deletes the branch ref* rather
-        // than moving it back one commit. An empty listing is reachable: the
-        // pipe drain returns empty output when a descendant holds a pipe
-        // past PIPE_DRAIN_GRACE, while the command's exit status is still
-        // success — so an unreadable listing could have deleted the branch.
+        // than moving it back one commit. An empty listing is reachable:
+        // output read back as empty alongside a successful exit status is
+        // not a contradiction — see `parse_first_parent`'s own doc comment —
+        // so an unreadable listing could have deleted the branch.
         assert_eq!(
             parse_first_parent(""),
             None,
