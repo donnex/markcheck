@@ -103,7 +103,17 @@ impl AppState {
              is rejected at load (main.rs) and reload (reload_if_changed)",
         );
         let (file_mtime, file_size) = current_stat(&document.file_path).unzip();
-        let file_content_hash = current_content_hash(&document.file_path);
+        // Derived from the document itself, never from a second read of the
+        // file. `raw_lines` concatenates to exactly the bytes it was parsed
+        // from — the invariant `write_back` already depends on — so this is
+        // the same content by construction. Re-reading the path would open a
+        // window in which the file changes between the parse and the hash,
+        // leaving the fingerprint describing content the in-memory document
+        // is not; `disk_content_diverged` would then report "unchanged" and
+        // the next toggle would silently overwrite the newer content. That
+        // is the same defect the reload path was fixed for, and the only
+        // durable cure is to stop reading twice.
+        let file_content_hash = Some(hash_bytes(writer::document_contents(&document).as_bytes()));
         // Start on the first not-done item: prefer the first list, then
         // fall back to the first list with remaining work, then item 0
         // (everything already done).
@@ -1256,8 +1266,13 @@ impl AppState {
                 self.set_status(msg);
                 self.last_update_at = Some(SystemTime::now());
                 // The only branch that adopted the new content, so the only
-                // one that may advance the fingerprint.
-                self.file_content_hash = current_content_hash(&self.document.file_path);
+                // one that may advance the fingerprint — and it is taken from
+                // the adopted document, not from a fresh read of the file, so
+                // the two cannot describe different revisions. See
+                // `AppState::new` for what re-reading here used to risk.
+                self.file_content_hash = Some(hash_bytes(
+                    writer::document_contents(&self.document).as_bytes(),
+                ));
                 true
             }
             // Parsed, but nothing to work through. Sticky (`set_error`, not
