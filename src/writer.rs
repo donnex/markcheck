@@ -144,8 +144,30 @@ impl Drop for WriteLock {
 /// Where `target`'s lock lives: one file per checklist, named by the digest
 /// of its path so two different checklists never share a lock and the name
 /// can't collide with anything the user owns.
+///
+/// **The path is canonicalized first, so every spelling of one file maps to
+/// one lock.** Mutual exclusion keyed on an unresolved path is exclusion in
+/// name only: `/checklists/server.md` and `/current/server.md` (a symlink to
+/// it), or a path carrying `..`, hash differently and would each get their
+/// own lock while writing the same bytes — two writers inside the section
+/// that exists to hold one. External review of `5c51d81` raised exactly
+/// this.
+///
+/// `main.rs` already canonicalizes at startup, which is why that scenario
+/// does not reproduce against the real binary today, and this is defence in
+/// depth rather than the primary mechanism. It is worth having anyway: an
+/// invariant maintained in a different module is one refactor away from
+/// being silently dropped, and a lock is the wrong place to discover that.
+/// Resolving it here makes the guarantee local to the code that depends on
+/// it.
+///
+/// Falling back to the given path when canonicalization fails is safe rather
+/// than lax: it fails when the target does not exist, and `write_back` reads
+/// the file's metadata before writing anything, so a vanished checklist is
+/// refused there instead.
 fn lock_path(target: &Path) -> PathBuf {
-    let digest = crate::model::hash_bytes(target.as_os_str().as_encoded_bytes());
+    let resolved = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+    let digest = crate::model::hash_bytes(resolved.as_os_str().as_encoded_bytes());
     let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     std::env::temp_dir().join(format!("markcheck-write-lock-{name}"))
 }
@@ -425,6 +447,94 @@ mod tests {
         let pid = child.id();
         child.wait().unwrap();
         pid
+    }
+
+    /// External review of `5c51d81`: mutual exclusion keyed on an unresolved
+    /// path excludes nothing when two callers spell the same file
+    /// differently. Each spelling here must map to the *same* lock file.
+    #[test]
+    fn every_spelling_of_one_checklist_maps_to_the_same_lock() {
+        let target = write_temp_file(EXAMPLE);
+        let dir = target.parent().unwrap();
+        let name = target.file_name().unwrap();
+        let expected = lock_path(&target);
+
+        // A `.` component.
+        assert_eq!(
+            lock_path(&dir.join(".").join(name)),
+            expected,
+            "a `.` component must not create a second lock"
+        );
+
+        // A `..` component that walks out of the directory and back in.
+        let round_trip = dir.join("sub").join("..").join(name);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        assert_eq!(
+            lock_path(&round_trip),
+            expected,
+            "a `..` component must not create a second lock"
+        );
+
+        // A symlink pointing at the checklist — the case the review called
+        // out as most important, and the one canonicalization is really for.
+        let link = dir.join(format!(
+            "link-to-{}",
+            crate::test_support::unique_temp_path("l", "", None)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+        ));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(
+            lock_path(&link),
+            expected,
+            "a symlink to the checklist must share its lock"
+        );
+
+        // Sanity: the guard only means something if distinct files still get
+        // distinct locks. Without this the test passes for a `lock_path`
+        // that returns one constant.
+        let other = write_temp_file(EXAMPLE);
+        assert_ne!(
+            lock_path(&other),
+            expected,
+            "two genuinely different checklists must not share a lock"
+        );
+
+        fs::remove_file(&link).ok();
+        fs::remove_dir(dir.join("sub")).ok();
+        fs::remove_file(&target).ok();
+        fs::remove_file(&other).ok();
+    }
+
+    /// The end the review actually cares about: not that the names match,
+    /// but that a second writer reaching the file by another spelling is
+    /// genuinely kept out of the critical section.
+    #[test]
+    fn a_writer_arriving_through_a_symlink_is_locked_out_by_the_first() {
+        let target = write_temp_file(EXAMPLE);
+        let dir = target.parent().unwrap();
+        let link = dir.join(format!(
+            "aliased-{}.md",
+            std::process::id() as u64 + random_suffix()
+        ));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let held = WriteLock::acquire(&target);
+        assert!(matches!(held, LockOutcome::Acquired(_)));
+        assert!(
+            matches!(WriteLock::acquire(&link), LockOutcome::Busy(_)),
+            "the same file through a symlink must be refused, not handed a second lock"
+        );
+
+        drop(held);
+        assert!(
+            matches!(WriteLock::acquire(&link), LockOutcome::Acquired(_)),
+            "and it must become available once the first writer is done"
+        );
+
+        fs::remove_file(&link).ok();
+        fs::remove_file(&target).ok();
     }
 
     #[test]
