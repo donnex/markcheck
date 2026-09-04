@@ -1073,19 +1073,24 @@ impl AppState {
         // over an already-existing check, so a machine with no writable temp
         // directory must not lose the ability to save at all. The guard is
         // bound for the rest of the function and released on return.
-        let _write_lock =
-            match writer::WriteLock::acquire(&self.document.file_path, writer::STALE_LOCK_AFTER) {
-                writer::LockOutcome::Acquired(lock) => Some(lock),
-                writer::LockOutcome::Unavailable => None,
-                writer::LockOutcome::Busy => {
-                    self.apply_snapshot(pre_state);
-                    self.set_error(
-                        "Another markcheck is saving this file — change not saved, please retry"
-                            .to_string(),
-                    );
-                    return false;
-                }
-            };
+        let _write_lock = match writer::WriteLock::acquire(&self.document.file_path) {
+            writer::LockOutcome::Acquired(lock) => Some(lock),
+            writer::LockOutcome::Unavailable => None,
+            writer::LockOutcome::Busy(lock_path) => {
+                self.apply_snapshot(pre_state);
+                // Naming the file matters: the lock is only ever released by
+                // its owner or recovered on that owner's proven death, so if
+                // a PID was recycled this refusal persists until the file is
+                // removed by hand. Silently telling the user to "retry"
+                // forever would be worse than telling them where to look.
+                self.set_error(format!(
+                    "Another markcheck is saving this file — change not saved, please retry \
+                     (if this persists, remove {})",
+                    lock_path.display()
+                ));
+                return false;
+            }
+        };
 
         if self.disk_content_diverged() {
             self.apply_snapshot(pre_state);
