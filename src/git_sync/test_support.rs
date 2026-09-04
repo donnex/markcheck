@@ -5,8 +5,10 @@
 //! file rebuilding its own `git init` boilerplate. Distinct from the
 //! crate-level `crate::test_support`, which only provides unique temp paths.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use super::*;
 
