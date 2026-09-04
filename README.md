@@ -340,11 +340,19 @@ of the file (formatting, comments, other lines) is left untouched. Writes are
 atomic — a temp file is written and renamed over the original — so a crash
 or full disk can never leave the runbook truncated, and the file's
 permissions (standard Unix mode bits) are preserved. POSIX ACLs, extended
-attributes, and ownership are **not** preserved — the rename gives the file
-a new inode, and only ordinary permissions are carried forward onto it —
-which matters if the file lives somewhere ACL-managed. Opening the file
-through a symlink writes through to the real target and keeps the link
-intact.
+attributes, ownership, and **hard links** are not preserved — the rename
+gives the file a new inode, and only ordinary permissions are carried
+forward onto it — which matters if the file lives somewhere ACL-managed.
+Opening the file through a symlink writes through to the real target and
+keeps the link intact.
+
+Hard links are the case worth calling out, because it changes what your
+files mean rather than just their metadata: if two names point at the same
+file, saving leaves the *other* name on the old content, and the two names
+are separate files from then on. Most editors that save atomically behave
+the same way. `markcheck` doesn't stop you, but it does say so up front —
+opening a checklist with more than one hard link shows a warning before you
+touch anything, so you can quit if that wasn't what you wanted.
 
 If the file changed on disk since it was last loaded — another `markcheck`
 instance, or an external editor, saved to it after you did — a toggle is

@@ -390,6 +390,10 @@ pub fn reload_if_changed(&mut self) {
 
 ---
 
+**Hard-linked checklists are warned about, not refused.** `write_back`'s temp-then-rename gives the path a *new inode*, so any other name hard-linked to the checklist keeps the old one and silently stops tracking it — one logical file quietly becomes two, and neither the content fingerprint nor the write lock notices, because both reason about paths while this is about inodes. External review of `5c51d81` raised it and preferred refusing the write outright.
+
+markcheck warns instead, at startup, before anything has been written and while quitting is still free: `writer::hard_link_count` reports the link count and `main.rs` turns anything above one into a sticky, error-coloured status message. Refusing would make markcheck stricter than the editors these files are already edited with — vim with `backupcopy=no`, emacs and VS Code all break hard links exactly the same way — and with no override flag the checklist would simply be unusable. No data is lost either; the aliases diverge, but both keep valid content. The defect the review names is that it happens *silently*, and the warning is what removes the silence. A PTY test asserts the warning actually reaches the terminal, since a warning nobody sees would make the whole trade-off worthless.
+
 ## Recurring defect classes
 
 Every deep review of this project has found new bugs, and by round three of

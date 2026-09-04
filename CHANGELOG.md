@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A warning when the checklist you opened has more than one hard link.
+  Saving writes a new file over the path, so the other names keep the old
+  content and quietly stop being the same file — the same thing happens in
+  most editors, but markcheck now tells you up front rather than letting you
+  find out later. Your file is still fully editable; it is a warning, not a
+  refusal.
+
 - `--nerd-font`, `--mouse`, `--no-primary` and `--no-auto-copy`, so every
   boolean setting can now be overridden for a single run in *both*
   directions, whichever way your config file sets it. Previously each

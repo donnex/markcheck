@@ -2,7 +2,12 @@
 //! These exercise `main.rs`'s terminal wiring — the event loop, key
 //! dispatch, editor suspend/restore, and reset — which unit tests can't
 //! reach headless. Assertions are behavioral (clean exit, file contents)
-//! rather than screen-scraping, to avoid ANSI/timing flakiness. Run under
+//! rather than screen-scraping wherever that is possible, to avoid
+//! ANSI/timing flakiness. The exception is a message whose *only* observable
+//! effect is what the user sees — the hard-link warning below — where
+//! scraping is the assertion rather than a shortcut around one; those match
+//! a short, stable substring so terminal width and styling can change
+//! without breaking them. Run under
 //! `cargo llvm-cov` the spawned binary is instrumented, so this also lifts
 //! `main.rs` coverage.
 //!
@@ -130,6 +135,13 @@ fn drive_new(md_path: &PathBuf, steps: &[Step]) -> bool {
 }
 
 fn run_with_pty(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> bool {
+    run_with_pty_capturing(cmd, md_path, steps).0
+}
+
+/// As `run_with_pty`, but also hands back everything the binary drew to the
+/// terminal, for the few tests that need to assert on what the user actually
+/// saw rather than only on the file and the exit status.
+fn run_with_pty_capturing(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> (bool, String) {
     let pty = native_pty_system();
     let pair = pty
         .openpty(PtySize {
@@ -200,7 +212,7 @@ fn run_with_pty(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> bool {
             .collect();
         eprintln!("[pty] child exited unsuccessfully; output tail:\n{tail}");
     }
-    status.success()
+    (status.success(), output)
 }
 
 #[test]
@@ -1530,6 +1542,58 @@ fn new_flag_creates_starter_checklist_and_opens_it() {
     assert!(
         contents.matches("- [ ]").count() == 2,
         "starter file has two blank tasks: {contents:?}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// External review of `5c51d81`: writing a hard-linked checklist silently
+/// turns one logical file into two, because the atomic rename gives the path
+/// a new inode while the other name keeps the old one. markcheck warns
+/// instead of refusing (see `writer::hard_link_count`), and the whole value
+/// of that decision rests on the warning actually reaching the user — which
+/// only the real binary, drawing to a real terminal, can demonstrate.
+#[test]
+fn a_hard_linked_checklist_warns_the_user_at_startup() {
+    let path = unique_path("hardlink-warn");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    let alias = path.with_extension("alias.md");
+    std::fs::remove_file(&alias).ok();
+    std::fs::hard_link(&path, &alias).unwrap();
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg("--no-nerd-font");
+    cmd.arg(&path);
+    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    let (ok, screen) = run_with_pty_capturing(cmd, &path, &[Step::Key("q")]);
+
+    assert!(ok, "binary should exit successfully");
+    assert!(
+        screen.contains("hard links"),
+        "the user must be told before touching anything; screen was:\n{screen}"
+    );
+
+    std::fs::remove_file(&alias).ok();
+    std::fs::remove_file(&path).ok();
+}
+
+/// The counterpart that stops the test above from passing for the wrong
+/// reason: an ordinary checklist must not be labelled hard-linked.
+#[test]
+fn an_ordinary_checklist_is_not_warned_about() {
+    let path = unique_path("no-hardlink-warn");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg("--no-nerd-font");
+    cmd.arg(&path);
+    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    let (ok, screen) = run_with_pty_capturing(cmd, &path, &[Step::Key("q")]);
+
+    assert!(ok, "binary should exit successfully");
+    assert!(
+        !screen.contains("hard links"),
+        "a single-linked file must not be warned about; screen was:\n{screen}"
     );
 
     std::fs::remove_file(&path).ok();

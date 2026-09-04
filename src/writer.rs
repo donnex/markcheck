@@ -141,6 +141,42 @@ impl Drop for WriteLock {
     }
 }
 
+/// How many directory entries point at `target`'s inode, when that can be
+/// determined. `Some(1)` is the ordinary case; anything greater means the
+/// checklist is hard-linked and `write_back`'s rename will break the link.
+///
+/// Reported rather than enforced. The atomic temp-then-rename in
+/// `write_back` gives the path a **new inode**, so a hard-linked alias stops
+/// tracking the checklist the moment anything is toggled — verified: two
+/// links to one inode become two independent files with different content,
+/// and neither the content fingerprint nor the write lock notices, since
+/// both reason about paths while this is about inodes. External review of
+/// `5c51d81` raised it.
+///
+/// Refusing the write was the reviewer's preference and is not what this
+/// does, deliberately. Every atomic-save editor breaks hard links the same
+/// way — vim with `backupcopy=no`, emacs, VS Code — so refusing would leave
+/// markcheck unable to open a file the user edits elsewhere without trouble,
+/// and with no flag to override it the checklist would simply be unusable.
+/// No data is lost either: both aliases keep valid, readable content, they
+/// just stop being the same file. The defect the review names is that this
+/// happens *silently*, and a warning at startup — before anything is
+/// written, while quitting is still free — removes the silence without
+/// removing the capability.
+///
+/// `None` on a platform or filesystem that cannot answer, which is treated
+/// as "nothing to warn about" rather than guessed at.
+#[cfg(unix)]
+pub fn hard_link_count(target: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(target).ok().map(|meta| meta.nlink())
+}
+
+#[cfg(not(unix))]
+pub fn hard_link_count(_target: &Path) -> Option<u64> {
+    None
+}
+
 /// Where `target`'s lock lives: one file per checklist, named by the digest
 /// of its path so two different checklists never share a lock and the name
 /// can't collide with anything the user owns.
@@ -447,6 +483,51 @@ mod tests {
         let pid = child.id();
         child.wait().unwrap();
         pid
+    }
+
+    /// The premise behind the startup hard-link warning, pinned so it cannot
+    /// quietly stop being true: an ordinary checklist has one link, a
+    /// hard-linked one reports more, and the atomic write really does break
+    /// the alias rather than updating both names.
+    #[test]
+    fn a_hard_linked_checklist_is_detected_and_the_write_breaks_the_alias() {
+        let target = write_temp_file(EXAMPLE);
+        assert_eq!(
+            hard_link_count(&target),
+            Some(1),
+            "an ordinary checklist has exactly one name"
+        );
+
+        let alias = target.with_extension("alias.md");
+        fs::hard_link(&target, &alias).unwrap();
+        assert_eq!(
+            hard_link_count(&target),
+            Some(2),
+            "the second name must be visible before anything is written"
+        );
+
+        // The divergence itself: write through one name, and the other is
+        // left holding the old content. This is what the warning is for.
+        let mut document = parse_document(target.clone()).unwrap();
+        document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+        write_back(&document).unwrap();
+        assert!(
+            fs::read_to_string(&target).unwrap().contains("[x]"),
+            "the write must land on the path that was written"
+        );
+        assert_eq!(
+            fs::read_to_string(&alias).unwrap(),
+            EXAMPLE,
+            "the alias keeps the old content — it is now a separate file"
+        );
+        assert_eq!(
+            hard_link_count(&target),
+            Some(1),
+            "and the link count drops, because the rename made a new inode"
+        );
+
+        fs::remove_file(&alias).ok();
+        fs::remove_file(&target).ok();
     }
 
     /// External review of `5c51d81`: mutual exclusion keyed on an unresolved
