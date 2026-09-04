@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer recreates a branch that has been deleted on the remote.
+  Your clone remembers the branch until you next fetch, so a toggle used to
+  push it straight back — republishing history somebody had removed, without
+  being asked. It now checks with the remote first and, if the branch is
+  gone, keeps the commit local and tells you rather than pushing. The same
+  applies when the remote can't be reached to check.
+
 - Git-sync now stores exactly the content `git add` would, in repositories
   that normalise line endings (`core.autocrlf`, or a `.gitattributes` `text`
   setting). It previously bypassed that normalisation and committed the file

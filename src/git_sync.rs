@@ -1130,6 +1130,54 @@ fn unpushed_history(
     }
 }
 
+/// Whether `branch_ref` still exists on `remote`, asked of the remote itself
+/// rather than of the local tracking ref.
+///
+/// **The local tracking ref is not evidence the branch still exists.**
+/// `refs/remotes/<remote>/<branch>` is a cache, updated only by a fetch, so
+/// after somebody deletes the branch upstream it keeps pointing at the last
+/// commit this clone saw and `@{u}` keeps resolving happily. Pushing an
+/// explicit `<sha>:refs/heads/<branch>` refspec at that point is not a
+/// rejected non-fast-forward — there is nothing to be non-fast-forward
+/// *against* — so git simply creates the branch again. Confirmed against a
+/// real remote: `* [new branch]`.
+///
+/// That is unattended republication of a branch somebody deliberately
+/// removed, triggered by ticking a checkbox, and it is the same hazard the
+/// refuse-without-an-upstream rule and the explicit-SHA refspec exist to
+/// prevent — arriving by a route neither of them watches. External review of
+/// `8a405dd`.
+///
+/// Three-way rather than a bool, because "could not ask" is a different
+/// answer from "not there" and collapsing the two is the defect class this
+/// module keeps relearning (see `UnpushedHistory`, `LockOutcome`,
+/// `parse_first_parent`).
+enum RemoteBranch {
+    Present,
+    Absent,
+    /// The remote could not be consulted at all — offline, credentials,
+    /// transport failure.
+    Unknown,
+}
+
+/// Costs one extra network round trip on the push path, which already spends
+/// one; nothing is asked of the network when there is nothing to push, since
+/// the callers reach here only with a commit in hand.
+fn remote_branch_state(repo_dir: &Path, remote: &str, branch_ref: &str) -> RemoteBranch {
+    let mut cmd = git_command(repo_dir);
+    cmd.args(["ls-remote", "--heads", remote, branch_ref]);
+    match run_with_timeout(cmd, PUSH_TIMEOUT) {
+        Ok(output) if output.status.success() => {
+            if String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+                RemoteBranch::Absent
+            } else {
+                RemoteBranch::Present
+            }
+        }
+        _ => RemoteBranch::Unknown,
+    }
+}
+
 /// The commit the branch's upstream tracking ref points at. `Ok(None)` when
 /// there is no resolvable upstream — either none is configured, or one is
 /// configured whose tracking ref doesn't exist locally yet (a remote added
@@ -1389,6 +1437,36 @@ fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
         return no_upstream;
     };
+    // Ask the remote, not the tracking ref — see `remote_branch_state`. An
+    // explicit-SHA refspec *creates* a branch that is no longer there, so
+    // without this a toggle silently republishes history somebody deleted.
+    match remote_branch_state(repo_dir, &remote, &branch_ref) {
+        RemoteBranch::Present => {}
+        RemoteBranch::Absent => {
+            return SyncOutcome::CommittedNotPushed {
+                message: format!(
+                    "git-sync: {branch_ref} no longer exists on {remote}; committed locally \
+                     but not pushed, since pushing would recreate it"
+                ),
+                commit: expected_commit.to_string(),
+            };
+        }
+        // Refusing rather than pushing blind: the hazard above needs only a
+        // stale local view to fire, and this is exactly the state where the
+        // local view cannot be trusted. Little is given up in practice —
+        // `ls-remote` and `push` share a transport and credentials, so a
+        // remote that cannot be consulted is one the push would not have
+        // reached either, and the retry machinery re-checks on its own.
+        RemoteBranch::Unknown => {
+            return SyncOutcome::CommittedNotPushed {
+                message: format!(
+                    "git-sync: could not reach {remote} to confirm {branch_ref} still exists; \
+                     committed locally but not pushed"
+                ),
+                commit: expected_commit.to_string(),
+            };
+        }
+    }
     let mut cmd = git_command(repo_dir);
     cmd.args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
     let output = run_with_timeout(cmd, PUSH_TIMEOUT);
@@ -2492,6 +2570,61 @@ mod tests {
 
     /// A repository with a clean filter configured, where the working tree
     /// and the blob git stores differ by exactly that filter.
+    /// External review of `8a405dd`. The local remote-tracking ref is a
+    /// cache, so after somebody deletes the branch upstream it still points
+    /// at the last commit this clone saw and `@{u}` still resolves. An
+    /// explicit `<sha>:refs/heads/<branch>` refspec then *creates* the
+    /// branch again rather than being rejected — confirmed against a real
+    /// remote, which reports `* [new branch]`. Ticking a checkbox must not
+    /// republish history somebody deliberately removed.
+    #[test]
+    fn a_branch_deleted_on_the_remote_is_not_recreated_by_a_sync() {
+        let (work, remote) = init_repo_with_remote();
+        let file = work.join("tracked.md");
+        let content = "- [x] one\n";
+        fs::write(&file, content).unwrap();
+
+        // The remote drops the branch; nothing fetches, so the local view
+        // goes stale exactly as it would in practice.
+        run(&remote, &["update-ref", "-d", "refs/heads/main"]);
+        assert!(
+            !git_stdout(&work, &["rev-parse", "--verify", "-q", "origin/main"]).is_empty(),
+            "test setup: the stale tracking ref must still be present, or \
+             this exercises the no-upstream path instead"
+        );
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            content,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(content),
+            None,
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
+                if message.contains("no longer exists")),
+            "the sync must commit locally and refuse to publish: {outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(
+                &remote,
+                &["for-each-ref", "--format=%(refname)", "refs/heads/"]
+            ),
+            "",
+            "the deleted branch must still be absent from the remote"
+        );
+        // The work is not lost — it is committed locally, waiting for the
+        // user to decide where it should go.
+        assert!(
+            git_stdout(&work, &["log", "--format=%s", "-1", "main"]).contains("Check"),
+            "the commit itself must have been made locally"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
     fn init_repo_with_crlf_filter() -> PathBuf {
         let work = unique_dir("repo-autocrlf").join("work");
         fs::create_dir_all(&work).unwrap();
