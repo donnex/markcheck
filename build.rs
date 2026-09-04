@@ -61,25 +61,46 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=MARKCHECK_GIT_SHA={sha}");
 
-    // Rebuild when the commit actually changes. Watching `HEAD` alone is not
-    // enough, and used to be all this did: committing on the same branch
-    // rewrites the *branch ref*, not `HEAD` — confirmed against real git —
-    // so the stamped SHA silently went stale until some unrelated change
-    // forced a rebuild. `HEAD` still has to be watched too, for branch
-    // switches and for a detached `HEAD`, where there is no branch ref.
+    // Rebuild when the commit actually changes. Getting this right takes
+    // three watches, because the branch tip has three possible
+    // representations and git moves between them freely.
     //
-    // Only paths that exist are emitted: a missing `rerun-if-changed` path
-    // makes cargo rebuild unconditionally, and a packed ref has no loose
-    // file to watch. Outside a repository (a source tarball) nothing is
-    // emitted at all, which is right — there is no commit to go stale.
+    // `HEAD` alone is not enough, and used to be all this did: committing on
+    // the same branch rewrites the *branch ref*, not `HEAD` — confirmed —
+    // so the stamped SHA silently went stale until some unrelated change
+    // forced a rebuild. `HEAD` still has to be watched for branch switches
+    // and for a detached `HEAD`, where there is no branch ref at all.
+    //
+    // Watching only the loose ref *file* is not enough either — external
+    // review of `d885c88`. In a repository whose refs have been packed
+    // (`git gc`, `git pack-refs`, a fresh clone) there is no loose file at
+    // build time, so nothing was emitted for the branch; the next commit
+    // then *creates* the loose ref, which cargo was not watching, and the
+    // SHA went stale exactly as before. Confirmed against real git.
+    //
+    // So: watch the directory the loose ref would live in, which covers it
+    // whether it exists yet or not, plus `packed-refs` for the case where the
+    // tip moves while staying packed. Emitting a directory costs an
+    // occasional extra rebuild when some *other* branch is created or
+    // deleted, which is the right trade against reporting a version that
+    // isn't the one built. Only existing paths are emitted: a missing
+    // `rerun-if-changed` path makes cargo rebuild unconditionally. Outside a
+    // repository (a source tarball) nothing is emitted at all, which is
+    // right — there is no commit to go stale.
     let mut watched = Vec::new();
     if let Some(head) = git_path(&manifest_dir, "HEAD") {
         watched.push(head);
     }
+    if let Some(packed) = git_path(&manifest_dir, "packed-refs") {
+        watched.push(packed);
+    }
     if let Some(branch_ref) = git(&manifest_dir, &["symbolic-ref", "-q", "HEAD"])
         .and_then(|name| git_path(&manifest_dir, &name))
     {
-        watched.push(branch_ref);
+        // The directory, not the file: the file may not exist yet.
+        if let Some(dir) = branch_ref.parent() {
+            watched.push(dir.to_path_buf());
+        }
     }
     for path in watched {
         if path.exists() {
