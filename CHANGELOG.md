@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer publishes unrelated local commits when your branch has
+  upstream *settings* but no remote-tracking ref yet — configured by hand,
+  or pruned. The check that refuses to publish unrelated work saw no
+  upstream to compare against and stood down, while the push went ahead and
+  created the branch on the remote. Both now agree on what having an
+  upstream means; run `git push -u` once and syncing proceeds as normal.
 - Git-sync now ignores git environment variables inherited from wherever
   you launched `markcheck`. With `GIT_DIR` or `GIT_WORK_TREE` exported — the
   common bare dotfiles-repo setup, or anything run from a git hook,

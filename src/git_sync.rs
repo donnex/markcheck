@@ -1382,13 +1382,31 @@ fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("git-sync: refusing to push an unresolved commit".to_string());
     }
+    // `push` and the unpushed-history guard must agree about what "has an
+    // upstream" means, and they used to answer it from different sources:
+    // this asked the *config* (`upstream_parts`), while `unpushed_history`
+    // resolves `@{u}`. Deep rounds 3, round 3, confirmed against real git —
+    // those disagree whenever the config names an upstream whose
+    // remote-tracking ref does not exist (set by hand, or pruned). The guard
+    // then reports `NoUpstream` and stands down, while this built a refspec
+    // and published anyway, *creating* the branch on the remote — reopening
+    // the very hazard the refuse-without-an-upstream rule closed, since
+    // unrelated local commits went out with it.
+    //
+    // The resolvable ref is the authority for both. A branch whose upstream
+    // has never been created still commits locally; only publishing waits
+    // for the one-off `git push -u`.
+    let no_upstream = SyncOutcome::CommittedNotPushed {
+        message: "git-sync: no upstream configured for this branch; \
+                  run `git push -u` once"
+            .to_string(),
+        commit: expected_commit.to_string(),
+    };
+    if !matches!(resolve_upstream(repo_dir), Ok(Some(_))) {
+        return no_upstream;
+    }
     let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
-        return SyncOutcome::CommittedNotPushed {
-            message: "git-sync: no upstream configured for this branch; \
-                      run `git push -u` once"
-                .to_string(),
-            commit: expected_commit.to_string(),
-        };
+        return no_upstream;
     };
     let mut cmd = git_command(repo_dir);
     cmd.args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
@@ -5943,6 +5961,79 @@ mod tests {
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_configured_but_unresolvable_upstream_does_not_bypass_the_unrelated_guard() {
+        // Deep rounds 3, round 3. Two functions answered "is there an
+        // upstream?" differently: `push` asks the *config*
+        // (`branch.<n>.remote`/`.merge` via `upstream_parts`), while
+        // `unpushed_history` resolves `@{u}`. Confirmed against real git that
+        // those disagree when the config names an upstream whose
+        // remote-tracking ref does not exist — set by hand, or pruned.
+        //
+        // The guard then answers `NoUpstream` and is skipped, while `push`
+        // happily builds a refspec and publishes, creating the branch on the
+        // remote. That reopens exactly the hazard the "refuse without an
+        // upstream" work closed: unrelated local commits get published by a
+        // checklist toggle.
+        let root = unique_dir("upstream-disagreement");
+        let remote = root.join("remote.git");
+        let work = root.join("work");
+        fs::create_dir_all(&remote).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        run(&remote, &["init", "--bare", "-q", "-b", "main"]);
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+        fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        run(&work, &["commit", "-q", "-m", "init"]);
+        run(
+            &work,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        // Config only — never `push -u`, so no remote-tracking ref exists.
+        run(&work, &["config", "branch.main.remote", "origin"]);
+        run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+        assert!(
+            upstream_parts(&work).is_some(),
+            "test setup: the config claims an upstream"
+        );
+        assert_eq!(
+            resolve_upstream(&work),
+            Ok(None),
+            "test setup: but @{{u}} does not resolve"
+        );
+
+        // Unrelated local work that must not be published.
+        fs::write(work.join("secret.txt"), "unrelated\n").unwrap();
+        run(&work, &["add", "secret.txt"]);
+        run(&work, &["commit", "-q", "-m", "unrelated work"]);
+
+        let file = work.join("tracked.md");
+        let expected = "- [x] one\n";
+        fs::write(&file, expected).unwrap();
+        let outcome = run_sync(
+            &work,
+            &file,
+            expected,
+            &commit_message(&file, "Check \"one\""),
+            &no_race(expected),
+            None,
+        );
+
+        assert!(
+            !matches!(outcome, SyncOutcome::Synced),
+            "must not publish when the unrelated-commits guard could not run: {outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(&remote, &["log", "--oneline", "-1", "main"]),
+            "",
+            "the unrelated commit must not have reached the remote"
+        );
+
+        fs::remove_dir_all(&root).ok();
     }
 
     // --- Hostile repository shapes (deep rounds 2, round 2) ---
