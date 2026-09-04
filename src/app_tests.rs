@@ -3596,3 +3596,59 @@ fn an_external_reload_drops_a_queued_git_sync_request() {
 
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn the_fingerprint_describes_the_loaded_document_not_a_later_read() {
+    // Deep rounds 3, round 2. The fingerprint used to come from a *second*
+    // read of the file, separate from the read the document was parsed
+    // from. If the file changed in between, the fingerprint described
+    // content the in-memory document was not — so `disk_content_diverged`
+    // reported "unchanged" and the next toggle silently overwrote the newer
+    // content. That is the same defect the reload path was fixed for in the
+    // first deep review, recurring as a race between two reads.
+    //
+    // Forced deterministically by changing the file between the parse and
+    // the construction, which is exactly the window that existed.
+    let path = unique_temp_path();
+    let loaded = "## L\n\n- [ ] alpha\n- [ ] beta\n";
+    fs::write(&path, loaded).unwrap();
+    let document = crate::parser::parse_document(path.clone()).unwrap();
+
+    // Somebody rewrites the file before the state is built.
+    let newer = "## L\n\n- [x] alpha\n- [ ] beta\n- [ ] gamma\n";
+    fs::write(&path, newer).unwrap();
+
+    let mut state = AppState::new(document);
+
+    assert_eq!(
+        state.file_content_hash,
+        Some(hash_bytes(
+            writer::document_contents(&state.document).as_bytes()
+        )),
+        "the fingerprint must describe the document in memory"
+    );
+    assert_ne!(
+        state.file_content_hash,
+        Some(hash_bytes(newer.as_bytes())),
+        "and must not have been taken from the newer content on disk"
+    );
+
+    // The consequence that matters: a write now correctly refuses and
+    // reloads, instead of overwriting content it never saw.
+    state.toggle_current();
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("File changed on disk")),
+        "the divergence must be detected: {:?}",
+        state.status_message
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        newer,
+        "the newer content must survive untouched"
+    );
+
+    fs::remove_file(&path).ok();
+}
