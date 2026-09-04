@@ -196,6 +196,26 @@ fn wait_with_timeout(
     // lingering descendant just means returning whatever arrived within the
     // budget. The reader and writer threads are detached and exit on their
     // own once it finally closes the pipes.
+    //
+    // That last sentence is the whole residual, so it is worth stating
+    // precisely rather than leaving it sounding free. Until the descendant
+    // closes the pipes those threads stay blocked in `read_to_end`, each
+    // holding a pipe read end: measured at +2 threads and 2 file descriptors
+    // per call, so a `pre-commit` hook that daemonises something on every
+    // commit accumulates them for as long as that daemon lives. The cost is
+    // bounded by the descendant's lifetime, not by ours, and a descendant
+    // that exits promptly reclaims everything — which is what
+    // `a_lingering_descendant_costs_threads_only_while_it_lives` pins.
+    //
+    // Not fixed rather than not noticed. Interrupting a thread blocked in a
+    // blocking `read` needs the descriptor closed underneath it, and the
+    // thread owns it; doing this properly means non-blocking reads or
+    // `waitid(WNOWAIT)` to delay the reap so the group kill stays safe, and
+    // both need `libc`/`nix` — a new dependency, which this project has
+    // ruled out. The alternative within std is redirecting to temp files
+    // instead of pipes, which removes the leak entirely but rewrites the
+    // subprocess core for every command to fix a narrow case. Left as a
+    // documented trade-off; revisit if a dependency ever becomes acceptable.
     let finish = |stdin_done: &Option<mpsc::Receiver<()>>| -> (Vec<u8>, Vec<u8>) {
         let deadline = Instant::now() + PIPE_DRAIN_GRACE;
         let left = || deadline.saturating_duration_since(Instant::now());
@@ -5411,6 +5431,75 @@ mod tests {
             started.elapsed() < Duration::from_secs(2),
             "must not deadlock on a full pipe buffer: {:?}",
             started.elapsed()
+        );
+    }
+
+    /// Pass 5, round 3. The success path deliberately does not kill the
+    /// process group (a reaped PID may have been recycled — see
+    /// `wait_with_timeout`), so a descendant holding the inherited pipes
+    /// leaves the two reader threads blocked in `read_to_end`, each holding
+    /// a descriptor. Measured: +2 threads per call, ~44 over 20 calls.
+    ///
+    /// That cost is real but *bounded by the descendant's lifetime*, and
+    /// that boundedness is the property worth pinning — if it ever became
+    /// permanent, a long session against a repository whose hooks daemonise
+    /// something would climb toward the descriptor limit. Here the
+    /// descendants exit on their own and everything is reclaimed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_lingering_descendant_costs_threads_only_while_it_lives() {
+        let threads = || {
+            std::fs::read_dir("/proc/self/task")
+                .map(|d| d.count())
+                .unwrap_or(0)
+        };
+
+        // Warm up with a child that leaves nothing behind, so lazily-created
+        // runtime threads exist before the baseline is taken and are not
+        // mistaken for leakage.
+        for _ in 0..3 {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "exit 0"]);
+            let _ = run_with_timeout(cmd, Duration::from_millis(500));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let baseline = threads();
+
+        // The shell exits immediately, so this takes the *success* path
+        // where no group kill happens; the backgrounded descendant inherits
+        // the pipes and outlives PIPE_DRAIN_GRACE, so the two reader threads
+        // are still blocked when the call returns.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 5 & exit 0"]);
+        let result = run_with_timeout(cmd, Duration::from_millis(500));
+        assert!(result.is_ok(), "the direct child exits successfully");
+
+        let while_held = threads();
+        assert!(
+            while_held > baseline,
+            "test is not exercising the case it claims: the descendant should \
+             still be holding the pipes here (baseline {baseline}, now {while_held})"
+        );
+
+        // The actual property: this costs threads and descriptors only while
+        // the descendant lives. Once it exits, the blocked reads see EOF and
+        // the threads finish, so the cost is bounded by the descendant rather
+        // than accumulating for the rest of the session.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while threads() > baseline && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        // Asserted against the peak, not only the baseline: `cargo test` runs
+        // these in parallel by default, so an unrelated test spawning threads
+        // could hold the absolute count above `baseline` through no fault of
+        // this code. Dropping below the peak is the part that is genuinely
+        // this call's doing, and cannot happen unless the reader threads
+        // finished.
+        let settled = threads();
+        assert!(
+            settled < while_held,
+            "threads must be reclaimed once the descendant lets go: baseline \
+             {baseline}, peak {while_held}, still {settled} after waiting"
         );
     }
 
