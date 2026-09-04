@@ -6036,6 +6036,148 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    // --- Randomised operation sequences (deep rounds 4, round 1) ---
+
+    /// A tiny deterministic PRNG. Seeded per case so a failure reproduces
+    /// exactly, and written inline rather than pulling in a dependency for
+    /// what is two lines of arithmetic.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// Whether `sha` is still reachable from the branch.
+    fn still_on_branch(work: &Path, sha: &str) -> bool {
+        Command::new("git")
+            .current_dir(work)
+            .args(["merge-base", "--is-ancestor", sha, "HEAD"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Whether `sha` is reachable from the remote's branch — i.e. it has
+    /// been published.
+    fn reached_the_remote(remote: &Path, sha: &str) -> bool {
+        Command::new("git")
+            .current_dir(remote)
+            .args(["merge-base", "--is-ancestor", sha, "main"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn randomised_sequences_never_lose_a_commit_markcheck_did_not_make() {
+        // Deep rounds 4, round 1. Every previous round reasoned about one
+        // interleaving at a time. This drives *sequences* of them against
+        // the strongest invariant the module has — markcheck never moves the
+        // branch across a commit it did not create — which is the one that
+        // produced the worst bug found so far (the rollback that rewound a
+        // concurrent commit off the branch).
+        //
+        // Deterministic: every case is seeded, so a failure names the exact
+        // sequence that produced it.
+        for seed in 0..10u64 {
+            let (work, remote) = init_repo_with_remote();
+            let file = work.join("tracked.md");
+            let broken = work.parent().unwrap().join("gone.git");
+            let good = remote.clone();
+
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let mut foreign: Vec<String> = Vec::new();
+            let mut content = "- [ ] one\n".to_string();
+            fs::write(&file, &content).unwrap();
+
+            for step in 0..10 {
+                match rng.below(5) {
+                    // A markcheck toggle and the sync it queues.
+                    0 => {
+                        let previous = content.clone();
+                        content = if content.contains("- [ ] one") {
+                            content.replace("- [ ] one", "- [x] one")
+                        } else {
+                            content.replace("- [x] one", "- [ ] one")
+                        };
+                        fs::write(&file, &content).unwrap();
+                        let _ = run_sync(
+                            &work,
+                            &file,
+                            &content,
+                            &commit_message(&file, "Toggle"),
+                            &no_race(&content),
+                            Some(hash_bytes(previous.as_bytes())),
+                        );
+                    }
+                    // Somebody edits the checklist outside markcheck.
+                    1 => {
+                        content = format!("{content}- [ ] edit{step}\n");
+                        fs::write(&file, &content).unwrap();
+                    }
+                    // A commit markcheck did not make.
+                    2 => {
+                        let name = format!("foreign{step}.txt");
+                        fs::write(work.join(&name), "not the checklist\n").unwrap();
+                        run(&work, &["add", &name]);
+                        run(&work, &["commit", "-q", "-m", &format!("foreign {step}")]);
+                        foreign.push(git_stdout(&work, &["rev-parse", "HEAD"]));
+                    }
+                    // The user stages the checklist themselves.
+                    3 => {
+                        run(&work, &["add", "tracked.md"]);
+                    }
+                    // The remote comes and goes.
+                    _ => {
+                        let url = if rng.below(2) == 0 {
+                            broken.to_str().unwrap()
+                        } else {
+                            good.to_str().unwrap()
+                        };
+                        run(&work, &["remote", "set-url", "origin", url]);
+                    }
+                }
+
+                // The invariant, checked after every single step.
+                for sha in &foreign {
+                    assert!(
+                        still_on_branch(&work, sha),
+                        "seed {seed}, step {step}: commit {sha} was made outside markcheck \
+                         and must still be on the branch"
+                    );
+                }
+                // And the checklist must never be destroyed.
+                assert!(
+                    fs::read_to_string(&file).is_ok_and(|on_disk| !on_disk.is_empty()),
+                    "seed {seed}, step {step}: the checklist must survive every sequence"
+                );
+                // The publication promise: a commit markcheck did not make
+                // must never be pushed. The unrelated-history guard is what
+                // enforces this, so any sequence that gets one onto the
+                // remote is a hole in it.
+                for sha in &foreign {
+                    assert!(
+                        !reached_the_remote(&remote, sha),
+                        "seed {seed}, step {step}: commit {sha} is not the checklist's \
+                         and must never have been published"
+                    );
+                }
+            }
+
+            fs::remove_dir_all(work.parent().unwrap()).ok();
+        }
+    }
+
     // --- Hostile repository shapes (deep rounds 2, round 2) ---
 
     #[test]
