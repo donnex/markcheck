@@ -221,3 +221,24 @@ pub(super) fn reached_the_remote(remote: &Path, sha: &str) -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// Injected `commit_temp_index` timeout for the two tests whose hook has
+/// to complete a real nested `git commit` *before* the timeout fires and
+/// `HEAD` is re-resolved.
+///
+/// Deliberately much larger than the 300ms the other timeout tests use:
+/// those only need their hook to reach its `sleep`, while these need it
+/// to finish actual git work first. At 300ms that was a coin flip under
+/// parallel test load — the nested commit hadn't landed when `HEAD` was
+/// re-resolved, so the ownership check correctly adopted markcheck's own
+/// commit (the right answer for that interleaving) and the test failed
+/// asserting the other one. Reproduced by running the suite six ways
+/// concurrently: roughly half the runs failed.
+///
+/// The hooks sleep far longer than this, so the timeout — not the sleep
+/// — is still what ends the run, and the timeout branch is still what's
+/// under test.
+pub(super) const HOOK_RACE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Sleep for a hook that must outlive `HOOK_RACE_TIMEOUT`. The process
+/// group is killed on timeout, so this never actually elapses.
+pub(super) const HOOK_RACE_SLEEP: &str = "30";
