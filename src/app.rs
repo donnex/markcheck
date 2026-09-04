@@ -102,7 +102,26 @@ impl AppState {
             "AppState requires a document with at least one list; the empty case \
              is rejected at load (main.rs) and reload (reload_if_changed)",
         );
-        let (file_mtime, file_size) = current_stat(&document.file_path).unzip();
+        // The stat is taken *after* the caller has read and parsed the file,
+        // so it can describe a revision the document is not. Recording it
+        // anyway would be worse than recording nothing: `reload_if_changed`
+        // short-circuits on mtime+size, so an external change that landed in
+        // that window would look *already seen* and never be loaded, leaving
+        // stale content on screen until something else touched the file. The
+        // reload path has no such problem — its stat precedes the read, which
+        // errs the safe way.
+        //
+        // The document's own byte length is the cheap cross-check: if it
+        // disagrees with what the stat reports, the file moved under us and
+        // neither value is worth keeping. Dropping both makes the next tick
+        // reload, which is exactly right. A change that preserves the byte
+        // length still slips through, which is the same limitation mtime and
+        // size already carry and why the content hash exists.
+        let contents = writer::document_contents(&document);
+        let (file_mtime, file_size) = match current_stat(&document.file_path) {
+            Some((modified, size)) if size == contents.len() as u64 => (Some(modified), Some(size)),
+            _ => (None, None),
+        };
         // Derived from the document itself, never from a second read of the
         // file. `raw_lines` concatenates to exactly the bytes it was parsed
         // from — the invariant `write_back` already depends on — so this is
@@ -113,7 +132,7 @@ impl AppState {
         // the next toggle would silently overwrite the newer content. That
         // is the same defect the reload path was fixed for, and the only
         // durable cure is to stop reading twice.
-        let file_content_hash = Some(hash_bytes(writer::document_contents(&document).as_bytes()));
+        let file_content_hash = Some(hash_bytes(contents.as_bytes()));
         // Start on the first not-done item: prefer the first list, then
         // fall back to the first list with remaining work, then item 0
         // (everything already done).
