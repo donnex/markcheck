@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced, so it was correctly refused — but shown as a git-sync error for
   a situation where nothing had gone wrong. The stale request is now
   discarded quietly when the external change is picked up.
+- A slow save can no longer cost you a toggle. When two copies of
+  `markcheck` had the same checklist open, one that took more than thirty
+  seconds to write — a stalled disk, a network or FUSE filesystem — was
+  treated as crashed, and the other started writing alongside it, so one of
+  the two changes was silently lost. A save is now only ever taken over
+  from a process that has actually exited.
 - Two copies of `markcheck` open on the same checklist can no longer lose a
   toggle. Both could previously check that the file was unchanged and then
   both save, with the second overwriting the first's change. Saving is now
