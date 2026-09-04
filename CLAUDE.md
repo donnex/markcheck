@@ -25,7 +25,7 @@ PTY integration tests (`tests/pty.rs`) require the binary to be built first — 
 
 ## Architecture
 
-Data flows one way: `parser.rs` reads a Markdown file into `Document` (via `pulldown-cmark`), `app.rs` holds `AppState` which wraps the `Document` and owns all navigation/toggle logic, `ui/` renders `AppState` each frame, and `writer.rs` atomically writes checkbox state back to the file on every toggle.
+Data flows one way: `parser.rs` reads a Markdown file into `Document` (via `pulldown-cmark`), `app.rs` holds `AppState` which wraps the `Document` and owns all navigation/toggle logic, `ui/` renders `AppState` each frame, and `writer.rs` atomically writes checkbox state back to the file on every toggle. `git_sync/` is a module directory split by concern in one dependency direction (process -> inspect -> guards -> commit/push -> sync); see DESIGN.md's Git Sync section.
 
 Key non-obvious design points:
 
