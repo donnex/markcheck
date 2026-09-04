@@ -1769,6 +1769,26 @@ const STAGED_TARGET_REFUSAL: &str = "git-sync: the checklist has staged changes 
 /// carries no pre-write hash to compare against, safety can't be
 /// established and the sync refuses — the same rule `unpushed_history`
 /// follows.
+///
+/// **Known limitation, content filters.** The two sides of the comparison
+/// below are not always like for like: `previous_content_hash` digests the
+/// bytes as they sit in the working tree, while `staged_bytes` returns the
+/// blob as git stored it, *after* any clean filter. Under `core.autocrlf`
+/// (or a `.gitattributes` `text` setting) with CRLF endings in the working
+/// tree they differ by exactly the normalisation — verified: 22 bytes on
+/// disk against 20 in the blob for the same two lines — so the hashes cannot
+/// match and this returns `true` for staged content that is in fact
+/// identical. The effect is a false refusal in precisely the two workflows
+/// the paragraph above says must keep working.
+///
+/// It fails in the safe direction — the sync refuses, nothing is committed
+/// and nothing is lost — which is why it is recorded rather than patched
+/// over. Comparing like for like means holding the pre-write *content*
+/// rather than its digest, so the same filters can be applied to both (`git
+/// hash-object --path <relpath>` gives the blob SHA git itself would
+/// compute), and that means threading content instead of a hash through the
+/// request plumbing in `app.rs`. Worth doing deliberately, not as an aside
+/// inside a guard this careful.
 fn staged_target_would_be_lost(
     repo_root: &Path,
     relpath: &str,
