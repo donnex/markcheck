@@ -458,7 +458,7 @@ pub(super) fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::super::inspect::{blob_at, current_head, hash_object, upstream_parts};
-    use super::super::push;
+    use super::super::push::push;
     use super::super::test_support::*;
     use super::*;
     use std::fs;
