@@ -149,7 +149,18 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Warn *before* the first write, while quitting still costs nothing: a
+    // toggle renames a new inode over this path and any hard-linked alias
+    // silently stops tracking the checklist. See `writer::hard_link_count`
+    // for why this warns rather than refuses.
+    let hard_links = writer::hard_link_count(&document.file_path);
+
     let mut state = AppState::new(document);
+    if let Some(links) = hard_links.filter(|links| *links > 1) {
+        state.set_error(format!(
+            "Warning: {links} hard links to this file — a save leaves the others behind"
+        ));
+    }
     if created_new {
         state.set_status("Created new checklist".to_string());
     }
