@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync now stores exactly the content `git add` would, in repositories
+  that normalise line endings (`core.autocrlf`, or a `.gitattributes` `text`
+  setting). It previously bypassed that normalisation and committed the file
+  verbatim, so a repository shared with Windows users could receive content
+  git itself would never have written. The same bug also made git-sync
+  wrongly refuse to sync — reporting that a staged version of the checklist
+  would be lost — when the staged version was in fact identical.
+
 - Git-sync no longer leaks a couple of threads and file handles per commit
   when a repository's hooks start a background process. Over a long session
   against such a repository this could accumulate until the process ran out

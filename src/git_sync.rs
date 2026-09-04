@@ -550,7 +550,7 @@ impl GitSync {
                     &sync.content,
                     &message,
                     &latest_requested_hash,
-                    sync.previous_content_hash,
+                    sync.previous_content.as_deref(),
                 )
             });
             let _ = sender.send(outcome);
@@ -795,7 +795,7 @@ fn run_sync(
     expected_content: &str,
     message: &str,
     latest_requested_hash: &Mutex<[u8; 32]>,
-    previous_content_hash: Option<[u8; 32]>,
+    previous_content: Option<&str>,
 ) -> SyncOutcome {
     // All plumbing commands run from the repo root with a root-relative
     // path, sidestepping any ambiguity between CWD-relative and
@@ -991,16 +991,11 @@ fn run_sync(
     let head_blob = tip
         .as_deref()
         .and_then(|t| blob_at(&repo_root, t, &relpath));
-    if staged_target_would_be_lost(
-        &repo_root,
-        &relpath,
-        head_blob.as_deref(),
-        previous_content_hash,
-    ) {
+    if staged_target_would_be_lost(&repo_root, &relpath, head_blob.as_deref(), previous_content) {
         return SyncOutcome::Failed(STAGED_TARGET_REFUSAL.to_string());
     }
 
-    let blob = match hash_object(&repo_root, expected_content) {
+    let blob = match hash_object(&repo_root, &relpath, expected_content) {
         Ok(sha) => sha,
         Err(err) => return SyncOutcome::Failed(err),
     };
@@ -1736,52 +1731,36 @@ const STAGED_TARGET_REFUSAL: &str = "git-sync: the checklist has staged changes 
 /// established and the sync refuses — the same rule `unpushed_history`
 /// follows.
 ///
-/// **Known limitation, content filters.** The two sides of the comparison
-/// below are not always like for like: `previous_content_hash` digests the
-/// bytes as they sit in the working tree, while `staged_bytes` returns the
-/// blob as git stored it, *after* any clean filter. Under `core.autocrlf`
-/// (or a `.gitattributes` `text` setting) with CRLF endings in the working
-/// tree they differ by exactly the normalisation — verified: 22 bytes on
-/// disk against 20 in the blob for the same two lines — so the hashes cannot
-/// match and this returns `true` for staged content that is in fact
-/// identical. The effect is a false refusal in precisely the two workflows
-/// the paragraph above says must keep working.
-///
-/// It fails in the safe direction — the sync refuses, nothing is committed
-/// and nothing is lost — which is why it is recorded rather than patched
-/// over. Comparing like for like means holding the pre-write *content*
-/// rather than its digest, so the same filters can be applied to both (`git
-/// hash-object --path <relpath>` gives the blob SHA git itself would
-/// compute), and that means threading content instead of a hash through the
-/// request plumbing in `app.rs`. Worth doing deliberately, not as an aside
-/// inside a guard this careful.
+/// Both sides of the comparison are blob SHAs that git computed for this
+/// path, so content filters apply to each identically. That was a real
+/// defect once: the guard compared a digest of the working-tree bytes
+/// against the staged blob's bytes, which under `core.autocrlf` differ by
+/// exactly the normalisation — measured at 22 bytes on disk against 20 in
+/// the blob for the same two lines — so the hashes could never match and a
+/// perfectly safe sync was refused, in precisely the two workflows the
+/// paragraph above says must keep working. See `hash_object_inner`.
 fn staged_target_would_be_lost(
     repo_root: &Path,
     relpath: &str,
     head_blob: Option<&str>,
-    previous_content_hash: Option<[u8; 32]>,
+    previous_content: Option<&str>,
 ) -> bool {
     let index = index_blob(repo_root, relpath);
     if index.as_deref() == head_blob {
         return false; // nothing staged for this path
     }
-    let Some(previous) = previous_content_hash else {
+    let Some(previous) = previous_content else {
         return true;
     };
-    match staged_bytes(repo_root, relpath) {
-        Some(bytes) => hash_bytes(&bytes) != previous,
+    // Both sides are blob SHAs computed by git for *this path*, so any
+    // clean filter applies equally to each — see `hash_object_inner`.
+    // Comparing raw bytes here instead was the bug: under `core.autocrlf`
+    // the staged blob is normalised and the working-tree bytes are not, so
+    // they could never match and a safe sync was refused.
+    match blob_sha_for(repo_root, relpath, previous) {
+        Some(sha) => index.as_deref() != Some(sha.as_str()),
         None => true,
     }
-}
-
-/// The checklist's staged content — stage 0 of the **real** index (`git show
-/// :<path>`), not `HEAD`'s. `None` when there is no staged entry or the read
-/// fails.
-fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["show", &format!(":{relpath}")]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    output.status.success().then_some(output.stdout)
 }
 
 /// The blob SHA the **real** index currently holds for `relpath`, or `None`
@@ -2237,10 +2216,44 @@ fn descends_directly_from(repo_root: &Path, commit: &str, parent: &Option<String
 }
 
 /// Writes `content` into the object database without touching the working
-/// tree or index, returning its blob SHA.
-fn hash_object(repo_root: &Path, content: &str) -> Result<String, String> {
+/// tree or index, returning its blob SHA — the blob a later commit stages.
+fn hash_object(repo_root: &Path, relpath: &str, content: &str) -> Result<String, String> {
+    hash_object_inner(repo_root, relpath, content, true)
+}
+
+/// The blob SHA `content` *would* have at `relpath`, computed without
+/// writing anything. Used to compare against what is already staged, where
+/// writing a throwaway object on every check would only litter the
+/// repository with unreferenced loose blobs.
+fn blob_sha_for(repo_root: &Path, relpath: &str, content: &str) -> Option<String> {
+    hash_object_inner(repo_root, relpath, content, false).ok()
+}
+
+/// **`--path` is what makes this agree with git.** Without it, `hash-object`
+/// hashes the bytes verbatim; with it, git applies whatever clean filter
+/// that path is configured for — `core.autocrlf`, a `.gitattributes` `text`
+/// setting — exactly as `git add` would.
+///
+/// Omitting it was a real defect, not a nicety. On a repository with
+/// `core.autocrlf` and CRLF endings, the same two lines hash to
+/// `508b5d62…` verbatim but `c83684de…` through the filter, and `git add`
+/// stores the latter — so markcheck was committing a blob git itself would
+/// never have written, publishing un-normalised content to everyone who
+/// pulls it. It also broke `staged_target_would_be_lost`, which compared a
+/// filtered blob against unfiltered bytes and so could never match, and
+/// refused a sync that was in fact safe.
+fn hash_object_inner(
+    repo_root: &Path,
+    relpath: &str,
+    content: &str,
+    write: bool,
+) -> Result<String, String> {
     let mut cmd = git_command(repo_root);
-    cmd.args(["hash-object", "-w", "--stdin"]);
+    cmd.arg("hash-object");
+    if write {
+        cmd.arg("-w");
+    }
+    cmd.args(["--path", relpath, "--stdin"]);
     let output = run_with_timeout_and_stdin(cmd, PLUMBING_TIMEOUT, content)
         .map_err(|err| format!("git hash-object failed: {err}"))?;
     if !output.status.success() {
@@ -2448,6 +2461,23 @@ mod tests {
     /// returned directly from `unique_dir` — otherwise `work.parent()` would
     /// be the shared system temp directory itself, and every test's cleanup
     /// (`remove_dir_all(work.parent().unwrap())`) would attempt to wipe it.
+    /// The checklist's staged content — stage 0 of the **real** index (`git
+    /// show :<path>`), not `HEAD`'s. `None` when there is no staged entry or
+    /// the read fails.
+    ///
+    /// A test helper rather than production code: the staged-target guard
+    /// used to read these bytes to compare them against a digest of the
+    /// working tree, which is exactly the comparison that broke under a
+    /// clean filter. It now compares blob SHAs git computed for the path, so
+    /// nothing in production needs the bytes — only the tests asserting a
+    /// staged version survived a race still do.
+    fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
+        let mut cmd = git_command(repo_root);
+        cmd.args(["show", &format!(":{relpath}")]);
+        let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+        output.status.success().then_some(output.stdout)
+    }
+
     fn init_repo_without_remote() -> PathBuf {
         let work = unique_dir("repo-no-remote").join("work");
         fs::create_dir_all(&work).unwrap();
@@ -2458,6 +2488,84 @@ mod tests {
         run(&work, &["add", "tracked.md"]);
         run(&work, &["commit", "-q", "-m", "init"]);
         work
+    }
+
+    /// A repository with a clean filter configured, where the working tree
+    /// and the blob git stores differ by exactly that filter.
+    fn init_repo_with_crlf_filter() -> PathBuf {
+        let work = unique_dir("repo-autocrlf").join("work");
+        fs::create_dir_all(&work).unwrap();
+        run(&work, &["init", "-q", "-b", "main"]);
+        run(&work, &["config", "user.email", "test@example.com"]);
+        run(&work, &["config", "user.name", "test"]);
+        run(&work, &["config", "core.autocrlf", "input"]);
+        fs::write(work.join("tracked.md"), "- [ ] one\r\n").unwrap();
+        run(&work, &["add", "tracked.md"]);
+        run(&work, &["commit", "-q", "-m", "init"]);
+        work
+    }
+
+    /// markcheck must stage the blob git itself would stage. Without
+    /// `--path`, `hash-object` hashes the bytes verbatim and skips the clean
+    /// filter, so markcheck published un-normalised content that `git add`
+    /// would never have produced — everyone pulling the repository got it.
+    #[test]
+    fn a_staged_blob_matches_what_git_add_would_have_stored() {
+        let work = init_repo_with_crlf_filter();
+        let content = "- [x] one\r\n- [ ] two\r\n";
+
+        let ours = hash_object(&work, "tracked.md", content).unwrap();
+
+        // What git produces for the same content through its own porcelain.
+        fs::write(work.join("tracked.md"), content).unwrap();
+        run(&work, &["add", "tracked.md"]);
+        let theirs = index_blob(&work, "tracked.md").unwrap();
+
+        assert_eq!(
+            ours, theirs,
+            "the blob markcheck stages must be the one `git add` stores"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    /// The false refusal this guard used to produce under a clean filter.
+    /// The staged content *is* what markcheck loaded, so nothing would be
+    /// lost — but the old comparison held a digest of the working-tree bytes
+    /// against the normalised staged blob, which can never match.
+    #[test]
+    fn a_matching_staged_checklist_is_not_refused_under_a_content_filter() {
+        let work = init_repo_with_crlf_filter();
+        let head_blob = blob_at(&work, &current_head(&work).unwrap(), "tracked.md");
+
+        // The user stages an edit; markcheck then loads exactly that content.
+        let loaded = "- [x] one\r\n";
+        fs::write(work.join("tracked.md"), loaded).unwrap();
+        run(&work, &["add", "tracked.md"]);
+
+        assert_ne!(
+            index_blob(&work, "tracked.md"),
+            head_blob,
+            "test setup: something must actually be staged, or the guard \
+             returns early and proves nothing"
+        );
+        assert!(
+            !staged_target_would_be_lost(&work, "tracked.md", head_blob.as_deref(), Some(loaded)),
+            "staged content identical to what markcheck loaded loses nothing"
+        );
+
+        // And the guard still fires when the index really does hold
+        // something else, so the fix did not simply disable it.
+        let only_in_index = "- [x] one\r\n- [ ] staged only\r\n";
+        fs::write(work.join("tracked.md"), only_in_index).unwrap();
+        run(&work, &["add", "tracked.md"]);
+        fs::write(work.join("tracked.md"), loaded).unwrap();
+        assert!(
+            staged_target_would_be_lost(&work, "tracked.md", head_blob.as_deref(), Some(loaded)),
+            "a staged snapshot the working tree does not have must still refuse"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
     /// A `latest_requested_hash` for a direct `run_sync` call representing
@@ -2471,8 +2579,11 @@ mod tests {
     /// The pre-write content hash for a test whose staged checklist matches
     /// the content being synced — the ordinary "staged, nothing lost" case,
     /// which the guard must let through.
-    fn staged_matches(content: &str) -> Option<[u8; 32]> {
-        Some(hash_bytes(content.as_bytes()))
+    /// The pre-write content a request carries — what the staged-target
+    /// guard compares the index against, now in git's terms rather than as a
+    /// digest (see `hash_object_inner`).
+    fn staged_matches(content: &str) -> Option<&str> {
+        Some(content)
     }
 
     fn pending_sync(content: &str, description: &str) -> PendingSync {
@@ -2482,7 +2593,7 @@ mod tests {
             // These tests drive `GitSync`'s request/coalescing machinery, not
             // the staged-target guard; none of them stage the checklist, so
             // the guard short-circuits before this is consulted.
-            previous_content_hash: None,
+            previous_content: None,
             description: description.to_string(),
         }
     }
@@ -2690,7 +2801,7 @@ mod tests {
         run(&work, &["add", "other.md"]);
         run(&work, &["commit", "-q", "-m", "concurrent change"]);
 
-        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
         let result = commit_via_temp_index(
             &work,
             &stale_parent,
@@ -2742,7 +2853,7 @@ mod tests {
         let parent = current_head(&work);
         fs::write(work.join(".git").join("MERGE_HEAD"), "deadbeef\n").unwrap();
 
-        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
         let result = commit_via_temp_index(
             &work,
             &parent,
@@ -4717,14 +4828,14 @@ mod tests {
     fn hash_object_reports_failure_outside_a_git_repo() {
         let dir = unique_dir("not-a-repo-hash-object");
         fs::create_dir_all(&dir).unwrap();
-        assert!(hash_object(&dir, "content").is_err());
+        assert!(hash_object(&dir, "tracked.md", "content").is_err());
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn stage_into_temp_index_reports_failure_for_an_invalid_mode() {
         let work = init_repo_without_remote();
-        let blob = hash_object(&work, "content").unwrap();
+        let blob = hash_object(&work, "tracked.md", "content").unwrap();
         let temp_index = work.join(".git").join("scratch-test-index");
         assert!(
             stage_into_temp_index(&work, &temp_index, "not-a-mode", &blob, "tracked.md").is_err()
@@ -4752,7 +4863,7 @@ mod tests {
         let work = init_repo_without_remote();
         let temp_index = work.join(".git").join("scratch-test-index");
         let head = current_head(&work).unwrap();
-        let blob = hash_object(&work, "- [ ] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [ ] one\n").unwrap();
         populate_temp_index(&work, &temp_index, &head).unwrap();
         assert!(
             commit_temp_index(
@@ -4792,7 +4903,7 @@ mod tests {
 
         let temp_index = work.join(".git").join("scratch-test-index-timeout");
         populate_temp_index(&work, &temp_index, &parent).unwrap();
-        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
         stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
 
         let result = commit_temp_index(
@@ -4838,7 +4949,7 @@ mod tests {
 
         let temp_index = work.join(".git").join("scratch-test-index-never-lands");
         populate_temp_index(&work, &temp_index, &parent).unwrap();
-        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
         stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
 
         let result = commit_temp_index(
@@ -4906,7 +5017,7 @@ mod tests {
 
         let temp_index = work.join(".git").join("scratch-test-index-unrelated");
         populate_temp_index(&work, &temp_index, &parent).unwrap();
-        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
         stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
 
         let result = commit_temp_index(
@@ -4994,7 +5105,7 @@ mod tests {
 
         let temp_index = work.join(".git").join("scratch-test-index-on-top");
         populate_temp_index(&work, &temp_index, &parent).unwrap();
-        let blob = hash_object(&work, "- [x] one\n").unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
         stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
 
         let result = commit_temp_index(
@@ -5227,9 +5338,9 @@ mod tests {
         run(&work, &["add", "other.md"]);
         run(&work, &["commit", "-q", "-m", "add other.md"]);
 
-        let base = hash_object(&work, "base\n").unwrap();
-        let ours = hash_object(&work, "ours\n").unwrap();
-        let theirs = hash_object(&work, "theirs\n").unwrap();
+        let base = hash_object(&work, "tracked.md", "base\n").unwrap();
+        let ours = hash_object(&work, "tracked.md", "ours\n").unwrap();
+        let theirs = hash_object(&work, "tracked.md", "theirs\n").unwrap();
         let index_info = format!(
             "100644 {base} 1\tother.md\n100644 {ours} 2\tother.md\n100644 {theirs} 3\tother.md\n"
         );
@@ -6208,7 +6319,7 @@ mod tests {
                             &content,
                             &commit_message(&file, "Toggle"),
                             &no_race(&content),
-                            Some(hash_bytes(previous.as_bytes())),
+                            Some(previous.as_str()),
                         );
                     }
                     // Somebody edits the checklist outside markcheck.
@@ -6615,7 +6726,7 @@ mod tests {
         assert_ne!(Some(&user_staged), before.as_ref(), "test setup");
 
         // markcheck finishes and would realign to its own committed blob.
-        let committed = hash_object(&work, "- [x] committed by markcheck\n").unwrap();
+        let committed = hash_object(&work, "tracked.md", "- [x] committed by markcheck\n").unwrap();
         align_real_index_entry(&work, "100644", &committed, "tracked.md", before.as_deref());
 
         assert_eq!(
@@ -6635,7 +6746,7 @@ mod tests {
         let (work, _remote) = init_repo_with_remote();
         let before = index_blob(&work, "tracked.md");
 
-        let committed = hash_object(&work, "- [x] committed by markcheck\n").unwrap();
+        let committed = hash_object(&work, "tracked.md", "- [x] committed by markcheck\n").unwrap();
         align_real_index_entry(&work, "100644", &committed, "tracked.md", before.as_deref());
 
         assert_eq!(

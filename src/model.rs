@@ -902,11 +902,18 @@ pub struct PendingSync {
     /// checklist has staged changes in git's index, committing the working
     /// tree replaces that index entry, so a staged snapshot that differs
     /// from the working tree would be dropped without ever reaching a
-    /// commit. Comparing the staged bytes against *this* hash is what tells
-    /// the two cases apart: staged content equal to what markcheck loaded is
-    /// wholly contained in the content about to be committed (nothing is
-    /// lost), while anything else is a snapshot only the index is holding.
-    pub previous_content_hash: Option<[u8; 32]>,
+    /// commit. Comparing what is staged against *this* is what tells the two
+    /// cases apart: staged content equal to what markcheck loaded is wholly
+    /// contained in the content about to be committed (nothing is lost),
+    /// while anything else is a snapshot only the index is holding.
+    ///
+    /// The content itself rather than a digest of it, because the comparison
+    /// has to be made in git's terms: `git_sync` hands this to `hash-object
+    /// --path` so that any clean filter configured for the checklist
+    /// (`core.autocrlf`, a `.gitattributes` `text` setting) applies to both
+    /// sides. A digest could only ever be compared against the raw staged
+    /// bytes, which under such a filter never match.
+    pub previous_content: Option<String>,
     pub description: String,
 }
 
