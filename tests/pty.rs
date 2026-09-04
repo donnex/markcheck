@@ -1264,17 +1264,31 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
     run_git(&work, &["add", "checklist.md"]);
     run_git(&work, &["commit", "-q", "-m", "init"]);
-    // Point origin at a path that will never resolve, so the first sync
-    // attempt's push fails deterministically and fast (no real network
-    // hang), while still recording origin as this branch's upstream so
-    // `ahead_of_upstream` (used by the retry-fast-path and the startup
-    // catch-up push) has something to compare against.
+    // Establish a *real* upstream first — `push -u` against the good remote,
+    // which is what creates the remote-tracking ref. Setting only
+    // `branch.main.remote`/`.merge` by hand is not equivalent: git-sync
+    // resolves `@{u}` rather than reading the config (they disagree when the
+    // tracking ref does not exist), and with no resolvable upstream it
+    // refuses to publish at all — so the retry this test exists to prove
+    // would never be reached.
     run_git(
         &work,
-        &["remote", "add", "origin", broken_remote.to_str().unwrap()],
+        &["remote", "add", "origin", remote.to_str().unwrap()],
     );
-    run_git(&work, &["config", "branch.main.remote", "origin"]);
-    run_git(&work, &["config", "branch.main.merge", "refs/heads/main"]);
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    // *Now* point origin at a path that will never resolve, so the first
+    // sync attempt's push fails deterministically and fast (no real network
+    // hang) while the upstream stays resolvable throughout.
+    run_git(
+        &work,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            broken_remote.to_str().unwrap(),
+        ],
+    );
 
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
     cmd.arg("--no-nerd-font");
