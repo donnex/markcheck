@@ -76,7 +76,12 @@ pub(super) fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u
 /// module keeps relearning (see `UnpushedHistory`, `LockOutcome`,
 /// `parse_first_parent`).
 pub(super) enum RemoteBranch {
-    Present,
+    /// The branch exists, and this is the commit it points at. The SHA is
+    /// carried because existence alone is not enough to push safely: it
+    /// becomes the lease the push is made against, so a branch that is
+    /// deleted or moved between this answer and the push is rejected by git
+    /// rather than overwritten. See `push`.
+    Present(String),
     Absent,
     /// The remote could not be consulted at all — offline, credentials,
     /// transport failure.
@@ -90,14 +95,30 @@ pub(super) fn remote_branch_state(repo_dir: &Path, remote: &str, branch_ref: &st
     cmd.args(["ls-remote", "--heads", remote, branch_ref]);
     match run_with_timeout(cmd, PUSH_TIMEOUT) {
         Ok(output) if output.status.success() => {
-            if String::from_utf8_lossy(&output.stdout).trim().is_empty() {
-                RemoteBranch::Absent
-            } else {
-                RemoteBranch::Present
+            // `<sha>\t<ref>` per line; exactly one line, since one ref was
+            // asked for. No output means the branch is not there.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match stdout.split_whitespace().next() {
+                Some(sha) => RemoteBranch::Present(sha.to_string()),
+                None => RemoteBranch::Absent,
             }
         }
         _ => RemoteBranch::Unknown,
     }
+}
+
+/// Whether `ancestor` is reachable from `descendant` — i.e. whether moving a
+/// ref from `ancestor` to `descendant` is a fast-forward.
+///
+/// `false` whenever the question cannot be answered, including when
+/// `ancestor` is not an object this repository has (a remote that has moved
+/// on to commits never fetched). That is the safe direction: the one caller
+/// uses this to decide whether a push can only ever add history, and an
+/// unanswerable question must not be read as a yes.
+pub(super) fn is_ancestor(repo_root: &Path, ancestor: &str, descendant: &str) -> bool {
+    let mut cmd = git_command(repo_root);
+    cmd.args(["merge-base", "--is-ancestor", ancestor, descendant]);
+    run_with_timeout(cmd, PLUMBING_TIMEOUT).is_ok_and(|out| out.status.success())
 }
 /// The commit the branch's upstream tracking ref points at. `Ok(None)` when
 /// there is no resolvable upstream — either none is configured, or one is
