@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Git-sync messages read as one sentence instead of two. Every failure used
+  to arrive doubly-labelled — `Git sync failed: git-sync: ...` — and the
+  push failures said "committed locally" twice. The internal prefix is gone
+  and the wording is plainer throughout: "a rebase is in progress" rather
+  than "repository has a rebase in progress", and the messages that only
+  made sense if you knew markcheck's internals now say what happened.
+- The two different messages for a deleted checklist are now one, and it
+  tells you the situation is recoverable: "File was deleted — changes cannot
+  be saved until it exists again".
+
 - Three keypresses that used to do nothing at all now say why. Pressing a
   number for a list that doesn't exist reports `No list 5: this document has
   2 lists`; `s` on a note card reports that there's nothing to start; and
