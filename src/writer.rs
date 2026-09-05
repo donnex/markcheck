@@ -112,10 +112,20 @@ impl WriteLock {
     fn try_create(path: &Path) -> io::Result<WriteLock> {
         use std::io::Write;
         let token = format!("markcheck {} {:x}", std::process::id(), random_suffix());
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // The lock lives in a shared temp directory at a path anyone can
+        // derive (it is the digest of the checklist's path), so it is
+        // readable by every account on the machine unless narrowed. Nothing
+        // secret is in it — a PID and a random token — but there is no
+        // reason for it to be legible either, and the two files this module
+        // creates that *do* hold user content are already 0600.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
         file.write_all(token.as_bytes())?;
         file.sync_all()?;
         Ok(WriteLock {
@@ -615,6 +625,26 @@ mod tests {
         );
 
         fs::remove_file(&link).ok();
+        fs::remove_file(&target).ok();
+    }
+
+    /// The lock sits in a shared temp directory at a path any account on the
+    /// machine can derive, so it should not be readable by all of them.
+    #[cfg(unix)]
+    #[test]
+    fn the_lock_file_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let target = write_temp_file(EXAMPLE);
+        let held = WriteLock::acquire(&target);
+        let LockOutcome::Acquired(lock) = &held else {
+            panic!("test setup: the lock must be acquired, got something else");
+        };
+
+        let mode = fs::metadata(&lock.path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "lock file mode should be 0600, was {mode:o}");
+
+        drop(held);
         fs::remove_file(&target).ok();
     }
 
