@@ -41,8 +41,8 @@ pub(super) fn commit_via_temp_index(
     relpath: &str,
     message: &str,
 ) -> Result<String, String> {
-    let git_dir =
-        git_dir(repo_root).ok_or_else(|| "git-sync: could not resolve git-dir".to_string())?;
+    let git_dir = git_dir(repo_root)
+        .ok_or_else(|| "could not find the repository's .git directory".to_string())?;
     let temp_index = git_dir.join(format!(
         "markcheck-index-{}-{:x}",
         std::process::id(),
@@ -58,7 +58,7 @@ pub(super) fn commit_via_temp_index(
         }
         stage_into_temp_index(repo_root, &temp_index, mode, blob, relpath)?;
         if &current_head(repo_root) != parent {
-            return Err("git-sync: repository changed during sync, will retry".to_string());
+            return Err("the repository changed while the sync was running".to_string());
         }
         // repo_sync_blocked (in run_sync) is only a snapshot taken before
         // any of the above ran; re-checking here narrows (not eliminates —
@@ -272,7 +272,7 @@ fn commit_temp_index(
         .args(["commit", "-m", message]);
     match run_with_timeout(cmd, timeout) {
         Ok(output) if output.status.success() => current_head(repo_root)
-            .ok_or_else(|| "git-sync: could not resolve HEAD after commit".to_string()),
+            .ok_or_else(|| "could not read the repository's state after committing".to_string()),
         Ok(output) => Err(command_error("git commit", &output)),
         Err(err) if err.kind() == io::ErrorKind::TimedOut => match current_head(repo_root) {
             Some(head)
@@ -329,7 +329,7 @@ mod tests {
         assert!(
             result
                 .as_ref()
-                .is_err_and(|e| e.contains("changed during sync")),
+                .is_err_and(|e| e.contains("changed while the sync was running")),
             "{result:?}"
         );
 

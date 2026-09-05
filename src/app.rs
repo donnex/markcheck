@@ -689,7 +689,9 @@ impl AppState {
     /// read as `if self.blocked_by_deletion() { return ...; }`.
     fn blocked_by_deletion(&mut self) -> bool {
         if self.file_deleted {
-            self.set_error("File was deleted — cannot save changes".to_string());
+            self.set_error(
+                "File was deleted — changes cannot be saved until it exists again".to_string(),
+            );
             true
         } else {
             false
@@ -1196,7 +1198,9 @@ impl AppState {
                 .is_some_and(|e| e.kind() == io::ErrorKind::NotFound);
             if is_deleted && !self.file_deleted {
                 self.file_deleted = true;
-                self.set_error("File deleted — changes cannot be saved".to_string());
+                self.set_error(
+                    "File was deleted — changes cannot be saved until it exists again".to_string(),
+                );
             }
             return false;
         };

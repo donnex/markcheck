@@ -1361,7 +1361,7 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     writer.flush().unwrap();
 
     assert!(
-        visible_contains(&rx, "push failed, will retry"),
+        visible_contains(&rx, "Committed, not pushed"),
         "the first push failure must be reported, proving CommittedNotPushed is handled"
     );
 

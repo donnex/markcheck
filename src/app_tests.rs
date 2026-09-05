@@ -2865,7 +2865,7 @@ fn reload_detects_deleted_file_and_blocks_writes() {
     assert!(state.file_deleted, "flag must be set after deletion");
     assert_eq!(
         state.status_message.as_deref(),
-        Some("File deleted — changes cannot be saved"),
+        Some("File was deleted — changes cannot be saved until it exists again"),
     );
     assert_eq!(state.status_expiry, None, "deletion message is sticky");
 
@@ -2873,7 +2873,7 @@ fn reload_detects_deleted_file_and_blocks_writes() {
     state.toggle_current();
     assert_eq!(
         state.status_message.as_deref(),
-        Some("File was deleted — cannot save changes"),
+        Some("File was deleted — changes cannot be saved until it exists again"),
     );
 }
 
@@ -2925,7 +2925,7 @@ fn reset_is_blocked_when_file_deleted() {
     state.handle_key(KeyCode::Char('y'));
     assert_eq!(
         state.status_message.as_deref(),
-        Some("File was deleted — cannot save changes"),
+        Some("File was deleted — changes cannot be saved until it exists again"),
     );
 }
 
@@ -3070,7 +3070,7 @@ fn undo_is_blocked_when_file_deleted() {
     state.undo();
     assert_eq!(
         state.status_message.as_deref(),
-        Some("File was deleted — cannot save changes"),
+        Some("File was deleted — changes cannot be saved until it exists again"),
     );
 }
 
