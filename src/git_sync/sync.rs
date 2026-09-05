@@ -304,7 +304,7 @@ pub(super) fn run_sync(
         Ok(bytes) if hash_bytes(&bytes) == *lock_hash(latest_requested_hash) => {}
         _ => {
             return SyncOutcome::Failed(
-                "git-sync: file changed since this request was queued; edit or toggle again to sync the current content"
+                "the file changed after this sync was queued; toggle again to sync the latest version"
                     .to_string(),
             );
         }
@@ -636,7 +636,7 @@ mod tests {
 
         assert!(
             matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
-                if message.contains("no upstream configured")),
+                if message.contains("no upstream yet")),
             "{outcome:?}"
         );
         // Nothing reached the remote at all -- it has no branches yet.
@@ -680,7 +680,7 @@ mod tests {
             None,
         );
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("file changed since this request was queued")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("changed after this sync was queued")),
             "{outcome:?}"
         );
 
@@ -727,7 +727,7 @@ mod tests {
             None,
         );
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("file changed since this request was queued")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("changed after this sync was queued")),
             "{outcome:?}"
         );
 
@@ -880,7 +880,7 @@ mod tests {
         );
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("hook modified files beyond the checklist")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("changed files other than the checklist")),
             "{outcome:?}"
         );
         assert_eq!(
@@ -960,7 +960,7 @@ mod tests {
         );
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("hook modified files beyond the checklist")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("changed files other than the checklist")),
             "{outcome:?}"
         );
         assert_eq!(
@@ -1173,7 +1173,7 @@ mod tests {
         );
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
             "{outcome:?}"
         );
         assert_eq!(
@@ -1239,7 +1239,7 @@ mod tests {
         );
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
             "{outcome:?}"
         );
         assert_eq!(
@@ -1299,7 +1299,7 @@ mod tests {
         );
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
             "the reverted commit must still count as unrelated history: {outcome:?}"
         );
         assert_eq!(
@@ -1343,7 +1343,7 @@ mod tests {
         );
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits unrelated to this change")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
             "a merge commit in range must refuse, even a clean one: {outcome:?}"
         );
         assert_eq!(current_head(&work).unwrap(), head_before);

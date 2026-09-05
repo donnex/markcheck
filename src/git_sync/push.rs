@@ -72,7 +72,7 @@ use super::{RacePoint, SyncOutcome, race_point};
 pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     race_point(RacePoint::BeforePush);
     if expected_commit.is_empty() {
-        return SyncOutcome::Failed("git-sync: refusing to push an unresolved commit".to_string());
+        return SyncOutcome::Failed("could not work out which commit to push".to_string());
     }
     // `push` and the unpushed-history guard must agree about what "has an
     // upstream" means, and they used to answer it from different sources:
@@ -89,7 +89,7 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     // has never been created still commits locally; only publishing waits
     // for the one-off `git push -u`.
     let no_upstream = SyncOutcome::CommittedNotPushed {
-        message: "git-sync: no upstream configured for this branch; \
+        message: "this branch has no upstream yet; \
                   run `git push -u` once"
             .to_string(),
         commit: expected_commit.to_string(),
@@ -108,8 +108,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
         RemoteBranch::Absent => {
             return SyncOutcome::CommittedNotPushed {
                 message: format!(
-                    "git-sync: {branch_ref} no longer exists on {remote}; committed locally \
-                     but not pushed, since pushing would recreate it"
+                    "{branch_ref} no longer exists on {remote}; \
+                     pushing would recreate it"
                 ),
                 commit: expected_commit.to_string(),
             };
@@ -123,8 +123,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
         RemoteBranch::Unknown => {
             return SyncOutcome::CommittedNotPushed {
                 message: format!(
-                    "git-sync: could not reach {remote} to confirm {branch_ref} still exists; \
-                     committed locally but not pushed"
+                    "could not reach {remote} to check whether {branch_ref} \
+                     still exists"
                 ),
                 commit: expected_commit.to_string(),
             };
@@ -166,7 +166,7 @@ pub(super) fn push_if_head_unchanged(
 ) -> SyncOutcome {
     if current_head(repo_root).as_deref() != Some(expected_commit) {
         return SyncOutcome::CommittedNotPushed {
-            message: "git-sync: repository changed after commit".to_string(),
+            message: "the repository changed after the commit was made".to_string(),
             commit: expected_commit.to_string(),
         };
     }
@@ -292,7 +292,7 @@ mod tests {
         let outcome = push_if_head_unchanged(&work, &work, &created_commit);
         assert!(
             matches!(&outcome, SyncOutcome::CommittedNotPushed { message, commit }
-                if message.contains("repository changed after commit") && commit == &created_commit),
+                if message.contains("changed after the commit was made") && commit == &created_commit),
             "{outcome:?}"
         );
 
@@ -349,7 +349,7 @@ mod tests {
         let outcome = push(&work, "");
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unresolved commit")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("which commit to push")),
             "{outcome:?}"
         );
         let branches = Command::new("git")
@@ -595,7 +595,7 @@ mod tests {
 
         assert!(
             matches!(&outcome, SyncOutcome::Failed(msg)
-                if msg.contains("unrelated to this change")),
+                if msg.contains("not part of this change")),
             "{outcome:?}"
         );
         assert_eq!(
@@ -635,7 +635,7 @@ mod tests {
         let outcome = catch_up_push(&work, &work.join("tracked.md"));
 
         assert!(
-            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("a merge in progress")),
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("a merge is in progress")),
             "{outcome:?}"
         );
 

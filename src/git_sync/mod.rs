@@ -210,7 +210,8 @@ fn lock_hash(hash: &Mutex<[u8; 32]>) -> std::sync::MutexGuard<'_, [u8; 32]> {
 /// purely to observe it.
 fn run_reporting_panics(op: impl FnOnce() -> SyncOutcome) -> SyncOutcome {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(op)).unwrap_or(SyncOutcome::Failed(
-        "git-sync: internal error (sync worker panicked)".to_string(),
+        "something went wrong inside markcheck; your change is saved but was not synced"
+            .to_string(),
     ))
 }
 

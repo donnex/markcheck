@@ -98,7 +98,7 @@ pub(super) fn unpushed_history(
 }
 /// The refusal message shared by both push-capable paths.
 pub(super) const UNRELATED_COMMITS_REFUSAL: &str =
-    "git-sync: branch has unpushed commits unrelated to this change; push them manually first";
+    "this branch has unpushed commits that are not part of this change; push them yourself first";
 /// Maps an `unpushed_history` answer to "may this path continue?", refusing
 /// on both an unrelated commit and an unanswerable check.
 pub(super) fn unpushed_history_blocks(
@@ -112,7 +112,7 @@ pub(super) fn unpushed_history_blocks(
             Some(SyncOutcome::Failed(UNRELATED_COMMITS_REFUSAL.to_string()))
         }
         Err(err) => Some(SyncOutcome::Failed(format!(
-            "git-sync: could not verify the branch has no unrelated unpushed commits ({err}); \
+            "could not check whether the branch has other unpushed commits ({err}); \
              not publishing"
         ))),
     }
@@ -219,7 +219,7 @@ pub(super) fn range_has_unrelated_commits(
         .any(|path| !path.is_empty() && path != relpath.as_bytes()))
 }
 /// The refusal message for a checklist whose staged version would be lost.
-pub(super) const STAGED_TARGET_REFUSAL: &str = "git-sync: the checklist has staged changes that differ from the file on disk; \
+pub(super) const STAGED_TARGET_REFUSAL: &str = "the checklist has staged changes that differ from the file on disk; \
      committing would drop them — commit or unstage them first";
 /// Whether committing the working tree would discard a staged snapshot of
 /// the checklist that exists nowhere else.
@@ -317,7 +317,7 @@ pub(super) fn verify_commit_scope(
             Ok(has_unrelated) => has_unrelated,
             Err(err) => {
                 return Err(format!(
-                    "git-sync: could not verify what commit {created_commit} changed ({err}); \
+                    "could not check what commit {created_commit} changed ({err}); \
                  it was made and left on the branch — check it before pushing"
                 ));
             }
@@ -327,10 +327,11 @@ pub(super) fn verify_commit_scope(
     }
     match undo_commit(repo_root, created_commit) {
         Ok(()) => Err(
-            "git-sync: a commit hook modified files beyond the checklist; sync aborted".to_string(),
+            "a commit hook changed files other than the checklist, so the commit was undone"
+                .to_string(),
         ),
         Err(undo_err) => Err(format!(
-            "git-sync: a commit hook modified files beyond the checklist, and undoing the \
+            "a commit hook changed files other than the checklist, and undoing the \
              commit failed ({undo_err}); commit {created_commit} may need manual cleanup"
         )),
     }
@@ -381,7 +382,7 @@ pub(super) fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), 
     let listing = String::from_utf8_lossy(&output.stdout);
     let first_parent = parse_first_parent(&listing).ok_or_else(|| {
         format!(
-            "git-sync: could not read commit {created_commit}'s parents; \
+            "could not read commit {created_commit}'s history; \
              refusing to rewind the branch"
         )
     })?;
@@ -395,7 +396,7 @@ pub(super) fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), 
         // deleted outright, returning to the "no commits yet" state.
         None => {
             let branch_ref = current_branch_ref(repo_root).ok_or_else(|| {
-                "git-sync: could not resolve branch ref to undo root commit".to_string()
+                "could not undo the commit: the branch reference could not be read".to_string()
             })?;
             cmd.args(["update-ref", "-d", &branch_ref, created_commit]);
         }
@@ -431,25 +432,27 @@ pub(super) fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
         ("BISECT_LOG", "a bisect"),
     ] {
         if git_dir.join(marker).exists() {
-            return Some(format!("git-sync: repository has {label} in progress"));
+            return Some(format!("{label} is in progress"));
         }
     }
     if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-        return Some("git-sync: repository has a rebase in progress".to_string());
+        return Some("a rebase is in progress".to_string());
     }
     let mut symbolic_ref_cmd = git_command(repo_root);
     symbolic_ref_cmd.args(["symbolic-ref", "-q", "HEAD"]);
     let on_a_branch = run_with_timeout(symbolic_ref_cmd, PLUMBING_TIMEOUT)
         .is_ok_and(|output| output.status.success());
     if !on_a_branch {
-        return Some("git-sync: repository is in a detached HEAD state".to_string());
+        return Some(
+            "the repository is not on a branch (detached HEAD); check one out to sync".to_string(),
+        );
     }
     let mut ls_files_cmd = git_command(repo_root);
     ls_files_cmd.args(["ls-files", "-u"]);
     let unmerged = run_with_timeout(ls_files_cmd, PLUMBING_TIMEOUT);
     match unmerged {
         Ok(output) if output.status.success() && !output.stdout.is_empty() => {
-            Some("git-sync: repository has unresolved merge conflicts".to_string())
+            Some("the repository has unresolved merge conflicts".to_string())
         }
         _ => None,
     }
@@ -742,7 +745,7 @@ mod tests {
         let result =
             verify_commit_scope(&work, &Some(parent.clone()), "tracked.md", &created_commit);
         assert!(
-            result.is_err_and(|e| e.contains("hook modified files beyond the checklist")),
+            result.is_err_and(|e| e.contains("changed files other than the checklist")),
             "the revert-cancelled unrelated commit must still be caught"
         );
         // Deep round 3 changed what "undo" means here. It used to reset
@@ -954,7 +957,7 @@ mod tests {
         );
         let refusal = unpushed_history_blocks(&work, Some(&bogus), "tracked.md");
         assert!(
-            matches!(&refusal, Some(SyncOutcome::Failed(msg)) if msg.contains("could not verify")),
+            matches!(&refusal, Some(SyncOutcome::Failed(msg)) if msg.contains("could not check")),
             "the caller must refuse to publish: {refusal:?}"
         );
 

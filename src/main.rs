@@ -338,7 +338,7 @@ where
                             .to_string(),
                     ),
                     git_sync::SyncOutcome::CommittedNotPushed { message, .. } => state.set_error(
-                        format!("Git commit saved locally; push failed, will retry: {message}"),
+                        format!("Committed, not pushed: {message} (will keep retrying)"),
                     ),
                     git_sync::SyncOutcome::Failed(msg) => {
                         state.set_error(format!("Git sync failed: {msg}"))
@@ -347,7 +347,7 @@ where
                     // still safely local and still armed, so say so rather
                     // than implying the change was lost.
                     git_sync::SyncOutcome::RetryFailed(msg) => {
-                        state.set_error(format!("Git push retry failed, will retry: {msg}"))
+                        state.set_error(format!("Push retry failed: {msg} (will keep retrying)"))
                     }
                 }
             }
