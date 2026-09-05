@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 use super::guards::{repo_sync_blocked, unpushed_history_blocks};
 use super::inspect::{
-    RemoteBranch, commits_ahead_of_upstream, current_head, index_entry, remote_branch_state,
-    resolve_upstream, upstream_parts,
+    RemoteBranch, commits_ahead_of_upstream, current_head, index_entry, is_ancestor,
+    remote_branch_state, resolve_upstream, upstream_parts,
 };
 use super::process::{
     PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, run_with_timeout,
@@ -70,7 +70,6 @@ use super::{RacePoint, SyncOutcome, race_point};
 /// Refusing keeps the commit safely local, reuses the existing retry
 /// machinery, and gives the user a one-off action to take.
 pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
-    race_point(RacePoint::BeforePush);
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("could not work out which commit to push".to_string());
     }
@@ -103,8 +102,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     // Ask the remote, not the tracking ref — see `remote_branch_state`. An
     // explicit-SHA refspec *creates* a branch that is no longer there, so
     // without this a toggle silently republishes history somebody deleted.
-    match remote_branch_state(repo_dir, &remote, &branch_ref) {
-        RemoteBranch::Present => {}
+    let remote_tip = match remote_branch_state(repo_dir, &remote, &branch_ref) {
+        RemoteBranch::Present(sha) => sha,
         RemoteBranch::Absent => {
             return SyncOutcome::CommittedNotPushed {
                 message: format!(
@@ -129,9 +128,45 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
                 commit: expected_commit.to_string(),
             };
         }
+    };
+
+    // Only ever a fast-forward. Checked here, before the push, because the
+    // push below carries a lease — and a lease permits a non-fast-forward
+    // whenever it matches, which is exactly what an ordinary `git push`
+    // refuses. Verified against real git: with the lease satisfied, pushing
+    // a commit that does not descend from the remote tip reports `(forced
+    // update)` and rewrites the branch. Establishing the fast-forward
+    // ourselves means the lease can only ever *reject*, never force.
+    //
+    // `is_ancestor` answers `false` when it cannot tell, including when the
+    // remote tip is a commit this clone has never fetched, so a remote that
+    // has moved ahead refuses rather than being overwritten.
+    if !is_ancestor(repo_dir, &remote_tip, expected_commit) {
+        return SyncOutcome::CommittedNotPushed {
+            message: format!(
+                "{branch_ref} on {remote} has commits this change is not based on;                  pull first, then it will sync"
+            ),
+            commit: expected_commit.to_string(),
+        };
     }
+
+    race_point(RacePoint::BeforePush);
+
+    // The lease is what makes the check above *hold* rather than merely
+    // having been true a moment ago. `ls-remote` and `push` are two network
+    // round trips, and a branch deleted or moved in between would otherwise
+    // be recreated or clobbered by this push — external review of `2322436`
+    // named exactly that window. `--force-with-lease=<ref>:<sha>` hands the
+    // expectation to git itself, which rejects with "stale info" if the ref
+    // is no longer that commit, missing included. Confirmed against real
+    // git for both the deleted and the moved case.
     let mut cmd = git_command(repo_dir);
-    cmd.args(["push", &remote, &format!("{expected_commit}:{branch_ref}")]);
+    cmd.args([
+        "push",
+        &format!("--force-with-lease={branch_ref}:{remote_tip}"),
+        &remote,
+        &format!("{expected_commit}:{branch_ref}"),
+    ]);
     let output = run_with_timeout(cmd, PUSH_TIMEOUT);
     match output {
         Ok(output) if output.status.success() => SyncOutcome::Synced,
@@ -365,6 +400,144 @@ mod tests {
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
+    /// External review of `2322436`. Asking the remote whether the branch
+    /// exists and then pushing are two round trips, so a deletion landing
+    /// between them would recreate the branch anyway — the check narrowed
+    /// the window the previous fix closed, it did not close it.
+    ///
+    /// The deletion here fires at `BeforePush`, which sits *after*
+    /// `remote_branch_state` has already answered `Present`. That is what
+    /// distinguishes this from the plain deleted-branch test, which never
+    /// reaches the push at all.
+    #[test]
+    fn a_branch_deleted_between_the_check_and_the_push_is_not_recreated() {
+        let (work, remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let commit = current_head(&work).unwrap();
+
+        let victim = remote.clone();
+        let _hook = RaceHook::at(RacePoint::BeforePush, move || {
+            run(&victim, &["update-ref", "-d", "refs/heads/main"]);
+        });
+
+        let outcome = push(&work, &commit);
+
+        assert!(
+            !matches!(outcome, SyncOutcome::Synced),
+            "a push into the deletion window must not report success: {outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(
+                &remote,
+                &["for-each-ref", "--format=%(refname)", "refs/heads/"]
+            ),
+            "",
+            "the branch must still be absent — the lease is what makes the \
+             earlier existence check hold rather than merely have been true"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    /// The same window, but the branch moves instead of vanishing.
+    ///
+    /// Worth being precise about what this pins: verified by mutation, it
+    /// still passes with the lease removed, because a plain push already
+    /// refuses this as a non-fast-forward. The lease's unique contribution
+    /// is the *deleted* case above, where there is no tip to be
+    /// non-fast-forward against and git would happily create the branch.
+    /// This test pins that the ordinary refusal keeps holding across the
+    /// check-then-push window — a contract a future change to the refspec
+    /// could break without either other test noticing.
+    #[test]
+    fn a_branch_that_moves_between_the_check_and_the_push_is_not_clobbered() {
+        let (work, remote) = init_repo_with_remote();
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let commit = current_head(&work).unwrap();
+
+        // Somebody else publishes to the branch inside the window.
+        let racer = work.clone();
+        let racer_remote = remote.clone();
+        let _hook = RaceHook::at(RacePoint::BeforePush, move || {
+            let sha = commit_unrelated(&racer, "other.md");
+            run(
+                &racer,
+                &[
+                    "push",
+                    "-q",
+                    &racer_remote.to_string_lossy(),
+                    &format!("{sha}:refs/heads/main"),
+                ],
+            );
+        });
+
+        let before = git_stdout(&remote, &["rev-parse", "refs/heads/main"]);
+        let outcome = push(&work, &commit);
+        let after = git_stdout(&remote, &["rev-parse", "refs/heads/main"]);
+
+        assert!(
+            !matches!(outcome, SyncOutcome::Synced),
+            "pushing over a tip that moved must not report success: {outcome:?}"
+        );
+        assert_ne!(
+            after, before,
+            "test setup: the racer must have moved the branch"
+        );
+        assert_ne!(
+            after, commit,
+            "the commit that raced in must still be the branch tip"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    /// The lease permits a non-fast-forward whenever it matches, which is
+    /// what an ordinary push refuses. `push` therefore establishes the
+    /// fast-forward itself, before the lease can ever license a rewrite.
+    #[test]
+    fn a_commit_not_based_on_the_remote_tip_is_refused_rather_than_forced() {
+        let (work, remote) = init_repo_with_remote();
+
+        // The remote moves ahead to a commit this clone's `main` is not on.
+        // Made on a side branch so `main` stays where it was: checking out
+        // the base commit instead would detach HEAD and lose the upstream,
+        // which is a different refusal entirely.
+        run(&work, &["checkout", "-q", "-b", "side"]);
+        let ahead = commit_unrelated(&work, "ahead.md");
+        run(
+            &work,
+            &[
+                "push",
+                "-q",
+                &remote.to_string_lossy(),
+                &format!("{ahead}:refs/heads/main"),
+            ],
+        );
+
+        // markcheck's commit is based on the older tip instead.
+        run(&work, &["checkout", "-q", "main"]);
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let commit = current_head(&work).unwrap();
+
+        let outcome = push(&work, &commit);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
+                if message.contains("not based on")),
+            "must refuse rather than force: {outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(&remote, &["rev-parse", "refs/heads/main"]),
+            ahead,
+            "the remote tip must be untouched"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
     #[test]
     fn push_never_sends_more_than_the_explicitly_targeted_commit() {
         // External review, round 5: push_if_head_unchanged/retry_commit
