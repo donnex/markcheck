@@ -65,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync will not recreate or overwrite a remote branch that changed while
+  it was pushing. The previous fix checked with the remote first, but the
+  check and the push were separate steps, so a branch deleted in between
+  could still be recreated. The push now tells git what it expects the
+  branch to be, and git refuses if that is no longer true.
+
 - Git-sync no longer recreates a branch that has been deleted on the remote.
   Your clone remembers the branch until you next fetch, so a toggle used to
   push it straight back — republishing history somebody had removed, without
