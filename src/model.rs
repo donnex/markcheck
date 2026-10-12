@@ -407,11 +407,22 @@ pub enum ColorDepth {
     Palette256,
     /// Named ANSI-16 only — the safe fallback.
     Basic,
+    /// No color at all (`NO_COLOR` set): state is carried by glyphs and
+    /// modifiers alone.
+    Mono,
 }
 
-/// Decides color depth from the `COLORTERM` and `TERM` values (pure, so it's
-/// unit-testable; `detect_color_depth` supplies the real env).
-pub fn depth_from_env(colorterm: Option<&str>, term: Option<&str>) -> ColorDepth {
+/// Decides color depth from the `NO_COLOR`, `COLORTERM` and `TERM` values
+/// (pure, so it's unit-testable; `detect_color_depth` supplies the real env).
+/// A non-empty `NO_COLOR` wins over everything, per no-color.org.
+pub fn depth_from_env(
+    no_color: Option<&str>,
+    colorterm: Option<&str>,
+    term: Option<&str>,
+) -> ColorDepth {
+    if no_color.is_some_and(|v| !v.is_empty()) {
+        return ColorDepth::Mono;
+    }
     if let Some(ct) = colorterm {
         let ct = ct.to_ascii_lowercase();
         if ct.contains("truecolor") || ct.contains("24bit") {
@@ -424,9 +435,11 @@ pub fn depth_from_env(colorterm: Option<&str>, term: Option<&str>) -> ColorDepth
     ColorDepth::Basic
 }
 
-/// Reads `COLORTERM`/`TERM` from the environment to pick a color depth.
+/// Reads `NO_COLOR`/`COLORTERM`/`TERM` from the environment to pick a color
+/// depth.
 pub fn detect_color_depth() -> ColorDepth {
     depth_from_env(
+        std::env::var("NO_COLOR").ok().as_deref(),
         std::env::var("COLORTERM").ok().as_deref(),
         std::env::var("TERM").ok().as_deref(),
     )
@@ -437,11 +450,12 @@ pub fn detect_color_depth() -> ColorDepth {
 /// terminals, the nearest 256-palette index on 256-color terminals, or a
 /// named ANSI-16 color as the always-safe fallback (which also respects the
 /// user's own theme). Curated hues are the widely-liked "One Dark" set.
+/// With `NO_COLOR` every role is `Color::Reset`.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub done: Color,       // completed tasks, progress fill
     pub started: Color,    // started/in-progress tasks, incomplete counter
-    pub code_bg: Color,    // subtle background behind inline + fenced code (markdown-style)
+    pub code: Style,       // inline + fenced code: an explicit fg/bg pair, so it reads on any theme
     pub current: Color,    // cursor/current, filename, accents
     pub note: Color,       // display-only note cards
     pub error: Color,      // error text, e.g. the missing-title placeholder
@@ -456,7 +470,7 @@ impl Palette {
         Palette {
             done: Color::Green,
             started: Color::Yellow,
-            code_bg: Color::DarkGray,
+            code: Style::new().fg(Color::White).bg(Color::DarkGray),
             current: Color::Cyan,
             note: Color::Blue,
             error: Color::Red,
@@ -470,7 +484,7 @@ impl Palette {
         Palette {
             done: Color::Indexed(114),    // green
             started: Color::Indexed(180), // yellow
-            code_bg: Color::Indexed(237), // dark gray (code block)
+            code: Style::new().fg(Color::Indexed(250)).bg(Color::Indexed(237)),
             current: Color::Indexed(73),  // cyan
             note: Color::Indexed(75),     // blue
             error: Color::Indexed(203),   // red
@@ -484,7 +498,10 @@ impl Palette {
         Palette {
             done: Color::Rgb(0x98, 0xc3, 0x79),
             started: Color::Rgb(0xe5, 0xc0, 0x7b),
-            code_bg: Color::Rgb(0x3e, 0x44, 0x51), // One Dark selection gray
+            // One Dark foreground on its selection gray.
+            code: Style::new()
+                .fg(Color::Rgb(0xab, 0xb2, 0xbf))
+                .bg(Color::Rgb(0x3e, 0x44, 0x51)),
             current: Color::Rgb(0x56, 0xb6, 0xc2),
             note: Color::Rgb(0x61, 0xaf, 0xef),
             error: Color::Rgb(0xe0, 0x6c, 0x75),   // One Dark red
@@ -493,12 +510,32 @@ impl Palette {
         }
     }
 
+    /// No color (`NO_COLOR`): every role is the terminal default, and code
+    /// is set off in reverse video instead of a background.
+    pub const fn mono() -> Self {
+        Palette {
+            done: Color::Reset,
+            started: Color::Reset,
+            code: Style::new().add_modifier(Modifier::REVERSED),
+            current: Color::Reset,
+            note: Color::Reset,
+            error: Color::Reset,
+            warning: Color::Reset,
+            depth: ColorDepth::Mono,
+        }
+    }
+
     pub const fn for_depth(depth: ColorDepth) -> Self {
         match depth {
             ColorDepth::TrueColor => Self::truecolor(),
             ColorDepth::Palette256 => Self::palette256(),
             ColorDepth::Basic => Self::basic(),
+            ColorDepth::Mono => Self::mono(),
         }
+    }
+
+    pub fn is_mono(&self) -> bool {
+        self.depth == ColorDepth::Mono
     }
 
     /// The palette for the current terminal's detected capability.
@@ -528,6 +565,7 @@ impl Palette {
                 const RAMP: [Color; 4] = [Color::Blue, Color::Magenta, Color::Cyan, Color::Yellow];
                 RAMP[slot % RAMP.len()]
             }
+            ColorDepth::Mono => Color::Reset,
         }
     }
 
@@ -559,6 +597,8 @@ impl Palette {
                     Style::default().fg(Color::Yellow)
                 }
             }
+            ColorDepth::Mono if ratio >= 1.0 => Style::default().add_modifier(Modifier::BOLD),
+            ColorDepth::Mono => Style::default(),
         }
     }
 }
@@ -1103,31 +1143,75 @@ mod tests {
     #[test]
     fn depth_from_env_prefers_truecolor_then_256_then_basic() {
         assert_eq!(
-            depth_from_env(Some("truecolor"), Some("xterm-256color")),
+            depth_from_env(None, Some("truecolor"), Some("xterm-256color")),
             ColorDepth::TrueColor
         );
-        assert_eq!(depth_from_env(Some("24bit"), None), ColorDepth::TrueColor);
         assert_eq!(
-            depth_from_env(None, Some("xterm-256color")),
+            depth_from_env(None, Some("24bit"), None),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(
+            depth_from_env(None, None, Some("xterm-256color")),
             ColorDepth::Palette256
         );
-        assert_eq!(depth_from_env(None, Some("xterm")), ColorDepth::Basic);
-        assert_eq!(depth_from_env(None, None), ColorDepth::Basic);
+        assert_eq!(depth_from_env(None, None, Some("xterm")), ColorDepth::Basic);
+        assert_eq!(depth_from_env(None, None, None), ColorDepth::Basic);
+    }
+
+    #[test]
+    fn depth_from_env_honours_a_non_empty_no_color() {
+        assert_eq!(
+            depth_from_env(Some("1"), Some("truecolor"), Some("xterm-256color")),
+            ColorDepth::Mono
+        );
+        assert_eq!(
+            depth_from_env(Some(""), Some("truecolor"), None),
+            ColorDepth::TrueColor,
+            "an empty NO_COLOR is ignored, per no-color.org"
+        );
+    }
+
+    #[test]
+    fn code_style_pairs_an_explicit_fg_with_its_bg_on_every_color_tier() {
+        for depth in [
+            ColorDepth::TrueColor,
+            ColorDepth::Palette256,
+            ColorDepth::Basic,
+        ] {
+            let code = Palette::for_depth(depth).code;
+            assert!(code.fg.is_some(), "{depth:?}: code fg left to the theme");
+            assert!(code.bg.is_some(), "{depth:?}: code has no background");
+        }
+    }
+
+    #[test]
+    fn mono_palette_has_no_colors() {
+        let p = Palette::for_depth(ColorDepth::Mono);
+        assert!(p.is_mono());
+        for c in [p.done, p.started, p.current, p.note, p.error, p.warning] {
+            assert_eq!(c, Color::Reset);
+        }
+        assert_eq!(p.code.fg, None);
+        assert_eq!(p.code.bg, None);
+        assert!(p.code.add_modifier.contains(Modifier::REVERSED));
+        assert_eq!(p.depth_color(3), Color::Reset);
+        assert_eq!(p.progress_color(1, 4), Style::default());
+        assert!(p.progress_color(4, 4).add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
     fn palette_for_depth_uses_the_matching_color_kind() {
         assert!(matches!(
-            Palette::for_depth(ColorDepth::TrueColor).code_bg,
-            Color::Rgb(..)
+            Palette::for_depth(ColorDepth::TrueColor).code.bg,
+            Some(Color::Rgb(..))
         ));
         assert!(matches!(
-            Palette::for_depth(ColorDepth::Palette256).code_bg,
-            Color::Indexed(_)
+            Palette::for_depth(ColorDepth::Palette256).code.bg,
+            Some(Color::Indexed(_))
         ));
         assert_eq!(
-            Palette::for_depth(ColorDepth::Basic).code_bg,
-            Color::DarkGray,
+            Palette::for_depth(ColorDepth::Basic).code.bg,
+            Some(Color::DarkGray),
             "basic fallback: a subtle gray code background"
         );
         // The error role (missing-title placeholder) resolves per depth.

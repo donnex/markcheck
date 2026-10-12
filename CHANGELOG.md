@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support for the `NO_COLOR` convention (<https://no-color.org/>): when the
+  `NO_COLOR` environment variable is set to any non-empty value, markcheck
+  draws no color at all. Commands are shown in reverse video, and states are
+  told apart by their icons and glyphs (a started item's position dot becomes
+  a half dot `◐`). Previously the variable was ignored and you got the full
+  color scheme regardless. (#45)
+
 - A warning when the checklist you opened has more than one hard link.
   Saving writes a new file over the path, so the other names keep the old
   content and quietly stop being the same file — the same thing happens in
@@ -64,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer implies a guarantee it can't back up.
 
 ### Fixed
+
+- Commands are now readable on light terminal themes. Inline commands and
+  command blocks set a dark gray background but left the text in the
+  terminal's own color, which on a light theme is black — dark text on a dark
+  box. They now always use light text on that background. (#45)
 
 - A file reload no longer closes the `/` search prompt, the `T` go-to-task
   filter or the `?` help overlay. When the checklist changed on disk while

@@ -81,7 +81,9 @@ workflow and file-backed state.
   you quit a fully-completed checklist
 - Mouse and keyboard driven; works on a plain terminal or a Nerd Font one
 - Colors adapt to your terminal: curated 24-bit hues on truecolor terminals,
-  a 256-color match otherwise, and named ANSI colors as a safe fallback
+  a 256-color match otherwise, and named ANSI colors as a safe fallback.
+  Set `NO_COLOR` (to any non-empty value, per [no-color.org](https://no-color.org/))
+  to turn color off entirely
 
 ## Installation
 
@@ -203,8 +205,8 @@ How each piece maps to the UI:
 | `- **Bold**` (bold only), later in a list | A display-only card titled with the bold text. |
 | `- plain text` | A display-only **note card** (rounded border). In the overview it shows a distinct note marker rather than a task circle, so information reads apart from steps. |
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |
-| `` `code` `` | An inline command chip; copy it with `y`. |
-| a fenced ```` ``` ```` block | A command block shown in a box; copy it with `y`. |
+| `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. |
+| a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
@@ -239,6 +241,10 @@ Finer points:
   still renders normally on the card, but `o` refuses it and says so. This keeps
   a checklist you didn't write from handing something unexpected to your
   browser or desktop opener.
+- **With `NO_COLOR` set**, nothing is colored: commands (chips and boxes) are
+  shown in reverse video, and the card's position-dot strip marks a started
+  item with a half dot `◐` (a done one stays `●`), so state still reads from the
+  icons and glyphs alone.
 - **`[/]` (started / in-progress)** is markcheck's own convention; GitHub and
   most tools render it as literal text rather than a checkbox.
 - **A blockquoted checkbox is never a live task.** `> - [ ] ...` reads as a
