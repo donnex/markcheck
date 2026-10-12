@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Checking or unchecking a task no longer rewrites other, untouched tasks
+  in the file. A task marked done with an uppercase `[X]` (common in files
+  written by other tools) was silently changed to `[x]` whenever any task in
+  the file was toggled, so one keypress could change many lines — and with
+  git sync, those unrelated changes were committed and pushed under a
+  message naming only the task you toggled. An untouched `[X]` is now left
+  exactly as written. (#23)
+
 - A `$BROWSER` value written the usual way now opens links. The variable is
   conventionally a colon-separated list of browsers to try in turn
   (`BROWSER=firefox:w3m`), and a command may mark where the URL goes with

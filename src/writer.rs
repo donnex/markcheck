@@ -233,13 +233,16 @@ fn ps_reports_gone(mut ps: Command, pid: &str) -> bool {
 
 /// Replaces the line's task checkbox (`[ ]`, `[x]`, `[X]`, `[/]`) with
 /// `target`. The leftmost marker is the checkbox, so a marker token in the
-/// body is never the one rewritten.
+/// body is never the one rewritten. A checkbox already in the target state
+/// is left as written, so an untouched `[X]` keeps its casing.
 fn set_task_marker(line: &mut String, target: &str) {
     let leftmost = ["[ ]", "[x]", "[X]", "[/]"]
         .into_iter()
         .filter_map(|marker| line.find(marker).map(|pos| (pos, marker)))
         .min_by_key(|&(pos, _)| pos);
-    if let Some((pos, marker)) = leftmost {
+    if let Some((pos, marker)) = leftmost
+        && !marker.eq_ignore_ascii_case(target)
+    {
         line.replace_range(pos..pos + marker.len(), target);
     }
 }
@@ -897,6 +900,23 @@ mod tests {
             reparsed.lists[0].items[0].kind,
             ItemKind::Checkbox(TaskState::NotStarted),
             "toggling [X] off now persists"
+        );
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn toggling_one_task_leaves_an_untouched_uppercase_x_byte_identical() {
+        let mut line = "- [X] done".to_string();
+        set_task_marker(&mut line, "[x]");
+        assert_eq!(line, "- [X] done");
+
+        let path = write_temp_file("## S\n\n- [X] done upper\n- [ ] other\n");
+        let mut document = parse_document(path.clone()).unwrap();
+        document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+        write_back(&document).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "## S\n\n- [X] done upper\n- [x] other\n"
         );
         fs::remove_file(&path).ok();
     }
