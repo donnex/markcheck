@@ -335,6 +335,12 @@ distant list with `Tab` / `Shift-H` / `Shift-L` / `T` instead; a 10th+ link has
 no way to open it directly (it's still listed, just not openable, in the
 panel below the card).
 
+Pasting text into markcheck never runs it as commands. A paste into `/` search
+or the `T` filter is added to the query as one line; anywhere else it is
+ignored, with a "Paste ignored" message in the status bar, so a command pasted
+into the wrong pane can't toggle, reset or quit anything. This relies on your
+terminal supporting bracketed paste, which almost all current terminals do.
+
 When you finish a list a summary card appears — `l` / `Enter` moves to
 the next list that still has incomplete tasks (skipping any already
 done), `h` reviews the one you just finished. If you go back to review, you

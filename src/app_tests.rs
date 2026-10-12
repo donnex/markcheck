@@ -731,6 +731,71 @@ fn committing_a_single_match_search_omits_the_cycle_nudge() {
     assert_eq!(state.status_message.as_deref(), Some("Match 1/1"));
 }
 
+// --- Bracketed paste ---
+
+#[test]
+fn paste_on_the_checklist_changes_nothing_and_says_so() {
+    let mut state = AppState::new(two_list_document());
+    state.navigate_next();
+    let before = fs::read_to_string(&state.document.file_path).unwrap();
+    let states = |state: &AppState| -> Vec<ItemKind> {
+        state
+            .document
+            .lists
+            .iter()
+            .flat_map(|l| l.items.iter().map(|i| i.kind))
+            .collect()
+    };
+    let states_before = states(&state);
+    state.handle_paste("systemctl restart example-service\nRy q");
+    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 1));
+    assert_eq!(states(&state), states_before);
+    assert_eq!(
+        fs::read_to_string(&state.document.file_path).unwrap(),
+        before
+    );
+    assert!(!state.should_quit);
+    assert!(state.status_is_error);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Paste ignored — markcheck takes single-key commands")
+    );
+}
+
+#[test]
+fn paste_on_the_help_overlay_is_ignored_and_keeps_it_open() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('?'));
+    state.handle_paste("x");
+    assert_eq!(state.screen, Screen::Help);
+    assert!(state.status_is_error);
+}
+
+#[test]
+fn paste_into_search_fills_the_query_as_one_line() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_paste("task\t4\u{7}\r\n");
+    assert_eq!(state.search.query, "task 4");
+    assert_eq!(state.screen, Screen::Search);
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    assert!(!state.status_is_error);
+}
+
+#[test]
+fn paste_into_the_picker_filters_and_resets_the_selection() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('T'));
+    state.handle_key(KeyCode::Down);
+    type_str(&mut state, "task");
+    state.handle_paste(" 4\n");
+    assert_eq!(state.picker.query, "task 4");
+    assert_eq!(state.picker_matches(), vec![(1, 0)]);
+    assert_eq!(state.picker.selection, 0);
+    assert_eq!(state.screen, Screen::ListPicker);
+}
+
 // --- Go-to-task overlay (ListPicker) ---
 
 #[test]
