@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With git-sync on, opening a checklist that isn't tracked in git now says
+  so in the status bar right away (`Git sync skipped: file is not tracked in
+  git`). Previously, on a branch with nothing left to push, the warning only
+  appeared after the first toggle, and until then the title bar's git-sync
+  indicator suggested syncing was working. (#28)
+
 - A `##` section whose only checkboxes are quoted in a blockquote
   (`> - [ ] ...`) is now skipped, like any other section without tasks.
   Quoted checkboxes are examples, never live tasks, yet such a section used

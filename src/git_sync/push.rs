@@ -151,10 +151,10 @@ pub(super) fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcom
     push(repo_dir, expected_commit)
 }
 /// Pushes a commit an earlier session left local-only, and never builds a
-/// commit: opening a checklist must not publish uncommitted edits. Nothing
-/// to push, or a tip that can't be read, is a quiet `Skipped`; a blocked
-/// repository or a refused history is `Failed`, and an untracked checklist is
-/// only reported once there are unpushed commits.
+/// commit: opening a checklist must not publish uncommitted edits. An
+/// untracked checklist is always reported, since git-sync can never act on
+/// it; a blocked repository or a refused history is `Failed`; nothing to
+/// push, or a tip that can't be read, is a quiet `Skipped`.
 pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     let mut cmd = git_command(repo_dir);
     cmd.args(["rev-parse", "--show-toplevel"]);
@@ -168,6 +168,12 @@ pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(&repo_root) {
         return SyncOutcome::Failed(reason);
     }
+    // A lookup error only matters once there is something to push.
+    let relpath = match index_entry(repo_dir, file_path) {
+        Ok(Some((_mode, relpath))) => Ok(relpath),
+        Ok(None) => return SyncOutcome::SkippedUntracked,
+        Err(err) => Err(err),
+    };
     // Capture the tip before validating anything, and push that exact SHA.
     let Some(head) = current_head(&repo_root) else {
         return SyncOutcome::Skipped;
@@ -175,9 +181,8 @@ pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     if commits_ahead_of_upstream(&repo_root, &head).is_none_or(|ahead| ahead == 0) {
         return SyncOutcome::Skipped;
     }
-    let relpath = match index_entry(repo_dir, file_path) {
-        Ok(Some((_mode, relpath))) => relpath,
-        Ok(None) => return SyncOutcome::SkippedUntracked,
+    let relpath = match relpath {
+        Ok(relpath) => relpath,
         Err(err) => return SyncOutcome::Failed(err),
     };
     if let Some(refusal) = unpushed_history_blocks(&repo_root, Some(&head), &relpath) {
@@ -609,6 +614,47 @@ mod tests {
         assert_eq!(
             catch_up_push(&work, &untracked),
             SyncOutcome::SkippedUntracked
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn catch_up_push_reports_an_untracked_checklist_on_a_fully_pushed_branch() {
+        let (work, _remote) = init_repo_with_remote();
+        let untracked = work.join("not-tracked.md");
+        fs::write(&untracked, "- [ ] one\n").unwrap();
+
+        assert_eq!(
+            catch_up_push(&work, &untracked),
+            SyncOutcome::SkippedUntracked
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn catch_up_push_is_quiet_about_an_index_lookup_error_with_nothing_to_push() {
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("other.md"), "x\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "other"]);
+        run(&work, &["push", "-q"]);
+
+        assert_eq!(catch_up_push(&work, &work), SyncOutcome::Skipped);
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn catch_up_push_fails_on_an_index_lookup_error_with_commits_to_push() {
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("other.md"), "x\n").unwrap();
+        run(&work, &["add", "other.md"]);
+        run(&work, &["commit", "-q", "-m", "ahead"]);
+
+        let outcome = catch_up_push(&work, &work);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("more than one tracked file")),
+            "{outcome:?}"
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
