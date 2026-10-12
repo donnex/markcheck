@@ -741,6 +741,20 @@ mod tests {
     }
 
     #[test]
+    fn toggling_below_front_matter_keeps_the_block_byte_for_byte() {
+        let source = "---\ntitle: Weekly ops\ntags: [ops]\n---\n\n- [ ] first task\n";
+        let path = write_temp_file(source);
+        let mut document = parse_document(path.clone()).unwrap();
+        document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+        write_back(&document).unwrap();
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert_eq!(written, source.replace("- [ ]", "- [x]"));
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn write_back_leaves_no_temp_file_behind() {
         let path = write_temp_file(EXAMPLE);
         let document = parse_document(path.clone()).unwrap();

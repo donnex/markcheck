@@ -207,6 +207,7 @@ How each piece maps to the UI:
 | a fenced ```` ``` ```` block | A command block shown in a box; copy it with `y`. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
+| a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
 | `> - [ ]` (a task inside a blockquote) | A **non-interactive** display-only card — a quoted/illustrative example (e.g. from another runbook), never a live, toggleable task. |
 
 Finer points:
@@ -279,6 +280,10 @@ Finer points:
   other bold title, but the link's URL is discarded — `o` can't open it (only
   links in the body are openable). Put the link after the bold title instead
   if it needs to be openable.
+- **Front matter is skipped, not read.** A `title:` key does not become the
+  document title; use a `# H1` for that. A `---` ... `---` pair anywhere but
+  the first line is ordinary Markdown (a horizontal rule, and possibly an
+  `##`-style heading underline), exactly as in any other Markdown renderer.
 - **Files are read as UTF-8.**
 
 ## Keybindings

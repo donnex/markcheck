@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across a reload. A pending reset or quit confirmation is cancelled instead,
   with a message saying the file changed, so a following `y` can no longer
   act on a dialog that had quietly disappeared. (#24)
+- A YAML or TOML front-matter block at the top of a checklist (the
+  `---` ... `---` properties block that Obsidian, Hugo and Jekyll write) is now
+  skipped. It used to be read as a section heading, so every task showed up
+  under a list titled with the raw metadata text, which also leaked into git
+  sync commit messages. The block is still left untouched in the file. (#43)
 
 - Git-sync no longer commits a checklist into a different file when the
   checklist's name contains `[`, `]`, `*` or `?`. Git read the name as a
