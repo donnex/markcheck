@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -843,7 +845,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     state.card_viewport_height = inner.height;
     state.card_scroll = state.card_scroll.min(max_scroll);
 
-    // Row-based click-to-copy: map each code row to its on-screen row,
+    // Click-to-copy: map each code target to its on-screen row and columns,
     // accounting for the vertical-centering pad (body fits) or the scroll
     // offset (body overflows), and clip to the visible body area.
     state.code_regions.clear();
@@ -853,8 +855,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     } else {
         0
     };
-    for (k, code) in code_rows.iter().enumerate() {
-        let Some(text) = code else { continue };
+    for (k, targets) in code_rows.iter().enumerate() {
         let line_idx = n_before + k;
         let vis_row = if max_scroll == 0 {
             top + line_idx
@@ -866,10 +867,17 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         if vis_row >= visible {
             continue;
         }
-        state.code_regions.push((
-            Rect::new(inner.x, inner.y + vis_row as u16, inner.width, 1),
-            text.clone(),
-        ));
+        for (cols, text) in targets {
+            state.code_regions.push((
+                Rect::new(
+                    inner.x + cols.start,
+                    inner.y + vis_row as u16,
+                    cols.end - cols.start,
+                    1,
+                ),
+                text.clone(),
+            ));
+        }
     }
 
     // The position dots and the scroll indicator are budgeted together; when
@@ -1072,17 +1080,48 @@ fn body_lines(item: &Item, width: u16, code: Style) -> Vec<Line<'static>> {
     body_layout(item, width, code).0
 }
 
-/// The trimmed inline code on a prose line, for click-to-copy.
-fn line_inline_code(line: &Line, code: Style) -> Option<String> {
-    line.spans
-        .iter()
-        .find(|s| s.style == code)
-        .map(|s| s.content.trim().to_string())
-        .filter(|t| !t.is_empty())
+/// One click-to-copy target on a body row: the columns it covers, measured
+/// from the card body's left edge, and the full text a click there copies.
+type CopyTarget = (Range<u16>, String);
+
+/// A target covering a whole body row, for rows that are entirely one command.
+fn full_row(width: usize, text: &str) -> Vec<CopyTarget> {
+    vec![(0..clamp_to_u16(width), text.to_string())]
 }
 
-/// `body_lines` plus, index-aligned, the copyable code text per line.
-fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec<Option<String>>) {
+/// The inline-code chips on one wrapped prose row as copy targets. Each chip
+/// maps to its token's full, unsplit text, so every fragment of a hard-split
+/// chip copies the whole command. The column offset mirrors how `Paragraph`
+/// places a centered line.
+fn chip_targets(
+    line: &Line,
+    origins: &[Option<usize>],
+    tokens: &[Token],
+    width: usize,
+    centered: bool,
+) -> Vec<CopyTarget> {
+    let mut x = if centered {
+        (width / 2).saturating_sub(line.width() / 2)
+    } else {
+        0
+    };
+    let mut targets = Vec::new();
+    for (span, origin) in line.spans.iter().zip(origins) {
+        let w = span.width();
+        if let Some(text) = origin.map(|i| tokens[i].0.trim()).filter(|t| !t.is_empty()) {
+            let start = clamp_to_u16(x.min(width));
+            let end = clamp_to_u16((x + w).min(width));
+            if start < end {
+                targets.push((start..end, text.to_string()));
+            }
+        }
+        x += w;
+    }
+    targets
+}
+
+/// `body_lines` plus, index-aligned, the click-to-copy targets on each line.
+fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec<Vec<CopyTarget>>) {
     let width = width.max(1) as usize;
 
     // Flow prose + inline code as styled word tokens; a trailing inline code
@@ -1104,12 +1143,11 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut code_rows: Vec<Option<String>> = Vec::new();
+    let mut code_rows: Vec<Vec<CopyTarget>> = Vec::new();
 
-    for line in prose {
-        let copyable = line_inline_code(&line, code);
+    for (line, origins) in prose {
+        code_rows.push(chip_targets(&line, &origins, &tokens, width, center_prose));
         lines.push(align(line));
-        code_rows.push(copyable);
     }
 
     // A trailing command drops onto its own line, with a blank line
@@ -1118,15 +1156,15 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     if let Some(cmd) = trailing_code {
         if !lines.is_empty() {
             lines.push(Line::from(""));
-            code_rows.push(None);
+            code_rows.push(Vec::new());
         }
         let chip = SpanStyle {
             code: true,
             ..Default::default()
         };
-        for line in wrap_tokens(&[(format!(" {cmd} "), chip, false)], width, code) {
+        for (line, _) in wrap_tokens(&[(format!(" {cmd} "), chip, false)], width, code) {
             lines.push(align(line));
-            code_rows.push(Some(cmd.clone()));
+            code_rows.push(full_row(width, &cmd));
         }
     }
 
@@ -1136,17 +1174,17 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     for block in &item.code_blocks {
         if !lines.is_empty() {
             lines.push(Line::from(""));
-            code_rows.push(None);
+            code_rows.push(Vec::new());
         }
         for line in code_block_lines(block, width, code) {
             lines.push(line);
-            code_rows.push(Some(block.clone()));
+            code_rows.push(full_row(width, block));
         }
     }
 
     if lines.is_empty() {
         lines.push(Line::from(""));
-        code_rows.push(None);
+        code_rows.push(Vec::new());
     }
     (lines, code_rows)
 }
@@ -1195,16 +1233,23 @@ fn code_block_lines(block: &str, width: usize, style: Style) -> Vec<Line<'static
 /// Greedy word wrap over styled tokens `(text, is_code)`, char-count based
 /// and hard-splitting overlong tokens. Same wrapping contract as
 /// `wrap_text` but emits styled `Line`s with code fragments in the `code` style.
-fn wrap_tokens(tokens: &[Token], width: usize, code: Style) -> Vec<Line<'static>> {
+/// Each line comes with, per span, the index of the code token it came from
+/// (`None` for prose and spacing), so click-to-copy can map a chip — or any
+/// fragment of a hard-split one — back to its full text.
+fn wrap_tokens(
+    tokens: &[Token],
+    width: usize,
+    code: Style,
+) -> Vec<(Line<'static>, Vec<Option<usize>>)> {
     let width = width.max(1);
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut lines: Vec<(Line<'static>, Vec<Option<usize>>)> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
+    let mut origins: Vec<Option<usize>> = Vec::new();
     let mut cur_len = 0usize;
 
     let span_for = |text: String, style: SpanStyle| {
         if style.code {
-            // Inline code keeps its chip style; it's also how
-            // click-to-copy recognises a code row (line_inline_code).
+            // Inline code keeps its chip style.
             return Span::styled(text, code);
         }
         let mut modifier = Modifier::empty();
@@ -1226,7 +1271,8 @@ fn wrap_tokens(tokens: &[Token], width: usize, code: Style) -> Vec<Line<'static>
         Span::styled(text, Style::default().add_modifier(modifier))
     };
 
-    for (word, style, glue) in tokens {
+    for (index, (word, style, glue)) in tokens.iter().enumerate() {
+        let origin = style.code.then_some(index);
         let mut rest = word.as_str();
         // Glued tokens abut the previous one with no separating space (unless
         // this is the first token on the line). Only the first physical piece
@@ -1238,8 +1284,10 @@ fn wrap_tokens(tokens: &[Token], width: usize, code: Style) -> Vec<Line<'static>
             if cur_len + sep + word_len <= width {
                 if sep == 1 {
                     current.push(Span::raw(" "));
+                    origins.push(None);
                 }
                 current.push(span_for(rest.to_string(), *style));
+                origins.push(origin);
                 cur_len += sep + word_len;
                 break;
             }
@@ -1247,20 +1295,23 @@ fn wrap_tokens(tokens: &[Token], width: usize, code: Style) -> Vec<Line<'static>
                 // Hard-split a token longer than the whole line.
                 let split: String = rest.chars().take(width).collect();
                 let rest_start = split.len();
-                lines.push(Line::from(span_for(split, *style)));
+                lines.push((Line::from(span_for(split, *style)), vec![origin]));
                 rest = &rest[rest_start..];
                 if rest.is_empty() {
                     break;
                 }
             } else {
                 // Flush the current line and retry the word on a fresh one.
-                lines.push(Line::from(std::mem::take(&mut current)));
+                lines.push((
+                    Line::from(std::mem::take(&mut current)),
+                    std::mem::take(&mut origins),
+                ));
                 cur_len = 0;
             }
         }
     }
     if !current.is_empty() {
-        lines.push(Line::from(current));
+        lines.push((Line::from(current), origins));
     }
     lines
 }
@@ -1560,7 +1611,7 @@ mod tests {
         assert!(lines.iter().flat_map(|l| &l.spans).any(|s| {
             s.content.contains("deploy") && s.style.add_modifier.contains(Modifier::REVERSED)
         }));
-        assert!(rows.contains(&Some("deploy".to_string())), "still copyable");
+        assert!(copy_texts(&rows).contains(&"deploy"), "still copyable");
 
         let list = List {
             title: "L".to_string(),
@@ -2174,8 +2225,75 @@ mod tests {
         assert_eq!(hard_wrap("", 4), vec![String::new()]);
     }
 
-    // --- Row-based click-to-copy code mapping. `body_layout` returns a
-    // per-output-line code text (index-aligned with the lines).
+    // --- Click-to-copy code mapping. `body_layout` returns, per output
+    // line, the copy targets on it (index-aligned with the lines).
+
+    fn copy_texts(rows: &[Vec<CopyTarget>]) -> Vec<&str> {
+        rows.iter().flatten().map(|(_, t)| t.as_str()).collect()
+    }
+
+    /// The text copied by a click at `col` on body row `row`, if any.
+    fn copy_at(rows: &[Vec<CopyTarget>], row: usize, col: u16) -> Option<&str> {
+        rows[row]
+            .iter()
+            .find(|(cols, _)| cols.contains(&col))
+            .map(|(_, t)| t.as_str())
+    }
+
+    #[test]
+    fn body_layout_maps_each_chip_on_a_row_to_its_own_command() {
+        let item = body_item(
+            vec![
+                BodySpan::Text("Run".to_string()),
+                BodySpan::Code("stop-svc".to_string()),
+                BodySpan::Text("then".to_string()),
+                BodySpan::Code("start-svc".to_string()),
+                BodySpan::Text("now.".to_string()),
+            ],
+            vec![],
+            "Run stop-svc then start-svc now.",
+        );
+        let width = 60u16;
+        let (lines, rows) = body_layout(&item, width, code_bg(Color::Magenta));
+        assert_eq!(lines.len(), 1, "fits on one row");
+        let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        let offset = (width as usize / 2).saturating_sub(lines[0].width() / 2);
+        let col_of = |needle: &str| (offset + rendered.find(needle).unwrap()) as u16;
+        assert_eq!(copy_at(&rows, 0, col_of("stop-svc")), Some("stop-svc"));
+        assert_eq!(copy_at(&rows, 0, col_of("start-svc")), Some("start-svc"));
+        assert_eq!(
+            copy_at(&rows, 0, col_of("then")),
+            None,
+            "prose has no target"
+        );
+        assert_eq!(copy_at(&rows, 0, col_of("Run")), None);
+    }
+
+    #[test]
+    fn body_layout_maps_every_row_of_a_hard_split_chip_to_the_full_command() {
+        let cmd = "curl -fsSL https://example.com/install.sh --output /tmp/install.sh";
+        let item = body_item(
+            vec![
+                BodySpan::Text("Fetch".to_string()),
+                BodySpan::Code(cmd.to_string()),
+                BodySpan::Text("first.".to_string()),
+            ],
+            vec![],
+            "Fetch it first.",
+        );
+        let (lines, rows) = body_layout(&item, 30, code_bg(Color::Magenta));
+        let chip_rows: Vec<usize> = (0..lines.len()).filter(|&r| !rows[r].is_empty()).collect();
+        assert!(
+            chip_rows.len() >= 3,
+            "the chip is split over rows: {rows:?}"
+        );
+        for r in chip_rows {
+            for (cols, text) in &rows[r] {
+                assert_eq!(text, cmd, "row {r} copies the whole command");
+                assert!(cols.end <= 30, "target stays inside the body");
+            }
+        }
+    }
 
     #[test]
     fn body_layout_lines_and_code_rows_are_aligned() {
@@ -2189,9 +2307,7 @@ mod tests {
         let item = body_item(vec![], vec!["kubectl apply"], "");
         let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
-            code_rows
-                .iter()
-                .any(|c| c.as_deref() == Some("kubectl apply")),
+            copy_texts(&code_rows).contains(&"kubectl apply"),
             "a fenced-block row copies the clean block text: {code_rows:?}"
         );
     }
@@ -2209,7 +2325,7 @@ mod tests {
         );
         let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
-            code_rows.iter().any(|c| c.as_deref() == Some("do-it")),
+            copy_texts(&code_rows).contains(&"do-it"),
             "trailing command row copies the command: {code_rows:?}"
         );
     }
@@ -2229,7 +2345,7 @@ mod tests {
         );
         let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
-            code_rows.iter().any(|c| c.as_deref() == Some("cmd")),
+            copy_texts(&code_rows).contains(&"cmd"),
             "inline code row copies the span: {code_rows:?}"
         );
     }
@@ -2243,7 +2359,7 @@ mod tests {
         );
         let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
-            code_rows.iter().all(|c| c.is_none()),
+            code_rows.iter().all(Vec::is_empty),
             "prose-only body has no code rows: {code_rows:?}"
         );
     }

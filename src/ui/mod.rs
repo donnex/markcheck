@@ -1786,6 +1786,51 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
+        use crate::model::BodySpan;
+        let item = Item {
+            line_number: 1,
+            depth: 0,
+            section: vec![],
+            display_text: "Run stop-svc then start-svc now.".to_string(),
+            body: vec![
+                BodySpan::Text("Run".to_string()),
+                BodySpan::Code("stop-svc".to_string()),
+                BodySpan::Text("then".to_string()),
+                BodySpan::Code("start-svc".to_string()),
+                BodySpan::Text("now.".to_string()),
+            ],
+            header: None,
+            code_spans: vec!["stop-svc".to_string(), "start-svc".to_string()],
+            code_blocks: vec![],
+            kind: ItemKind::Checkbox(TaskState::NotStarted),
+        };
+        let mut state = state_with(vec![List {
+            title: "Ops".to_string(),
+            banner: None,
+            items: vec![item],
+        }]);
+        let (width, height) = (100, 30);
+        let _ = buffer_text(&mut state, width, height);
+        let (row, col) = (0..height)
+            .find_map(|y| {
+                let line = nth_row(&mut state, width, height, y);
+                let byte = line.find("start-svc")?;
+                Some((y, line[..byte].chars().count() as u16))
+            })
+            .expect("the second chip rendered");
+
+        state.handle_left_click(col + 2, row);
+        crate::clipboard::fake::with(|c| {
+            assert_eq!(
+                c.system_attempts.last().map(|(t, _)| t.as_str()),
+                Some("start-svc"),
+                "the clicked chip is copied"
+            );
+        });
+    }
+
+    #[test]
     fn card_shows_fenced_code_block() {
         // Fenced blocks (previously copy-only) now render in the card.
         let item = Item {
