@@ -78,6 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A list's first bullet that is only bold text but carries a command — a
+  fenced code block under it, or `` `code` `` inside the bold — is now shown as
+  a note card with its command visible and copyable with `y`. It used to
+  become the list's one-line warning banner, which silently dropped the
+  fenced block altogether and showed inline code as plain, uncopyable text, so
+  a precondition like "export this first" never showed the command to run.
+  (#115)
+
 - Quitting markcheck right after a change no longer hides what happened to
   that change's git sync. With git sync on, the final sync runs while
   markcheck is exiting, and if it failed, committed but couldn't push, or

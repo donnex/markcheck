@@ -53,6 +53,16 @@ Non-task content and the ways code is handled.
 - [ ] Mail the [on-call owner](mailto:oncall@example.com) with `o` — `mailto:`
   is a safe scheme, so this one opens in your mail client
 
+## Precondition with a command
+
+- **Export the environment first:**
+
+  ```sh
+  export APP_ENV=staging
+  ```
+
+- [ ] Run the step that needs the exported environment
+
 ## Notes only (this section is dropped)
 
 - This section has no checkboxes, so markcheck drops it entirely.

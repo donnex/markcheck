@@ -587,9 +587,13 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
                     // A bullet with children is never the banner, which emits no `Item` and
                     // would orphan them.
                     let has_children = current_list_items.len() > builder.items_before;
+                    // A command in the bold or under the bullet keeps it a card,
+                    // since the one-line text banner would discard it.
                     let is_bold_only = kind == ItemKind::DisplayOnly
                         && header.is_some()
-                        && display_text.is_empty();
+                        && display_text.is_empty()
+                        && builder.code_spans.is_empty()
+                        && builder.code_blocks.is_empty();
                     let is_banner = !seen_first_top_item
                         && is_bold_only
                         && builder.depth == 0
@@ -1660,6 +1664,35 @@ Separator paragraph.
         assert!(document.lists[1].banner.is_none());
         // The banner emits no item; only the checkbox remains.
         assert_eq!(document.lists[0].items.len(), 1);
+    }
+
+    #[test]
+    fn bold_only_first_bullet_with_fenced_command_is_a_card() {
+        let document = parse(
+            "## Deploy\n\n- **Export the environment first:**\n\n  ```sh\n  export APP_ENV=staging\n  ```\n\n- [ ] step one\n",
+        );
+        let list = &document.lists[0];
+        assert!(list.banner.is_none());
+        assert_eq!(list.items.len(), 2);
+        let note = &list.items[0];
+        assert_eq!(note.kind, ItemKind::DisplayOnly);
+        assert_eq!(
+            note.header.as_deref(),
+            Some("Export the environment first:")
+        );
+        assert_eq!(note.code_blocks, vec!["export APP_ENV=staging".to_string()]);
+        assert_eq!(list.items[1].display_text, "step one");
+    }
+
+    #[test]
+    fn bold_only_first_bullet_with_inline_command_is_a_card() {
+        let document = parse("## S\n\n- **Run `fix-perms` first**\n- [ ] step one\n");
+        let list = &document.lists[0];
+        assert!(list.banner.is_none());
+        assert_eq!(list.items.len(), 2);
+        let note = &list.items[0];
+        assert_eq!(note.header.as_deref(), Some("Run fix-perms first"));
+        assert_eq!(note.code_spans, vec!["fix-perms".to_string()]);
     }
 
     #[test]
