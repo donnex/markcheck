@@ -2469,7 +2469,22 @@ mod tests {
         state.screen = Screen::ConfirmReset;
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("Confirm Reset"));
+        assert!(text.contains("This marks 1 done task (of 3) as not started"));
         assert!(text.contains("cancel"));
+    }
+
+    #[test]
+    fn confirm_reset_counts_started_tasks() {
+        let mut state = sample_state();
+        state.document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Started);
+        state.document.lists[1].items[0].kind = ItemKind::Checkbox(TaskState::Started);
+        state.screen = Screen::ConfirmReset;
+        let text = buffer_text(&mut state, 100, 30);
+        assert!(text.contains("This marks 2 started tasks (of 3) as not started"));
+
+        state.document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+        let text = buffer_text(&mut state, 100, 30);
+        assert!(text.contains("This marks 1 done and 2 started tasks (of 3) as not started"));
     }
 
     #[test]
