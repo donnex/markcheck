@@ -65,6 +65,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync no longer commits a checklist into a different file when the
+  checklist's name contains `[`, `]`, `*` or `?`. Git read the name as a
+  pattern, so ticking a box in `notes[1].md` in a repository that also
+  tracked `notes1.md` overwrote `notes1.md` with the checklist, committed
+  and pushed it, and reported success, while the checklist itself was never
+  committed. Names are now matched exactly, also when `GIT_ICASE_PATHSPECS`
+  or `GIT_GLOB_PATHSPECS` is set in your shell, and a lookup that still
+  matches more than one file stops the sync with an error. (#70)
+
 - Git-sync will not recreate or overwrite a remote branch that changed while
   it was pushing. The previous fix checked with the remote first, but the
   check and the push were separate steps, so a branch deleted in between

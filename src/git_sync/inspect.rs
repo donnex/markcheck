@@ -13,8 +13,8 @@
 use std::path::{Path, PathBuf};
 
 use super::process::{
-    PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, run_with_timeout,
-    run_with_timeout_and_stdin,
+    PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, literal_pathspec_command,
+    run_with_timeout, run_with_timeout_and_stdin,
 };
 
 /// Whether `HEAD` is ahead of its upstream tracking branch — i.e. there's a
@@ -181,7 +181,7 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 /// containing a newline or a quotable character intact, as `index_entry`
 /// already relies on.
 pub(super) fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
-    let mut cmd = git_command(repo_root);
+    let mut cmd = literal_pathspec_command(repo_root);
     cmd.args(["ls-files", "--stage", "-z", "--"]).arg(relpath);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     if !output.status.success() {
@@ -259,7 +259,7 @@ pub(super) fn index_entry(
     repo_dir: &Path,
     file_path: &Path,
 ) -> Result<Option<(String, String)>, String> {
-    let mut cmd = git_command(repo_dir);
+    let mut cmd = literal_pathspec_command(repo_dir);
     cmd.args(["ls-files", "--stage", "--full-name", "-z", "--"])
         .arg(file_path);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
@@ -280,9 +280,19 @@ pub(super) fn index_entry(
     // is untracked. That is a normal answer, not a failure, and the caller
     // needs it separated from "the lookup itself went wrong": `git status`
     // cannot be trusted to report untrackedness on its own (see `run_sync`).
-    let Some(record) = output.stdout.split(|&b| b == 0).find(|r| !r.is_empty()) else {
+    let mut records = output.stdout.split(|&b| b == 0).filter(|r| !r.is_empty());
+    let Some(record) = records.next() else {
         return Ok(None);
     };
+    // More than one record means the pathspec matched more than the one
+    // file asked for (#70). Taking the first would commit the checklist's
+    // content under someone else's path, so refuse instead.
+    if records.next().is_some() {
+        return Err(format!(
+            "git ls-files: {} matched more than one tracked file",
+            file_path.display()
+        ));
+    }
     let record = String::from_utf8_lossy(record);
     let (info, path) = record
         .split_once('\t')
@@ -478,6 +488,38 @@ mod tests {
         assert_eq!(
             ours, theirs,
             "the blob markcheck stages must be the one `git add` stores"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn index_entry_refuses_a_pathspec_that_matches_more_than_one_file() {
+        // #70, defence in depth: exactly one path is asked for, so more than
+        // one record means the match went wider than the checklist, and the
+        // first record may well be someone else's file. A directory is the
+        // one pathspec that still matches several files literally.
+        let (work, _remote) = init_repo_with_remote();
+        fs::write(work.join("other.md"), "x\n").unwrap();
+        run(&work, &["add", "other.md"]);
+
+        let err = index_entry(&work, &work).unwrap_err();
+        assert!(err.contains("more than one tracked file"), "{err}");
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn index_entry_matches_glob_characters_literally() {
+        let (work, _remote) = init_repo_with_remote_named("notes[1].md");
+        fs::write(work.join("notes1.md"), "x\n").unwrap();
+        run(&work, &["add", "notes1.md"]);
+
+        assert_eq!(
+            index_entry(&work, &work.join("notes[1].md")),
+            Ok(Some(("100644".to_string(), "notes[1].md".to_string())))
+        );
+        assert_ne!(
+            index_blob(&work, "notes[1].md"),
+            index_blob(&work, "notes1.md")
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();

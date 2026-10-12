@@ -287,6 +287,32 @@ pub(super) fn git_command(repo_dir: &Path) -> Command {
     }
     cmd
 }
+/// A [`git_command`] for an invocation that hands the checklist's path to
+/// git as a pathspec (after `--`), with that pathspec matched literally.
+///
+/// Pathspecs are globs by default, so a checklist named `notes[1].md` also
+/// matched a tracked `notes1.md`; `ls-files` listed that sibling first and
+/// the sync committed and pushed the checklist's content *as the sibling*
+/// (#70). `GIT_LITERAL_PATHSPECS=1` turns the glob characters back into
+/// plain bytes. Git refuses to combine it with any other global pathspec
+/// setting, and an ambient `GIT_ICASE_PATHSPECS`/`GIT_GLOB_PATHSPECS` would
+/// widen the match again anyway, so those are removed.
+///
+/// Scoped to these read-only lookups rather than set in `git_command`:
+/// `git commit` runs the repository's hooks, which inherit the environment,
+/// and a hook's own glob pathspecs must keep working.
+pub(super) fn literal_pathspec_command(repo_dir: &Path) -> Command {
+    let mut cmd = git_command(repo_dir);
+    for var in [
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    ] {
+        cmd.env_remove(var);
+    }
+    cmd.env("GIT_LITERAL_PATHSPECS", "1");
+    cmd
+}
 /// The first line of a failed command's stderr, prefixed with which command
 /// produced it — short enough for the single-line sticky status bar.
 pub(super) fn command_error(step: &str, output: &Output) -> String {
@@ -550,6 +576,43 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn literal_pathspec_command_matches_literally_whatever_the_ambient_setting() {
+        // #70. Structural for the same reason as the test below: the ambient
+        // case can only be staged on the process, which would race every
+        // other test (sync.rs re-runs a whole sync in a child process for
+        // that). Git rejects literal combined with any other global pathspec
+        // setting, so all three must go, not just be outvoted.
+        let cmd = literal_pathspec_command(Path::new("."));
+        let envs: Vec<(String, Option<String>)> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(envs.contains(&("GIT_LITERAL_PATHSPECS".to_string(), Some("1".to_string()))));
+        for var in [
+            "GIT_GLOB_PATHSPECS",
+            "GIT_NOGLOB_PATHSPECS",
+            "GIT_ICASE_PATHSPECS",
+            "GIT_DIR",
+        ] {
+            assert!(
+                envs.contains(&(var.to_string(), None)),
+                "{var} must be removed"
+            );
+        }
+        // Plain git_command leaves pathspec handling alone, so the
+        // repository's hooks (run by `git commit`) keep their own globs.
+        assert!(
+            !git_command(Path::new("."))
+                .get_envs()
+                .any(|(k, _)| k == "GIT_LITERAL_PATHSPECS")
+        );
     }
     #[test]
     fn git_invocations_ignore_an_ambient_git_environment() {
