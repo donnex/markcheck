@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 /// Cap for local plumbing commands, which are normally instant.
 pub(super) const PLUMBING_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a timed-out command gets after `SIGTERM` before `SIGKILL`.
+const KILL_GRACE: Duration = Duration::from_secs(1);
 /// Scratch files for one run's stdio, removed on drop. Kept in the temp
 /// directory: anything written inside the repository could be swept into a
 /// commit by a hook.
@@ -95,11 +97,15 @@ fn run_with_optional_stdin(
             break status;
         }
         if Instant::now() >= deadline {
-            kill_and_reap(&mut child);
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("git command timed out after {timeout:?}"),
-            ));
+            let message = if terminate_and_reap(&mut child, KILL_GRACE) {
+                format!(
+                    "git command timed out after {timeout:?} and was force-killed; \
+                     if git now reports that index.lock exists, remove .git/index.lock"
+                )
+            } else {
+                format!("git command timed out after {timeout:?}")
+            };
+            return Err(io::Error::new(io::ErrorKind::TimedOut, message));
         }
         std::thread::sleep(Duration::from_millis(20));
     };
@@ -119,28 +125,49 @@ fn spawn_in_own_process_group(mut cmd: Command) -> io::Result<Child> {
     }
     cmd.spawn()
 }
-fn kill_and_reap(child: &mut Child) {
+/// `SIGTERM` first: git's signal handlers remove the lock files it holds in
+/// the user's repository, which an uncatchable `SIGKILL` would leave behind.
+/// The group is only signalled while the child is unreaped, since a reaped
+/// child's PID, and so the group ID, can be recycled onto something unrelated.
+/// Returns whether the child outlived the grace period and had to be killed.
+fn terminate_and_reap(child: &mut Child, grace: Duration) -> bool {
+    signal_group(child, "-TERM");
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    signal_group(child, "-KILL");
+    let _ = child.kill();
+    let _ = child.wait();
+    true
+}
+fn signal_group(child: &Child, signal: &str) {
     #[cfg(unix)]
     {
-        // Nulled: `kill` complains on stderr if the group is gone, and markcheck
-        // owns the terminal.
+        // Nulled: `kill` complains on stderr if the group is gone, and
+        // markcheck owns the terminal.
         let _ = Command::new("kill")
-            .args(["-KILL", "--"])
+            .args([signal, "--"])
             .arg(format!("-{}", child.id()))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    #[cfg(not(unix))]
+    let _ = (child, signal);
 }
 /// Strips the variables that would make git act on a different repository
 /// than the one holding the checklist (hooks and `git rebase --exec` export
-/// `GIT_DIR` and `GIT_INDEX_FILE`, for example).
+/// `GIT_DIR` and `GIT_INDEX_FILE`, for example). `GIT_OPTIONAL_LOCKS=0` stops
+/// the background `git status` from taking `.git/index.lock` to refresh the
+/// stat cache, which would make the user's own git commands fail meanwhile.
 pub(super) fn git_command(repo_dir: &Path) -> Command {
     let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir);
+    cmd.current_dir(repo_dir).env("GIT_OPTIONAL_LOCKS", "0");
     for var in [
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -362,6 +389,73 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).ok();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_timed_out_command_gets_sigterm_before_sigkill() {
+        // The trap only runs on a catchable signal, so the marker proves SIGTERM
+        // arrived first.
+        let marker = crate::test_support::unique_temp_path("git-sync-sigterm", "marker", None);
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            &format!(
+                "trap 'touch {}; exit 1' TERM; sleep 5 & wait",
+                shell_words::quote(marker.to_str().unwrap())
+            ),
+        ]);
+
+        let started = Instant::now();
+        let result = run_with_timeout(cmd, Duration::from_millis(150));
+
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            !err.to_string().contains("force-killed"),
+            "a command that exits on SIGTERM was not force-killed: {err}"
+        );
+        assert!(marker.exists(), "the child must have received SIGTERM");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "must not wait out the grace period once the child exits: {:?}",
+            started.elapsed()
+        );
+        fs::remove_file(&marker).ok();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_command_ignoring_sigterm_is_force_killed_with_a_lock_hint() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "trap '' TERM; sleep 5"]);
+
+        let started = Instant::now();
+        let result = run_with_timeout(cmd, Duration::from_millis(150));
+        let elapsed = started.elapsed();
+
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            err.to_string().contains(".git/index.lock"),
+            "a force-kill can leave a lock behind and must say how to clear it: {err}"
+        );
+        assert!(
+            elapsed >= KILL_GRACE && elapsed < KILL_GRACE + Duration::from_secs(2),
+            "SIGKILL must follow once the grace period runs out: {elapsed:?}"
+        );
+    }
+    #[test]
+    fn git_command_disables_optional_locks() {
+        let cmd = git_command(Path::new("."));
+        assert!(
+            cmd.get_envs()
+                .any(|(k, v)| k == "GIT_OPTIONAL_LOCKS" && v == Some(std::ffi::OsStr::new("0"))),
+            "a background git status must not take .git/index.lock"
+        );
+        assert!(
+            literal_pathspec_command(Path::new("."))
+                .get_envs()
+                .any(|(k, v)| k == "GIT_OPTIONAL_LOCKS" && v == Some(std::ffi::OsStr::new("0")))
+        );
     }
     #[test]
     fn literal_pathspec_command_matches_literally_whatever_the_ambient_setting() {
