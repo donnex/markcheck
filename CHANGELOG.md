@@ -100,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cancels, just like `Esc`. Previously the key had no effect anywhere, so
   the reflexive way out of a terminal program made markcheck look hung. (#13)
 
+- `markcheck --new` now works on filesystems without hard links, such as
+  FAT32/exFAT USB sticks and SD cards and many network shares. Previously it
+  always failed there with "cannot create …: Operation not permitted"; it
+  still never overwrites a file that already exists. (#14)
+
 - A status message too long for the bottom row now wraps onto a few more
   rows instead of being cut off at the right edge. Previously the end of the
   longest messages was never visible: the "Another markcheck is saving this
