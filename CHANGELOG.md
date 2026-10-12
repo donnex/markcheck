@@ -72,6 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clicking a command on a card now copies exactly that command, in full.
+  Previously, with two inline commands on the same row, clicking the second
+  copied the first; and a long inline command that wrapped across several
+  rows copied only the piece on the clicked row, putting a truncated command
+  on the clipboard. Clicking the prose beside a command now behaves like `y`
+  instead of copying the command next to it. (#59)
+
 - On Linux X11 desktops without a clipboard manager, a command copied with
   `y` (or a click, or `--auto-copy`) can now actually be pasted. Previously
   markcheck said "Copied to clipboard" but the copy vanished at once, because

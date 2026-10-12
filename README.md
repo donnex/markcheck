@@ -595,9 +595,12 @@ same way as any other command — worth keeping in mind for a runbook shared
 in a less-trusted environment.
 
 When a task has **several** commands, `y` won't guess between them — instead
-**left-click the row** of the command you want and that specific one is
-copied (an inline command, the trailing command, or a fenced block). Clicking
-anywhere else on the card copies its sole command, the same as `y`.
+**left-click the command** you want and that specific one is copied, in
+full (an inline command, the trailing command, or a fenced block). With two
+inline commands on one row, each copies its own; a long inline command that
+wraps across rows copies whole from any of them. Clicking anywhere else on
+the card, including the prose beside a command, copies its sole command, the
+same as `y`.
 
 Passive status messages — copy confirmations, reloads, resets — clear
 themselves after a few seconds. Messages that answer a keypress stay until your

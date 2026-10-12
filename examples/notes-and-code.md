@@ -29,6 +29,9 @@ Non-task content and the ways code is handled.
 
 - [ ] A task with two commands `first` and `second` — ambiguous for `y`, so
   click the specific command you want to copy
+- [ ] Fetch `curl -fsSL https://example.com/install.sh --output /tmp/install.sh`
+  first — on a narrow card this long inline command wraps across rows, and a
+  click on any of them copies it whole
 - [ ] A task with *emphasis*, mid-line **bold**, and ~~struck-through~~ text to
   show inline styling in the card body
 - [ ] Open the [project runbook](https://example.com/runbook) with `o` — the
