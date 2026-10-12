@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 /// Cap for local plumbing commands, which are normally instant.
 pub(super) const PLUMBING_TIMEOUT: Duration = Duration::from_secs(10);
+/// Cap for the network-bound commands: `git push` and `git ls-remote`.
 pub(super) const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a timed-out command gets after `SIGTERM` before `SIGKILL`.
 const KILL_GRACE: Duration = Duration::from_secs(1);

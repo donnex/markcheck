@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::guards::{repo_sync_blocked, verify_commit_scope};
 use super::inspect::{blob_at, current_head, descends_directly_from, git_dir, index_blob};
 use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout};
-use super::{RacePoint, race_point};
+use super::shared::{RacePoint, race_point};
 
 /// Re-checks that `HEAD` is still `parent` before committing, so a tree
 /// based on a stale parent can't revert a concurrent commit. The real index

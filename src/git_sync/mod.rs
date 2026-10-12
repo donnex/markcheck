@@ -3,11 +3,14 @@ mod guards;
 mod inspect;
 mod process;
 mod push;
+mod shared;
 mod sync;
 #[cfg(test)]
 mod test_support;
 
-use inspect::blob_sha_for;
+pub use shared::SyncOutcome;
+use shared::lock_hash;
+
 use process::{PLUMBING_TIMEOUT, git_command, run_with_timeout};
 use push::{catch_up_push, retry_commit};
 use sync::{commit_message, run_sync};
@@ -20,63 +23,6 @@ use crate::model::{PendingSync, hash_bytes};
 
 /// Backoff between automatic push retries after `CommittedNotPushed`.
 const PUSH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
-
-/// A named point inside a sync where a test can interleave a real
-/// concurrent git process. Compiles to nothing outside tests. Hooks are
-/// thread-local so parallel tests can't fire each other's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum RacePoint {
-    AfterHistoryValidation,
-    BeforeCommit,
-    BeforeIndexAlignment,
-    BeforePush,
-}
-
-#[cfg(test)]
-thread_local! {
-    static RACE_HOOKS: std::cell::RefCell<
-        std::collections::HashMap<RacePoint, Box<dyn Fn()>>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-#[cfg(test)]
-fn race_point(point: RacePoint) {
-    // Taken out while it runs, so a hook reaching a sync point can't recurse.
-    let hook = RACE_HOOKS.with(|h| h.borrow_mut().remove(&point));
-    if let Some(hook) = hook {
-        hook();
-    }
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn race_point(_point: RacePoint) {}
-
-/// Result of one background commit+push attempt, delivered via
-/// [`GitSync::poll`].
-#[derive(Debug, PartialEq, Eq)]
-pub enum SyncOutcome {
-    Synced,
-    /// Nothing to do: already committed and pushed. Not reported.
-    Skipped,
-    /// The file isn't tracked. Reported, but never `git add`ed automatically.
-    SkippedUntracked,
-    /// Committed locally, but the push failed. `commit` is retried, never the
-    /// content that produced it, so a retry can't build a new commit from stale
-    /// content.
-    CommittedNotPushed {
-        message: String,
-        commit: String,
-    },
-    /// A push retry gave up because its commit is no longer `HEAD`. Unlike
-    /// `Skipped`, it clears the armed retry.
-    RetryAbandoned,
-    /// Nothing was committed; the message is the first line of git's stderr.
-    Failed(String),
-    /// A push retry failed outright. Separate from `Failed` because it restarts
-    /// the retry's backoff, while a content sync's failure must leave it alone.
-    RetryFailed(String),
-}
 
 /// The line to print on stderr after quitting, for a final sync that didn't
 /// land cleanly: `last` is the last outcome seen while waiting, and
@@ -125,12 +71,6 @@ pub struct GitSync {
     /// Hash of the latest request, read live by the worker so `run_sync` can
     /// tell a superseded request from an outside edit.
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
-}
-
-/// Tolerates poisoning: the digest has no invariant to break, and a panic
-/// here would crash the TUI from the main thread.
-fn lock_hash(hash: &Mutex<[u8; 32]>) -> std::sync::MutexGuard<'_, [u8; 32]> {
-    hash.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Turns a panic into `Failed`: a worker that dies without sending leaves
