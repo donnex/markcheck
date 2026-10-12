@@ -68,8 +68,17 @@ pub fn validate_new_path(path: &Path) -> io::Result<()> {
 
 /// Creates a starter checklist at `path` and returns its canonical path.
 /// Written to a temp file and hard-linked into place, which fails rather
-/// than overwrite an existing file and never leaves a partial one.
+/// than overwrite an existing file and never leaves a partial one. On a
+/// filesystem without hard links, the file is created directly instead,
+/// still refusing to overwrite an existing one.
 pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
+    create_new_checklist_with(path, |from, to| fs::hard_link(from, to))
+}
+
+fn create_new_checklist_with(
+    path: &Path,
+    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<PathBuf> {
     validate_new_path(path)?;
 
     let parent = match path.parent() {
@@ -96,9 +105,15 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     ));
     // `write_temp` cleans up after its own failures.
     let temp_path = write_temp(&temp_path_base, &contents)?;
-    let link_result = fs::hard_link(&temp_path, &full_path);
+    let link_result = link(&temp_path, &full_path);
     let _ = fs::remove_file(&temp_path);
-    link_result?;
+    match link_result {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => return Err(err),
+        // FAT32/exFAT, many SMB mounts and some FUSE filesystems have no hard
+        // links, and report it with a range of error codes.
+        Err(_) => write_new_file(&full_path, &contents)?,
+    }
 
     #[cfg(unix)]
     crate::writer::sync_parent_dir(&full_path);
@@ -110,35 +125,34 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
 /// the umask default. Retries once at a fresh name if taken, never deleting
 /// the existing file.
 fn write_temp(base_temp_path: &Path, contents: &str) -> io::Result<PathBuf> {
-    let open = |path: &Path| {
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-    };
-    let (path, mut file) = match open(base_temp_path) {
-        Ok(file) => (base_temp_path.to_path_buf(), file),
+    match write_new_file(base_temp_path, contents) {
+        Ok(()) => Ok(base_temp_path.to_path_buf()),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
             let mut retry_path = base_temp_path.as_os_str().to_os_string();
             retry_path.push(format!("-{:x}", crate::writer::random_suffix()));
             let retry_path = PathBuf::from(retry_path);
-            let file = open(&retry_path)?;
-            (retry_path, file)
+            write_new_file(&retry_path, contents)?;
+            Ok(retry_path)
         }
-        Err(err) => return Err(err),
-    };
+        Err(err) => Err(err),
+    }
+}
 
+/// Creates `path` (failing if it exists), writes and fsyncs `contents`, and
+/// removes the file again if the write fails.
+fn write_new_file(path: &Path, contents: &str) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
     let write_result = (|| {
         file.write_all(contents.as_bytes())?;
         file.sync_all()
     })();
-    match write_result {
-        Ok(()) => Ok(path),
-        Err(err) => {
-            let _ = fs::remove_file(&path);
-            Err(err)
-        }
+    if write_result.is_err() {
+        let _ = fs::remove_file(path);
     }
+    write_result
 }
 
 #[cfg(test)]
@@ -328,6 +342,45 @@ mod tests {
         let err = create_new_checklist(&path).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&path).unwrap(), "already here");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    fn no_hard_links(_: &Path, _: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Operation not supported",
+        ))
+    }
+
+    #[test]
+    fn create_new_checklist_falls_back_to_a_direct_write_without_hard_links() {
+        let dir = unique_temp_dir();
+        let path = dir.join("todo.md");
+
+        let created = create_new_checklist_with(&path, no_hard_links).unwrap();
+
+        assert_eq!(fs::read_to_string(&created).unwrap(), template(&created));
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("todo.md")]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_new_checklist_fallback_still_refuses_to_overwrite() {
+        let dir = unique_temp_dir();
+        let path = dir.join("todo.md");
+        fs::write(&path, "already here").unwrap();
+
+        let err = create_new_checklist_with(&path, no_hard_links).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "already here");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
 
         fs::remove_dir_all(&dir).ok();
     }

@@ -131,8 +131,9 @@ markcheck --version                   # print the version and build's git commit
 existing one — `PATH` must not already exist and must end in `.md`
 (case-insensitively). The starter content is a title derived from the
 filename (`meeting-notes.md` → `# Meeting Notes`) and two blank tasks ready
-to fill in. `--new` and the positional `FILE` argument are mutually
-exclusive — pass exactly one.
+to fill in. It works on filesystems without hard links too (FAT32/exFAT
+USB sticks and SD cards, many network shares). `--new` and the positional
+`FILE` argument are mutually exclusive — pass exactly one.
 
 ## Config file
 
