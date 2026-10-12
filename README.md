@@ -337,6 +337,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `o` then `1`–`9` | when a card has several links, open link `[N]` |
 | `e` | edit the file in `$EDITOR` (at the current task's line for editors that support it) |
 | `Ctrl-Z` | suspend to the shell, as in vim or less; `fg` brings markcheck back, picking up any change made to the file meanwhile |
+| `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
 | `R` | reset all tasks to not-done (asks first) |
 | `1`–`9` | jump to list N |
 | `?` | show the keybinding help overlay (scrollable — `j`/`k`/arrows/`Ctrl-D`/`U` — when it doesn't fit; any other key closes) |

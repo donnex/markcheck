@@ -268,6 +268,7 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
         key("o then 1-9", "open link [N] when a card has several"),
         key("e", "edit the file in $EDITOR"),
         key("Ctrl-Z", "suspend to the shell (fg to come back)"),
+        key("Ctrl-C", "cancel like Esc; elsewhere hints how to quit"),
         key("R", "reset all tasks (asks first)"),
         key("1–9", "jump to list N"),
         key("?", "toggle this help"),

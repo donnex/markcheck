@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tabs, the header title, breadcrumbs and section dividers had the same
   mis-measurement and could overflow or cut such text wrongly. (#12)
 
+- `Ctrl-C` now responds instead of silently doing nothing. Outside an
+  overlay it shows "Type q to quit", as vim does, rather than quitting; in
+  search, the "go to task" list, the help overlay or a confirmation it
+  cancels, just like `Esc`. Previously the key had no effect anywhere, so
+  the reflexive way out of a terminal program made markcheck look hung. (#13)
+
 - A status message too long for the bottom row now wraps onto a few more
   rows instead of being cut off at the right edge. Previously the end of the
   longest messages was never visible: the "Another markcheck is saving this
