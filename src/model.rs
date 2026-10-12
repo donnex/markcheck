@@ -781,6 +781,9 @@ pub struct AppState {
     /// them. Cleared whenever a fresh mutating action happens (the usual
     /// undo/redo rule) and on any external reload.
     pub redo_stack: Vec<StateSnapshot>,
+    /// Bumped whenever an external reload clears the undo/redo history, so a
+    /// failed undo/redo can tell whether the stack it popped from still exists.
+    pub history_epoch: u64,
 }
 
 /// Incremental `/` search state.

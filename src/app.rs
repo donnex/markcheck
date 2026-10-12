@@ -160,6 +160,7 @@ impl AppState {
             help: HelpState::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            history_epoch: 0,
         }
     }
 
@@ -1161,6 +1162,7 @@ impl AppState {
                 // snapshots no longer apply cleanly.
                 self.undo_stack.clear();
                 self.redo_stack.clear();
+                self.history_epoch += 1;
                 // A queued git-sync request describes content this reload replaced. The
                 // new content queues nothing: markcheck doesn't commit edits it didn't
                 // make.
@@ -1480,7 +1482,8 @@ impl AppState {
     }
 
     /// `u`: undo the last state-changing action. If the write fails, the entry
-    /// goes back onto the stack.
+    /// goes back onto the stack, unless the failure reloaded the file and so
+    /// cleared the history the entry belonged to.
     pub fn undo(&mut self) {
         if self.blocked_by_deletion() {
             return;
@@ -1489,10 +1492,13 @@ impl AppState {
             self.set_error("Nothing to undo".to_string());
             return;
         };
+        let epoch = self.history_epoch;
         let redo_point = self.state_snapshot();
         let changed = self.apply_snapshot(&snapshot);
         if !self.finish_history_apply(&redo_point, &changed, "Undo") {
-            self.undo_stack.push(snapshot);
+            if self.history_epoch == epoch {
+                self.undo_stack.push(snapshot);
+            }
             return;
         }
         self.redo_stack.push(redo_point);
@@ -1508,10 +1514,13 @@ impl AppState {
             self.set_error("Nothing to redo".to_string());
             return;
         };
+        let epoch = self.history_epoch;
         let undo_point = self.state_snapshot();
         let changed = self.apply_snapshot(&snapshot);
         if !self.finish_history_apply(&undo_point, &changed, "Redo") {
-            self.redo_stack.push(snapshot);
+            if self.history_epoch == epoch {
+                self.redo_stack.push(snapshot);
+            }
             return;
         }
         self.undo_stack.push(undo_point);

@@ -3245,6 +3245,54 @@ fn external_reload_clears_undo_history() {
     fs::remove_file(&path).ok();
 }
 
+const STALE_HISTORY_EXTERNAL_EDIT: &str = "## L\n\n- [x] new\n- [x] a\n- [x] b\n";
+
+#[test]
+fn undo_refused_by_an_external_edit_does_not_replay_a_stale_snapshot() {
+    let path = write_real_file("## L\n\n- [ ] a\n- [ ] b\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    touch_with_new_mtime(&path, STALE_HISTORY_EXTERNAL_EDIT);
+
+    state.undo();
+    assert!(state.status_is_error);
+    assert!(state.undo_stack.is_empty(), "history cleared by the reload");
+    assert!(state.redo_stack.is_empty());
+
+    state.undo();
+    assert_eq!(state.status_message.as_deref(), Some("Nothing to undo"));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        STALE_HISTORY_EXTERNAL_EDIT
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn redo_refused_by_an_external_edit_does_not_replay_a_stale_snapshot() {
+    let path = write_real_file("## L\n\n- [ ] a\n- [ ] b\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    state.undo();
+    assert_eq!(state.redo_stack.len(), 1);
+    touch_with_new_mtime(&path, STALE_HISTORY_EXTERNAL_EDIT);
+
+    state.redo();
+    assert!(state.status_is_error);
+    assert!(state.undo_stack.is_empty());
+    assert!(state.redo_stack.is_empty(), "history cleared by the reload");
+
+    state.redo();
+    assert_eq!(state.status_message.as_deref(), Some("Nothing to redo"));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        STALE_HISTORY_EXTERNAL_EDIT
+    );
+
+    fs::remove_file(&path).ok();
+}
+
 #[test]
 fn record_git_sync_sets_the_synced_timestamp() {
     let mut state = AppState::new(two_list_document());
