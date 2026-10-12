@@ -1431,9 +1431,11 @@ impl AppState {
         self.screen = Screen::ConfirmReset;
     }
 
-    fn reset_all(&mut self) {
+    /// Resets every task to not done and saves. Returns whether the reset
+    /// reached disk; on failure the sticky error explains why.
+    fn reset_all(&mut self) -> bool {
         if self.blocked_by_deletion() {
-            return;
+            return false;
         }
         let pre_state = self.state_snapshot();
         for list in &mut self.document.lists {
@@ -1448,11 +1450,12 @@ impl AppState {
             "Write failed — reset not saved to disk",
             "Reset all tasks to not done",
         ) {
-            return;
+            return false;
         }
         self.push_undo_point(pre_state);
         self.screen = Screen::Checklist;
         self.set_status("All tasks reset to not done".to_string());
+        true
     }
 
     // ----- Undo / redo -------------------------------------------------
@@ -1754,17 +1757,17 @@ impl AppState {
             // Only `y` confirms — `Enter` is too easy to hit by reflex for a
             // whole-file rewrite. Any other key cancels.
             match code {
-                KeyCode::Char('y') => self.reset_all(),
+                KeyCode::Char('y') => {
+                    self.reset_all();
+                }
                 _ => self.screen = self.screen_before_confirm,
             }
         } else {
             // ConfirmQuitReset, offered on quit when all done: y resets
             // then quits, n quits without resetting, Esc/anything else cancels.
+            // A failed reset stays open so its error is read before exiting.
             match code {
-                KeyCode::Char('y') => {
-                    self.reset_all();
-                    self.should_quit = true;
-                }
+                KeyCode::Char('y') => self.should_quit = self.reset_all(),
                 KeyCode::Char('n') => self.should_quit = true,
                 _ => self.screen = self.screen_before_confirm,
             }

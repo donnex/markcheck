@@ -1943,6 +1943,56 @@ fn confirm_quit_reset_yes_resets_and_quits() {
 }
 
 #[test]
+fn confirm_quit_reset_yes_stays_running_when_the_file_changed_on_disk() {
+    let document = all_done_document();
+    let path = document.file_path.clone();
+    let mut state = AppState::new(document);
+    let external_content = "## Other\n\n- [x] external change\n";
+    fs::write(&path, external_content).unwrap();
+
+    state.handle_key(KeyCode::Char('q'));
+    state.handle_key(KeyCode::Char('y'));
+
+    assert!(!state.should_quit, "a refused reset must not quit");
+    assert!(state.status_is_error);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("File changed on disk")),
+        "got {:?}",
+        state.status_message
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), external_content);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn confirm_quit_reset_yes_stays_running_when_the_write_fails() {
+    let mut state = AppState::new(document_with_missing_file(vec![List {
+        title: "S".to_string(),
+        banner: None,
+        items: vec![checkbox(1, true), checkbox(2, true)],
+    }]));
+
+    state.handle_key(KeyCode::Char('q'));
+    state.handle_key(KeyCode::Char('y'));
+
+    assert!(!state.should_quit, "a failed reset must not quit");
+    assert!(state.status_is_error);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("Write failed")),
+        "got {:?}",
+        state.status_message
+    );
+    assert_eq!(state.screen, Screen::ConfirmQuitReset, "y retries, n quits");
+    assert_eq!(state.document.checkbox_stats().0, 2, "nothing was reset");
+}
+
+#[test]
 fn confirm_quit_reset_no_quits_without_resetting() {
     let mut state = AppState::new(all_done_document());
     let done_before = state.document.checkbox_stats().0;

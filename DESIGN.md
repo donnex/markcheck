@@ -847,7 +847,7 @@ Green border. Replaces the three-card area entirely.
 
 On the `ConfirmReset` screen, only `y` confirms and **any other key (including `Enter`) cancels** (returning to `screen_before_confirm`); `Enter` was dropped because it's too easy to hit by reflex for a whole-file rewrite. This screen is checked before the global `q`/`Esc` handler so `Esc` cancels rather than quits.
 
-On the `ConfirmQuitReset` screen (offered when pressing `q`/`Esc` with every task already done): `y` resets all tasks then quits, `n` quits without resetting, and `Esc`/any other key cancels back to `screen_before_confirm`. Like `ConfirmReset`, it's handled before the global quit check.
+On the `ConfirmQuitReset` screen (offered when pressing `q`/`Esc` with every task already done): `y` resets all tasks then quits, `n` quits without resetting, and `Esc`/any other key cancels back to `screen_before_confirm`. `reset_all` returns whether the reset reached disk, and `y` quits only on success: a refused or failed write keeps markcheck running with the sticky error shown (still on the modal, so `y` retries and `n` quits as-is — or on the checklist, when a file changed on disk forced a reload), so the reason is never lost to an exit. Like `ConfirmReset`, it's handled before the global quit check.
 
 ## Incremental search (`/`)
 
@@ -873,7 +873,7 @@ Raw mode turns off the terminal's `ISIG`, so Ctrl-Z reaches markcheck as a key r
 
 `request_reset` opens the `ConfirmReset` modal, or shows "Nothing to reset" when no task is done. `reset_all` flips every checkbox to not-done, writes back once (updating `file_mtime` to suppress a self-reload), and returns to `Checklist`. The cursor is kept. A write failure sets a sticky error (`Write failed — reset not saved to disk`) instead — the screen stays on `ConfirmReset` and the reset status is never shown, since it wasn't actually saved (the checkboxes are rolled back to their pre-reset state via `commit_write`'s failure path, matching `set_current_state`'s behavior — memory never diverges from what's actually on disk).
 
-Quitting with everything already done (`q`/`Esc` when `document.checkbox_stats()` is all-done) opens the `ConfirmQuitReset` modal instead of quitting outright, so a finished checklist can be handed back ready to run again: `y` calls `reset_all` then quits, `n` quits without resetting, `Esc`/other cancels. This keeps the "leave it clean for the next run" workflow one keystroke away without ever resetting silently.
+Quitting with everything already done (`q`/`Esc` when `document.checkbox_stats()` is all-done) opens the `ConfirmQuitReset` modal instead of quitting outright, so a finished checklist can be handed back ready to run again: `y` calls `reset_all` and quits only if the reset was saved, `n` quits without resetting, `Esc`/other cancels. This keeps the "leave it clean for the next run" workflow one keystroke away without ever resetting silently.
 
 ## Undo / redo (`u` / `Ctrl-R`)
 
