@@ -452,7 +452,9 @@ checklist is never picked up and never committed, and the same goes for the
 checklist file itself: if it isn't tracked yet, git-sync won't `git add` it
 for you — it reports `Git sync skipped: file is not tracked in git` in the
 status bar instead of silently doing nothing, so it's clear a `git add` is
-needed before syncing can start. Commit messages name the
+needed before syncing can start. A checklist whose file name isn't valid
+UTF-8 isn't synced either: each sync fails with a red status-bar message
+saying so, and nothing is committed. Commit messages name the
 actual change (`checklist.md: Check "Restart service"`, `checklist.md:
 Reset all tasks to not done`, …) rather than a generic "updated by
 markcheck", so `git log`/`git blame` stay useful across hosts. A failed
