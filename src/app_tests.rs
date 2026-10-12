@@ -2654,6 +2654,115 @@ fn own_write_does_not_trigger_spurious_reload() {
 }
 
 #[test]
+fn reload_keeps_search_open_and_typed_keys_stay_query_text() {
+    let path = write_real_file("## A\n\n- [ ] `alpha`\n\n## B\n\n- [ ] `bravo`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "alp");
+
+    let changed = "## A\n\n- [ ] `alpha`\n- [ ] `also`\n";
+    touch_with_new_mtime(&path, changed);
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.current_item().unwrap().display_text, "alpha");
+    type_str(&mut state, "hs");
+    assert_eq!(state.search.query, "alphs");
+    assert!(!state.take_editor_request());
+    assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+
+    // The pre-search list is gone, so Esc lands on the remapped fallback
+    // rather than an index past the end of the new document.
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(state.current_item().unwrap().display_text, "alpha");
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn reload_keeps_the_picker_open_and_clamps_its_selection() {
+    let path = write_real_file("## L\n\n- [ ] `alpha`\n- [ ] `bravo`\n- [ ] `charlie`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('T'));
+    state.handle_key(KeyCode::Down);
+    state.handle_key(KeyCode::Down);
+    assert_eq!(state.picker.selection, 2);
+
+    touch_with_new_mtime(&path, "## L\n\n- [ ] `alpha`\n");
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.picker.selection, 0);
+    type_str(&mut state, "es");
+    assert_eq!(state.picker.query, "es");
+    assert!(!state.take_editor_request());
+    assert_eq!(state.screen, Screen::ListPicker);
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn reload_keeps_help_open_and_closing_it_returns_to_the_checklist() {
+    let path = write_real_file("## L\n\n- [x] `alpha`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('?'));
+
+    touch_with_new_mtime(&path, "## L\n\n- [ ] `alpha`\n");
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.screen, Screen::Help);
+    state.handle_key(KeyCode::Char('x'));
+    assert_eq!(state.screen, Screen::Checklist);
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn reload_cancels_a_pending_reset_confirmation_visibly() {
+    let path = write_real_file("## L\n\n- [x] `alpha`\n- [ ] `bravo`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.screen, Screen::ConfirmReset);
+
+    let changed = "## L\n\n- [x] `alpha`\n- [x] `bravo`\n- [ ] `charlie`\n";
+    touch_with_new_mtime(&path, changed);
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("File changed on disk — reset cancelled")
+    );
+    assert!(state.status_is_error);
+    state.handle_key(KeyCode::Char('y'));
+    assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn reload_cancels_a_pending_quit_reset_confirmation_visibly() {
+    let path = write_real_file("## L\n\n- [x] `alpha`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('q'));
+    assert_eq!(state.screen, Screen::ConfirmQuitReset);
+
+    touch_with_new_mtime(&path, "## L\n\n- [x] `alpha`\n- [ ] `bravo`\n");
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.screen, Screen::Checklist);
+    assert!(!state.should_quit);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("File changed on disk — quit cancelled")
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn reload_preserves_cursor_by_title_and_line_number() {
     let path = write_real_file(
         "## List A\n\n- [ ] `alpha`\n- [ ] `bravo`\n\n## List B\n\n- [ ] `charlie`\n",

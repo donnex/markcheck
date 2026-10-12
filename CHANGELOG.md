@@ -65,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A file reload no longer closes the `/` search prompt, the `T` go-to-task
+  filter or the `?` help overlay. When the checklist changed on disk while
+  one of them was open, markcheck switched back to the checklist without
+  saying so, and every key typed after that ran as a command: typing a word
+  into the search could open your editor, or mark a task started and save
+  the file (and, with git sync on, commit and push it). These now stay open
+  across a reload. A pending reset or quit confirmation is cancelled instead,
+  with a message saying the file changed, so a following `y` can no longer
+  act on a dialog that had quietly disappeared. (#24)
+
 - Git-sync no longer commits a checklist into a different file when the
   checklist's name contains `[`, `]`, `*` or `?`. Git read the name as a
   pattern, so ticking a box in `notes[1].md` in a repository that also
