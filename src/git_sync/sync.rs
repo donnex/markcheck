@@ -22,7 +22,9 @@ use super::guards::{
 use super::inspect::{
     ahead_of_upstream, blob_at, blob_bytes_at, hash_object, index_entry, resolve_parent,
 };
-use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout};
+use super::process::{
+    PLUMBING_TIMEOUT, command_error, git_command, literal_pathspec_command, run_with_timeout,
+};
 use super::push::{push, push_if_head_unchanged};
 use super::{RacePoint, SyncOutcome, lock_hash, race_point};
 
@@ -152,7 +154,7 @@ pub(super) fn run_sync(
     // taken as "tracked and unchanged"** — see the index lookup below, which
     // is what actually settles trackedness. `status` is only trusted for the
     // question it can always answer: has anything changed.
-    let mut cmd = git_command(repo_dir);
+    let mut cmd = literal_pathspec_command(repo_dir);
     cmd.args(["status", "--porcelain", "--"]).arg(file_path);
     let status = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) => output,
@@ -1510,6 +1512,68 @@ mod tests {
 
             fs::remove_dir_all(work.parent().unwrap()).ok();
         }
+    }
+    #[test]
+    fn run_sync_commits_a_checklist_whose_name_has_glob_characters_as_itself() {
+        // #70: a pathspec is a glob by default, so `notes[1].md` also
+        // matched the tracked `notes1.md`, which `ls-files` lists first. The
+        // sync then committed and pushed the checklist's content *as
+        // `notes1.md`*, and reported `Synced`.
+        let (work, remote) = init_repo_with_remote_named("notes[1].md");
+        fs::write(work.join("notes1.md"), "unrelated\n").unwrap();
+        run(&work, &["add", "notes1.md"]);
+        run(&work, &["commit", "-q", "-m", "sibling"]);
+        run(&work, &["push", "-q"]);
+
+        let file_path = work.join("notes[1].md");
+        fs::write(&file_path, "- [x] one\n").unwrap();
+        let message = commit_message(&file_path, "Check \"one\"");
+        assert_eq!(
+            run_sync(
+                &work,
+                &file_path,
+                "- [x] one\n",
+                &message,
+                &no_race("- [x] one\n"),
+                None,
+            ),
+            SyncOutcome::Synced
+        );
+
+        assert_eq!(
+            git_stdout(&remote, &["show", "main:notes[1].md"]),
+            "- [x] one"
+        );
+        assert_eq!(
+            git_stdout(&remote, &["show", "main:notes1.md"]),
+            "unrelated"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn run_sync_commits_a_glob_named_checklist_as_itself_under_ambient_icase_pathspecs() {
+        // #70's ambient half: an exported `GIT_ICASE_PATHSPECS` changes
+        // what every pathspec matches, and git refuses to combine it with
+        // the literal setting outright. It has to be set on the *process*
+        // to test that, and `set_var` would race every other test in this
+        // binary, so the test above is re-run in a child copy of the test
+        // binary with the variable exported there instead.
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "git_sync::sync::tests::run_sync_commits_a_checklist_whose_name_has_glob_characters_as_itself",
+                "--test-threads=1",
+            ])
+            .env("GIT_ICASE_PATHSPECS", "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child run failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     #[test]
     fn commit_message_prefixes_the_file_name() {
