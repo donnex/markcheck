@@ -80,7 +80,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     }
     rows.push(Constraint::Length(1)); // progress bar
     rows.push(Constraint::Min(0)); // main
-    rows.push(Constraint::Length(1)); // status
+    rows.push(Constraint::Length(statusbar::height(
+        state,
+        area.width,
+        area.height,
+    ))); // status
     let chunks = Layout::vertical(rows).split(area);
 
     let mut next = 0;
@@ -2414,6 +2418,56 @@ mod tests {
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("Copied to clipboard"));
         assert!(!text.contains("space:toggle"), "legend replaced by message");
+    }
+
+    fn write_lock_refusal() -> (String, String) {
+        let lock = std::env::temp_dir()
+            .join(format!("markcheck-write-lock-{}", "ab".repeat(32)))
+            .display()
+            .to_string();
+        let message = format!(
+            "Another markcheck is saving this file — change not saved, please retry \
+             (if this persists, remove {lock})"
+        );
+        (message, lock)
+    }
+
+    #[test]
+    fn long_status_message_wraps_so_the_lock_file_path_shows_in_full() {
+        // The write-lock refusal is longer than any status bar row; its
+        // actionable part, the lock file to remove, sits at the end.
+        for width in [80u16, 120] {
+            let mut state = sample_state();
+            let (message, lock) = write_lock_refusal();
+            state.set_error(message);
+            let text = buffer_text(&mut state, width, 30);
+            assert!(
+                text.contains(&lock),
+                "lock path shown in full at {width} columns"
+            );
+            assert!(text.contains("Another markcheck"), "message start kept");
+            assert!(text.contains("Second"), "checklist still rendered");
+        }
+    }
+
+    #[test]
+    fn status_bar_grows_only_for_a_long_message_and_stays_capped() {
+        let mut state = sample_state();
+        assert_eq!(statusbar::height(&state, 80, 30), 1, "legend: one row");
+        state.set_error("Nothing to copy".to_string());
+        assert_eq!(statusbar::height(&state, 80, 30), 1, "short message");
+        let (message, _) = write_lock_refusal();
+        state.set_error(message);
+        assert!(statusbar::height(&state, 80, 30) > 1, "long message wraps");
+        assert_eq!(
+            statusbar::height(&state, 10, 30),
+            6,
+            "capped so the checklist keeps the screen"
+        );
+        assert_eq!(statusbar::height(&state, 10, 8), 2, "capped by height");
+        assert_eq!(statusbar::height(&state, 10, 3), 1, "never below one row");
+        state.screen = Screen::Search;
+        assert_eq!(statusbar::height(&state, 10, 30), 1, "search stays one row");
     }
 
     #[test]

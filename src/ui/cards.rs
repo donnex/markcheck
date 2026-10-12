@@ -1518,7 +1518,7 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
 /// Greedy word wrap on character counts, hard-splitting overlong words, so
 /// line counts are exact for scroll clamping. Counts chars, not display
 /// width.
-fn wrap_text(text: &str, width: u16) -> Vec<String> {
+pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
     let width = width.max(1) as usize;
     let mut lines = Vec::new();
     let mut current = String::new();

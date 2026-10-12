@@ -86,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A status message too long for the bottom row now wraps onto a few more
+  rows instead of being cut off at the right edge. Previously the end of the
+  longest messages was never visible: the "Another markcheck is saving this
+  file" refusal names a lock file to remove by hand if it persists, and that
+  path could not be read on any terminal, while git sync (`--git-sync`)
+  failures were often cut off right where the reason began. (#11)
+
 - Git sync (`--git-sync`)'s message for a remote branch that has moved ahead
   now reads "... is not based on; pull first, then it will sync".
   Previously a run of 18 spaces sat in the middle of it, which on a typical
