@@ -72,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git-sync (`--git-sync`) no longer pushes where a plain `git push` would
+  not. It used to always push to the branch's upstream under the upstream's
+  name, so a branch started from `origin/main` under another name had its
+  checklist commits published straight to `main`, and a fork setup
+  (`remote.pushDefault` or `branch.<name>.pushRemote`) had them pushed into
+  the shared repository instead of your fork. In those cases the commit now
+  stays local with a message asking you to push it yourself. A remote with
+  a separate push URL (`pushurl`) is now checked on that URL too, rather
+  than failing every push as out of date. (#98)
+
 - Undo (`u`) and redo (`Ctrl-R`) can no longer overwrite another program's
   edits. When the checklist file had been changed by something else, the
   first `u` correctly reloaded the file and saved nothing, but a second `u`

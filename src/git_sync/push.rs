@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::guards::{repo_sync_blocked, unpushed_history_blocks};
 use super::inspect::{
     RemoteBranch, commits_ahead_of_upstream, current_head, index_entry, is_ancestor,
-    remote_branch_state, resolve_upstream, upstream_parts,
+    push_goes_to_upstream, push_url, remote_branch_state, resolve_upstream, upstream_parts,
 };
 use super::process::{
     PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, run_with_timeout,
@@ -38,8 +38,27 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
         return no_upstream;
     };
+    // The upstream is where changes are fetched from, not necessarily where
+    // `git push` sends them (#98).
+    if !push_goes_to_upstream(repo_dir, &remote) {
+        return SyncOutcome::CommittedNotPushed {
+            message: format!(
+                "`git push` would not push this branch to {branch_ref} on \
+                 {remote}; push it yourself"
+            ),
+            commit: expected_commit.to_string(),
+        };
+    }
+    // Ask the repository the push will reach, which `pushurl` can make
+    // different from the one `ls-remote <remote>` would ask.
+    let Some(url) = push_url(repo_dir, &remote) else {
+        return SyncOutcome::CommittedNotPushed {
+            message: format!("could not work out where {remote} pushes to"),
+            commit: expected_commit.to_string(),
+        };
+    };
     // Ask the remote: an explicit-SHA refspec recreates a deleted branch.
-    let remote_tip = match remote_branch_state(repo_dir, &remote, &branch_ref) {
+    let remote_tip = match remote_branch_state(repo_dir, &url, &branch_ref) {
         RemoteBranch::Present(sha) => sha,
         RemoteBranch::Absent => {
             return SyncOutcome::CommittedNotPushed {
@@ -605,6 +624,139 @@ mod tests {
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("a merge is in progress")),
             "{outcome:?}"
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    fn second_bare_repo(work: &Path, name: &str) -> PathBuf {
+        let repo = work.parent().unwrap().join(name);
+        fs::create_dir_all(&repo).unwrap();
+        run(&repo, &["init", "--bare", "-q", "-b", "main"]);
+        run(
+            work,
+            &[
+                "push",
+                "-q",
+                repo.to_str().unwrap(),
+                "refs/heads/main:refs/heads/main",
+            ],
+        );
+        repo
+    }
+    fn commit_checklist_change(work: &Path) -> String {
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(work, &["commit", "-q", "-am", "markcheck commit"]);
+        current_head(work).unwrap()
+    }
+    /// `git switch -c notes origin/main` tracks `main`; with the default
+    /// `push.default = simple`, `git push` refuses (#98).
+    #[test]
+    fn a_branch_whose_upstream_has_another_name_is_not_pushed_to_that_upstream() {
+        let (work, remote) = init_repo_with_remote();
+        run(&work, &["config", "push.default", "simple"]);
+        run(&work, &["switch", "-q", "-c", "notes", "origin/main"]);
+        let commit = commit_checklist_change(&work);
+
+        let outcome = push(&work, &commit);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
+                if message.contains("would not push this branch")),
+            "{outcome:?}"
+        );
+        assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+        assert_eq!(
+            git_stdout(
+                &remote,
+                &["for-each-ref", "--format=%(refname)", "refs/heads/notes"]
+            ),
+            ""
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    /// Where `git push` itself would publish to the differently named
+    /// upstream, so does the sync.
+    #[test]
+    fn a_differently_named_upstream_is_pushed_when_push_default_is_upstream() {
+        let (work, remote) = init_repo_with_remote();
+        run(&work, &["config", "push.default", "upstream"]);
+        run(&work, &["switch", "-q", "-c", "notes", "origin/main"]);
+        let commit = commit_checklist_change(&work);
+
+        assert_eq!(push(&work, &commit), SyncOutcome::Synced);
+        assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), commit);
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    fn assert_never_pushed_to_the_fetch_remote(config: &[&str]) {
+        let (work, remote) = init_repo_with_remote();
+        let fork = second_bare_repo(&work, "fork.git");
+        run(&work, &["remote", "add", "fork", fork.to_str().unwrap()]);
+        run(&work, &["fetch", "-q", "fork"]);
+        run(&work, &["config", "push.default", "simple"]);
+        run(&work, &["config", config[0], config[1]]);
+        let commit = commit_checklist_change(&work);
+
+        let outcome = push(&work, &commit);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
+                if message.contains("would not push this branch")),
+            "{config:?}: {outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(&remote, &["log", "--format=%s", "main"]),
+            "init",
+            "{config:?}: nothing may reach the fetch remote"
+        );
+        assert_ne!(git_stdout(&fork, &["rev-parse", "main"]), commit);
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn a_push_default_remote_keeps_the_sync_off_the_fetch_remote() {
+        assert_never_pushed_to_the_fetch_remote(&["remote.pushDefault", "fork"]);
+    }
+    #[test]
+    fn a_branch_push_remote_keeps_the_sync_off_the_fetch_remote() {
+        assert_never_pushed_to_the_fetch_remote(&["branch.main.pushRemote", "fork"]);
+    }
+    /// `ls-remote <remote>` asks the fetch `url`; the lease must describe the
+    /// `pushurl` repository the push actually reaches.
+    #[test]
+    fn a_push_url_is_checked_and_pushed_instead_of_the_fetch_url() {
+        let (work, remote) = init_repo_with_remote();
+        let push_repo = second_bare_repo(&work, "push.git");
+        run(
+            &work,
+            &[
+                "config",
+                "remote.origin.pushurl",
+                push_repo.to_str().unwrap(),
+            ],
+        );
+        // The fetch repository moves on with a commit this clone never fetched.
+        let other = work.parent().unwrap().join("other");
+        run(
+            work.parent().unwrap(),
+            &[
+                "clone",
+                "-q",
+                remote.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        run(&other, &["config", "user.email", "test@example.com"]);
+        run(&other, &["config", "user.name", "test"]);
+        commit_unrelated(&other, "elsewhere.md");
+        run(&other, &["push", "-q", "origin", "main"]);
+        let fetch_tip = git_stdout(&remote, &["rev-parse", "main"]);
+        let commit = commit_checklist_change(&work);
+
+        assert_eq!(push(&work, &commit), SyncOutcome::Synced);
+        assert_eq!(git_stdout(&push_repo, &["rev-parse", "main"]), commit);
+        assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), fetch_tip);
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }

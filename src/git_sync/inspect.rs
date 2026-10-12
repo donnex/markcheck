@@ -33,9 +33,14 @@ pub(super) enum RemoteBranch {
     Absent,
     Unknown,
 }
-pub(super) fn remote_branch_state(repo_dir: &Path, remote: &str, branch_ref: &str) -> RemoteBranch {
+/// `location` is a remote name or URL.
+pub(super) fn remote_branch_state(
+    repo_dir: &Path,
+    location: &str,
+    branch_ref: &str,
+) -> RemoteBranch {
     let mut cmd = git_command(repo_dir);
-    cmd.args(["ls-remote", "--heads", remote, branch_ref]);
+    cmd.args(["ls-remote", "--heads", location, branch_ref]);
     match run_with_timeout(cmd, PUSH_TIMEOUT) {
         Ok(output) if output.status.success() => {
             // No output means the branch is not there.
@@ -78,6 +83,43 @@ pub(super) fn upstream_parts(repo_root: &Path) -> Option<(String, String)> {
     let remote = git_config(repo_root, &format!("branch.{branch}.remote"))?;
     let merge_ref = git_config(repo_root, &format!("branch.{branch}.merge"))?;
     Some((remote, merge_ref))
+}
+/// Whether a plain `git push` on this branch would publish to `remote` under
+/// the upstream's own name. `@{push}` applies `branch.<name>.pushRemote`,
+/// `remote.pushDefault`, `push.default` and push refspecs exactly as `git push`
+/// does, and fails to resolve wherever `git push` would refuse.
+pub(super) fn push_goes_to_upstream(repo_root: &Path, remote: &str) -> bool {
+    let Some(branch_ref) = current_branch_ref(repo_root) else {
+        return false;
+    };
+    let Some(push_remote) = git_stdout_line(
+        repo_root,
+        &["for-each-ref", "--format=%(push:remotename)", &branch_ref],
+    ) else {
+        return false;
+    };
+    let tracking =
+        |spec: &str| git_stdout_line(repo_root, &["rev-parse", "--symbolic-full-name", spec]);
+    match (tracking("@{push}"), tracking("@{u}")) {
+        (Some(push), Some(upstream)) => {
+            push_remote == remote && !push.is_empty() && push == upstream
+        }
+        _ => false,
+    }
+}
+/// The URL `git push <remote>` sends to: `remote.<name>.pushurl` when set,
+/// which can name a different repository than the fetch `url`.
+pub(super) fn push_url(repo_root: &Path, remote: &str) -> Option<String> {
+    git_stdout_line(repo_root, &["remote", "get-url", "--push", remote])
+}
+fn git_stdout_line(repo_root: &Path, args: &[&str]) -> Option<String> {
+    let mut cmd = git_command(repo_root);
+    cmd.args(args);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 fn git_config(repo_root: &Path, key: &str) -> Option<String> {
     let mut cmd = git_command(repo_root);

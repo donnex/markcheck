@@ -515,6 +515,18 @@ the whole branch — including any unrelated local commits — which is exactly
 what the unrelated-work check above exists to prevent, and that check can't
 run without an upstream to compare against either.
 
+**It pushes only where `git push` would.** The upstream is where a branch
+is *fetched* from, which isn't always where `git push` sends it. If a plain
+`git push` on the branch would push somewhere else, or nowhere — a branch
+started from `origin/main` under another name (which `git push` refuses
+under the default `push.default = simple`), or a `remote.pushDefault` /
+`branch.<name>.pushRemote` that sends pushes to a fork — git-sync commits
+locally and reports ``Committed, not pushed: `git push` would not push this
+branch to refs/heads/main on origin; push it yourself``, rather than
+publishing to the upstream.
+When the remote has a separate `pushurl`, the branch is checked on, and
+pushed to, that URL.
+
 **Requirements.** Git-sync shells out to `git`, so it needs `git` on
 `PATH`; it's developed and tested against modern git (2.40+) and uses only
 long-standing plumbing, so anything from **git 2.0** onward should work.
