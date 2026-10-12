@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync (`--git-sync`) no longer commits in the middle of a multi-commit
+  cherry-pick or revert that you concluded one step of with a plain
+  `git commit` rather than `--continue`, and no longer commits when git fails
+  to say whether a merge, rebase or conflict is in progress. Previously both
+  were taken as "nothing in progress" and an automatic commit could land in
+  the middle of your work; syncing is now refused with a message saying
+  why. (#9)
+
 - Git sync (`--git-sync`) no longer commits a stray file when the checklist's
   file name isn't valid UTF-8. Previously it rewrote the name with
   replacement characters and committed and pushed the new content under that

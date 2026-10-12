@@ -512,11 +512,14 @@ exact commit it just made (or verified), not whatever the branch currently
 is — so even in the rare case something else commits to the branch at
 just the wrong moment, that commit is never swept along and published as
 a side effect. Also refuses to run while the repository is
-mid-merge, mid-rebase, mid-cherry-pick, on a detached `HEAD`, or has any
-unresolved conflict anywhere in it — an automatic commit in any of those
-states could silently interfere with work already in progress, so it
-reports a status-bar error and does nothing instead, until you resolve it
-yourself in a terminal.
+mid-merge, mid-rebase, mid-cherry-pick or mid-revert (including a
+multi-commit one you've only partly worked through), on a detached `HEAD`,
+or has any unresolved conflict anywhere in it — an automatic commit in any
+of those states could silently interfere with work already in progress, so
+it reports a status-bar error and does nothing instead, until you resolve it
+yourself in a terminal. If git can't answer whether the repository is in
+one of those states, git-sync refuses the same way rather than assuming
+it isn't.
 
 Whenever git-sync is actually active for the current file, `⇅ git` sits in
 the title bar too, grouped with the `Updated` tag and the progress counter
