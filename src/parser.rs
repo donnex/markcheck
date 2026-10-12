@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -138,139 +139,57 @@ fn heading_level_number(level: HeadingLevel) -> u8 {
     }
 }
 
+/// Parser options shared by the `[/]` pre-pass and the real parse, so both
+/// see exactly the same block structure.
+const PARSE_OPTIONS: Options = Options::ENABLE_TASKLISTS.union(Options::ENABLE_STRIKETHROUGH);
+
 /// pulldown-cmark's task-list extension only recognizes `[ ]` and `[x]`,
-/// not the `[/]` "started" marker. Since `[/]` and `[ ]` are both
-/// three bytes, we rewrite `[/]` task markers to `[ ]` before parsing —
-/// byte offsets (and therefore line numbers) are preserved — and return
-/// the 1-indexed lines that were `[/]` so their items can be promoted to
-/// `Started` afterwards.
-fn extract_started_markers(raw: &str) -> (String, std::collections::HashSet<LineNumber>) {
-    let mut started_lines = std::collections::HashSet::new();
-    // Track fenced-code-block boundaries so a code line that merely
-    // *looks* like a `[/]` bullet (e.g. a runbook documenting markcheck's own
-    // syntax) is never rewritten — this scan runs on raw text, before
-    // pulldown-cmark has identified any fence boundaries itself.
-    let mut fence: Option<(char, usize)> = None;
-    let processed = split_lines_keeping_endings(raw)
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            if let Some((fence_char, fence_len)) = fence {
-                if is_closing_fence(line, fence_char, fence_len) {
-                    fence = None;
+/// not the `[/]` "started" marker. This pre-pass parses `raw` once with
+/// pulldown-cmark itself and records the byte offset of every `[/]` that
+/// opens a list item's first paragraph — exactly the position where a
+/// `[ ]` would have been reported as a `TaskListMarker`. Only those ranges
+/// are rewritten to `[ ]` (same three bytes, so every offset and line number
+/// is preserved), and the returned offsets let the second parse promote the
+/// matching `TaskListMarker`s to `Started`.
+///
+/// Deriving the positions from pulldown-cmark rather than from a raw-text
+/// scan is the point: an earlier line-based scan guessed fence boundaries
+/// itself and disagreed with CommonMark around HTML blocks, indented code
+/// and fences opened on a list-marker line, which made started tasks vanish
+/// or rewrote `[/]` text inside code blocks.
+fn extract_started_markers(raw: &str) -> (String, HashSet<usize>) {
+    let mut offsets = HashSet::new();
+    let mut awaiting_first_inline = false;
+    for (event, range) in Parser::new_ext(raw, PARSE_OPTIONS).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Item) => awaiting_first_inline = true,
+            Event::Start(Tag::Paragraph) => {}
+            Event::Text(_) if awaiting_first_inline => {
+                awaiting_first_inline = false;
+                if is_started_marker_at(raw, range.start) {
+                    offsets.insert(range.start);
                 }
-                return line.to_string();
             }
-            if let Some(marker) = fence_delimiter(line) {
-                fence = Some(marker);
-                return line.to_string();
-            }
-            if is_started_task_line(line) {
-                started_lines.insert(index + 1);
-                line.replacen("[/]", "[ ]", 1)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect();
-    (processed, started_lines)
+            _ => awaiting_first_inline = false,
+        }
+    }
+    let mut processed = raw.to_string();
+    for &offset in &offsets {
+        processed.replace_range(offset..offset + 3, "[ ]");
+    }
+    (processed, offsets)
 }
 
-/// Strips any number of leading `>` blockquote markers (each optionally
-/// followed by whitespace) plus ordinary leading whitespace, per CommonMark —
-/// shared by `is_started_task_line` and `fence_delimiter` so both agree on
-/// where a blockquote's content starts. A fence delimiter quoted inside a
-/// `>` blockquote must be recognized as a fence boundary the same way a
-/// plain one is, or a `[/]`-lookalike line inside it gets incorrectly
-/// rewritten.
-fn strip_blockquote_markers(line: &str) -> &str {
-    let mut rest = line.trim_start();
-    while let Some(after) = rest.strip_prefix('>') {
-        rest = after.trim_start();
-    }
-    rest
-}
-
-/// A fenced-code-block delimiter line: an (optionally indented, optionally
-/// blockquoted) run of 3+ backticks or 3+ tildes, per CommonMark. Returns the
-/// fence character and its length so callers can match an opening fence to
-/// its closer.
-fn fence_delimiter(line: &str) -> Option<(char, usize)> {
-    let trimmed = strip_blockquote_markers(line);
-    let fence_char = trimmed.chars().next()?;
-    if fence_char != '`' && fence_char != '~' {
-        return None;
-    }
-    let len = trimmed.chars().take_while(|&c| c == fence_char).count();
-    if len < 3 {
-        return None;
-    }
-    // A backtick fence's info string can't itself contain a backtick.
-    if fence_char == '`' && trimmed[len..].contains('`') {
-        return None;
-    }
-    Some((fence_char, len))
-}
-
-/// Whether `line` closes a fence opened with `open_char`/`open_len`. Unlike
-/// an opening fence, CommonMark allows a closing fence line to contain
-/// *nothing* after the fence run but trailing whitespace — no info string.
-/// `fence_delimiter` alone doesn't check this (it's shared with opening-line
-/// detection, where trailing content is an info string, not a violation),
-/// so without this a line like `` ```done `` would wrongly be treated as a
-/// closer here while pulldown-cmark itself does not see it as one — the
-/// exact preprocessor/parser disagreement this scan exists to avoid.
-fn is_closing_fence(line: &str, open_char: char, open_len: usize) -> bool {
-    let trimmed = strip_blockquote_markers(line);
-    let len = trimmed.chars().take_while(|&c| c == open_char).count();
-    len >= open_len && trimmed[len..].trim().is_empty()
-}
-
-/// True if `line` is a task-list bullet whose marker is `[/]`, i.e. optional
-/// indentation and blockquote nesting, a list marker, whitespace, then `[/]`.
-fn is_started_task_line(line: &str) -> bool {
-    // Any number of leading `>` blockquote levels: a `[/]` bullet nested
-    // inside one (`> - [/] x`, possibly several `>` deep) still needs
-    // rewriting so pulldown recognizes it as a checkbox at all — it's then
-    // forced to a non-interactive `DisplayOnly` card the same way it
-    // already does for a blockquoted `[ ]`/`[x]`, rather than the marker
-    // surviving unrewritten and the bullet reading as plain, non-task text.
-    let rest = strip_blockquote_markers(line);
-    let Some(after_marker) = strip_list_marker(rest) else {
-        return false;
-    };
-    // CommonMark (and pulldown-cmark's own checkbox detection) accepts a
-    // space *or* a tab between the marker and its content — matching only
-    // a literal space here let a tab-separated `[/]` bullet fall through
-    // to a plain, non-checkbox item.
-    match after_marker.chars().next() {
-        Some(c) if c.is_whitespace() => after_marker.trim_start().starts_with("[/]"),
-        _ => false,
-    }
-}
-
-/// Strips a leading list-item marker — an unordered bullet (`-`/`*`/`+`) or
-/// an ordered marker (one to nine ASCII digits, the CommonMark limit,
-/// followed by `.` or `)`) — returning the remainder, or `None` if `rest`
-/// doesn't start with one.
-fn strip_list_marker(rest: &str) -> Option<&str> {
-    if let Some(after) = rest
-        .strip_prefix('-')
-        .or_else(|| rest.strip_prefix('*'))
-        .or_else(|| rest.strip_prefix('+'))
-    {
-        return Some(after);
-    }
-    let digits = rest.chars().take_while(char::is_ascii_digit).count();
-    if digits == 0 || digits > 9 {
-        return None;
-    }
-    // ASCII digits are one byte each, so this index always lands on a char
-    // boundary.
-    let after_digits = &rest[digits..];
-    after_digits
-        .strip_prefix('.')
-        .or_else(|| after_digits.strip_prefix(')'))
+/// Whether `raw` holds a `[/]` marker at `offset` followed by whitespace —
+/// the same shape pulldown-cmark requires of `[ ]` before it reports a
+/// `TaskListMarker` (a `[ ]` at the very end of the input is not one).
+fn is_started_marker_at(raw: &str, offset: usize) -> bool {
+    raw[offset..].strip_prefix("[/]").is_some_and(|after| {
+        after
+            .chars()
+            .next()
+            .is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\r'))
+    })
 }
 
 /// Mutable state for one list item while it's being parsed. Kept on a stack
@@ -333,10 +252,11 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     // original bytes (BOM included) so write-back never touches it.
     let raw_for_parsing = raw.strip_prefix('\u{FEFF}').unwrap_or(raw);
 
-    // Rewrite `[/]` started markers to `[ ]` so pulldown recognizes them as
-    // task items; `started_lines` records which to promote to `Started`.
-    // Offsets are preserved, so line numbers still index `raw_lines`.
-    let (source, started_lines) = extract_started_markers(raw_for_parsing);
+    // Rewrite item-leading `[/]` markers to `[ ]` so pulldown recognizes them
+    // as task items; `started_offsets` records which `TaskListMarker`s to
+    // promote to `Started`. Offsets are preserved, so line numbers still
+    // index `raw_lines`.
+    let (source, started_offsets) = extract_started_markers(raw_for_parsing);
 
     let mut lists: Vec<List> = Vec::new();
     let mut default_items: Vec<Item> = Vec::new();
@@ -389,8 +309,7 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     let mut item_stack: Vec<ItemBuilder> = Vec::new();
     let mut line_counter = LineCounter::new();
 
-    let options = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
-    let parser = Parser::new_ext(&source, options).into_offset_iter();
+    let parser = Parser::new_ext(&source, PARSE_OPTIONS).into_offset_iter();
 
     for (event, range) in parser {
         // Any block-level start other than a fenced code block breaks the
@@ -498,6 +417,8 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
                 if let Some(item) = item_stack.last_mut() {
                     item.kind = Some(ItemKind::Checkbox(if checked {
                         TaskState::Done
+                    } else if started_offsets.contains(&range.start) {
+                        TaskState::Started
                     } else {
                         TaskState::NotStarted
                     }));
@@ -658,12 +579,6 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
             Event::End(TagEnd::Item) => {
                 if let Some(builder) = item_stack.pop() {
                     let mut kind = builder.kind.unwrap_or(ItemKind::DisplayOnly);
-                    // Promote a rewritten `[/]` marker to the Started state.
-                    if kind == ItemKind::Checkbox(TaskState::NotStarted)
-                        && started_lines.contains(&builder.line)
-                    {
-                        kind = ItemKind::Checkbox(TaskState::Started);
-                    }
                     // A checkbox quoted inside a `>` blockquote is an
                     // illustrative example, not a real task — force it to a
                     // plain, non-interactive display-only card regardless of
@@ -1448,84 +1363,6 @@ mod tests {
     }
 
     #[test]
-    fn is_started_task_line_only_matches_started_bullets() {
-        assert!(is_started_task_line("- [/] task"));
-        assert!(is_started_task_line("  * [/] indented"));
-        assert!(!is_started_task_line("- [ ] not started"));
-        assert!(!is_started_task_line("- [x] done"));
-        assert!(!is_started_task_line("plain text [/] not a bullet"));
-    }
-
-    #[test]
-    fn is_started_task_line_accepts_a_tab_separator() {
-        // CommonMark (and pulldown-cmark's own checkbox detection) accepts
-        // a tab between the bullet and its content, not just a space.
-        assert!(is_started_task_line("-\t[/] tab-separated"));
-        assert!(is_started_task_line("+\t[/] tab-separated"));
-        assert!(!is_started_task_line("-\t[ ] not started"));
-    }
-
-    #[test]
-    fn is_started_task_line_accepts_ordered_markers() {
-        // An ordered-list marker (`.` or `)` delimiter) qualifies too, not
-        // just `-`/`*`/`+`.
-        assert!(is_started_task_line("1. [/] ordered task"));
-        assert!(is_started_task_line("2) [/] ordered task"));
-        assert!(is_started_task_line("  10. [/] indented ordered task"));
-        assert!(!is_started_task_line("1. [ ] not started"));
-        assert!(!is_started_task_line("0123456789. [/] too many digits"));
-    }
-
-    #[test]
-    fn is_started_task_line_accepts_blockquote_nesting() {
-        // A `[/]` bullet nested inside one or more `>` blockquote levels
-        // still needs rewriting, so it can then be demoted to DisplayOnly
-        // rather than the marker surviving unrewritten.
-        assert!(is_started_task_line("> - [/] quoted"));
-        assert!(is_started_task_line(">- [/] quoted, no space"));
-        assert!(is_started_task_line("> > - [/] nested quote"));
-        assert!(is_started_task_line("> 1. [/] quoted ordered"));
-        assert!(!is_started_task_line("> - [ ] not started"));
-    }
-
-    #[test]
-    fn fence_delimiter_recognizes_backtick_and_tilde_fences() {
-        assert_eq!(fence_delimiter("```"), Some(('`', 3)));
-        assert_eq!(fence_delimiter("````shell\n"), Some(('`', 4)));
-        assert_eq!(fence_delimiter("  ~~~\n"), Some(('~', 3)));
-        assert_eq!(fence_delimiter("not a fence"), None);
-        assert_eq!(fence_delimiter("``\n"), None, "only 2 backticks");
-        assert_eq!(
-            fence_delimiter("```has ` a backtick\n"),
-            None,
-            "backtick info string can't contain a backtick"
-        );
-    }
-
-    #[test]
-    fn is_closing_fence_requires_only_whitespace_after_the_fence_run() {
-        assert!(is_closing_fence("```\n", '`', 3), "bare closer");
-        assert!(
-            is_closing_fence("```   \n", '`', 3),
-            "trailing whitespace only"
-        );
-        assert!(is_closing_fence("````\n", '`', 3), "longer run also closes");
-        assert!(
-            !is_closing_fence("```shell\n", '`', 3),
-            "an info string closes nothing per CommonMark, unlike an opener"
-        );
-        assert!(
-            !is_closing_fence("```done\n", '`', 3),
-            "trailing non-whitespace content after the run is not a closer"
-        );
-        assert!(!is_closing_fence("~~~\n", '`', 3), "wrong fence character");
-        assert!(
-            !is_closing_fence("``\n", '`', 3),
-            "run shorter than the opener"
-        );
-    }
-
-    #[test]
     fn fence_with_trailing_text_on_the_would_be_closing_line_does_not_close_it() {
         // CommonMark requires a closing fence line to contain nothing but
         // the fence run and trailing whitespace; a line like "```done" is
@@ -2071,28 +1908,17 @@ Intro paragraph.
         assert!(!item.display_text.contains("indented"));
     }
 
-    // External review: strip_blockquote_markers' unconditional trim_start()
-    // (used by is_started_task_line, the [/]-rewrite gate) doesn't
-    // distinguish a real `[/]` bullet from 4+-space indented code, so the
-    // two-parser (custom pre-scan vs pulldown-cmark) disagreement class
-    // from the fence-closing bug could in principle recur here too. Verified
-    // empirically rather than assumed: indented (non-fenced) code content is
-    // *always* discarded by this parser regardless of what the [/]-rewrite
-    // preprocessing did to it (Event::End(TagEnd::CodeBlock) only captures
-    // the fenced case — see indented_code_block_is_ignored above), and
-    // raw_lines/write-back are never touched by the rewrite either, so the
-    // theoretical disagreement has no path to becoming user-visible. These
-    // four cases (the ones the review specifically named) lock that in as a
-    // permanent regression guard, so a future parser change can't quietly
-    // make it reachable without a test noticing.
+    // `[/]` lookalikes in and around indented code: the pre-pass finds
+    // markers with pulldown-cmark itself, so indented code is never mistaken
+    // for a task, while an indented bullet that continues a list item is a
+    // real nested task. These cases lock both halves in.
 
     #[test]
     fn indented_lookalike_following_a_list_item_becomes_a_real_nested_task() {
         // The realistic shape for this: a `[/]`-lookalike indented right
         // after a list item reads as list *continuation*, not top-level
         // indented code — pulldown-cmark treats it as a genuine nested
-        // list item, and the preprocessing pass agrees (it's rewritten and
-        // promoted to Started), so there's no divergence at all here.
+        // list item, so it's rewritten and promoted to Started.
         let source = "## S\n\n- [ ] `alpha`\n\n    - [/] nested example\n";
         let document = parse(source);
         let items = &document.lists[0].items;
@@ -2130,80 +1956,159 @@ Intro paragraph.
         assert_eq!(document.lists[0].items.len(), 1);
     }
 
+    /// Byte offsets of every `TaskListMarker` pulldown-cmark reports for
+    /// `source` — the ground truth the `[/]` pre-pass must agree with.
+    fn task_marker_offsets(source: &str) -> HashSet<usize> {
+        Parser::new_ext(source, PARSE_OPTIONS)
+            .into_offset_iter()
+            .filter(|(event, _)| matches!(event, Event::TaskListMarker(_)))
+            .map(|(_, range)| range.start)
+            .collect()
+    }
+
+    /// Runs the pre-pass on `source` and checks it against pulldown-cmark:
+    /// the rewrite preserves byte length, touches nothing but the recorded
+    /// `[/]` ranges, and records exactly the `[/]`s that pulldown-cmark
+    /// itself reads as task markers once `[/]` is spelled `[ ]`.
+    fn assert_pre_pass_agrees_with_pulldown(source: &str) -> HashSet<usize> {
+        let (processed, started) = extract_started_markers(source);
+        assert_eq!(processed.len(), source.len(), "length kept: {source:?}");
+        for (offset, (before, after)) in source.bytes().zip(processed.bytes()).enumerate() {
+            if before != after {
+                assert!(
+                    started.contains(&(offset - 1)),
+                    "only recorded markers are rewritten: {source:?}"
+                );
+            }
+        }
+        let expected: HashSet<usize> = task_marker_offsets(&source.replace("[/]", "[ ]"))
+            .into_iter()
+            .filter(|&offset| source[offset..].starts_with("[/]"))
+            .collect();
+        assert_eq!(
+            started, expected,
+            "pre-pass disagrees with pulldown: {source:?}"
+        );
+        started
+    }
+
     #[test]
-    fn extract_started_markers_boundary_sweep_never_panics_or_shifts_offsets() {
-        // External review: the highest-value next step beyond targeted
-        // regressions is fuzzing the boundary between
-        // extract_started_markers (raw-text preprocessing) and
-        // pulldown-cmark (the real parser) -- two overlapping lexical
-        // interpretations of the same input. This isn't a persistent-corpus
-        // fuzzer, but it exhaustively sweeps the dimensions the review
-        // called highest-value (indentation 0-4 spaces plus a tab,
-        // blockquote nesting, unordered/ordered markers, fence character
-        // and length, info-string variants, unterminated fences) against
-        // the one invariant that must hold no matter how they combine:
-        // extract_started_markers never panics, and every rewritten line
-        // stays exactly the same byte length as the input (`[/]` -> `[ ]`
-        // is always same-length; untouched lines pass through unchanged) --
-        // which is what keeps every downstream line number/offset valid.
+    fn extract_started_markers_boundary_sweep_agrees_with_pulldown() {
+        // The pre-pass finds `[/]` markers with pulldown-cmark itself, so
+        // the property swept here is agreement: across indentation (0-4
+        // spaces and a tab), blockquote nesting, unordered/ordered markers,
+        // and every block context that can hide a `[/]` lookalike — fences
+        // of each character, length, info string and termination, HTML
+        // blocks, indented code, and a fence opened on a list-marker line —
+        // the recorded markers are exactly pulldown's task markers.
         let indents = ["", " ", "  ", "   ", "    ", "\t"];
-        let quote_depths = ["", "> ", "> > "];
+        let quote_depths = ["", "> ", "> > ", ">"];
         let markers = ["-", "*", "+", "1.", "2)"];
         let states = ["[/]", "[ ]", "[x]"];
-
         for indent in indents {
             for quote in quote_depths {
                 for marker in markers {
                     for state in states {
-                        let source = format!("{indent}{quote}{marker} {state} task\n");
-                        let raw_len = source.len();
-                        let (processed, _started) = extract_started_markers(&source);
-                        assert_eq!(
-                            processed.len(),
-                            raw_len,
-                            "byte length must be preserved: {source:?}"
-                        );
+                        let source = format!("## S\n\n{indent}{quote}{marker} {state} task\n");
+                        assert_pre_pass_agrees_with_pulldown(&source);
                     }
                 }
             }
         }
 
-        let fence_chars = ['`', '~'];
-        let fence_lens = [3usize, 4, 6, 10, 20];
-
-        for fence_char in fence_chars {
-            // A backtick fence's info string can't itself contain a
-            // backtick (fence_delimiter's own rule, matching CommonMark) --
-            // that combination is deliberately excluded here since it
-            // isn't a fence opener at all, not a boundary case of one.
+        let mut wrappers: Vec<(String, String)> = Vec::new();
+        for fence_char in ['`', '~'] {
             let info_strings: &[&str] = if fence_char == '`' {
                 &["", "rust", "done"]
             } else {
                 &["", "rust", "`backtick`", "done"]
             };
-            for &len in &fence_lens {
+            for len in [3usize, 4, 6, 10, 20] {
+                let fence: String = std::iter::repeat_n(fence_char, len).collect();
                 for &info in info_strings {
-                    let fence: String = std::iter::repeat_n(fence_char, len).collect();
-                    for terminated in [true, false] {
-                        let mut source = format!("{fence}{info}\n- [/] inside fence\n");
-                        if terminated {
-                            source.push_str(&fence);
-                            source.push('\n');
-                        }
-                        let raw_len = source.len();
-                        let (processed, started) = extract_started_markers(&source);
-                        assert_eq!(
-                            processed.len(),
-                            raw_len,
-                            "byte length must be preserved: {source:?}"
-                        );
-                        assert!(
-                            started.is_empty(),
-                            "a [/] inside a fence must never be treated as a real task: {source:?}"
-                        );
-                    }
+                    wrappers.push((format!("{fence}{info}\n"), format!("{fence}\n")));
+                    wrappers.push((format!("{fence}{info}\n"), String::new()));
+                    wrappers.push((format!("- {fence}{info}\n"), format!("  {fence}\n")));
                 }
+                wrappers.push((format!("<!--\n{fence}\n"), "-->\n".to_string()));
+                wrappers.push((format!("    {fence}\n\n"), String::new()));
             }
         }
+        for (open, close) in wrappers {
+            for inner in ["- [/] inside", "  - [/] inside"] {
+                let source = format!("## S\n\n- [ ] a\n\n{open}{inner}\n{close}\n- [/] after\n");
+                assert_pre_pass_agrees_with_pulldown(&source);
+            }
+        }
+    }
+
+    #[test]
+    fn started_task_after_a_fence_inside_an_html_comment_is_kept() {
+        // A fence-looking line inside an HTML block opens no fence, so the
+        // `[/]` task after it must still be a started task rather than its
+        // whole list vanishing as checkbox-free.
+        let source = "## S\n\n- [ ] a\n\n<!--\n```\n-->\n\n- [/] after\n";
+        let items = &parse(source).lists[0].items;
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert_eq!(items[1].display_text, "after");
+        assert_eq!(items[1].kind, ItemKind::Checkbox(TaskState::Started));
+    }
+
+    #[test]
+    fn started_task_after_an_indented_fence_lookalike_is_kept() {
+        // Four-space-indented backticks are indented code, not a fence.
+        let source = "## S\n\n    ```\n\n- [/] x\n- [ ] c\n";
+        let items = &parse(source).lists[0].items;
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert_eq!(items[0].display_text, "x");
+        assert_eq!(items[0].kind, ItemKind::Checkbox(TaskState::Started));
+        assert_eq!(items[1].kind, ItemKind::Checkbox(TaskState::NotStarted));
+    }
+
+    #[test]
+    fn started_lookalike_in_a_fence_opened_on_a_marker_line_is_not_rewritten() {
+        // A fence opened on a list-marker line is still a fence, so a
+        // `[/]` lookalike inside it is code and must reach the card (and
+        // `y`) exactly as written.
+        let source = "## S\n\n- [ ] a\n\n- ```\n  - [/] literal\n  ```\n";
+        let document = parse(source);
+        let items = &document.lists[0].items;
+        let block_owner = items
+            .iter()
+            .find(|item| !item.code_blocks.is_empty())
+            .expect("the fence is kept as a code block");
+        assert_eq!(block_owner.code_blocks, vec!["- [/] literal".to_string()]);
+        assert!(
+            items
+                .iter()
+                .all(|item| item.kind != ItemKind::Checkbox(TaskState::Started))
+        );
+    }
+
+    #[test]
+    fn started_marker_without_trailing_whitespace_is_left_alone() {
+        // `[/]x` isn't task syntax, so it must not be rewritten to `[ ]x`.
+        let source = "## S\n\n- [ ] a\n- [/]x\n";
+        let items = &parse(source).lists[0].items;
+        assert_eq!(items[1].kind, ItemKind::DisplayOnly);
+        assert_eq!(items[1].display_text, "[/]x");
+    }
+
+    #[test]
+    fn bare_started_marker_agrees_with_pulldown() {
+        for source in [
+            "## S\n\n- [/]\n",
+            "## S\n\n- [/]",
+            "## S\n\n- [/]\r\n- [ ] b\n",
+        ] {
+            assert_pre_pass_agrees_with_pulldown(source);
+        }
+    }
+
+    #[test]
+    fn started_marker_after_a_bom_is_still_found() {
+        let source = "\u{FEFF}## S\n\n- [/] a\n";
+        let items = &parse(source).lists[0].items;
+        assert_eq!(items[0].kind, ItemKind::Checkbox(TaskState::Started));
     }
 }
