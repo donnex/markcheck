@@ -147,6 +147,7 @@ impl AppState {
             pending_open_link: false,
             icons: IconSet::nerd(),
             editor_requested: false,
+            suspend_requested: false,
             screen_before_confirm: Screen::Checklist,
             clipboard_primary: false,
             auto_copy: false,
@@ -1345,6 +1346,24 @@ impl AppState {
         std::mem::take(&mut self.editor_requested)
     }
 
+    /// Consumed by the main loop each tick, like [`take_editor_request`].
+    pub fn take_suspend_request(&mut self) -> bool {
+        std::mem::take(&mut self.suspend_requested)
+    }
+
+    /// Called by the main loop once `fg` has resumed it, or once the suspend
+    /// failed. The file may have been edited from the shell meanwhile.
+    pub fn finish_suspend(&mut self, outcome: Result<(), String>) {
+        if let Err(err) = outcome {
+            self.set_error(format!("Couldn't suspend: {err}"));
+            return;
+        }
+        self.reload_if_changed();
+        if self.status_message.is_none() {
+            self.set_status("Resumed".to_string());
+        }
+    }
+
     /// `o`: open the current card's link. With several links, arm a digit that
     /// picks link `[N]`. The spawn happens in the main loop.
     fn open_current_link(&mut self) {
@@ -1619,6 +1638,14 @@ impl AppState {
     /// global keys, then the current screen's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         self.clear_status();
+
+        // Ctrl-Z suspends from every screen, overlays and search input
+        // included, as in other full-screen terminal programs.
+        if code == KeyCode::Char('z') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.clear_pending_chords();
+            self.suspend_requested = true;
+            return;
+        }
 
         // Any key other than a second `g` cancels a pending `gg` motion.
         let pending_g = std::mem::take(&mut self.pending_g);

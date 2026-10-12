@@ -347,6 +347,10 @@ where
             open_in_editor(terminal, state, mouse)?;
         }
 
+        if state.take_suspend_request() {
+            suspend_to_shell(terminal, state, mouse)?;
+        }
+
         if let Some(url) = state.take_link_open_request() {
             open_link(&url, state);
         }
@@ -538,6 +542,60 @@ where
         state.request_external_edit_sync(&program);
     }
     Ok(())
+}
+
+/// `Ctrl-Z`: hands the terminal back to the shell and stops the process
+/// until `fg` resumes it, then restores the TUI and picks up any edit made
+/// meanwhile. Raw mode turns off `ISIG`, so the terminal itself never sends
+/// `SIGTSTP` for the keypress.
+fn suspend_to_shell<B: Backend>(
+    terminal: &mut Terminal<B>,
+    state: &mut AppState,
+    mouse: bool,
+) -> anyhow::Result<()>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    disable_raw_mode()?;
+    if mouse {
+        execute!(io::stdout(), DisableMouseCapture)?;
+    }
+    execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen)?;
+
+    let outcome = stop_self();
+
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+    if mouse {
+        execute!(io::stdout(), EnableMouseCapture)?;
+    }
+    // Same full repaint as after the editor: see `open_in_editor`.
+    let size = terminal.size()?;
+    terminal.resize(Rect::new(0, 0, size.width, size.height))?;
+
+    state.finish_suspend(outcome);
+    Ok(())
+}
+
+/// Sends `SIGTSTP` to this process through `kill(1)`, as `git_sync` does for
+/// its timeouts, rather than taking on a libc dependency. The process stops
+/// while waiting for `kill`, so this returns only once it's been resumed.
+fn stop_self() -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let status = Command::new("kill")
+        .args(["-TSTP", "--"])
+        .arg(std::process::id().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|err| format!("couldn't run kill ({err})"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("kill exited with {status}"))
+    }
 }
 
 #[cfg(test)]

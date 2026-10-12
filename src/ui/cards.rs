@@ -265,6 +265,7 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
         key("o", "open the card's link in your browser"),
         key("o then 1-9", "open link [N] when a card has several"),
         key("e", "edit the file in $EDITOR"),
+        key("Ctrl-Z", "suspend to the shell (fg to come back)"),
         key("R", "reset all tasks (asks first)"),
         key("1–9", "jump to list N"),
         key("?", "toggle this help"),
