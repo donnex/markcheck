@@ -367,9 +367,9 @@ fn current_card_width(area: Rect) -> u16 {
 /// lines + top/bottom borders, clamped between `MIN_CARD_HEIGHT` and ~60%
 /// of the main area. Short tasks get a compact card (which also removes the
 /// empty-body void); long tasks get more room before scrolling.
-fn desired_card_height(item: &Item, area: Rect, code_bg: Color) -> u16 {
+fn desired_card_height(item: &Item, area: Rect, code: Style) -> u16 {
     let inner_w = current_card_width(area).saturating_sub(2 + 2 * BODY_PAD);
-    let body = clamp_to_u16(body_lines(item, inner_w.max(1), code_bg).len());
+    let body = clamp_to_u16(body_lines(item, inner_w.max(1), code).len());
     // The inside-card title adds a title line + a blank separator.
     let title = if item.header.is_some() { 2 } else { 0 };
     // A nested item adds a one-line parent breadcrumb above the title.
@@ -404,7 +404,7 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
     };
 
     let content_h = if let Some(item) = state.current_item() {
-        desired_card_height(item, area, state.palette.code_bg)
+        desired_card_height(item, area, state.palette.code)
     } else {
         MIN_CARD_HEIGHT.min(area.height)
     };
@@ -704,7 +704,8 @@ fn item_block(
 
 /// A compact pilot-style dot strip for the current list's items:
 /// current `◉` in the accent color, done/started in their state colors,
-/// pending `·` dim.
+/// pending `·` dim. Without color, a started item is a half dot `◐` so it
+/// still reads apart from a done one.
 fn position_dots(list: &List, current: usize, palette: Palette) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, item) in list.items.iter().enumerate() {
@@ -714,7 +715,8 @@ fn position_dots(list: &List, current: usize, palette: Palette) -> Line<'static>
             match item.kind {
                 ItemKind::Checkbox(TaskState::Done) => ("●", Style::default().fg(palette.done)),
                 ItemKind::Checkbox(TaskState::Started) => {
-                    ("●", Style::default().fg(palette.started))
+                    let glyph = if palette.is_mono() { "◐" } else { "●" };
+                    (glyph, Style::default().fg(palette.started))
                 }
                 // Info items keep the small `·` (not a task, no progress of
                 // their own) but in note blue, so the strip stays a faithful
@@ -832,7 +834,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     }
     lines.extend(card_title_lines(item, icons, palette));
     let n_before = lines.len();
-    let (body, code_rows) = body_layout(item, inner.width, palette.code_bg);
+    let (body, code_rows) = body_layout(item, inner.width, palette.code);
     lines.extend(body);
     let visible = inner.height as usize;
     let total_lines = lines.len();
@@ -1066,25 +1068,21 @@ fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
 
 /// The current card's body as styled, word-wrapped lines, with fenced
 /// blocks appended below. Char-count based so scroll clamping stays exact.
-fn body_lines(item: &Item, width: u16, code_bg: Color) -> Vec<Line<'static>> {
-    body_layout(item, width, code_bg).0
+fn body_lines(item: &Item, width: u16, code: Style) -> Vec<Line<'static>> {
+    body_layout(item, width, code).0
 }
 
 /// The trimmed inline code on a prose line, for click-to-copy.
-fn line_inline_code(line: &Line, code_bg: Color) -> Option<String> {
+fn line_inline_code(line: &Line, code: Style) -> Option<String> {
     line.spans
         .iter()
-        .find(|s| s.style.bg == Some(code_bg))
+        .find(|s| s.style == code)
         .map(|s| s.content.trim().to_string())
         .filter(|t| !t.is_empty())
 }
 
 /// `body_lines` plus, index-aligned, the copyable code text per line.
-fn body_layout(
-    item: &Item,
-    width: u16,
-    code_bg: Color,
-) -> (Vec<Line<'static>>, Vec<Option<String>>) {
+fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec<Option<String>>) {
     let width = width.max(1) as usize;
 
     // Flow prose + inline code as styled word tokens; a trailing inline code
@@ -1095,7 +1093,7 @@ fn body_layout(
     // Center short prose, left-align it once it wraps past a couple of
     // lines (centered multi-line prose is tiring to read). The trailing
     // command line, if any, shares the prose alignment.
-    let prose = wrap_tokens(&tokens, width, code_bg);
+    let prose = wrap_tokens(&tokens, width, code);
     let center_prose = prose.len() <= PROSE_CENTER_MAX_LINES;
     let align = |line: Line<'static>| {
         if center_prose {
@@ -1109,15 +1107,15 @@ fn body_layout(
     let mut code_rows: Vec<Option<String>> = Vec::new();
 
     for line in prose {
-        let code = line_inline_code(&line, code_bg);
+        let copyable = line_inline_code(&line, code);
         lines.push(align(line));
-        code_rows.push(code);
+        code_rows.push(copyable);
     }
 
     // A trailing command drops onto its own line, with a blank line
     // separating it from any prose above (nothing to separate when the body
     // is only the command).
-    if let Some(code) = trailing_code {
+    if let Some(cmd) = trailing_code {
         if !lines.is_empty() {
             lines.push(Line::from(""));
             code_rows.push(None);
@@ -1126,9 +1124,9 @@ fn body_layout(
             code: true,
             ..Default::default()
         };
-        for line in wrap_tokens(&[(format!(" {code} "), chip, false)], width, code_bg) {
+        for line in wrap_tokens(&[(format!(" {cmd} "), chip, false)], width, code) {
             lines.push(align(line));
-            code_rows.push(Some(code.clone()));
+            code_rows.push(Some(cmd.clone()));
         }
     }
 
@@ -1140,7 +1138,7 @@ fn body_layout(
             lines.push(Line::from(""));
             code_rows.push(None);
         }
-        for line in code_block_lines(block, width, code_bg) {
+        for line in code_block_lines(block, width, code) {
             lines.push(line);
             code_rows.push(Some(block.clone()));
         }
@@ -1157,9 +1155,7 @@ fn body_layout(
 /// light box. Preserves the block's own line breaks (hard-wrapped to
 /// fit); falls back to plain left-aligned lines when the card is too narrow
 /// for a box. Deterministic line count, so scroll clamping stays exact.
-fn code_block_lines(block: &str, width: usize, code_bg: Color) -> Vec<Line<'static>> {
-    let style = Style::default().bg(code_bg);
-
+fn code_block_lines(block: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     // Not enough room for "│ x │": drop the box, keep left-aligned code.
     if width < 6 {
         return block
@@ -1198,8 +1194,8 @@ fn code_block_lines(block: &str, width: usize, code_bg: Color) -> Vec<Line<'stat
 
 /// Greedy word wrap over styled tokens `(text, is_code)`, char-count based
 /// and hard-splitting overlong tokens. Same wrapping contract as
-/// `wrap_text` but emits styled `Line`s with code fragments in `code_bg`.
-fn wrap_tokens(tokens: &[Token], width: usize, code_bg: Color) -> Vec<Line<'static>> {
+/// `wrap_text` but emits styled `Line`s with code fragments in the `code` style.
+fn wrap_tokens(tokens: &[Token], width: usize, code: Style) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
@@ -1207,9 +1203,9 @@ fn wrap_tokens(tokens: &[Token], width: usize, code_bg: Color) -> Vec<Line<'stat
 
     let span_for = |text: String, style: SpanStyle| {
         if style.code {
-            // Inline code keeps its background chip; it's also how
+            // Inline code keeps its chip style; it's also how
             // click-to-copy recognises a code row (line_inline_code).
-            return Span::styled(text, Style::default().bg(code_bg));
+            return Span::styled(text, code);
         }
         let mut modifier = Modifier::empty();
         if style.emphasis {
@@ -1520,6 +1516,72 @@ mod tests {
     use super::*;
     use crate::model::TextStyle;
 
+    fn code_bg(color: Color) -> Style {
+        Style::default().bg(color)
+    }
+
+    #[test]
+    fn code_spans_carry_an_explicit_fg_on_every_color_tier() {
+        let item = body_item(
+            vec![
+                BodySpan::Text("Run ".into()),
+                BodySpan::Code("deploy --now".into()),
+            ],
+            vec!["make all"],
+            "Run deploy --now",
+        );
+        for palette in [
+            Palette::truecolor(),
+            Palette::palette256(),
+            Palette::basic(),
+        ] {
+            let code_styles: Vec<Style> = body_lines(&item, 40, palette.code)
+                .into_iter()
+                .flat_map(|l| {
+                    let line_style = l.style;
+                    l.spans.into_iter().map(move |s| line_style.patch(s.style))
+                })
+                .filter(|s| s.bg.is_some())
+                .collect();
+            assert!(code_styles.len() > 1, "inline chip and fenced box rendered");
+            assert!(
+                code_styles.iter().all(|s| s.fg.is_some()),
+                "{:?}: code left to the theme's fg",
+                palette.depth
+            );
+        }
+    }
+
+    #[test]
+    fn mono_renders_code_reversed_and_started_dots_as_half_dots() {
+        let item = body_item(vec![BodySpan::Code("deploy".into())], vec![], "deploy");
+        let mono = Palette::mono();
+        let (lines, rows) = body_layout(&item, 40, mono.code);
+        assert!(lines.iter().flat_map(|l| &l.spans).any(|s| {
+            s.content.contains("deploy") && s.style.add_modifier.contains(Modifier::REVERSED)
+        }));
+        assert!(rows.contains(&Some("deploy".to_string())), "still copyable");
+
+        let list = List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![
+                kind_item(ItemKind::Checkbox(TaskState::NotStarted)),
+                kind_item(ItemKind::Checkbox(TaskState::Done)),
+                kind_item(ItemKind::Checkbox(TaskState::Started)),
+            ],
+        };
+        let glyphs = |pal| -> Vec<String> {
+            position_dots(&list, 0, pal)
+                .spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect()
+        };
+        assert_eq!(glyphs(mono)[2..4], ["●", "◐"]);
+        assert_eq!(glyphs(Palette::basic())[2..4], ["●", "●"]);
+    }
+
     #[test]
     fn wrap_exact_fit_stays_one_line() {
         assert_eq!(wrap_text("ab cd", 5), vec!["ab cd".to_string()]);
@@ -1555,7 +1617,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::widgets::Paragraph;
 
-        let lines = code_block_lines(block, width as usize, Color::DarkGray);
+        let lines = code_block_lines(block, width as usize, code_bg(Color::DarkGray));
         let mut terminal = Terminal::new(TestBackend::new(width, lines.len() as u16)).unwrap();
         terminal
             .draw(|f| f.render_widget(Paragraph::new(lines), f.area()))
@@ -1711,7 +1773,7 @@ mod tests {
             vec![],
             "run cmd",
         );
-        let pairs = span_pairs(&body_lines(&item, 40, Color::Magenta));
+        let pairs = span_pairs(&body_lines(&item, 40, code_bg(Color::Magenta)));
         assert!(
             pairs
                 .iter()
@@ -1768,7 +1830,7 @@ mod tests {
             vec![],
             "italicword plain boldword crossed",
         );
-        let mods = span_mods(&body_lines(&item, 60, Color::Magenta));
+        let mods = span_mods(&body_lines(&item, 60, code_bg(Color::Magenta)));
         assert!(
             mods.iter()
                 .any(|(t, m)| t == "italicword" && m.contains(Modifier::ITALIC))
@@ -1799,7 +1861,7 @@ mod tests {
             vec![],
             "see runbook",
         );
-        let lines = body_lines(&item, 60, Color::Magenta);
+        let lines = body_lines(&item, 60, code_bg(Color::Magenta));
         let whole: String = line_texts(&lines).join(" ");
         assert!(whole.contains("runbook"), "link text shown: {whole:?}");
         assert!(
@@ -1834,7 +1896,7 @@ mod tests {
             vec![],
             "see runbook and wiki",
         );
-        let lines = body_lines(&item, 60, Color::Magenta);
+        let lines = body_lines(&item, 60, code_bg(Color::Magenta));
         let whole: String = line_texts(&lines).join(" ");
         assert!(whole.contains("runbook [1]"), "first marker: {whole:?}");
         assert!(whole.contains("wiki [2]"), "second marker: {whole:?}");
@@ -1866,7 +1928,7 @@ mod tests {
             vec![],
             "say hi, ok",
         );
-        let whole = line_texts(&body_lines(&item, 40, Color::Magenta)).join(" ");
+        let whole = line_texts(&body_lines(&item, 40, code_bg(Color::Magenta))).join(" ");
         assert!(
             whole.contains("hi,"),
             "comma attaches to the word: {whole:?}"
@@ -1899,7 +1961,7 @@ mod tests {
             vec![],
             "run this cmd",
         );
-        let lines = body_lines(&item, 40, Color::Magenta);
+        let lines = body_lines(&item, 40, code_bg(Color::Magenta));
         let texts = line_texts(&lines);
         assert_eq!(texts.len(), 3, "prose, blank, command: {texts:?}");
         assert_eq!(texts[0], "run this");
@@ -1927,7 +1989,7 @@ mod tests {
             vec![],
             "run x and wait",
         );
-        let lines = body_lines(&item, 40, Color::Magenta);
+        let lines = body_lines(&item, 40, code_bg(Color::Magenta));
         let texts = line_texts(&lines);
         assert!(
             !texts.iter().any(|t| t.trim().is_empty()),
@@ -1952,7 +2014,7 @@ mod tests {
             vec![],
             "refresh-cache",
         );
-        let lines = body_lines(&item, 40, Color::Magenta);
+        let lines = body_lines(&item, 40, code_bg(Color::Magenta));
         let texts = line_texts(&lines);
         assert_eq!(texts.len(), 1, "just the command line: {texts:?}");
         assert!(texts[0].contains("refresh-cache"));
@@ -1965,7 +2027,7 @@ mod tests {
             vec!["first line\nsecond line"],
             "do this",
         );
-        let lines = body_lines(&item, 40, Color::Magenta);
+        let lines = body_lines(&item, 40, code_bg(Color::Magenta));
         // Each code line's content appears inside a boxed, code-background,
         // left-aligned line.
         for expected in ["first line", "second line"] {
@@ -1998,7 +2060,7 @@ mod tests {
         // A short one-line block still fills the full card-body width, so
         // every box row (borders, blanks, content) is exactly `width` wide.
         let width = 30usize;
-        let lines = code_block_lines("hi", width, Color::Magenta);
+        let lines = code_block_lines("hi", width, code_bg(Color::Magenta));
         assert!(lines.len() >= 5, "top + blank + content + blank + bottom");
         for line in &lines {
             let w: usize = line.spans.iter().flat_map(|s| s.content.chars()).count();
@@ -2015,7 +2077,7 @@ mod tests {
     fn narrow_code_block_falls_back_without_a_box() {
         // Below the box minimum the fallback is still plain left-aligned
         // code lines (no border), unchanged by the full-width change.
-        let lines = code_block_lines("hello world", 4, Color::Magenta);
+        let lines = code_block_lines("hello world", 4, code_bg(Color::Magenta));
         let all: String = lines
             .iter()
             .flat_map(|l| l.spans.iter())
@@ -2027,7 +2089,7 @@ mod tests {
     #[test]
     fn short_prose_centered_long_prose_left_aligned() {
         let short = body_item(vec![BodySpan::Text("do it".to_string())], vec![], "do it");
-        for line in body_lines(&short, 40, Color::Magenta) {
+        for line in body_lines(&short, 40, code_bg(Color::Magenta)) {
             if !line.spans.is_empty() {
                 assert_eq!(
                     line.alignment,
@@ -2038,7 +2100,7 @@ mod tests {
         }
         let long_text = "word ".repeat(60);
         let long = body_item(vec![BodySpan::Text(long_text.clone())], vec![], &long_text);
-        let long_lines = body_lines(&long, 20, Color::Magenta);
+        let long_lines = body_lines(&long, 20, code_bg(Color::Magenta));
         assert!(long_lines.len() > PROSE_CENTER_MAX_LINES);
         for line in long_lines {
             assert_eq!(
@@ -2052,7 +2114,7 @@ mod tests {
     #[test]
     fn body_lines_fall_back_to_display_text_when_body_empty() {
         let item = body_item(vec![], vec![], "plain text");
-        let pairs = span_pairs(&body_lines(&item, 40, Color::Magenta));
+        let pairs = span_pairs(&body_lines(&item, 40, code_bg(Color::Magenta)));
         let text: String = pairs
             .iter()
             .map(|(t, _)| t.as_str())
@@ -2081,7 +2143,7 @@ mod tests {
         let area = Rect::new(0, 0, 100, 40); // max ≈ 24 rows (60%)
         let short = body_item(vec![BodySpan::Text("do it".to_string())], vec![], "do it");
         assert_eq!(
-            desired_card_height(&short, area, Color::Magenta),
+            desired_card_height(&short, area, code_bg(Color::Magenta)),
             MIN_CARD_HEIGHT,
             "short task uses the minimum height"
         );
@@ -2089,7 +2151,7 @@ mod tests {
         let long_text = "word ".repeat(400);
         let long = body_item(vec![BodySpan::Text(long_text.clone())], vec![], &long_text);
         assert_eq!(
-            desired_card_height(&long, area, Color::Magenta),
+            desired_card_height(&long, area, code_bg(Color::Magenta)),
             (area.height * 3 / 5).max(MIN_CARD_HEIGHT),
             "long task clamps to the max height"
         );
@@ -2118,14 +2180,14 @@ mod tests {
     #[test]
     fn body_layout_lines_and_code_rows_are_aligned() {
         let item = body_item(vec![], vec!["kubectl apply"], "");
-        let (lines, code_rows) = body_layout(&item, 40, Color::Magenta);
+        let (lines, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert_eq!(lines.len(), code_rows.len());
     }
 
     #[test]
     fn body_layout_maps_fenced_block_rows_to_block_text() {
         let item = body_item(vec![], vec!["kubectl apply"], "");
-        let (_, code_rows) = body_layout(&item, 40, Color::Magenta);
+        let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
             code_rows
                 .iter()
@@ -2145,7 +2207,7 @@ mod tests {
             vec![],
             "run this do-it",
         );
-        let (_, code_rows) = body_layout(&item, 40, Color::Magenta);
+        let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
             code_rows.iter().any(|c| c.as_deref() == Some("do-it")),
             "trailing command row copies the command: {code_rows:?}"
@@ -2165,7 +2227,7 @@ mod tests {
             vec![],
             "first cmd then done",
         );
-        let (_, code_rows) = body_layout(&item, 40, Color::Magenta);
+        let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
             code_rows.iter().any(|c| c.as_deref() == Some("cmd")),
             "inline code row copies the span: {code_rows:?}"
@@ -2179,7 +2241,7 @@ mod tests {
             vec![],
             "just prose here",
         );
-        let (_, code_rows) = body_layout(&item, 40, Color::Magenta);
+        let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
         assert!(
             code_rows.iter().all(|c| c.is_none()),
             "prose-only body has no code rows: {code_rows:?}"

@@ -249,8 +249,11 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
 
 /// Black text on the accent background. `Color::Black` is a deliberate
 /// exception to reading colors from the palette: it reads fine on
-/// `palette.current` at every color depth.
+/// `palette.current` at every color depth. Without color, reverse video.
 fn current_tab_pill_style(state: &AppState) -> Style {
+    if state.palette.is_mono() {
+        return Style::default().add_modifier(Modifier::REVERSED);
+    }
     Style::default().fg(Color::Black).bg(state.palette.current)
 }
 
@@ -2148,6 +2151,33 @@ mod tests {
             !joined.contains("Skipped when empty"),
             "item-less sub-heading is dropped: {joined}"
         );
+    }
+
+    #[test]
+    fn no_color_palette_renders_frames_without_any_color() {
+        for example in ["examples/notes-and-code.md", "examples/nested.md"] {
+            let doc = crate::parser::parse_document(std::path::PathBuf::from(example)).unwrap();
+            let mut state = AppState::new(doc);
+            state.palette = crate::model::Palette::mono();
+            state.set_error("a failure".to_string());
+            for list in 0..state.document.lists.len() {
+                for item in 0..state.document.lists[list].items.len() {
+                    state.current_list_index = list;
+                    state.current_item_index = item;
+                    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+                    terminal.draw(|f| render(f, &mut state)).unwrap();
+                    let buffer = terminal.backend().buffer();
+                    let colored = buffer.content().iter().find(|c| {
+                        c.style().fg.is_some_and(|fg| fg != Color::Reset)
+                            || c.style().bg.is_some_and(|bg| bg != Color::Reset)
+                    });
+                    assert!(
+                        colored.is_none(),
+                        "{example} list {list} item {item}: colored cell {colored:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
