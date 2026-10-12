@@ -144,13 +144,25 @@ fn main() -> anyhow::Result<()> {
     // toggle renames a new inode over this path and any hard-linked alias
     // silently stops tracking the checklist. See `writer::hard_link_count`
     // for why this warns rather than refuses.
+    // Likewise a file owned by someone else: the save's new file is the
+    // runner's, which can lock its owner out (see `writer::foreign_owner`).
     let hard_links = writer::hard_link_count(&document.file_path);
+    let foreign_owner = writer::foreign_owner(&document.file_path);
 
     let mut state = AppState::new(document);
+    let mut warnings = Vec::new();
     if let Some(links) = hard_links.filter(|links| *links > 1) {
-        state.set_error(format!(
-            "Warning: {links} hard links to this file — a save leaves the others behind"
+        warnings.push(format!(
+            "{links} hard links to this file — a save leaves the others behind"
         ));
+    }
+    if let Some(owner) = foreign_owner {
+        warnings.push(format!(
+            "this file belongs to user {owner} — saving makes it yours"
+        ));
+    }
+    if !warnings.is_empty() {
+        state.set_error(format!("Warning: {}", warnings.join("; ")));
     }
     if created_new {
         state.set_status("Created new checklist".to_string());

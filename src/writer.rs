@@ -126,6 +126,49 @@ pub fn hard_link_count(_target: &Path) -> Option<u64> {
     None
 }
 
+/// The UID owning `target` when it isn't the user running markcheck, who
+/// can't keep it: `write_back`'s rename makes the file theirs. `None` when
+/// the owner is kept (it already is the current user, or that user is
+/// root) or either side can't be told. Warned about at startup, like a hard
+/// link, since a teammate may then lose write access.
+#[cfg(unix)]
+pub fn foreign_owner(target: &Path) -> Option<u32> {
+    foreign_owner_for(target, current_uid()?)
+}
+
+#[cfg(not(unix))]
+pub fn foreign_owner(_target: &Path) -> Option<u32> {
+    None
+}
+
+#[cfg(unix)]
+fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let owner = fs::metadata(target).ok()?.uid();
+    (current_uid != 0 && owner != current_uid).then_some(owner)
+}
+
+/// The UID a file created by this process gets — exactly what a save's
+/// temp file will be owned by — read off a throwaway probe file, as std
+/// exposes no `geteuid`.
+#[cfg(unix)]
+fn current_uid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let probe = std::env::temp_dir().join(format!(
+        "markcheck-uid-probe-{}-{:x}",
+        std::process::id(),
+        random_suffix()
+    ));
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .ok()?;
+    let uid = file.metadata().ok().map(|meta| meta.uid());
+    let _ = fs::remove_file(&probe);
+    uid
+}
+
 /// One lock file per checklist, named by the digest of its canonical path so
 /// every spelling of one file (symlink, `..`) shares a lock. Falls back to
 /// the given path when canonicalization fails; `write_back` then refuses
@@ -192,8 +235,9 @@ pub fn document_contents(document: &Document) -> String {
 
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
 /// over the target, so a crash can't leave the checklist truncated; the
-/// parent directory is fsynced too on unix. Permissions are kept; hard links
-/// and ownership are not. Returns the content written.
+/// parent directory is fsynced too on unix. Permissions and, where the user
+/// may set it, the group are kept; hard links and another user's ownership
+/// are not. Returns the content written.
 pub fn write_back(document: &Document) -> io::Result<String> {
     let mut lines = document.raw_lines.clone();
     for list in &document.lists {
@@ -210,13 +254,10 @@ pub fn write_back(document: &Document) -> io::Result<String> {
     }
     let contents = join_lines(&lines);
 
-    // Read the source permissions before touching anything. Any error —
+    // Read the source metadata before touching anything. Any error —
     // including NotFound — aborts before writing, so a deleted file is never
     // silently recreated. A 0600 file can also never be widened.
-    let source_perms = {
-        let meta = fs::metadata(&document.file_path)?;
-        Some(meta.permissions())
-    };
+    let source = fs::metadata(&document.file_path)?;
 
     let file_name = document
         .file_path
@@ -230,7 +271,7 @@ pub fn write_back(document: &Document) -> io::Result<String> {
     ));
 
     // `write_temp` cleans up after its own failures.
-    let temp_path = write_temp(&temp_path_base, &contents, source_perms)?;
+    let temp_path = write_temp(&temp_path_base, &contents, Some(&source))?;
     if let Err(err) = fs::rename(&temp_path, &document.file_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(err);
@@ -251,18 +292,19 @@ pub(crate) fn sync_parent_dir(path: &Path) {
     }
 }
 
-/// Creates the temp file 0600, writes the contents, applies the source
-/// permissions through the handle (immune to umask) and fsyncs. If the name
+/// Creates the temp file 0600, writes the contents, gives it the source's
+/// owner and group as far as this user may, applies the source permissions
+/// through the handle (immune to umask) and fsyncs. If the name
 /// is taken it retries once at a fresh name, never deleting the existing
 /// file, which may belong to a live writer. Returns the path written.
 #[cfg(unix)]
 fn write_temp(
     base_temp_path: &Path,
     contents: &str,
-    perms: Option<fs::Permissions>,
+    source: Option<&fs::Metadata>,
 ) -> io::Result<PathBuf> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, fchown};
 
     let open = |path: &Path| {
         fs::OpenOptions::new()
@@ -285,8 +327,15 @@ fn write_temp(
 
     let write_result = (|| {
         file.write_all(contents.as_bytes())?;
-        if let Some(perms) = perms {
-            file.set_permissions(perms)?;
+        if let Some(source) = source {
+            // Best effort, and before the mode so setgid survives: keeping
+            // the UID needs root, but any group the user belongs to may be
+            // set, which keeps a shared group checklist writable by the
+            // group rather than handing it to the saver's primary group.
+            if fchown(&file, Some(source.uid()), Some(source.gid())).is_err() {
+                let _ = fchown(&file, None, Some(source.gid()));
+            }
+            file.set_permissions(source.permissions())?;
         }
         file.sync_all()
     })();
@@ -303,7 +352,7 @@ fn write_temp(
 fn write_temp(
     temp_path: &Path,
     contents: &str,
-    perms: Option<fs::Permissions>,
+    source: Option<&fs::Metadata>,
 ) -> io::Result<PathBuf> {
     use std::io::Write;
 
@@ -313,8 +362,8 @@ fn write_temp(
         .truncate(true)
         .open(temp_path)?;
     file.write_all(contents.as_bytes())?;
-    if let Some(perms) = perms {
-        file.set_permissions(perms)?;
+    if let Some(source) = source {
+        file.set_permissions(source.permissions())?;
     }
     file.sync_all()?;
     Ok(temp_path.to_path_buf())
@@ -404,6 +453,75 @@ mod tests {
         );
 
         fs::remove_file(&alias).ok();
+        fs::remove_file(&target).ok();
+    }
+
+    /// A group other than `exclude` that the test user belongs to, if any.
+    fn a_supplementary_group(exclude: u32) -> Option<u32> {
+        let output = Command::new("id").arg("-G").output().ok()?;
+        String::from_utf8(output.stdout)
+            .ok()?
+            .split_whitespace()
+            .filter_map(|gid| gid.parse().ok())
+            .find(|&gid| gid != exclude)
+    }
+
+    /// A shared group checklist keeps its group across a save, so the rest
+    /// of the group can still write it, instead of passing to the saver's
+    /// primary group.
+    #[test]
+    fn a_save_keeps_the_checklist_group() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let target = write_temp_file(EXAMPLE);
+        let default_gid = fs::metadata(&target).unwrap().gid();
+        let Some(shared_gid) = a_supplementary_group(default_gid) else {
+            eprintln!("skipped: the test user has no second group");
+            fs::remove_file(&target).ok();
+            return;
+        };
+        std::os::unix::fs::chown(&target, None, Some(shared_gid)).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o664)).unwrap();
+
+        let mut document = parse_document(target.clone()).unwrap();
+        document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+        write_back(&document).unwrap();
+
+        let meta = fs::metadata(&target).unwrap();
+        assert!(fs::read_to_string(&target).unwrap().contains("[x]"));
+        assert_eq!(meta.gid(), shared_gid, "the save must keep the group");
+        assert_eq!(meta.mode() & 0o7777, 0o664, "and the mode with it");
+
+        fs::remove_file(&target).ok();
+    }
+
+    /// Only a file someone else owns, opened by a non-root user, is flagged:
+    /// that is the one case where a save hands the file to the saver.
+    #[test]
+    fn only_a_file_another_user_owns_is_flagged() {
+        use std::os::unix::fs::MetadataExt;
+        let target = write_temp_file(EXAMPLE);
+        let owner = fs::metadata(&target).unwrap().uid();
+
+        assert_eq!(current_uid(), Some(owner), "the probe sees this user");
+        assert_eq!(foreign_owner(&target), None, "your own file is not flagged");
+        assert_eq!(
+            foreign_owner_for(&target, owner.wrapping_add(1)),
+            Some(owner),
+            "another user's file is flagged with its owner"
+        );
+        if owner != 0 {
+            assert_eq!(
+                foreign_owner_for(&target, 0),
+                None,
+                "root keeps the owner, so nothing to flag"
+            );
+        }
+        assert_eq!(
+            foreign_owner_for(&target.with_extension("missing"), owner.wrapping_add(1)),
+            None,
+            "an unreadable file is not flagged"
+        );
+
         fs::remove_file(&target).ok();
     }
 
