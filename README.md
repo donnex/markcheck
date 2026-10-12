@@ -372,6 +372,12 @@ external edit — and disappears two minutes later. The tag steps in 5-second
 increments rather than ticking every second. Your own toggles never trigger
 a spurious reload.
 
+A reload never closes what you are typing into: an open `/` search, `T`
+go-to-task filter or `?` help overlay stays open and is re-run against the
+new content. A pending `R` reset or quit-reset confirmation is cancelled
+instead, since it was asked about the old content, with a red `File changed
+on disk — reset cancelled` (or `quit cancelled`) message.
+
 If the file is **deleted** from under the app, `markcheck` won't recreate it
 behind your back: it shows a red `File was deleted — changes cannot be
 saved until it exists again` message and blocks toggling and reset until the

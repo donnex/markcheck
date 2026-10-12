@@ -1124,9 +1124,10 @@ impl AppState {
 
         match parser::parse_document(self.document.file_path.clone()) {
             Ok(new_document) if !new_document.lists.is_empty() => {
+                let search_origin = self.remapped(self.search.origin, &new_document);
                 self.remap_position(&new_document);
                 self.document = new_document;
-                self.screen = Screen::Checklist;
+                let cancelled = self.keep_screen_across_reload(search_origin);
                 // An external edit is a hard boundary for undo history: it can
                 // change task state and line numbers underneath us, so the
                 // snapshots no longer apply cleanly.
@@ -1140,12 +1141,13 @@ impl AppState {
                 // not act on it.
                 self.pending_g = false;
                 self.pending_open_link = false;
-                let msg = if was_deleted {
-                    "File restored — reloaded".to_string()
+                if let Some(cancelled) = cancelled {
+                    self.set_error(format!("File changed on disk — {cancelled} cancelled"));
+                } else if was_deleted {
+                    self.set_status("File restored — reloaded".to_string());
                 } else {
-                    "Reloaded: file changed on disk".to_string()
-                };
-                self.set_status(msg);
+                    self.set_status("Reloaded: file changed on disk".to_string());
+                }
                 self.last_update_at = Some(SystemTime::now());
                 // Taken from the adopted document, never a fresh read.
                 self.file_content_hash = Some(hash_bytes(
@@ -1184,20 +1186,73 @@ impl AppState {
         });
     }
 
+    /// Decides which screen survives a reload. Text-input and read-only
+    /// overlays stay open, so keys typed into them never fall through to the
+    /// checklist as commands; a confirmation is dropped, since it was asked
+    /// about the old content, and its name is returned for the status message.
+    /// Must run after the new document is adopted.
+    fn keep_screen_across_reload(&mut self, search_origin: (usize, usize)) -> Option<&'static str> {
+        match self.screen {
+            Screen::Search => {
+                self.search.origin = search_origin;
+                self.update_search();
+                None
+            }
+            Screen::ListPicker | Screen::Help => {
+                self.screen_before_confirm = Screen::Checklist;
+                let count = self.picker_matches().len();
+                self.picker.selection = self.picker.selection.min(count.saturating_sub(1));
+                None
+            }
+            Screen::ConfirmReset => {
+                self.screen = Screen::Checklist;
+                Some("reset")
+            }
+            Screen::ConfirmQuitReset => {
+                self.screen = Screen::Checklist;
+                Some("quit")
+            }
+            Screen::Checklist | Screen::ListComplete | Screen::AllComplete => {
+                self.screen = Screen::Checklist;
+                None
+            }
+        }
+    }
+
     /// Keeps the cursor on the same list (by title and occurrence) and item (by
     /// line number) after a reload, falling back to the start.
     fn remap_position(&mut self, new_document: &Document) {
-        let old_title = self
-            .document
-            .lists
-            .get(self.current_list_index)
-            .map(|s| s.title.clone());
-        let old_line_number = self.current_item().map(|item| item.line_number);
+        let (list_index, item_index) = self.remapped(
+            (self.current_list_index, self.current_item_index),
+            new_document,
+        );
+        self.current_list_index = list_index;
+        self.current_item_index = item_index;
+        self.reset_card_scroll();
+        // Auto-copy waits for a committed search, as it does while typing.
+        if self.screen != Screen::Search {
+            self.maybe_auto_copy();
+        }
+    }
+
+    /// Where the `(list, item)` position in the current document lands in
+    /// `new_document`, matching the list by title and occurrence and the item
+    /// by line number.
+    fn remapped(
+        &self,
+        (list_index, item_index): (usize, usize),
+        new_document: &Document,
+    ) -> (usize, usize) {
+        let old_list = self.document.lists.get(list_index);
+        let old_title = old_list.map(|s| s.title.clone());
+        let old_line_number = old_list
+            .and_then(|list| list.items.get(item_index))
+            .map(|item| item.line_number);
 
         // Two lists can share a title, so the old list's rank among same-titled
         // lists picks the new one.
         let old_occurrence = old_title.as_deref().map(|title| {
-            self.document.lists[..self.current_list_index]
+            self.document.lists[..list_index]
                 .iter()
                 .filter(|s| s.title == title)
                 .count()
@@ -1227,10 +1282,7 @@ impl AppState {
             })
             .unwrap_or(0);
 
-        self.current_list_index = new_list_index;
-        self.current_item_index = new_item_index;
-        self.reset_card_scroll();
-        self.maybe_auto_copy();
+        (new_list_index, new_item_index)
     }
 
     /// From a finished list, jump to the next list with incomplete work,
