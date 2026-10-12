@@ -19,7 +19,9 @@ markcheck examples/basics.md
   goes blue → yellow (one under way) → green (all done), on the card and in the
   overview, while staying a note.
 - **`notes-and-code.md`** — banners (one long enough to wrap onto several
-  rows above the card, and to end in `…` in the overview), a long card title
+  rows above the card, and to end in `…` in the overview), a bold-only first
+  bullet carrying a command that stays a copyable note card instead of a
+  banner, a long card title
   that wraps inside the card, a note that has a command but no checkbox
   (copyable, not a task), a blockquoted `> - [ ]` and `> - [/]` example that
   both render as a non-interactive note rather than a live task, inline vs
