@@ -4184,3 +4184,102 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
     state.maybe_auto_copy();
     assert_eq!(state.status_message.as_deref(), expected);
 }
+
+// --- Unbound Ctrl/Alt chords ---
+
+const CHORD_TEST_FILE: &str =
+    "## List 1\n\n- [ ] task one\n- [x] task two\n\n## List 2\n\n- [ ] task three\n";
+
+#[test]
+fn ctrl_s_does_not_start_the_task_or_write_the_file() {
+    let path = write_real_file(CHORD_TEST_FILE);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key_with_mods(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(fs::read_to_string(&path).unwrap(), CHORD_TEST_FILE);
+    assert_eq!(
+        state.current_item().unwrap().kind,
+        ItemKind::Checkbox(TaskState::NotStarted)
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Ctrl-S is not bound (? lists every key)")
+    );
+    assert!(state.status_is_error);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn ctrl_q_and_alt_digit_do_not_quit_or_jump() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key_with_mods(KeyCode::Char('q'), KeyModifiers::CONTROL);
+    assert!(!state.should_quit);
+    state.handle_key_with_mods(KeyCode::Char('2'), KeyModifiers::ALT);
+    assert_eq!(state.current_list_index, 0);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Alt-2 is not bound (? lists every key)")
+    );
+    state.handle_key_with_mods(KeyCode::Char('L'), KeyModifiers::SHIFT);
+    assert_eq!(state.current_list_index, 1, "Shift still passes through");
+}
+
+#[test]
+fn ctrl_y_does_not_confirm_the_reset() {
+    let path = write_real_file(CHORD_TEST_FILE);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.screen, Screen::ConfirmReset);
+    state.handle_key_with_mods(KeyCode::Char('y'), KeyModifiers::CONTROL);
+    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(fs::read_to_string(&path).unwrap(), CHORD_TEST_FILE);
+    state.handle_key(KeyCode::Char('y'));
+    assert_eq!(state.screen, Screen::Checklist);
+    assert_ne!(fs::read_to_string(&path).unwrap(), CHORD_TEST_FILE);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn ctrl_e_on_a_completion_screen_does_not_open_the_editor() {
+    let mut state = AppState::new(two_list_document());
+    state.screen = Screen::ListComplete;
+    state.handle_key_with_mods(KeyCode::Char('e'), KeyModifiers::CONTROL);
+    assert!(!state.editor_requested);
+    assert_eq!(state.screen, Screen::ListComplete);
+    state.screen = Screen::AllComplete;
+    state.handle_key_with_mods(KeyCode::Char('d'), KeyModifiers::CONTROL);
+    assert_eq!(state.screen, Screen::AllComplete);
+}
+
+#[test]
+fn an_unbound_chord_cancels_a_pending_prompt_and_names_special_keys() {
+    let mut state = AppState::new(two_list_document());
+    state.pending_open_link = true;
+    state.handle_key_with_mods(KeyCode::Left, KeyModifiers::CONTROL);
+    assert!(!state.pending_open_link);
+    assert_eq!(state.current_item_index, 0, "Ctrl-Left does not navigate");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Ctrl-Left is not bound (? lists every key)")
+    );
+    assert_eq!(
+        chord_name(
+            KeyCode::Char('x'),
+            KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META
+        ),
+        "Super-Hyper-Meta-X"
+    );
+}
+
+#[test]
+fn bound_ctrl_chords_still_reach_their_screen() {
+    let mut state = AppState::new(two_list_document());
+    state.toggle_current();
+    state.handle_key(KeyCode::Char('u'));
+    state.screen = Screen::ListComplete;
+    state.handle_key_with_mods(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::Done),
+        "Ctrl-R redoes from a completion screen"
+    );
+}

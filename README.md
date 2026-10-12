@@ -354,6 +354,12 @@ distant list with `Tab` / `Shift-H` / `Shift-L` / `T` instead; a 10th+ link has
 no way to open it directly (it's still listed, just not openable, in the
 panel below the card).
 
+Holding `Ctrl` or `Alt` makes a different key, as in vim: only the `Ctrl`
+chords listed above do anything. Any other chord, such as a reflexive `Ctrl-S`
+or `Ctrl-Q`, does nothing and the status bar says it isn't bound, rather than
+acting like the plain letter (`s` would mark the task started). `Shift` is
+still fine, so `Shift-L` and `L` are the same key.
+
 Pasting text into markcheck never runs it as commands. A paste into `/` search
 or the `T` filter is added to the query as one line; anywhere else it is
 ignored, with a "Paste ignored" message in the status bar, so a command pasted

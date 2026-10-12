@@ -1669,6 +1669,18 @@ impl AppState {
             return;
         }
 
+        // A Ctrl/Alt chord runs only where it is explicitly bound. Every
+        // binding below matches on `KeyCode` alone, so without this Ctrl-S
+        // would act as `s` and Ctrl-Y would confirm the reset like `y`.
+        if !self.is_bound_chord(code, modifiers) {
+            self.clear_pending_chords();
+            self.set_error(format!(
+                "{} is not bound (? lists every key)",
+                chord_name(code, modifiers)
+            ));
+            return;
+        }
+
         // Any key other than a second `g` cancels a pending `gg` motion.
         let pending_g = std::mem::take(&mut self.pending_g);
 
@@ -1723,6 +1735,31 @@ impl AppState {
             | Screen::Search
             | Screen::ListPicker => {}
         }
+    }
+
+    /// Whether `code` with `modifiers` may reach the screen's bindings: plain
+    /// and Shift-modified keys always may (capitals can arrive with SHIFT);
+    /// a Ctrl chord only where the current screen binds it; Alt (and any
+    /// other modifier) never, since nothing binds it.
+    fn is_bound_chord(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        let chord = modifiers - KeyModifiers::SHIFT;
+        if chord.is_empty() {
+            return true;
+        }
+        if chord != KeyModifiers::CONTROL {
+            return false;
+        }
+        let KeyCode::Char(c) = code else {
+            return false;
+        };
+        let bound: &[char] = match self.screen {
+            Screen::Checklist => &['e', 'y', 'd', 'u', 'r'],
+            Screen::ListComplete | Screen::AllComplete => &['r'],
+            Screen::Help => &['e', 'y', 'd', 'u'],
+            Screen::ListPicker => &['p', 'n', 'd', 'u'],
+            Screen::Search | Screen::ConfirmReset | Screen::ConfirmQuitReset => &[],
+        };
+        bound.contains(&c)
     }
 
     /// Raw mode delivers Ctrl-C as a key, not `SIGINT`. As in vim, it cancels
@@ -2030,6 +2067,27 @@ impl AppState {
             _ => {}
         }
     }
+}
+
+/// A chord as the status bar names it, e.g. `Ctrl-S`, `Alt-1`, `Ctrl-Left`.
+fn chord_name(code: KeyCode, modifiers: KeyModifiers) -> String {
+    let mut name = String::new();
+    for (flag, prefix) in [
+        (KeyModifiers::CONTROL, "Ctrl-"),
+        (KeyModifiers::ALT, "Alt-"),
+        (KeyModifiers::SUPER, "Super-"),
+        (KeyModifiers::HYPER, "Hyper-"),
+        (KeyModifiers::META, "Meta-"),
+    ] {
+        if modifiers.contains(flag) {
+            name.push_str(prefix);
+        }
+    }
+    match code {
+        KeyCode::Char(c) if c.is_ascii_alphabetic() => name.push(c.to_ascii_uppercase()),
+        other => name.push_str(&other.to_string()),
+    }
+    name
 }
 
 fn list_all_done(list: &List) -> bool {

@@ -86,6 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Ctrl`- and `Alt`-modified keys no longer act like the plain key. Every
+  key binding ignored the modifier, so a reflexive `Ctrl-S` marked the
+  current task started and saved (and, with git-sync, committed and pushed)
+  the file, `Ctrl-Q` quit, `Ctrl-Y` confirmed the whole-file reset like `y`,
+  and `Alt-2` jumped to list 2. Now only the documented `Ctrl` chords (card
+  scrolling, `Ctrl-R` redo, `Ctrl-Z`, `Ctrl-C` and the task-picker keys) do
+  anything; any other chord is ignored with a "not bound" message in the
+  status bar. (#25)
+
 - Checking or unchecking a task no longer rewrites other, untouched tasks
   in the file. A task marked done with an uppercase `[X]` (common in files
   written by other tools) was silently changed to `[x]` whenever any task in
