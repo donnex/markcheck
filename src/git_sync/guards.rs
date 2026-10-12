@@ -4,12 +4,12 @@
 use std::path::Path;
 
 use super::inspect::{
-    current_branch_ref, git_dir, index_blob, parse_first_parent, resolve_upstream,
+    blob_sha_for, current_branch_ref, git_dir, index_blob, parse_first_parent, resolve_upstream,
 };
 use super::process::{
     PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout, run_with_timeout_and_stdin,
 };
-use super::{SyncOutcome, blob_sha_for};
+use super::shared::SyncOutcome;
 
 /// What the unpushed-history check could establish about a tip.
 #[derive(Debug, PartialEq, Eq)]

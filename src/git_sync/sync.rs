@@ -19,7 +19,7 @@ use super::process::{
     PLUMBING_TIMEOUT, command_error, git_command, literal_pathspec_command, run_with_timeout,
 };
 use super::push::{push, push_if_head_unchanged};
-use super::{RacePoint, SyncOutcome, lock_hash, race_point};
+use super::shared::{RacePoint, SyncOutcome, lock_hash, race_point};
 
 /// One-line commit messages are capped here; the description is cut first,
 /// marked with `…`.

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use super::shared::{RACE_HOOKS, RacePoint};
 use super::*;
 
 pub(super) fn unique_dir(name_hint: &str) -> PathBuf {

@@ -12,7 +12,7 @@ use super::inspect::{
 use super::process::{
     PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, run_with_timeout,
 };
-use super::{RacePoint, SyncOutcome, race_point};
+use super::shared::{RacePoint, SyncOutcome, race_point};
 
 /// Pushes `expected_commit` as an explicit refspec. A failure is
 /// `CommittedNotPushed`, since the commit is safely local.
@@ -151,8 +151,10 @@ pub(super) fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcom
     push(repo_dir, expected_commit)
 }
 /// Pushes a commit an earlier session left local-only, and never builds a
-/// commit: opening a checklist must not publish uncommitted edits. Fails
-/// closed throughout (`Skipped`), except for reporting an untracked file.
+/// commit: opening a checklist must not publish uncommitted edits. Nothing
+/// to push, or a tip that can't be read, is a quiet `Skipped`; a blocked
+/// repository or a refused history is `Failed`, and an untracked checklist is
+/// only reported once there are unpushed commits.
 pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     let mut cmd = git_command(repo_dir);
     cmd.args(["rev-parse", "--show-toplevel"]);
