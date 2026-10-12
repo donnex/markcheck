@@ -241,7 +241,10 @@ Finer points:
   rather than pushing the card around, but the card's border shows a compact
   `→ link` hint so you still know one is there.)
 - **Opening links (`o`)** launches your `$BROWSER` (falling back to `xdg-open` /
-  `open`). With exactly one link, `o` opens it. With **several**, the URLs stay
+  `open`). `$BROWSER` follows the usual convention: a colon-separated list of
+  commands tried in order until one starts (`BROWSER=firefox:w3m`), where `%s`
+  marks the URL's place (`BROWSER="firefox --new-tab %s"`, `%%` for a literal
+  `%`) and the URL is appended when there is no `%s`. With exactly one link, `o` opens it. With **several**, the URLs stay
   listed below the card and the status bar shows `press 1–N to open · esc
   cancels` — press the number (matching the card's `[1]`/`[2]` markers) to open
   that one, or Esc to cancel. With no link, the status bar says so.
