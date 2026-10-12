@@ -87,7 +87,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     if !is_ancestor(repo_dir, &remote_tip, expected_commit) {
         return SyncOutcome::CommittedNotPushed {
             message: format!(
-                "{branch_ref} on {remote} has commits this change is not based on;                  pull first, then it will sync"
+                "{branch_ref} on {remote} has commits this change is not based on; \
+                 pull first, then it will sync"
             ),
             commit: expected_commit.to_string(),
         };
@@ -374,8 +375,8 @@ mod tests {
 
         assert!(
             matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
-                if message.contains("not based on")),
-            "must refuse rather than force: {outcome:?}"
+                if message.ends_with("is not based on; pull first, then it will sync")),
+            "must refuse rather than force, in a single-spaced message: {outcome:?}"
         );
         assert_eq!(
             git_stdout(&remote, &["rev-parse", "refs/heads/main"]),
