@@ -72,6 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Undo (`u`) and redo (`Ctrl-R`) can no longer overwrite another program's
+  edits. When the checklist file had been changed by something else, the
+  first `u` correctly reloaded the file and saved nothing, but a second `u`
+  then applied the old undo step to the new content by line number and saved
+  it — unchecking tasks you never touched. The reload now clears the undo and
+  redo history as intended, so the next `u` says "Nothing to undo". (#91)
+
 - Clicking a command on a card now copies exactly that command, in full.
   Previously, with two inline commands on the same row, clicking the second
   copied the first; and a long inline command that wrapped across several
