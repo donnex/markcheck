@@ -86,6 +86,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With git sync on, markcheck no longer leaves a stale `.git/index.lock`
+  behind that breaks your own git commands. A git command that ran past
+  markcheck's time limit was killed outright, which could leave the lock file
+  in place, and from then on every `git add`, `git commit` or `git checkout`
+  failed with "index.lock: File exists" until you deleted it by hand. markcheck
+  now asks git to stop first so it can clean up, and if it still has to
+  force-kill one, the error message says how to clear the lock. The
+  `git status` that git sync runs after every toggle also no longer takes the
+  lock at all, so your own git commands in another terminal can no longer fail
+  because a sync happened to be running. (#119)
+
 - A list's first bullet that is only bold text but carries a command — a
   fenced code block under it, or `` `code` `` inside the bold — is now shown as
   a note card with its command visible and copyable with `y`. It used to

@@ -368,6 +368,54 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
+    fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
+        // A `pre-commit` hook past the timeout: SIGTERM lets git and the hook
+        // clean up their locks, which SIGKILL never would.
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let marker = work.parent().unwrap().join("hook-got-sigterm");
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(
+            &hook_path,
+            format!(
+                "#!/bin/sh\ntrap 'touch {}; exit 1' TERM\nsleep 5 &\nwait\n",
+                shell_words::quote(marker.to_str().unwrap())
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let temp_index = work.join(".git").join("scratch-test-index-sigterm");
+        populate_temp_index(&work, &temp_index, &parent).unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
+        stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
+
+        let result = commit_temp_index(
+            &work,
+            &temp_index,
+            "should not land",
+            &Some(parent.clone()),
+            "tracked.md",
+            &blob,
+            Duration::from_millis(300),
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(marker.exists(), "the hook must have received SIGTERM");
+        assert!(
+            !work.join(".git").join("index.lock").exists(),
+            "no lock may be left in the user's repository"
+        );
+        assert_eq!(current_head(&work), Some(parent));
+
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[cfg(unix)]
+    #[test]
     fn commit_temp_index_does_not_adopt_an_unrelated_commit_after_a_timeout() {
         // A `pre-commit` hook commits something unrelated and sleeps past the
         // timeout, so `HEAD` moves without our commit landing. `--no-verify` stops
