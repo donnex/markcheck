@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync (`--git-sync`) no longer commits a stray file when the checklist's
+  file name isn't valid UTF-8. Previously it rewrote the name with
+  replacement characters and committed and pushed the new content under that
+  made-up name on every toggle, while the real checklist was never updated in
+  git. Syncing such a file is now refused with a message saying why. (#8)
+
 - Answering `y` to "reset and quit" (offered when you quit a checklist with
   every task done) no longer exits when the reset can't be saved. Previously
   markcheck quit anyway, so the reason — another instance saving, the file

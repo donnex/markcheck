@@ -202,7 +202,14 @@ pub(super) fn index_entry(
             file_path.display()
         ));
     }
-    let record = String::from_utf8_lossy(record);
+    // A lossy conversion would hand git a different, U+FFFD-mangled path to
+    // stage, so a non-UTF-8 name is refused rather than synced (#8).
+    let record = std::str::from_utf8(record).map_err(|_| {
+        format!(
+            "git sync: {} is not a UTF-8 file name, so it can't be synced",
+            file_path.display()
+        )
+    })?;
     let (info, path) = record
         .split_once('\t')
         .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
@@ -363,6 +370,26 @@ mod tests {
             index_blob(&work, "notes[1].md"),
             index_blob(&work, "notes1.md")
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn index_entry_refuses_a_file_name_that_is_not_utf8() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let (work, _remote) = init_repo_with_remote();
+        let file = work.join(OsStr::from_bytes(b"list-\xff.md"));
+        fs::write(&file, "- [ ] one\n").unwrap();
+        let status = std::process::Command::new("git")
+            .current_dir(&work)
+            .arg("add")
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let err = index_entry(&work, &file).unwrap_err();
+        assert!(err.contains("not a UTF-8 file name"), "{err}");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }

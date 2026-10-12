@@ -237,6 +237,41 @@ mod tests {
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
     #[test]
+    fn run_sync_refuses_a_non_utf8_file_name_without_committing() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let work = init_repo_without_remote();
+        let file = work.join(OsStr::from_bytes(b"list-\xff.md"));
+        fs::write(&file, "- [ ] one\n").unwrap();
+        let add = Command::new("git")
+            .current_dir(&work)
+            .arg("add")
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(add.success());
+        run(&work, &["commit", "-q", "-m", "add list"]);
+        let before = git_stdout(&work, &["rev-parse", "HEAD"]);
+        fs::write(&file, "- [x] one\n").unwrap();
+
+        let outcome = run_sync(
+            &work,
+            &file,
+            "- [x] one\n",
+            "should not commit",
+            &no_race("- [x] one\n"),
+            None,
+        );
+
+        assert!(
+            matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("not a UTF-8 file name")),
+            "{outcome:?}"
+        );
+        assert_eq!(git_stdout(&work, &["rev-parse", "HEAD"]), before);
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
     fn run_sync_reports_an_untracked_file_without_adding_it() {
         let work = init_repo_without_remote();
         let untracked = work.join("untracked.md");
