@@ -4,7 +4,7 @@ Non-task content and the ways code is handled.
 
 ## Reference
 
-- **Read before proceeding**
+- **Read before proceeding: every step below assumes the service has already been drained from the load balancer**
 - A note with a command but no checkbox — you can copy it with `y`, but it is
   not a task and cannot be checked off: `restart-service example-service`
 
@@ -13,6 +13,8 @@ Non-task content and the ways code is handled.
 > - [/] Neither does a quoted "started" marker — still just reference text
 
 - [ ] A task with a single inline command `apply-config --now`
+- [ ] **Restart the primary application service and confirm that every health check passes** —
+  a card title too long for one row wraps inside the card instead of being cut
 - [ ] A task with a fenced block:
 
   ```sh

@@ -200,8 +200,8 @@ How each piece maps to the UI:
 | `## Heading` | A **list**: its title (the **list header**) appears above the cards and in the overview, and is jumpable with `1`–`9` (and in a dedicated list-tab row on narrow terminals). |
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. |
-| `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. |
-| `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. |
+| `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. A long title wraps inside the card, which grows to fit. |
+| `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. |
 | `- **Bold**` (bold only), later in a list | A display-only card titled with the bold text. |
 | `- plain text` | A display-only **note card** (rounded border). In the overview it shows a distinct note marker rather than a task circle, so information reads apart from steps. |
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |

@@ -72,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Long text is no longer cut off silently at the edge of the screen. A list's
+  warning banner (a list's leading bold-only bullet) and a card's title now
+  wrap onto as many rows as they need, so the whole warning and the whole
+  step name are always readable; before, both were cut mid-word, which could
+  hide a precondition at the end of a warning while still reading as
+  complete. Places that stay one row — the list heading, the overview's
+  banner and task rows, and the `T` "go to task" picker — now end in `…`
+  when shortened, and the picker keeps its list and sub-section context
+  visible beside a long task name. A long document title no longer pushes
+  the file name out of the title bar. (#102)
+
 - Git-sync (`--git-sync`) no longer pushes where a plain `git push` would
   not. It used to always push to the branch's upstream under the upstream's
   name, so a branch started from `origin/main` under another name had its

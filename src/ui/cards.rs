@@ -93,6 +93,8 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let palette = state.palette;
     let matches = state.picker_matches();
     let multi_list = state.document.lists.len() > 1;
+    // A row's text width inside the borders and padding, less the marker.
+    let text_width = area.width.saturating_sub(4 + 2) as usize;
 
     let rows: Vec<ListItem> = matches
         .iter()
@@ -111,10 +113,6 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 ItemKind::DisplayOnly => (icons.note, Style::default().fg(palette.note)),
             };
             let label = item.header.as_deref().unwrap_or(&item.display_text);
-            let mut spans = vec![
-                Span::styled(format!("{marker} "), marker_style),
-                Span::raw(label.to_string()),
-            ];
             // A dim `— {list} › {sub-section}` context suffix: the
             // list title (only when several lists exist) followed by the item's
             // `### H3`+ sub-section path, so the same visible text can be told
@@ -124,9 +122,27 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 context.push(state.document.lists[li].title.clone());
             }
             context.extend(item.section.iter().map(|h| h.text.clone()));
-            if !context.is_empty() {
+            let suffix = if context.is_empty() {
+                String::new()
+            } else {
+                format!("  — {}", context.join(" › "))
+            };
+            // A long label must not push the suffix off the row, since the
+            // suffix is what tells same-named tasks apart: both keep a share
+            // and are cut with `…`.
+            let (label_budget, suffix_budget) = super::split_width(
+                label.chars().count(),
+                suffix.chars().count(),
+                text_width,
+                text_width / 2,
+            );
+            let mut spans = vec![
+                Span::styled(format!("{marker} "), marker_style),
+                Span::raw(super::truncate(label, label_budget)),
+            ];
+            if !suffix.is_empty() {
                 spans.push(Span::styled(
-                    format!("  — {}", context.join(" › ")),
+                    super::truncate(&suffix, suffix_budget),
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
@@ -372,8 +388,14 @@ fn current_card_width(area: Rect) -> u16 {
 fn desired_card_height(item: &Item, area: Rect, code: Style) -> u16 {
     let inner_w = current_card_width(area).saturating_sub(2 + 2 * BODY_PAD);
     let body = clamp_to_u16(body_lines(item, inner_w.max(1), code).len());
-    // The inside-card title adds a title line + a blank separator.
-    let title = if item.header.is_some() { 2 } else { 0 };
+    // The inside-card title adds its wrapped rows + a blank separator. The
+    // note icon is measured as one character, like every icon set's glyph.
+    let title_rows = card_title_rows(item, "i", inner_w.max(1)).len();
+    let title = if title_rows > 0 {
+        clamp_to_u16(title_rows + 1)
+    } else {
+        0
+    };
     // A nested item adds a one-line parent breadcrumb above the title.
     let breadcrumb = u16::from(item.depth > 0);
     let content = body
@@ -388,7 +410,14 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // The `## H2` title above the cards, except for the synthesized default
     // list, and a leading bold-only bullet as a banner.
     let has_h2 = !(state.current_list_index == 0 && state.document.has_default_list);
-    let banner = state.current_list().banner.clone();
+    // The banner wraps to the card width so a long warning is shown in full;
+    // each wrapped row takes its own heading row.
+    let banner_rows = state
+        .current_list()
+        .banner
+        .as_ref()
+        .map(|banner| banner_rows(banner, state.icons, current_card_width(area)))
+        .unwrap_or_default();
     // The current item's `### H3`+ sub-section path, shown as a dim breadcrumb
     // directly above the card so the single-card view still says which
     // sub-section you're in — the overview's divider isn't visible on narrow
@@ -398,7 +427,8 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .and_then(|item| section_breadcrumb(&item.section));
     // Title, banner and breadcrumb sit together, then one blank row before
     // the card.
-    let heading_rows = (has_h2 as u16) + (banner.is_some() as u16) + (breadcrumb.is_some() as u16);
+    let heading_rows =
+        (has_h2 as u16) + clamp_to_u16(banner_rows.len()) + (breadcrumb.is_some() as u16);
     let reserved = if heading_rows > 0 {
         heading_rows + 1
     } else {
@@ -434,8 +464,8 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
             );
             i += 1;
         }
-        if let Some(banner) = &banner {
-            render_list_banner(frame, rows[i], banner, state.icons, state.palette);
+        for row in &banner_rows {
+            render_list_banner(frame, rows[i], row, state.palette);
             i += 1;
         }
         if let Some(crumb) = &breadcrumb {
@@ -520,7 +550,9 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
 }
 
 /// The current list's `## H2` title, centered above the cards, in the same
-/// color as the overview's current-list row (`palette.current` bold).
+/// color as the overview's current-list row (`palette.current` bold). Kept to
+/// one row, so a title wider than the area ends in `…` rather than being
+/// clipped mid-word.
 fn render_list_heading(
     frame: &mut Frame,
     area: Rect,
@@ -529,7 +561,7 @@ fn render_list_heading(
     palette: Palette,
 ) {
     let heading = Line::from(Span::styled(
-        format!("{} {title}", icons.list),
+        super::truncate(&format!("{} {title}", icons.list), area.width as usize),
         Style::default()
             .fg(palette.current)
             .add_modifier(Modifier::BOLD),
@@ -538,18 +570,18 @@ fn render_list_heading(
     frame.render_widget(Paragraph::new(heading), area);
 }
 
-/// A list's banner: a leading bold-only bullet, shown below the list
-/// title as a non-navigable warning line in `palette.warning`, prefixed with
-/// the info icon.
-fn render_list_banner(
-    frame: &mut Frame,
-    area: Rect,
-    banner: &str,
-    icons: IconSet,
-    palette: Palette,
-) {
+/// A list's banner (a leading bold-only bullet) prefixed with the info icon
+/// and word-wrapped to `width`, one string per heading row. The banner carries
+/// a warning, so it is never cut short.
+fn banner_rows(banner: &str, icons: IconSet, width: u16) -> Vec<String> {
+    wrap_text(&format!("{} {banner}", icons.note), width)
+}
+
+/// One wrapped row of a list's banner, shown below the list title as a
+/// non-navigable warning line in `palette.warning`.
+fn render_list_banner(frame: &mut Frame, area: Rect, row: &str, palette: Palette) {
     let line = Line::from(Span::styled(
-        format!("{} {banner}", icons.note),
+        row.to_string(),
         Style::default()
             .fg(palette.warning)
             .add_modifier(Modifier::BOLD),
@@ -657,28 +689,48 @@ fn breadcrumb_line(
     )
 }
 
-fn card_title_lines(item: &Item, icons: IconSet, palette: Palette) -> Vec<Line<'static>> {
+/// The card title (`Item.header`) prefixed with the note icon, word-wrapped
+/// to the card's inner `width` so a long title is shown in full instead of
+/// being clipped at the border. Shared by the renderer and
+/// `desired_card_height`, so the card grows by exactly the rows drawn.
+fn card_title_rows(item: &Item, icon: &str, width: u16) -> Vec<String> {
     match &item.header {
-        // The title text uses the terminal's **default** foreground (bold) so it
-        // always contrasts with the background and stays legible (a
-        // colored title could wash out on some backgrounds); the leading note
-        // icon keeps `palette.note` (blue) as a small accent.
-        Some(header) => vec![
-            Line::from(vec![
-                Span::styled(
-                    format!("{} ", icons.note),
-                    Style::default().fg(palette.note),
-                ),
-                Span::styled(
-                    header.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-            ])
-            .centered(),
-            Line::from(""),
-        ],
+        Some(header) => wrap_text(&format!("{icon} {header}"), width),
         None => Vec::new(),
     }
+}
+
+fn card_title_lines(
+    item: &Item,
+    width: u16,
+    icons: IconSet,
+    palette: Palette,
+) -> Vec<Line<'static>> {
+    let rows = card_title_rows(item, icons.note, width);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    // The title text uses the terminal's **default** foreground (bold) so it
+    // always contrasts with the background and stays legible (a colored title
+    // could wash out on some backgrounds); the leading note icon on the first
+    // row keeps `palette.note` (blue) as a small accent.
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'static>> = rows
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let spans = match row.strip_prefix(icons.note) {
+                Some(rest) if i == 0 => vec![
+                    Span::styled(icons.note.to_string(), Style::default().fg(palette.note)),
+                    Span::styled(rest.to_string(), bold),
+                ],
+                _ => vec![Span::styled(row, bold)],
+            };
+            Line::from(spans).centered()
+        })
+        .collect();
+    lines.push(Line::from(""));
+    lines
 }
 
 fn item_block(
@@ -834,7 +886,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     ) {
         lines.push(crumb);
     }
-    lines.extend(card_title_lines(item, icons, palette));
+    lines.extend(card_title_lines(item, inner.width, icons, palette));
     let n_before = lines.len();
     let (body, code_rows) = body_layout(item, inner.width, palette.code);
     lines.extend(body);

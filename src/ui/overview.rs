@@ -165,8 +165,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         // The list banner: a non-selectable warning row below the
         // list title, in the warning color, prefixed with the info icon.
         if let Some(banner) = &list.banner {
+            // One row here; the full banner is wrapped above the cards, so a
+            // long one is cut with `…` rather than clipped silently.
             list_items.push(ListItem::new(Line::from(Span::styled(
-                format!("{}{} {banner}", item_indent(0, has_list_header), icons.note),
+                super::truncate(
+                    &format!("{}{} {banner}", item_indent(0, has_list_header), icons.note),
+                    inner_width,
+                ),
                 Style::default()
                     .fg(palette.warning)
                     .add_modifier(Modifier::BOLD),
@@ -284,7 +289,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             }
             let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
             spans.push(Span::styled(format!("{marker} "), marker_style));
-            spans.push(Span::styled(label.to_string(), text_style));
+            spans.push(Span::styled(
+                super::truncate(label, inner_width.saturating_sub(marker_cells as usize)),
+                text_style,
+            ));
             list_items.push(ListItem::new(Line::from(spans)));
             // A checkbox row splits into a marker zone (toggle) and a label
             // zone (navigate); a display-only row navigates whole.
