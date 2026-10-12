@@ -19,6 +19,15 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 
 const HIDDEN_CHARACTERS_MESSAGE: &str = "Not copied: command contains hidden control characters";
 
+/// Whether a cursor move lands on a card the user navigated to, so
+/// `--auto-copy` fires, or is a side effect (undo, cancelling a search)
+/// that must not touch the clipboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorMove {
+    Navigate,
+    Quiet,
+}
+
 /// The modification time and byte length of `path` from a single `stat()`
 /// call, or `None` if it can't be read. Cross-checking both narrows (but
 /// doesn't eliminate) the window where a same-instant external edit could be
@@ -190,18 +199,19 @@ impl AppState {
     }
 
     pub fn navigate_next(&mut self) {
-        let last_index = self.current_list().items.len().saturating_sub(1);
-        if self.current_item_index < last_index {
-            self.current_item_index += 1;
-        }
-        self.reset_card_scroll();
-        self.maybe_auto_copy();
+        self.focus_item(
+            self.current_list_index,
+            self.current_item_index + 1,
+            CursorMove::Navigate,
+        );
     }
 
     pub fn navigate_prev(&mut self) {
-        self.current_item_index = self.current_item_index.saturating_sub(1);
-        self.reset_card_scroll();
-        self.maybe_auto_copy();
+        self.focus_item(
+            self.current_list_index,
+            self.current_item_index.saturating_sub(1),
+            CursorMove::Navigate,
+        );
     }
 
     /// Jump to list `index` (0-based); out of range is reported, since the
@@ -216,13 +226,10 @@ impl AppState {
             ));
             return;
         }
-        self.current_list_index = index;
         // Land on the first not-done item in the target list,
         // falling back to its first item when all are done.
-        self.current_item_index = first_undone_index(&self.document.lists[index]).unwrap_or(0);
-        self.screen = Screen::Checklist;
-        self.reset_card_scroll();
-        self.maybe_auto_copy();
+        let item_index = first_undone_index(&self.document.lists[index]).unwrap_or(0);
+        self.focus_item(index, item_index, CursorMove::Navigate);
     }
 
     /// All `(list_index, item_index)` whose text matches `query`, in document
@@ -244,11 +251,11 @@ impl AppState {
     }
 
     /// Move the cursor to an *exact* item and show it on the `Checklist`
-    /// screen, resetting card scroll. Unlike [`AppState::jump_to_list`]
-    /// this lands on the given item, not the list's first not-done one, and
-    /// does not auto-copy — callers decide when a copy should fire. Out-of-range
-    /// indices are clamped/ignored so a stale match can't panic.
-    pub fn focus_item(&mut self, list_index: usize, item_index: usize) {
+    /// screen, resetting card scroll — the one primitive every cursor motion
+    /// goes through, so none can forget a step. `CursorMove::Navigate` also
+    /// honours `--auto-copy`. Out-of-range indices are clamped/ignored so a
+    /// stale match can't panic.
+    pub fn focus_item(&mut self, list_index: usize, item_index: usize, how: CursorMove) {
         let Some(list) = self.document.lists.get(list_index) else {
             return;
         };
@@ -259,6 +266,9 @@ impl AppState {
         self.current_item_index = item_index.min(list.items.len() - 1);
         self.screen = Screen::Checklist;
         self.reset_card_scroll();
+        if how == CursorMove::Navigate {
+            self.maybe_auto_copy();
+        }
     }
 
     /// Enter incremental search (`/`): remember the cursor for a possible
@@ -309,10 +319,7 @@ impl AppState {
     /// the `Checklist` screen.
     fn cancel_search(&mut self) {
         let (list_index, item_index) = self.search.origin;
-        self.current_list_index = list_index;
-        self.current_item_index = item_index;
-        self.reset_card_scroll();
-        self.screen = Screen::Checklist;
+        self.focus_item(list_index, item_index, CursorMove::Quiet);
     }
 
     /// Cycle to the next (`forward`) or previous match of the last committed
@@ -345,14 +352,13 @@ impl AppState {
                         .expect("matches is non-empty — checked above")
                 })
         };
-        self.focus_item(target.0, target.1);
         let position = matches
             .iter()
             .position(|&m| m == target)
             .map_or(0, |i| i + 1);
         self.set_status(format!("Match {position}/{}", matches.len()));
         // A successful auto-copy (if enabled) overrides with its own message.
-        self.maybe_auto_copy();
+        self.focus_item(target.0, target.1, CursorMove::Navigate);
     }
 
     /// Jump the cursor to the first item of the next (`forward`) / previous
@@ -375,14 +381,13 @@ impl AppState {
         };
         match target {
             Some(i) => {
-                self.focus_item(list_index, i);
                 let name = self.document.lists[list_index].items[i]
                     .section
                     .last()
                     .map_or_else(String::new, |h| h.text.clone());
                 self.set_status(format!("Sub-section: {name}"));
                 // A successful auto-copy (if enabled) overrides with its message.
-                self.maybe_auto_copy();
+                self.focus_item(list_index, i, CursorMove::Navigate);
             }
             None => {
                 let edge = if forward { "last" } else { "first" };
@@ -450,8 +455,7 @@ impl AppState {
     fn picker_commit(&mut self) {
         match self.picker_matches().get(self.picker.selection) {
             Some(&(list_index, item_index)) => {
-                self.focus_item(list_index, item_index);
-                self.maybe_auto_copy();
+                self.focus_item(list_index, item_index, CursorMove::Navigate)
             }
             None => self.screen = self.screen_before_confirm,
         }
@@ -551,10 +555,7 @@ impl AppState {
                 self.document.lists[s].items[i].kind,
                 ItemKind::Checkbox(TaskState::NotStarted | TaskState::Started)
             ) {
-                self.current_list_index = s;
-                self.current_item_index = i;
-                self.screen = Screen::Checklist;
-                self.reset_card_scroll();
+                self.focus_item(s, i, CursorMove::Navigate);
                 return;
             }
         }
@@ -564,13 +565,7 @@ impl AppState {
     /// `gg`: jump to the very first task in the document — a literal position,
     /// not first-undone (a raw vim motion).
     pub fn go_to_first_item(&mut self) {
-        if self.document.lists.is_empty() {
-            return;
-        }
-        self.current_list_index = 0;
-        self.current_item_index = 0;
-        self.screen = Screen::Checklist;
-        self.reset_card_scroll();
+        self.focus_item(0, 0, CursorMove::Navigate);
     }
 
     /// `G`: jump to the very last task in the document (literal position).
@@ -578,10 +573,7 @@ impl AppState {
         let Some(last) = self.document.lists.len().checked_sub(1) else {
             return;
         };
-        self.current_list_index = last;
-        self.current_item_index = self.document.lists[last].items.len().saturating_sub(1);
-        self.screen = Screen::Checklist;
-        self.reset_card_scroll();
+        self.focus_item(last, usize::MAX, CursorMove::Navigate);
     }
 
     /// `l`/→: step to the next item, or — at the last item of a list —
@@ -803,10 +795,7 @@ impl AppState {
             match target {
                 OverviewTarget::List(list_index) => self.jump_to_list(list_index),
                 OverviewTarget::Item(list_index, item_index) => {
-                    // Mirror the go-to-task picker: focus the exact item,
-                    // then honour --auto-copy (a no-op otherwise).
-                    self.focus_item(list_index, item_index);
-                    self.maybe_auto_copy();
+                    self.focus_item(list_index, item_index, CursorMove::Navigate)
                 }
                 // The marker prefix toggles in place, cursor unchanged.
                 OverviewTarget::Toggle(list_index, item_index) => {
@@ -1336,14 +1325,6 @@ impl AppState {
         self.screen = Screen::Checklist;
     }
 
-    fn return_to_last_list(&mut self) {
-        let last = self.document.lists.len().saturating_sub(1);
-        self.current_list_index = last;
-        self.current_item_index = self.document.lists[last].items.len().saturating_sub(1);
-        self.screen = Screen::Checklist;
-        self.reset_card_scroll();
-    }
-
     /// Consumed by the main loop each tick.
     pub fn take_editor_request(&mut self) -> bool {
         std::mem::take(&mut self.editor_requested)
@@ -1576,7 +1557,7 @@ impl AppState {
             [] => self.set_status(format!("{verb}: no change")),
             [line] => {
                 if let Some((li, ii)) = self.locate_line(*line) {
-                    self.focus_item(li, ii);
+                    self.focus_item(li, ii, CursorMove::Quiet);
                 }
                 let desc = match self.current_item().map(|item| item.kind) {
                     Some(ItemKind::Checkbox(TaskState::Done)) => "marked done",
@@ -2062,7 +2043,7 @@ impl AppState {
     fn handle_all_complete_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
-                self.return_to_last_list()
+                self.go_to_last_item()
             }
             _ => {}
         }

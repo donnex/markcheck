@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--auto-copy` now also copies when you reach a task with `Tab`, `gg`,
+  `G`, or `h`/`k` from the "All Tasks Complete" screen. Previously only
+  some motions (such as `h`/`l`, the number keys and the `T` picker)
+  copied the landing task's command, so the same card copied or not
+  depending on how you got there. (#30)
+
 - With git-sync on, opening a checklist that isn't tracked in git now says
   so in the status bar right away (`Git sync skipped: file is not tracked in
   git`). Previously, on a branch with nothing left to push, the warning only

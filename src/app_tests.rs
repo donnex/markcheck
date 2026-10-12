@@ -583,18 +583,18 @@ fn find_matches_searches_command_text() {
 #[test]
 fn focus_item_lands_on_exact_item_and_clamps() {
     let mut state = AppState::new(two_list_document());
-    state.focus_item(1, 0);
+    state.focus_item(1, 0, CursorMove::Quiet);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
     assert_eq!(state.screen, Screen::Checklist);
     // An out-of-range item clamps to the list's last item...
-    state.focus_item(0, 99);
+    state.focus_item(0, 99, CursorMove::Quiet);
     let last = state.document.lists[0].items.len() - 1;
     assert_eq!(
         (state.current_list_index, state.current_item_index),
         (0, last)
     );
     // ...and an out-of-range list index is ignored (no move, no panic).
-    state.focus_item(99, 0);
+    state.focus_item(99, 0, CursorMove::Quiet);
     assert_eq!(state.current_list_index, 0);
 }
 
@@ -2133,6 +2133,176 @@ fn auto_copy_stays_silent_without_a_single_candidate() {
     state.document.lists[si].items[ii].code_blocks = vec!["one".to_string(), "two".to_string()];
     state.maybe_auto_copy();
     assert_eq!(state.status_message, None, "ambiguous set -> silent");
+}
+
+#[test]
+fn auto_copy_fires_on_every_navigation_motion() {
+    // Every motion that lands on a card honours --auto-copy, not just
+    // h/l: each card carries one command, and the fake clipboard records
+    // which one was copied.
+    type Position = (usize, usize);
+    let cases: &[(&str, Screen, Position, &[KeyCode], Position)] = &[
+        (
+            "l",
+            Screen::Checklist,
+            (0, 1),
+            &[KeyCode::Char('l')],
+            (0, 2),
+        ),
+        (
+            "h",
+            Screen::Checklist,
+            (0, 2),
+            &[KeyCode::Char('h')],
+            (0, 1),
+        ),
+        (
+            "j",
+            Screen::Checklist,
+            (0, 1),
+            &[KeyCode::Char('j')],
+            (0, 2),
+        ),
+        (
+            "k",
+            Screen::Checklist,
+            (0, 2),
+            &[KeyCode::Char('k')],
+            (0, 1),
+        ),
+        (
+            "l across lists",
+            Screen::Checklist,
+            (0, 2),
+            &[KeyCode::Char('l')],
+            (1, 0),
+        ),
+        ("Tab", Screen::Checklist, (0, 1), &[KeyCode::Tab], (0, 2)),
+        (
+            "Tab wraps",
+            Screen::Checklist,
+            (1, 1),
+            &[KeyCode::Tab],
+            (0, 1),
+        ),
+        (
+            "gg",
+            Screen::Checklist,
+            (1, 1),
+            &[KeyCode::Char('g'), KeyCode::Char('g')],
+            (0, 0),
+        ),
+        (
+            "G",
+            Screen::Checklist,
+            (0, 1),
+            &[KeyCode::Char('G')],
+            (1, 1),
+        ),
+        (
+            "digit",
+            Screen::Checklist,
+            (0, 1),
+            &[KeyCode::Char('2')],
+            (1, 0),
+        ),
+        (
+            "L",
+            Screen::Checklist,
+            (0, 1),
+            &[KeyCode::Char('L')],
+            (1, 0),
+        ),
+        (
+            "H",
+            Screen::Checklist,
+            (1, 1),
+            &[KeyCode::Char('H')],
+            (0, 1),
+        ),
+        (
+            "n",
+            Screen::Checklist,
+            (0, 1),
+            &[KeyCode::Char('n')],
+            (1, 0),
+        ),
+        (
+            "T + Enter",
+            Screen::Checklist,
+            (1, 1),
+            &[KeyCode::Char('T'), KeyCode::Enter],
+            (0, 0),
+        ),
+        (
+            "all-complete h",
+            Screen::AllComplete,
+            (0, 0),
+            &[KeyCode::Char('h')],
+            (1, 1),
+        ),
+        (
+            "all-complete k",
+            Screen::AllComplete,
+            (0, 0),
+            &[KeyCode::Char('k')],
+            (1, 1),
+        ),
+    ];
+    for &(name, screen, (from_list, from_item), keys, (to_list, to_item)) in cases {
+        let mut document = two_list_document();
+        document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+        for list in &mut document.lists {
+            for item in &mut list.items {
+                item.code_spans = vec![format!("cmd-{}", item.line_number)];
+            }
+        }
+        let expected = document.lists[to_list].items[to_item].code_spans[0].clone();
+        let mut state = AppState::new(document);
+        state.auto_copy = true;
+        state.search.last = Some("task 4".to_string());
+        state.current_list_index = from_list;
+        state.current_item_index = from_item;
+        state.screen = screen;
+        crate::clipboard::fake::with(|c| c.system_attempts.clear());
+
+        for &key in keys {
+            state.handle_key(key);
+        }
+
+        assert_eq!(
+            (state.current_list_index, state.current_item_index),
+            (to_list, to_item),
+            "{name}: lands on the target card"
+        );
+        crate::clipboard::fake::with(|c| {
+            assert_eq!(
+                c.system_attempts,
+                vec![(expected.clone(), false)],
+                "{name}: copies the landing card's command"
+            );
+        });
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Sent to clipboard (OSC 52)"),
+            "{name}: confirms the copy"
+        );
+    }
+}
+
+#[test]
+fn quiet_cursor_moves_do_not_auto_copy() {
+    // Cancelling a search restores the cursor without copying.
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["cmd".to_string()];
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_key(KeyCode::Char('5'));
+    state.handle_key(KeyCode::Esc);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(state.screen, Screen::Checklist);
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
 }
 
 // Copy alert paths (0 or many candidates) never touch a clipboard
