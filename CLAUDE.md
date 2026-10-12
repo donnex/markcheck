@@ -53,10 +53,42 @@ Key non-obvious design points:
 
 ## Changelog
 
-- `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): dated `## [X.Y.Z]` sections (newest first), each broken into `Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` subsections as needed, plus a `## [Unreleased]` section at the top for work already on `dev` but not yet released.
-- Whenever a user-facing change lands — a new feature, a behavior change, a bug fix a user would notice — add a bullet under `## [Unreleased]` in the **same commit** as the change, the same sync-in-the-same-work discipline as `DESIGN.md`/the README Markdown reference/`examples/`. Write it for a user reading release notes, not as a copy of the commit title: describe the effect, not the implementation.
-- Purely internal changes (refactors, test-only additions, CI/tooling, contributor-facing doc updates like this file) don't get a changelog entry — `CHANGELOG.md` is for users, not contributors.
-- At release time, see "Releasing" below: `## [Unreleased]` is renamed to the new version heading and a fresh empty `## [Unreleased]` is added above it, as part of the version-bump commit.
+A changelog is for a reader who will not read the commit history. Git already records every change, so `CHANGELOG.md` is not a second copy of it: **`CHANGELOG.md` is for users, not contributors** — a summary of the changes worth knowing about, written for someone deciding whether anything affects them.
+
+### Format
+
+- `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The file opens by saying so; keep that header.
+- **`## [X.Y.Z] - YYYY-MM-DD` sections, newest first**, each broken into `Added` / `Changed` / `Deprecated` / `Removed` / `Fixed` / `Security` subsections **as needed** — not every heading in every release.
+- **`## [Unreleased]` at the top**, always, for work already on `dev` but not yet released. It stays in the file even when empty, so there is always somewhere for the next entry to go.
+- `CHANGELOG.md` is tracked and committed like any other documentation. **Never add it to `.gitignore`** — the opposite of `REVIEW.md`; don't reason from one to the other.
+- Every release repeats headings like `### Added`, which markdownlint's MD024 (no-duplicate-heading) would reject. `.markdownlint.json` settles this with `"MD024": { "siblings_only": true }` beside the `MD013` line — keep it. Don't make headings artificially unique (`### Added (2026-09-12)`) instead.
+
+### When it is updated
+
+- **In the same commit as the change it describes**, under `## [Unreleased]` — the same sync-in-the-same-work discipline as `DESIGN.md`/the README Markdown reference/`examples/`. This is not optional and not a follow-up: a changelog updated later is written from memory, and a change that shipped without its entry is invisible in the file for ever.
+- A commit that only fixes a not-yet-merged commit is squashed into it per the history-rewriting rules below, so its entry is folded in the same way rather than added as a second one.
+- An entry is only filed under a version once it has been released — see "Releasing" below.
+
+### What goes in, and what does not
+
+- Include a change **a user would notice**: a new feature, a behavior change, a bug fix they would have seen, and anything that changes their configuration, their command-line flags, their keybindings, or what they have to install.
+- **Purely internal changes get no entry** — refactors, test-only additions, CI and tooling, and contributor-facing documentation like this file or `DESIGN.md`. Also left out: dependency bumps, unless one changes behavior or adds something the reader has to satisfy; and review bookkeeping and other process artefacts.
+- When a stretch of history consists of little but the above, say so in one line rather than listing it.
+- The test for an entry is whether someone who did not make the change would want to know about it — not whether it was hard, and not how many files it touched.
+
+### How an entry is written
+
+- **Write it for a user reading release notes**, not as a copy of the commit title: describe the effect, not the implementation. An entry naming files or functions is a commit message in the wrong place — the reader does not have the code open.
+- Lead with the change itself. The reason belongs in the sentence after, where it can be skipped.
+- Where a change replaced something that was wrong, **say what was wrong**, rather than "improved X".
+- End with the issue number in parentheses where the work is tracked, matching the `(#N)` suffix on commit titles, so the entry, the commits and the issue all point at each other.
+- Where a change genuinely needs more than a few sentences, put the detail in a second paragraph under the same bullet rather than splitting it into several entries.
+- Within a section, lead with the largest change. A section is scanned, not read through.
+- This repo is public: the Test Data & Privacy rules below apply to the changelog like any other file, and an entry has to make sense to someone who has never run markcheck — name what it is talking about the first time it comes up in a release.
+
+### Releasing
+
+Every merge to `main` is a release; the version bump, the renaming of `## [Unreleased]` and the release tag are covered under "Releasing" at the end of this file.
 
 ## Keybindings
 
