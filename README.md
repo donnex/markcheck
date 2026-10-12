@@ -371,8 +371,9 @@ increments rather than ticking every second. Your own toggles never trigger
 a spurious reload.
 
 If the file is **deleted** from under the app, `markcheck` won't recreate it
-behind your back: it shows a red `File deleted — changes cannot be saved`
-message and blocks toggling and reset until the file comes back. Restore the
+behind your back: it shows a red `File was deleted — changes cannot be
+saved until it exists again` message and blocks toggling and reset until the
+file comes back. Restore the
 file (or save it again from your editor) and the app reloads it and resumes
 normally.
 
@@ -391,9 +392,9 @@ $EDITOR`) — even if you only edit and quit without toggling anything
 afterward. If something *else* changes the file in the meantime — an
 edit made outside markcheck entirely, or the file getting deleted — while
 a sync is still queued or in flight, that sync is refused rather than
-publishing content that's since gone stale: `Git sync failed: git-sync:
-file changed since this request was queued; edit or toggle again to sync
-the current content`. Toggling or editing again picks up the file's
+publishing content that's since gone stale: `Git sync failed: the file
+changed after this sync was queued; toggle again to sync the latest
+version`. Toggling or editing again picks up the file's
 actual current content normally. It only ever
 touches files git already tracks — a new/untracked file next to the
 checklist is never picked up and never committed, and the same goes for the
@@ -408,11 +409,12 @@ commit (diverged history, mid-merge, …) is reported as a red status-bar
 message — `markcheck` never attempts to resolve it for you (no auto
 `git pull --rebase`), so fix it in a terminal as usual. A commit that
 succeeds but fails to *push* (offline, expired credentials, …) is
-reported separately (`Git commit saved locally; push failed, will retry`) —
+reported separately (`Committed, not pushed: ... (will keep retrying)`) —
 nothing is lost, and `markcheck` retries the push on its own every 30
 seconds, on the next sync of any kind, and once more right at startup, so
 you don't have to make another edit just to nudge it once the network's
-back. Since the sync runs on a background thread, a slow or offline `git push`
+back. If one of those retries fails too, the status bar says `Push retry
+failed: ... (will keep retrying)`. Since the sync runs on a background thread, a slow or offline `git push`
 never freezes the app during normal use. Quitting right after a toggle or
 edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
@@ -421,14 +423,14 @@ change unsynced.
 Running plain `git push` yourself sends the whole current branch — so if
 the branch already has other local commits ahead of the remote that aren't
 from this checklist, git-sync refuses to create its own commit on top
-rather than pushing your other work for you: `Git sync failed: git-sync:
-branch has unpushed commits unrelated to this change; push them manually
+rather than pushing your other work for you: `Git sync failed: this branch
+has unpushed commits that are not part of this change; push them yourself
 first`. Push those yourself, then the next toggle syncs normally. (Several
 of *markcheck's own* commits accumulating while offline is fine and
 expected — this only refuses for commits that aren't the checklist file.)
 If the checklist itself has **staged changes** that differ from the file on
-disk, git-sync refuses rather than committing: `Git sync failed: git-sync:
-the checklist has staged changes that differ from the file on disk;
+disk, git-sync refuses rather than committing: `Git sync failed: the
+checklist has staged changes that differ from the file on disk;
 committing would drop them — commit or unstage them first`. Committing the
 working tree would replace that staged version in the index, leaving it in
 no commit and no longer staged. Staging the checklist and *then* toggling is
@@ -438,16 +440,16 @@ committed; only a staged version you have since edited away is at risk.
 If git-sync cannot *determine* whether the branch has unrelated unpushed
 commits — a git command failing or timing out while it inspects history —
 it refuses to publish rather than assuming the branch is clean: `Git sync
-failed: git-sync: could not verify the branch has no unrelated unpushed
-commits (...); not publishing`. Being unable to prove the branch is safe is
+failed: could not check whether the branch has other unpushed commits
+(...); not publishing`. Being unable to prove the branch is safe is
 not the same as proving it is. (A branch with simply no upstream configured
 is *not* this case — that's benign, and reported separately below.)
 
 That check only runs before markcheck's own commit is made; if something
 else commits to the branch in the brief window after that but before the
-push, markcheck won't push it either — it reports `Git commit saved
-locally; push failed, will retry: git-sync: repository changed after
-commit` and retries automatically, the same as any other failed push.
+push, markcheck won't push it either — it reports `Committed, not pushed:
+the repository changed after the commit was made (will keep retrying)` and
+retries automatically, the same as any other failed push.
 Unlike running `git push` yourself, git-sync's own push always targets the
 exact commit it just made (or verified), not whatever the branch currently
 is — so even in the rare case something else commits to the branch at
@@ -478,8 +480,9 @@ inside a git work tree at startup; on a file that isn't in a repo, the flag
 
 **The branch needs an upstream.** Git-sync pushes the exact commit it just
 made, to the branch's configured upstream — so a branch that's never had
-one set is committed to locally and reported as ``git-sync: no upstream
-configured for this branch; run `git push -u` once``. Do that once per
+one set is committed to locally and reported as ``Committed, not pushed:
+this branch has no upstream yet; run `git push -u` once (will keep
+retrying)``. Do that once per
 branch (`git push -u origin <branch>`) and syncing proceeds normally from
 then on; the commits made in the meantime go out with the next one. It
 deliberately won't fall back to a plain `git push` here, because that sends
@@ -508,8 +511,8 @@ commit hooks (and honors `commit.gpgsign`) exactly like committing by hand,
 so a `pre-commit` hook that itself runs `git add` against that same
 temporary index can try to pull other files into the commit alongside the
 checklist — but markcheck checks for this after the commit is made and
-undoes it if so, reporting `Git sync failed: ...a commit hook modified
-files beyond the checklist; sync aborted` rather than letting the extra
+undoes it if so, reporting `Git sync failed: a commit hook changed files
+other than the checklist, so the commit was undone` rather than letting the extra
 files through (let alone pushing them). The hook itself still runs
 normally either way; only the resulting commit's scope is enforced.
 
