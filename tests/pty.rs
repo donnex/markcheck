@@ -1609,6 +1609,52 @@ fn open_link_spawns_the_configured_browser() {
 }
 
 #[test]
+fn open_link_tries_each_browser_in_a_colon_list_with_url_placeholder() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let recorded = unique_path("linklist");
+    let browser = unique_path("fakebrowser-list");
+    // Records its argument count and arguments, so a stray literal `%s` or a
+    // doubled URL would show up.
+    std::fs::write(
+        &browser,
+        format!(
+            "#!/bin/sh\nprintf '%s|%s' \"$#\" \"$*\" > {}\n",
+            recorded.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let md = unique_path("linklistmd");
+    write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");
+
+    // The first entry doesn't exist, so the second must be tried.
+    let value = format!(
+        "/nonexistent/markcheck-browser:{} --tab %s",
+        browser.display()
+    );
+    let ok = drive_args(
+        &md,
+        &[],
+        &[("BROWSER", value.as_str())],
+        &[Step::Key("o"), Step::Key("q")],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    assert!(
+        wait_for_file(&recorded, |s| !s.is_empty()),
+        "timed out waiting for the second opener to record the URL"
+    );
+    let got = std::fs::read_to_string(&recorded).unwrap_or_default();
+    assert_eq!(got, "2|--tab https://example.com/rb");
+
+    std::fs::remove_file(&md).ok();
+    std::fs::remove_file(&browser).ok();
+    std::fs::remove_file(&recorded).ok();
+}
+
+#[test]
 fn new_flag_creates_starter_checklist_and_opens_it() {
     let path = unique_path("new-flag").with_extension("md");
     assert!(!path.exists(), "test path must not already exist yet");

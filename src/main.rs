@@ -403,6 +403,21 @@ fn default_opener() -> &'static str {
     }
 }
 
+/// Shell-word-splits one command into `(program, args)`; `Ok(None)` for a
+/// blank value or one that quotes to an empty program name.
+fn split_command(command: &str) -> Result<Option<(String, Vec<String>)>, shell_words::ParseError> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Ok(None);
+    }
+    let mut parts = shell_words::split(command)?;
+    if parts.is_empty() || parts[0].is_empty() {
+        return Ok(None);
+    }
+    let program = parts.remove(0);
+    Ok(Some((program, parts)))
+}
+
 /// Shell-word-splits an env-var command into `(program, args, warning)`.
 /// Blank or empty values fall back silently; unbalanced quotes fall back
 /// with a warning naming `var_name`.
@@ -411,15 +426,9 @@ fn resolve_command(
     fallback: &str,
     var_name: &str,
 ) -> (String, Vec<String>, Option<String>) {
-    let Some(command) = command.map(str::trim).filter(|v| !v.is_empty()) else {
-        return (fallback.to_string(), Vec::new(), None);
-    };
-    match shell_words::split(command) {
-        Ok(mut parts) if !parts.is_empty() && !parts[0].is_empty() => {
-            let program = parts.remove(0);
-            (program, parts, None)
-        }
-        Ok(_) => (fallback.to_string(), Vec::new(), None),
+    match split_command(command.unwrap_or_default()) {
+        Ok(Some((program, args))) => (program, args, None),
+        Ok(None) => (fallback.to_string(), Vec::new(), None),
         Err(err) => (
             fallback.to_string(),
             Vec::new(),
@@ -430,34 +439,105 @@ fn resolve_command(
     }
 }
 
-/// `$BROWSER` (shell-word-split), else the platform default.
-fn resolve_opener(browser: Option<&str>) -> (String, Vec<String>, Option<String>) {
-    resolve_command(browser, default_opener(), "$BROWSER")
+/// Expands the `$BROWSER` placeholders in one argument: `%s` becomes `url`,
+/// `%%` a literal `%`. Returns whether a `%s` was found.
+fn expand_browser_placeholders(arg: &str, url: &str) -> (String, bool) {
+    let mut out = String::with_capacity(arg.len());
+    let mut found = false;
+    let mut chars = arg.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('%', Some('s')) => {
+                chars.next();
+                out.push_str(url);
+                found = true;
+            }
+            ('%', Some('%')) => {
+                chars.next();
+                out.push('%');
+            }
+            _ => out.push(c),
+        }
+    }
+    (out, found)
 }
 
-/// Opens `url` without suspending the TUI. No shell, discarded output, and
-/// the child is reaped on a detached thread.
+/// The commands to try, in order, to open `url`. `$BROWSER` follows the
+/// common convention: a colon-separated list of commands, each
+/// shell-word-split, with `%s` standing for the URL (appended as the last
+/// argument when absent). Unparseable entries are skipped with a warning;
+/// with no usable entry, the platform default opener is used.
+fn resolve_opener(
+    browser: Option<&str>,
+    url: &str,
+) -> (Vec<(String, Vec<String>)>, Option<String>) {
+    let mut candidates = Vec::new();
+    let mut warning = None;
+    for entry in browser.unwrap_or_default().split(':') {
+        match split_command(entry) {
+            Ok(Some((program, args))) => {
+                let mut has_placeholder = false;
+                let mut args: Vec<String> = args
+                    .iter()
+                    .map(|arg| {
+                        let (arg, found) = expand_browser_placeholders(arg, url);
+                        has_placeholder |= found;
+                        arg
+                    })
+                    .collect();
+                if !has_placeholder {
+                    args.push(url.to_string());
+                }
+                candidates.push((program, args));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warning.get_or_insert_with(|| {
+                    format!("Couldn't parse $BROWSER entry {:?} ({err})", entry.trim())
+                });
+            }
+        }
+    }
+    if candidates.is_empty() {
+        let fallback = default_opener();
+        if let Some(w) = warning.as_mut() {
+            w.push_str(&format!("; falling back to {fallback}"));
+        }
+        candidates.push((fallback.to_string(), vec![url.to_string()]));
+    }
+    (candidates, warning)
+}
+
+/// Opens `url` without suspending the TUI, trying each resolved opener in
+/// turn until one spawns. No shell, discarded output, and the child is
+/// reaped on a detached thread.
 fn open_link(url: &str, state: &mut AppState) {
     use std::process::{Command, Stdio};
 
-    let (program, mut args, warning) = resolve_opener(std::env::var("BROWSER").ok().as_deref());
+    let (candidates, warning) = resolve_opener(std::env::var("BROWSER").ok().as_deref(), url);
     if let Some(warning) = warning {
         state.set_error(warning);
     }
-    args.push(url.to_string());
-    match Command::new(&program)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(mut child) => {
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+    let mut last_error = None;
+    for (program, args) in &candidates {
+        match Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return;
+            }
+            Err(err) => last_error = Some(format!("{program}: {err}")),
         }
-        Err(err) => state.set_error(format!("Couldn't open link ({program}): {err}")),
+    }
+    if let Some(err) = last_error {
+        state.set_error(format!("Couldn't open link ({err})"));
     }
 }
 
@@ -748,27 +828,92 @@ mod tests {
         }
     }
 
+    const URL: &str = "https://example.com/x";
+
+    fn is_default_opener(candidates: &[(String, Vec<String>)]) -> bool {
+        candidates.len() == 1
+            && (candidates[0].0 == "xdg-open" || candidates[0].0 == "open")
+            && candidates[0].1 == vec![URL.to_string()]
+    }
+
     #[test]
     fn opener_prefers_browser_then_platform_default() {
-        let (prog, args, warning) = resolve_opener(Some("firefox --new-tab"));
-        assert_eq!(prog, "firefox");
-        assert_eq!(args, vec!["--new-tab".to_string()]);
+        let (candidates, warning) = resolve_opener(Some("firefox --new-tab"), URL);
+        assert_eq!(
+            candidates,
+            vec![(
+                "firefox".to_string(),
+                vec!["--new-tab".to_string(), URL.to_string()]
+            )]
+        );
         assert!(warning.is_none());
         // Empty/absent $BROWSER falls back to the platform opener.
-        let (prog, args, warning) = resolve_opener(None);
-        assert!(prog == "xdg-open" || prog == "open");
-        assert!(args.is_empty());
+        let (candidates, warning) = resolve_opener(None, URL);
+        assert!(is_default_opener(&candidates));
         assert!(warning.is_none());
-        assert_eq!(resolve_opener(Some("   ")).1, Vec::<String>::new());
+        assert!(is_default_opener(&resolve_opener(Some("   "), URL).0));
+    }
+
+    #[test]
+    fn opener_colon_list_yields_each_command_in_order() {
+        let (candidates, warning) = resolve_opener(Some("firefox:w3m -o x"), URL);
+        assert_eq!(
+            candidates,
+            vec![
+                ("firefox".to_string(), vec![URL.to_string()]),
+                (
+                    "w3m".to_string(),
+                    vec!["-o".to_string(), "x".to_string(), URL.to_string()]
+                ),
+            ]
+        );
+        assert!(warning.is_none());
+        // Empty entries (doubled or trailing colons) are skipped.
+        let (candidates, _) = resolve_opener(Some(":firefox::"), URL);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "firefox");
+        // Only colons: nothing usable, so the platform default.
+        assert!(is_default_opener(&resolve_opener(Some("::"), URL).0));
+    }
+
+    #[test]
+    fn opener_substitutes_the_url_placeholder_instead_of_appending() {
+        let (candidates, warning) = resolve_opener(Some("firefox --new-tab %s"), URL);
+        assert_eq!(
+            candidates,
+            vec![(
+                "firefox".to_string(),
+                vec!["--new-tab".to_string(), URL.to_string()]
+            )]
+        );
+        assert!(warning.is_none());
+        // Embedded in a larger argument, and `%%` is a literal percent sign.
+        let (candidates, _) = resolve_opener(Some("wrap --url=%s --pct=100%% --odd=%x %"), URL);
+        assert_eq!(
+            candidates[0].1,
+            vec![
+                format!("--url={URL}"),
+                "--pct=100%".to_string(),
+                "--odd=%x".to_string(),
+                "%".to_string(),
+            ]
+        );
+        // `%%s` is a literal `%s`, not a placeholder, so the URL is appended.
+        let (candidates, _) = resolve_opener(Some("wrap %%s"), URL);
+        assert_eq!(candidates[0].1, vec!["%s".to_string(), URL.to_string()]);
     }
 
     #[test]
     fn opener_quoted_argument_with_spaces_stays_one_token() {
         // Shell-word splitting (not plain whitespace) so a quoted argument
         // containing spaces survives as a single token.
-        let (prog, args, warning) = resolve_opener(Some(r#"my-wrapper --arg="value with spaces""#));
-        assert_eq!(prog, "my-wrapper");
-        assert_eq!(args, vec!["--arg=value with spaces".to_string()]);
+        let (candidates, warning) =
+            resolve_opener(Some(r#"my-wrapper --arg="value with spaces""#), URL);
+        assert_eq!(candidates[0].0, "my-wrapper");
+        assert_eq!(
+            candidates[0].1,
+            vec!["--arg=value with spaces".to_string(), URL.to_string()]
+        );
         assert!(warning.is_none());
     }
 
@@ -778,9 +923,8 @@ mod tests {
         // fall back the same as an unset/whitespace-only $BROWSER, not
         // attempt to launch a program with an empty name (`shell_words::split`
         // returns one empty token for this, not an empty list).
-        let (prog, args, warning) = resolve_opener(Some("''"));
-        assert!(prog == "xdg-open" || prog == "open");
-        assert!(args.is_empty());
+        let (candidates, warning) = resolve_opener(Some("''"), URL);
+        assert!(is_default_opener(&candidates));
         assert!(warning.is_none());
     }
 
@@ -788,13 +932,17 @@ mod tests {
     fn opener_malformed_quoting_falls_back_with_a_warning() {
         // Unbalanced quotes can't be parsed; fall back to the platform
         // default rather than misparsing, and surface why.
-        let (prog, args, warning) = resolve_opener(Some("my-wrapper 'unterminated"));
-        assert!(prog == "xdg-open" || prog == "open");
-        assert!(args.is_empty());
+        let (candidates, warning) = resolve_opener(Some("my-wrapper 'unterminated"), URL);
+        assert!(is_default_opener(&candidates));
         assert!(
-            warning.is_some_and(|w| w.contains("$BROWSER")),
+            warning.is_some_and(|w| w.contains("$BROWSER") && w.contains("falling back")),
             "warning names the offending variable"
         );
+        // In a list, the bad entry is skipped and the good one still used.
+        let (candidates, warning) = resolve_opener(Some("bad 'x:firefox"), URL);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "firefox");
+        assert!(warning.is_some_and(|w| w.contains("bad 'x") && !w.contains("falling back")));
     }
 
     #[test]

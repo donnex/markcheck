@@ -86,6 +86,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `$BROWSER` value written the usual way now opens links. The variable is
+  conventionally a colon-separated list of browsers to try in turn
+  (`BROWSER=firefox:w3m`), and a command may mark where the URL goes with
+  `%s` (`BROWSER="firefox --new-tab %s"`). markcheck took the whole list as
+  one program name, so `o` failed with "Couldn't open link", and passed `%s`
+  through literally while also appending the URL, so the browser opened an
+  extra bogus tab. It now tries each command in order until one starts, and
+  puts the URL in place of `%s` (`%%` for a literal `%`), adding it at the
+  end only when there is no `%s`. (#15)
+
 - Card text written in East Asian scripts (Chinese, Japanese, Korean) or
   with emoji now wraps onto further lines instead of losing its end off the
   right edge of the card. These characters take two terminal columns each,
