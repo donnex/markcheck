@@ -8,6 +8,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List as ListWidget, ListItem, ListState, Padding, Paragraph,
 };
 
+use super::{char_width, display_width, split_at_width};
 use crate::model::{
     AppState, BodySpan, IconSet, Item, ItemKind, List, Palette, Screen, SubHeading, TaskState,
 };
@@ -131,8 +132,8 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
             // suffix is what tells same-named tasks apart: both keep a share
             // and are cut with `…`.
             let (label_budget, suffix_budget) = super::split_width(
-                label.chars().count(),
-                suffix.chars().count(),
+                display_width(label),
+                display_width(&suffix),
                 text_width,
                 text_width / 2,
             );
@@ -671,10 +672,18 @@ fn breadcrumb_line(
     let text = format!("{} ›", labels.join(" › "));
 
     let width = width.max(1) as usize;
-    let n = text.chars().count();
-    let text = if n > width {
-        let skip = n - width.saturating_sub(1);
-        format!("…{}", text.chars().skip(skip).collect::<String>())
+    let text = if display_width(&text) > width {
+        let budget = width.saturating_sub(1);
+        let mut used = 0;
+        let start = text
+            .char_indices()
+            .rev()
+            .find_map(|(i, ch)| {
+                used += char_width(ch);
+                (used > budget).then_some(i + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        format!("…{}", &text[start..])
     } else {
         text
     };
@@ -942,9 +951,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         let last = (state.card_scroll as usize + visible).min(lines.len());
         format!(" {first}–{last}/{} ", lines.len())
     });
-    let scroll_width = scroll_title
-        .as_ref()
-        .map_or(0, |s| s.chars().count() as u16);
+    let scroll_width = scroll_title.as_ref().map_or(0, |s| display_width(s) as u16);
     let dots_width = list.items.len() as u16 + 2;
     if !list.items.is_empty() && dots_width + scroll_width <= area.width {
         block = block
@@ -1379,8 +1386,8 @@ fn soft_wrapped(block: &str, width: usize) -> impl Iterator<Item = (String, bool
     })
 }
 
-/// Greedy word wrap over styled tokens `(text, is_code)`, char-count based
-/// and hard-splitting overlong tokens. Same wrapping contract as
+/// Greedy word wrap over styled tokens `(text, is_code)`, measured in display
+/// cells and hard-splitting overlong tokens. Same wrapping contract as
 /// `wrap_text` but emits styled `Line`s with code fragments in the `code` style.
 /// Each line comes with, per span, the index of the code token it came from
 /// (`None` for prose and spacing), so click-to-copy can map a chip — or any
@@ -1429,7 +1436,7 @@ fn wrap_tokens(
         let glued = *glue;
         loop {
             let sep = usize::from(!current.is_empty() && !glued);
-            let word_len = rest.chars().count();
+            let word_len = display_width(rest);
             if cur_len + sep + word_len <= width {
                 if sep == 1 {
                     current.push(Span::raw(" "));
@@ -1446,9 +1453,8 @@ fn wrap_tokens(
                 // command doesn't read as several.
                 let marked = style.code && width >= 2;
                 let take = if marked { width - 1 } else { width };
-                let split: String = rest.chars().take(take).collect();
-                let rest_start = split.len();
-                let mut spans = vec![span_for(split, *style)];
+                let rest_start = split_at_width(rest, take);
+                let mut spans = vec![span_for(rest[..rest_start].to_string(), *style)];
                 if marked {
                     spans.push(Span::styled(CONTINUATION, continuation_style(code)));
                 }
@@ -1472,19 +1478,6 @@ fn wrap_tokens(
         lines.push((Line::from(current), origins));
     }
     lines
-}
-
-/// Display width in terminal cells, used by the fenced-code box, whose
-/// closing `│` is placed by padding to a fixed width.
-fn display_width(text: &str) -> usize {
-    Span::raw(text).width()
-}
-
-/// Display width of a single character, without allocating —
-/// `char::encode_utf8` writes into a stack buffer.
-fn char_width(ch: char) -> usize {
-    let mut buf = [0u8; 4];
-    display_width(ch.encode_utf8(&mut buf))
 }
 
 /// Hard-wraps a single line to `width` **display cells** (no word breaking),
@@ -1515,9 +1508,9 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Greedy word wrap on character counts, hard-splitting overlong words, so
-/// line counts are exact for scroll clamping. Counts chars, not display
-/// width.
+/// Greedy word wrap on display cells, hard-splitting overlong words. The
+/// renderer and `desired_card_height` both wrap through here, so line counts
+/// are exact for scroll clamping.
 pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
     let width = width.max(1) as usize;
     let mut lines = Vec::new();
@@ -1527,7 +1520,7 @@ pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
         let mut word = word;
         loop {
             let fits =
-                current.chars().count() + word.chars().count() + usize::from(!current.is_empty());
+                display_width(&current) + display_width(word) + usize::from(!current.is_empty());
             if fits <= width {
                 if !current.is_empty() {
                     current.push(' ');
@@ -1537,9 +1530,8 @@ pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
             }
             if current.is_empty() {
                 // Hard-split a word longer than the line.
-                let split: String = word.chars().take(width).collect();
-                let rest_start = split.len();
-                lines.push(split);
+                let rest_start = split_at_width(word, width);
+                lines.push(word[..rest_start].to_string());
                 word = &word[rest_start..];
                 if word.is_empty() {
                     break;
@@ -2372,6 +2364,31 @@ mod tests {
         assert_eq!(top_pad(3, 10), 3); // floor of 3.5
         assert_eq!(top_pad(10, 10), 0); // exact fit
         assert_eq!(top_pad(12, 10), 0); // overflow: no negative pad
+    }
+
+    #[test]
+    fn wrap_text_measures_wide_glyphs_in_cells() {
+        let lines = wrap_text("漢字漢字漢 ab", 4);
+        assert_eq!(lines, vec!["漢字", "漢字", "漢", "ab"]);
+        assert!(lines.iter().all(|l| display_width(l) <= 4));
+    }
+
+    #[test]
+    fn breadcrumb_front_truncation_fits_wide_glyphs() {
+        let parent = body_item(vec![], vec![], "漢字漢字漢字");
+        let mut child = body_item(vec![], vec![], "child");
+        child.line_number = 2;
+        child.depth = 1;
+        let list = List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![parent, child],
+        };
+        let line = breadcrumb_line(&list, 0, 1, 6, Palette::truecolor())
+            .expect("nested item has a breadcrumb");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(display_width(&text) <= 6, "fits the width: {text}");
+        assert!(text.starts_with('…') && text.ends_with('›'), "{text}");
     }
 
     #[test]

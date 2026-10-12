@@ -31,7 +31,9 @@ markcheck examples/basics.md
   digit, fenced lines and a long
   mid-sentence command that wrap with a dim `↩` on every continued row (and
   still copy whole on click), inline
-  styling (emphasis / mid-line bold / strikethrough), links whose URL shows
+  styling (emphasis / mid-line bold / strikethrough), a task in wide
+  (East Asian) characters that wraps by display width rather than being cut
+  off at the card edge, links whose URL shows
   centered below the card rather than on it — including a long URL that
   no longer wraps and a two-link task with `[1]`/`[2]` markers keyed to the
   numbered list below the card — an `https://` and a `mailto:` one that `o`

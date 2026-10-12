@@ -62,6 +62,8 @@ Non-task content and the ways code is handled.
   continued row ending in a dim `↩`, and a click on any of them copies it whole
 - [ ] A task with *emphasis*, mid-line **bold**, and ~~struck-through~~ text to
   show inline styling in the card body
+- [ ] A task in wide (two-column) characters wraps by width instead of running
+  off the card: 本番環境に適用する前に、ステージング環境で変更内容をすべて確認し、ログにエラーが出ていないことを確かめてください。
 - [ ] Open the [project runbook](https://example.com/runbook) with `o` — the
   link shows as underlined text on the card, its URL appears centered below the
   card, and `o` launches it in your browser

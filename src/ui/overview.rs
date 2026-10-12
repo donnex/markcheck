@@ -54,10 +54,10 @@ fn section_divider_line(
     // "── " (3 cells) before the label, one trailing space after it: truncate
     // the label with an ellipsis (matching the card-side breadcrumb's
     // truncation) so a long sub-heading is never hard-clipped instead.
-    let prefix_width = indent.chars().count() + 3;
+    let prefix_width = super::display_width(&indent) + 3;
     let label_budget = inner_width.saturating_sub(prefix_width + 1);
     let label = format!("{} ", super::truncate(&heading.text, label_budget));
-    let used = prefix_width + label.chars().count();
+    let used = prefix_width + super::display_width(&label);
     let trailing = inner_width.saturating_sub(used);
     let dim = Style::default().add_modifier(Modifier::DIM);
     let bold = Style::default().add_modifier(Modifier::BOLD);

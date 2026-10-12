@@ -213,10 +213,10 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         ));
     }
 
-    let right_width = counter_text.chars().count() as u16
+    let right_width = display_width(&counter_text) as u16
         + right_parts
             .iter()
-            .map(|(text, _)| text.chars().count() as u16 + 3) // + " │ "
+            .map(|(text, _)| display_width(text) as u16 + 3) // + " │ "
             .sum::<u16>();
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(right_width)]).areas(area);
@@ -251,8 +251,8 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     // filename never runs into the right-hand cluster.
     let available = (left_area.width as usize).saturating_sub(separator.width() + 1);
     let (title_budget, file_budget) = split_width(
-        title_span.content.chars().count(),
-        file_name.chars().count(),
+        display_width(&title_span.content),
+        display_width(&file_name),
         available,
         FILENAME_MIN_WIDTH,
     );
@@ -334,7 +334,7 @@ fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
     let fixed = TAB_DECORATION * n;
     let title_budget = avail.checked_sub(fixed)?;
 
-    let lengths: Vec<usize> = titles.iter().map(|t| t.chars().count()).collect();
+    let lengths: Vec<usize> = titles.iter().map(|t| display_width(t)).collect();
     let total_len: usize = lengths.iter().sum();
     if total_len <= title_budget {
         return Some(lengths); // everything fits at full length
@@ -362,8 +362,8 @@ fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
     Some(shares)
 }
 
-/// Splits `total` columns between two texts of `first` and `second`
-/// characters sharing one row. Both keep their full length when they fit;
+/// Splits `total` columns between two texts `first` and `second` cells wide
+/// sharing one row. Both keep their full length when they fit;
 /// otherwise `second` keeps at least `second_floor` columns (or its own
 /// length, if shorter) and `first` takes the rest, so neither text can push
 /// the other off the row.
@@ -375,15 +375,51 @@ fn split_width(first: usize, second: usize, total: usize, second_floor: usize) -
     (total - second_budget, second_budget)
 }
 
-fn truncate(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
+/// Cuts `text` to at most `max_width` display cells, ending in `…` when cut.
+fn truncate(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
         String::new()
-    } else if text.chars().count() <= max_chars {
+    } else if display_width(text) <= max_width {
         text.to_string()
     } else {
-        let truncated: String = text.chars().take(max_chars - 1).collect();
-        format!("{truncated}…")
+        let mut used = 0;
+        let end = text
+            .char_indices()
+            .find_map(|(i, ch)| {
+                used += char_width(ch);
+                (used > max_width - 1).then_some(i)
+            })
+            .unwrap_or(text.len());
+        format!("{}…", &text[..end])
     }
+}
+
+/// Display width in terminal cells. A wide (e.g. East Asian) glyph takes two
+/// cells, so anything that wraps, pads or truncates to fit a row measures
+/// with this rather than a character count.
+fn display_width(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
+/// Display width of a single character, without allocating —
+/// `char::encode_utf8` writes into a stack buffer.
+fn char_width(ch: char) -> usize {
+    let mut buf = [0u8; 4];
+    display_width(ch.encode_utf8(&mut buf))
+}
+
+/// The byte index splitting off the longest prefix of `text` that fits in
+/// `width` cells — but always at least one character, so a glyph wider than
+/// the whole budget still makes progress instead of looping forever.
+fn split_at_width(text: &str, width: usize) -> usize {
+    let mut used = 0;
+    for (i, ch) in text.char_indices() {
+        used += char_width(ch);
+        if used > width && i > 0 {
+            return i;
+        }
+    }
+    text.len()
 }
 
 /// A relative "time since X" label for the update and sync tags, `None`
@@ -508,6 +544,41 @@ mod tests {
     fn truncate_nonzero_budget_still_fits_within_it() {
         assert_eq!(truncate("hello world", 5), "hell…");
         assert_eq!(truncate("hi", 5), "hi");
+    }
+
+    #[test]
+    fn truncate_measures_wide_glyphs_in_cells() {
+        assert_eq!(truncate("漢字漢字", 8), "漢字漢字");
+        assert_eq!(truncate("漢字漢字", 5), "漢字…");
+        assert_eq!(display_width(&truncate("漢字漢字", 6)), 5);
+    }
+
+    #[test]
+    fn tab_budgets_count_wide_glyphs_as_two_cells() {
+        assert_eq!(fit_tab_titles(&["漢字"], 100).unwrap(), vec![4]);
+    }
+
+    #[test]
+    fn split_at_width_always_takes_at_least_one_glyph() {
+        assert_eq!(split_at_width("漢字", 3), "漢".len());
+        assert_eq!(split_at_width("漢字", 1), "漢".len());
+        assert_eq!(split_at_width("ab", 5), 2);
+    }
+
+    #[test]
+    fn card_body_of_wide_glyphs_wraps_instead_of_clipping() {
+        let body = format!("{}終", "漢字".repeat(20));
+        let mut item = checkbox(1, &body, false);
+        item.body = vec![crate::model::BodySpan::Text(body.clone())];
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![item],
+        }]);
+        let text = buffer_text(&mut state, 50, 30);
+        assert_eq!(text.matches('漢').count(), 20, "every 漢 shown: {text}");
+        assert_eq!(text.matches('字').count(), 20, "every 字 shown");
+        assert!(text.contains('終'), "the final glyph is shown");
     }
 
     #[test]
