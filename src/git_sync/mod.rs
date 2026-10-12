@@ -78,6 +78,36 @@ pub enum SyncOutcome {
     RetryFailed(String),
 }
 
+/// The line to print on stderr after quitting, for a final sync that didn't
+/// land cleanly: `last` is the last outcome seen while waiting, and
+/// `still_running` says the wait gave up before the worker finished. The TUI
+/// is already gone by then, so this is the only place the user can learn it.
+pub fn exit_report(last: Option<&SyncOutcome>, still_running: bool) -> Option<String> {
+    if still_running {
+        return Some(
+            "markcheck: git sync was still running when markcheck exited; \
+             the last change may not be committed or pushed"
+                .to_string(),
+        );
+    }
+    match last? {
+        SyncOutcome::Synced | SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => None,
+        SyncOutcome::SkippedUntracked => Some(
+            "markcheck: git sync skipped: file is not tracked in git (run `git add` on it)"
+                .to_string(),
+        ),
+        SyncOutcome::CommittedNotPushed { message, .. } | SyncOutcome::RetryFailed(message) => {
+            Some(format!(
+                "markcheck: committed but not pushed: {message}; \
+                 markcheck pushes it the next time it opens this file with git sync on"
+            ))
+        }
+        SyncOutcome::Failed(message) => Some(format!(
+            "markcheck: git sync failed: {message}; the file is saved, but not committed"
+        )),
+    }
+}
+
 /// Drives commit+push for one file on a background thread, so a slow
 /// `git push` never blocks the UI.
 pub struct GitSync {
@@ -696,5 +726,43 @@ mod tests {
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn exit_report_stays_quiet_when_the_final_sync_landed_or_had_nothing_to_do() {
+        assert_eq!(exit_report(None, false), None);
+        assert_eq!(exit_report(Some(&SyncOutcome::Synced), false), None);
+        assert_eq!(exit_report(Some(&SyncOutcome::Skipped), false), None);
+        assert_eq!(exit_report(Some(&SyncOutcome::RetryAbandoned), false), None);
+    }
+
+    #[test]
+    fn exit_report_names_each_problem_with_the_final_sync() {
+        let failed = exit_report(Some(&SyncOutcome::Failed("hook said no".into())), false);
+        assert!(failed.is_some_and(
+            |m| m.contains("git sync failed: hook said no") && m.contains("not committed")
+        ));
+
+        let unpushed = exit_report(
+            Some(&SyncOutcome::CommittedNotPushed {
+                message: "remote moved".into(),
+                commit: "abc".into(),
+            }),
+            false,
+        );
+        assert!(unpushed.is_some_and(|m| m.contains("committed but not pushed: remote moved")));
+
+        let retry = exit_report(Some(&SyncOutcome::RetryFailed("offline".into())), false);
+        assert!(retry.is_some_and(|m| m.contains("committed but not pushed: offline")));
+
+        let untracked = exit_report(Some(&SyncOutcome::SkippedUntracked), false);
+        assert!(untracked.is_some_and(|m| m.contains("not tracked in git")));
+    }
+
+    #[test]
+    fn exit_report_flags_a_sync_cut_off_by_the_exit_wait() {
+        for last in [None, Some(&SyncOutcome::Synced)] {
+            assert!(exit_report(last, true).is_some_and(|m| m.contains("still running")));
+        }
     }
 }

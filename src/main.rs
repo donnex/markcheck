@@ -209,7 +209,7 @@ fn main() -> anyhow::Result<()> {
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
-    let _guard = TerminalGuard { mouse };
+    let guard = TerminalGuard { mouse };
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -221,8 +221,13 @@ fn main() -> anyhow::Result<()> {
         &mut git_sync,
         mouse,
     );
+    drop(guard);
     clipboard::release_system_clipboard();
-    result
+    // Printed only once the alternate screen is gone, so it stays visible.
+    if let Some(report) = result? {
+        eprintln!("{report}");
+    }
+    Ok(())
 }
 
 /// The four boolean settings, resolved in one place so the wiring can be
@@ -272,7 +277,7 @@ fn run<B: Backend>(
     watcher: Option<&FileWatcher>,
     git_sync: &mut Option<git_sync::GitSync>,
     mouse: bool,
-) -> anyhow::Result<()>
+) -> anyhow::Result<Option<String>>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
@@ -362,26 +367,30 @@ where
 
     // The last action may have queued a sync, which takes several git
     // subprocesses; give it a bounded window to land before exiting.
-    if let Some(sync) = git_sync.as_mut() {
-        if let Some(pending) = state.take_git_sync_request() {
-            sync.request(pending);
-        }
-        wait_for_git_sync(sync);
+    let Some(sync) = git_sync.as_mut() else {
+        return Ok(None);
+    };
+    if let Some(pending) = state.take_git_sync_request() {
+        sync.request(pending);
     }
-
-    Ok(())
+    Ok(wait_for_git_sync(sync))
 }
 
 /// Polls `sync` until its in-flight (and any coalesced-behind-it) request
 /// settles, or `timeout` elapses — whichever comes first. Only meant to be
-/// called once, right before quitting.
-fn wait_for_git_sync(sync: &mut git_sync::GitSync) {
+/// called once, right before quitting. Returns the line to print after the
+/// TUI closes when that last sync didn't land cleanly.
+fn wait_for_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
     const TIMEOUT: Duration = Duration::from_secs(5);
     let deadline = Instant::now() + TIMEOUT;
+    let mut last = None;
     while sync.is_busy() && Instant::now() < deadline {
-        sync.poll();
+        if let Some(outcome) = sync.poll() {
+            last = Some(outcome);
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
+    git_sync::exit_report(last.as_ref(), sync.is_busy())
 }
 
 /// The platform default opener when `$BROWSER` is unset or unusable: `open` on
