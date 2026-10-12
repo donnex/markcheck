@@ -79,6 +79,25 @@ Key non-obvious design points:
 - Before running a prompt that generates `REVIEW.md` (e.g. a deep-code-review or an agent-instructions audit prompt), check whether an untracked `REVIEW.md` already exists in the repo root. If it does, ask whether it has already been processed — its presence signals unfinished review work per the rule above. If the user confirms it's been processed, proceed (the new prompt will overwrite it); otherwise stop and let the user decide how to handle the existing report before running the new prompt.
 - When a large task wraps up, or context usage is running high (roughly 20% or more used), remind the user to run `/clear` to start the next task with a fresh context. Output the reminder as a `> [!WARNING]` markdown callout so it stands out from surrounding prose. This is a reminder only — `/clear` is a built-in CLI command, not something invocable through a tool, so it can never be run on the user's behalf.
 
+### Issue drafts: `new-issues.md`
+
+A `new-issues.md` file in the repo root holds issue drafts the user wants filed in the project's issue tracker. Like `REVIEW.md`, it is a signal file: leave it untracked, and never add it to `.gitignore`.
+
+**When to check.** Look for it at the start of a session, before starting each new task or step, and after each commit. Work that runs for a long time without any of those moments still checks between its steps.
+
+**When one is found, pause briefly and ask.** Stop what you're doing at the next safe point: never in the middle of a file edit or a git operation. Then:
+
+1. Read the file and reword each draft into a proper issue. A draft is raw notes, not text to paste as-is. Give each one a short, specific title and a body that states the problem or request, where it applies, and what done looks like. Follow the project's own issue conventions for format, e.g. a severity or type prefix. Keep the draft's meaning, and don't invent details it doesn't support.
+2. Present a summary: how many drafts there are, and the reworded title plus a one-line gist of each.
+3. Ask whether to create them as issues: all, some, or none.
+4. Wait **one minute** for an answer, and no longer. Ask in plain text, then wait with a 60-second sleep (e.g. `sleep 60`), so a reply typed during the wait arrives when it ends. Never ask with a prompt that blocks until someone answers, since nothing would then end the wait.
+
+**The pause must never stop the work.** When no answer arrives within the minute, resume the interrupted work exactly where it left off, with no further prompt and no change to what it was doing. Never abort, roll back, or skip ongoing work because of this check, and never leave the work paused indefinitely waiting for an answer. An unanswered question is not a no: create nothing until the user says yes.
+
+**Ask again at the very next interaction.** Getting the issues filed is the priority, so an unanswered question never waits for a new session. The next time the user interacts, lead with it: put the summary and the question at the top of the reply to their next message, before anything else. If the work finishes first, put them in the final summary too. Keep asking at every interaction, in this session or a later one, until the user answers. While work is running between interactions, an unchanged `new-issues.md` doesn't trigger another one-minute pause, but a change to its contents does.
+
+**When the user says yes**, create the approved issues from the reworded versions, not the raw drafts. Follow the project's issue conventions: check for an existing open issue covering the same thing first, and add any required trailer. Then delete `new-issues.md`, since its content now lives in the tracker. Report each new issue's number, and list any drafts that were declined or skipped as duplicates, so none disappears without a mention. Then resume the interrupted work.
+
 ## CI
 
 If a project has no CI workflow configured yet, suggest setting one up — don't wait to be asked. This is a suggestion, not something to set up unprompted: propose it and let the user decide.
@@ -124,14 +143,34 @@ Before actually running `gh issue create` or `gh issue comment`, re-read the ful
 - Install `gh` via the OS's package manager (e.g. `apt install gh`, `brew install gh`) or from GitHub's own release page.
 - Authenticate once per machine: `gh auth login`, following its interactive prompts (browser or token; add `--hostname <host>` for a GitHub Enterprise Server host). The resulting credentials live only in `gh`'s own local config (`~/.config/gh/hosts.yml`) on the machine running it — never commit a token or write one into the repo.
 - Run `gh` from inside the project's repo; it auto-detects the repository from the git remote, so `--repo <owner>/<name>` isn't needed unless operating on a different repo than the current checkout.
-- List issues: `gh issue list`
+- List issues: `gh issue list`. **This stops at 30 issues by default**, with no sign that anything was cut off. To count or sweep the whole backlog, raise the limit well past the backlog's size (`gh issue list --limit 1000`) and check the result count is below it — a listing that comes back exactly at its limit has been truncated.
 - View a single issue: `gh issue view <number>`
-- Create an issue: `gh issue create --title "..." --body "..."`
-- Comment on an issue: `gh issue comment <number> --body "..."`
-- Close an issue via `gh issue close <number>`, once it's actually fixed and the fix is committed (and pushed, if that's part of the workflow in play).
+- Create an issue: `gh issue create --title "..." --body "..."`. For a body of any real length prefer `--body-file <file>` (or `--body-file -` for stdin), which also keeps a long value out of the process's argument list.
+- Comment on an issue: `gh issue comment <number> --body "..."` (or `--body-file`).
+- Close an issue via `gh issue close <number>`, once it's actually fixed and the fix is committed (and pushed, if that's part of the workflow in play) — never with a bare state change; see below.
 - Label an issue: `gh issue edit <number> --add-label "..."`
 - Unlike some other issue-tracker CLIs, `gh`'s issue subcommands cover the full set of routine operations natively (list, view, create, comment, close, label) — there's no need to fall back to the API or the web UI for any of these.
 - Before starting substantial work, check open issues (`gh issue list`) so nothing gets duplicated or missed.
+
+### Attribution and closing
+
+- Every issue, comment, or other content posted to the tracker must end with a trailer identifying the active model, in the same `Co-Authored-By: <model name> <noreply@anthropic.com>` format used in git commit messages, e.g. `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`. Append it as the last line of the body or comment text. Never omit it.
+- Never close an issue with a bare state change. First post a comment with a short description of what changed to resolve it, and the commit(s) that fixed it (short SHA plus subject line, e.g. `abc1234 scope: Fix the thing`), then close it — a plain closed state with no comment loses the traceability back to what actually resolved it and how. `gh issue close <number> --comment "..."` does both in one step.
+- Alongside each commit SHA and subject line, also include a link to that commit (e.g. `https://<host>/<owner>/<repo>/commit/<full-sha>`), so the closing comment lets a reviewer jump straight to the actual diff instead of having to look the commit up themselves.
+
+### Remind about the open issue count
+
+Open issues accumulate silently otherwise — nothing surfaces them again once filed, so they're easy to forget for months. If this project already has a periodic review-timer mechanism for other recurring obligations (docs review, security audit, etc.), add an issue-triage timer to it: periodically list the whole backlog (with a limit well past its size, per the listing note above — a default listing stops at 30 and under-reports the very number this check exists to surface), spot-check a sample of open issues against the current code (not necessarily every one, for a large backlog), and report the total open count plus anything found stale to the user — offering to close the confirmed-stale ones per the closing rule above. If the project has no such mechanism, do the same check-and-report at the start of a session or before ending one, whichever is more natural given how the mechanism (or its absence) works here, rather than letting the count grow unremarked indefinitely.
+
+### Filing deep code review findings
+
+When a deep code review (or similar audit prompt) says to file its findings with the project's issue tracker, and this project's is GitHub, file one issue per finding instead of writing a local report — per that prompt's own instructions on where findings go.
+
+- Title: `[<severity>] <short description>`, e.g. `[HIGH] SQL injection in the search endpoint`.
+- Body: the same content the review would otherwise put in a finding's entry in a local report — file and line number(s), why it's a problem, and the suggested fix — plus the required trailer from above.
+- Before creating one, check the open issues (the whole backlog, per the listing note above) for an existing one covering the same finding, so re-running the review doesn't file a duplicate.
+- Create with `gh issue create --title "..." --body-file <file>`, same as any other issue.
+- Filing the issue is the full extent of this step — do not apply the fix or open a pull request as part of it. The review reports findings before anything gets fixed, the same as the local-report fallback would.
 
 ## Test Data & Privacy
 
@@ -174,13 +213,21 @@ Do this check — and any resulting rewrite plus `--force-with-lease` push — *
 
 #### Merging to master
 
-Merging to `master` happens only on explicit request, as a sequence:
+Merging to `master` happens only on explicit request, following the sequence below.
+
+**`mm` is shorthand for "merge to `master`".** A message consisting of only `mm` (nothing else, ignoring surrounding whitespace) is a request to merge `dev` into `master` — the same as typing it out in full. It starts the sequence below at step 1, exactly like any other merge request. It never approves a merge: it can't stand in for the confirmation in step 3, even when it's sent right after a merge summary. A merge summary answered with `mm` is a new merge request, and gets a fresh summary of its own. `mm` inside a longer message is ordinary text, not the shortcut.
+
+The sequence:
 
 1. Perform the mandatory pre-merge history check above. Do not proceed to the next step until `dev`'s history is already clean.
 2. Present a summary of what's about to land — the commit range (`git log --oneline master..dev`) and a nutshell of what changed.
 3. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are two separate steps; don't collapse them just because the user already said "merge."
 4. Once confirmed, fast-forward `master` to `dev`: `git merge --ff-only dev` — no merge commit, no squash, since `dev`'s history is already linear and clean. If there's no local `master` checkout to merge into, push `dev`'s tip directly to `master` on the remote instead.
 5. If a true fast-forward isn't possible (something moved `master` independently), stop and ask rather than falling back to a merge commit or force-push.
+
+**Steps 2 and 3 have no size exception, and no staleness exception either.** A single-commit merge, or a merge of work already discussed at length earlier in the same conversation, still gets its own summary and its own explicit confirmation — this has been skipped before on exactly that reasoning ("it's small," "we already just went over this"), which collapses the two steps the same way jumping straight from the user's "merge" to running it does. A summary shown earlier in the conversation does not count either, no matter how recently — even one turn earlier, even with nothing but an unrelated message in between. Any turn landing between the summary and the user's actual merge request breaks the link: treat every occurrence of the user asking to merge as requiring a summary shown *after* that specific request, with confirmation anchored to that specific summary, every single time it happens in a conversation, not just the first.
+
+**This step must never be skipped, full stop — not "try harder next time," a hard gate to check before running the merge command.** Immediately before running `git merge --ff-only` or pushing directly to `master` for any reason, stop and verify explicitly: *did the user's most recent merge request get answered with a summary shown after that request, and did they confirm that specific summary?* If either answer is no, the merge does not happen yet, regardless of confidence, urgency, commit count, or how many times the contents were already discussed. Treat the user's message asking to merge as the trigger for step 2, never as permission to skip to step 4.
 
 Remind the user to merge when it seems due: when a large feature/fix on `dev` looks finished, or `dev` has accumulated a lot of commits ahead of `master`, say so and suggest merging. This is a reminder only — never merge to `master` automatically or without explicit confirmation, no matter how done the work looks or how many commits have piled up.
 
