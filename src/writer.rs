@@ -235,8 +235,9 @@ pub fn document_contents(document: &Document) -> String {
 
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
 /// over the target, so a crash can't leave the checklist truncated; the
-/// parent directory is fsynced too on unix. Permissions and, where the user
-/// may set it, the group are kept; hard links and another user's ownership
+/// parent directory is fsynced too on unix. Permission bits (but never
+/// setuid, setgid or sticky) and, where the user may set it, the group are
+/// kept; hard links and another user's ownership
 /// are not. Returns the content written.
 pub fn write_back(document: &Document) -> io::Result<String> {
     let mut lines = document.raw_lines.clone();
@@ -293,8 +294,9 @@ pub(crate) fn sync_parent_dir(path: &Path) {
 }
 
 /// Creates the temp file 0600, writes the contents, gives it the source's
-/// owner and group as far as this user may, applies the source permissions
-/// through the handle (immune to umask) and fsyncs. If the name
+/// owner and group as far as this user may, applies the source's ordinary
+/// permission bits (never setuid, setgid or sticky) through the handle
+/// (immune to umask) and fsyncs. If the name
 /// is taken it retries once at a fresh name, never deleting the existing
 /// file, which may belong to a live writer. Returns the path written.
 #[cfg(unix)]
@@ -304,7 +306,7 @@ fn write_temp(
     source: Option<&fs::Metadata>,
 ) -> io::Result<PathBuf> {
     use std::io::Write;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, fchown};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, fchown};
 
     let open = |path: &Path| {
         fs::OpenOptions::new()
@@ -328,14 +330,17 @@ fn write_temp(
     let write_result = (|| {
         file.write_all(contents.as_bytes())?;
         if let Some(source) = source {
-            // Best effort, and before the mode so setgid survives: keeping
-            // the UID needs root, but any group the user belongs to may be
-            // set, which keeps a shared group checklist writable by the
-            // group rather than handing it to the saver's primary group.
+            // Best effort: keeping the UID needs root, but any group the
+            // user belongs to may be set, which keeps a shared group
+            // checklist writable by the group rather than handing it to the
+            // saver's primary group.
             if fchown(&file, Some(source.uid()), Some(source.gid())).is_err() {
                 let _ = fchown(&file, None, Some(source.gid()));
             }
-            file.set_permissions(source.permissions())?;
+            // Only the ordinary bits: the new file belongs to the saver, so
+            // copying setuid/setgid/sticky would bypass the kernel clearing
+            // them when someone other than the owner writes the file.
+            file.set_permissions(fs::Permissions::from_mode(source.mode() & 0o777))?;
         }
         file.sync_all()
     })();
@@ -1100,8 +1105,33 @@ mod tests {
             document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
             write_back(&document).unwrap();
 
-            let actual = fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+            let actual = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(actual, mode, "permissions changed for mode {mode:o}");
+
+            fs::remove_file(&path).ok();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_back_clears_setuid_setgid_and_sticky_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for (mode, expected) in [(0o6755u32, 0o755u32), (0o4700, 0o700), (0o1644, 0o644)] {
+            let path = write_temp_file(EXAMPLE);
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            let before = fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(before, mode, "test setup must apply mode {mode:o}");
+
+            let mut document = parse_document(path.clone()).unwrap();
+            document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+            write_back(&document).unwrap();
+
+            let actual = fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(
+                actual, expected,
+                "special bits must be dropped from mode {mode:o}"
+            );
 
             fs::remove_file(&path).ok();
         }

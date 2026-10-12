@@ -362,7 +362,8 @@ Toggling a task rewrites only its `[ ]`/`[/]`/`[x]` marker character; the rest
 of the file (formatting, comments, other lines) is left untouched. Writes are
 atomic — a temp file is written and renamed over the original — so a crash
 or full disk can never leave the runbook truncated, and the file's
-permissions (standard Unix mode bits) and its group are preserved. POSIX
+permissions (standard Unix mode bits) and its group are preserved — except
+the setuid, setgid and sticky bits, which a save always clears. POSIX
 ACLs, extended attributes, another user's ownership, and **hard links** are
 not preserved — the rename gives the file a new inode, and only ordinary
 permissions, the group and (when you are its owner, or root) the owner are
