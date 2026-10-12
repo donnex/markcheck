@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync (`--git-sync`)'s message for a remote branch that has moved ahead
+  now reads "... is not based on; pull first, then it will sync".
+  Previously a run of 18 spaces sat in the middle of it, which on a typical
+  terminal width pushed the useful half — what to do about it — off the end
+  of the status bar. (#10)
+
 - Git sync (`--git-sync`) no longer commits in the middle of a multi-commit
   cherry-pick or revert that you concluded one step of with a plain
   `git commit` rather than `--continue`, and no longer commits when git fails
