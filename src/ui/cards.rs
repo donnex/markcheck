@@ -1644,8 +1644,21 @@ fn completion_rule() -> Line<'static> {
     ))
 }
 
+/// What a reset will change, e.g. `3 done and 2 started tasks`.
+fn reset_scope(done: usize, started: usize) -> String {
+    let mut parts = Vec::new();
+    if done > 0 {
+        parts.push(format!("{done} done"));
+    }
+    if started > 0 {
+        parts.push(format!("{started} started"));
+    }
+    let noun = if done + started == 1 { "task" } else { "tasks" };
+    format!("{} {noun}", parts.join(" and "))
+}
+
 fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
-    let (done, total) = state.document.checkbox_stats();
+    let (done, started, total) = state.document.checkbox_progress();
     let file_name = state
         .document
         .file_path
@@ -1667,7 +1680,8 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         )),
         Line::from(""),
         Line::from(format!(
-            "This marks all {done} completed tasks ({done}/{total}) as not done"
+            "This marks {} (of {total}) as not started",
+            reset_scope(done, started)
         )),
         Line::from(format!("and rewrites {file_name}.")),
         Line::from(""),

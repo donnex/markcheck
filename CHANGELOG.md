@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `R` reset confirmation now says how many done and how many started
+  tasks it will clear. It used to count only done tasks, so with a few
+  tasks started and none done it asked to reset "all 0 completed tasks" —
+  which read like a no-op — and then cleared the started markers it never
+  mentioned. (#26)
+
 - `Ctrl`- and `Alt`-modified keys no longer act like the plain key. Every
   key binding ignored the modifier, so a reflexive `Ctrl-S` marked the
   current task started and saved (and, with git-sync, committed and pushed)

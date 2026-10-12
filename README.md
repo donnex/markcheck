@@ -698,7 +698,8 @@ to `vi`), and reloads on exit. For editors that use the `+N file` convention
 (`vi`/`vim`/`nvim`/`view`, `nano`, `pico`, `emacs`/`emacsclient`, `joe`,
 `gedit`) the file opens on the selected task's line; other editors (VS Code,
 Sublime, Helix, …) open at the top of the file. `R` resets every task to not-done after a
-confirmation prompt (press `y` to confirm — any other key cancels). When
+confirmation prompt that says how many done and started tasks it will clear
+(press `y` to confirm — any other key cancels). When
 you quit with every task already done, `markcheck` first asks whether to
 reset the checklist so it's ready to run again: `y` resets and quits, `n`
 quits as-is, `Esc` stays in the app. If the reset can't be saved, markcheck
