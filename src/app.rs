@@ -1664,6 +1664,11 @@ impl AppState {
             return;
         }
 
+        if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.handle_ctrl_c();
+            return;
+        }
+
         // Any key other than a second `g` cancels a pending `gg` motion.
         let pending_g = std::mem::take(&mut self.pending_g);
 
@@ -1717,6 +1722,22 @@ impl AppState {
             | Screen::Help
             | Screen::Search
             | Screen::ListPicker => {}
+        }
+    }
+
+    /// Raw mode delivers Ctrl-C as a key, not `SIGINT`. As in vim, it cancels
+    /// an overlay or search input like `Esc`, and elsewhere says how to quit
+    /// rather than quitting.
+    fn handle_ctrl_c(&mut self) {
+        self.clear_pending_chords();
+        match self.screen {
+            Screen::Search => self.cancel_search(),
+            Screen::ListPicker | Screen::Help | Screen::ConfirmReset | Screen::ConfirmQuitReset => {
+                self.screen = self.screen_before_confirm;
+            }
+            Screen::Checklist | Screen::ListComplete | Screen::AllComplete => {
+                self.set_error("Type q to quit".to_string());
+            }
         }
     }
 

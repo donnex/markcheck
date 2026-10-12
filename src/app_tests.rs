@@ -1794,6 +1794,108 @@ fn ctrl_z_cancels_a_pending_gg() {
     assert!(!state.pending_g);
 }
 
+// --- Ctrl-C ---
+
+fn press_ctrl_c(state: &mut AppState) {
+    state.handle_key_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL);
+}
+
+fn assert_quit_hint(state: &AppState) {
+    assert_eq!(state.status_message.as_deref(), Some("Type q to quit"));
+    assert!(state.status_is_error);
+    assert!(!state.should_quit);
+}
+
+#[test]
+fn ctrl_c_on_checklist_shows_quit_hint() {
+    let mut state = AppState::new(two_list_document());
+    press_ctrl_c(&mut state);
+    assert_quit_hint(&state);
+    assert_eq!(state.screen, Screen::Checklist);
+}
+
+#[test]
+fn ctrl_c_on_list_complete_shows_quit_hint() {
+    let mut state = AppState::new(two_list_document());
+    state.screen = Screen::ListComplete;
+    press_ctrl_c(&mut state);
+    assert_quit_hint(&state);
+    assert_eq!(state.screen, Screen::ListComplete);
+}
+
+#[test]
+fn ctrl_c_on_all_complete_shows_quit_hint_without_reset_prompt() {
+    let mut state = AppState::new(all_done_document());
+    state.screen = Screen::AllComplete;
+    press_ctrl_c(&mut state);
+    assert_quit_hint(&state);
+    assert_eq!(state.screen, Screen::AllComplete);
+}
+
+#[test]
+fn ctrl_c_cancels_search_input_like_esc() {
+    let mut state = AppState::new(two_list_document());
+    let origin = (state.current_list_index, state.current_item_index);
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task");
+    press_ctrl_c(&mut state);
+    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(state.search.query, "task", "no 'c' typed into the query");
+    assert_eq!((state.current_list_index, state.current_item_index), origin);
+}
+
+#[test]
+fn ctrl_c_closes_the_task_picker() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('T'));
+    assert_eq!(state.screen, Screen::ListPicker);
+    press_ctrl_c(&mut state);
+    assert_eq!(state.screen, Screen::Checklist);
+}
+
+#[test]
+fn ctrl_c_closes_help() {
+    let mut state = AppState::new(two_list_document());
+    state.screen = Screen::ListComplete;
+    state.handle_key(KeyCode::Char('?'));
+    assert_eq!(state.screen, Screen::Help);
+    press_ctrl_c(&mut state);
+    assert_eq!(state.screen, Screen::ListComplete);
+}
+
+#[test]
+fn ctrl_c_cancels_reset_confirmation() {
+    let mut state = AppState::new(all_done_document());
+    state.screen_before_confirm = Screen::AllComplete;
+    state.screen = Screen::ConfirmReset;
+    press_ctrl_c(&mut state);
+    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(
+        state.document.checkbox_stats().0,
+        state.document.checkbox_stats().1
+    );
+}
+
+#[test]
+fn ctrl_c_cancels_quit_reset_confirmation_without_quitting() {
+    let mut state = AppState::new(all_done_document());
+    state.screen = Screen::AllComplete;
+    state.handle_key(KeyCode::Char('q'));
+    assert_eq!(state.screen, Screen::ConfirmQuitReset);
+    press_ctrl_c(&mut state);
+    assert_eq!(state.screen, Screen::AllComplete);
+    assert!(!state.should_quit);
+}
+
+#[test]
+fn ctrl_c_cancels_a_pending_link_prompt() {
+    let mut state = AppState::new(two_list_document());
+    state.pending_open_link = true;
+    press_ctrl_c(&mut state);
+    assert!(!state.pending_open_link);
+    assert_quit_hint(&state);
+}
+
 #[test]
 fn finish_suspend_failure_is_a_sticky_error() {
     let mut state = AppState::new(two_list_document());
