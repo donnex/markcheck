@@ -78,6 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Quitting markcheck right after a change no longer hides what happened to
+  that change's git sync. With git sync on, the final sync runs while
+  markcheck is exiting, and if it failed, committed but couldn't push, or
+  was still running when markcheck gave up waiting, the screen just closed
+  as if all was well. markcheck now prints one line on the terminal after it
+  closes naming the problem, so you know the checklist wasn't published.
+  (#108)
+
 - Saving a checklist no longer moves it out of its group. Every toggle
   writes a fresh file over the old one, and that file used to take the
   group of whoever ran markcheck, so in a shared runbook directory the

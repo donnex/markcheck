@@ -455,7 +455,11 @@ failed: ... (will keep retrying)`. Since the sync runs on a background thread, a
 never freezes the app during normal use. Quitting right after a toggle or
 edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
-change unsynced.
+change unsynced. If that last sync doesn't land cleanly — it fails, the
+commit is made but the push fails, or it's still running when the 5 seconds
+are up — `markcheck` prints one line on stderr after the screen closes
+saying so (e.g. `markcheck: git sync failed: ...`), so you don't walk away
+thinking the change was published. The exit status stays 0.
 
 Running plain `git push` yourself sends the whole current branch — so if
 the branch already has other local commits ahead of the remote that aren't
