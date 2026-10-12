@@ -23,7 +23,8 @@ markcheck examples/basics.md
   bullet carrying a command that stays a copyable note card instead of a
   banner, a long card title
   that wraps inside the card, a note that has a command but no checkbox
-  (copyable, not a task), a blockquoted `> - [ ]` and `> - [/]` example that
+  (copyable, not a task), an indented (4-space) code block inside a task that
+  renders and copies like a fenced one, a blockquoted `> - [ ]` and `> - [/]` example that
   both render as a non-interactive note rather than a live task, inline vs
   fenced code,
   multi-command tasks (inline and fenced) numbered `[1]`/`[2]` for `y` then a

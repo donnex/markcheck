@@ -1,5 +1,7 @@
 # Notes, Banners, and Code
 
+<!-- markdownlint-disable MD046 -- one task deliberately uses an indented code block, to show it renders like a fenced one -->
+
 Non-task content and the ways code is handled.
 
 ## Reference
@@ -21,6 +23,11 @@ Non-task content and the ways code is handled.
   run-migration --step 1
   run-migration --step 2
   ```
+
+- [ ] A task with an indented code block, the older Markdown way to write a
+  command — shown and copied just like a fenced one:
+
+      restart-service example-service --graceful
 
 - [ ] A task with a short one-line fenced block — its box still spans the full
   card width:
