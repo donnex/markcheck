@@ -7,13 +7,8 @@ use sha2::{Digest, Sha256};
 
 pub type LineNumber = usize;
 
-/// A content digest — used to detect whether a file's on-disk bytes still
-/// match what was last seen (`app.rs`'s `disk_content_diverged`), and as
-/// `PendingSync`'s revision marker (below) — not a security boundary
-/// (nothing here is adversarial), so a cryptographic digest is stronger
-/// than either use actually needs; used anyway since the cost is
-/// negligible at checklist-file sizes and the abstraction is shared
-/// between `app.rs`, `git_sync.rs`, and `main.rs`.
+/// SHA-256 of `bytes`, used to detect whether a file still holds what was
+/// last seen. Not a security boundary.
 pub(crate) fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
@@ -83,10 +78,7 @@ pub struct Item {
     /// order; `depth` carries the hierarchy as metadata.
     pub depth: usize,
     /// The active `### H3`+ sub-section path at this item, outermost first.
-    /// Empty when the item sits directly under its `## H2`. Every item
-    /// in one Markdown list shares the same snapshot, since a heading can't
-    /// appear inside a list; the overview diffs adjacent items' paths to place
-    /// dividers, and the card shows the path as a breadcrumb.
+    /// Empty directly under the `## H2`.
     pub section: Vec<SubHeading>,
     /// Body text only; a leading `**bold**` span is stripped into `header`.
     pub display_text: String,
@@ -169,11 +161,8 @@ impl List {
         (done, total)
     }
 
-    /// Indices of the items that **begin** a `### H3`+ sub-section: an
-    /// item whose `section` introduces at least one heading beyond its common
-    /// prefix with the previous item's — exactly the positions where the
-    /// overview draws a `── Text` divider. These are the jump targets for the
-    /// `}`/`{` next/previous-sub-section motions.
+    /// Indices of the items that begin a `### H3`+ sub-section, where the
+    /// overview draws a divider; the `}`/`{` targets.
     pub fn sub_section_starts(&self) -> Vec<usize> {
         let mut starts = Vec::new();
         let mut prev: &[SubHeading] = &[];
@@ -254,13 +243,9 @@ impl List {
         out
     }
 
-    /// Aggregate state of a display-only item's sub-list, for the "info parent
-    /// reflects its children" treatment: `Done` when it has at
-    /// least one descendant checkbox and every one is `Done`, `Started` when at
-    /// least one descendant checkbox is `Started` or `Done` but not all are
-    /// `Done`, and `None` otherwise — including an item with no checkbox
-    /// descendants. Checkbox items return `None`; they carry their own state.
-    /// This never feeds `checkbox_progress`: an info parent is not a task.
+    /// Aggregate state of a display-only item's checkbox descendants: `Done`
+    /// when all are done, `Started` when some are started or done, `None`
+    /// otherwise and for checkbox items. Never counted as progress.
     pub fn info_parent_state(&self, i: usize) -> Option<TaskState> {
         if !matches!(self.items.get(i)?.kind, ItemKind::DisplayOnly) {
             return None;
@@ -304,20 +289,9 @@ pub struct Document {
     /// Used to suppress the above-cards list heading for it.
     pub has_default_list: bool,
     pub lists: Vec<List>,
-    /// The source file's lines, each **including its own terminator**
-    /// (`\r\n`, `\n`, or a lone `\r`; the final line has none if the file
-    /// didn't end with one). Produced by
-    /// `parser::split_lines_keeping_endings` and indexed by
-    /// `Item::line_number`; `writer::write_back` edits one line's checkbox
-    /// and rejoins by plain concatenation, so every other byte — every
-    /// terminator included — round-trips exactly as authored.
-    ///
-    /// This replaced a pair of whole-file `uses_crlf`/`trailing_newline`
-    /// flags. Those could only describe one ending for the entire file, so a
-    /// file mixing CRLF and LF had every line rewritten to CRLF on the first
-    /// toggle, and they were derived from `str::lines()`, which disagrees
-    /// with CommonMark about lone-`\r` endings — see
-    /// `split_lines_keeping_endings` for what that cost.
+    /// The source file's lines, each including its own terminator, indexed by
+    /// `Item::line_number`. `writer::write_back` edits one line and rejoins by
+    /// concatenation, so mixed line endings round-trip exactly.
     pub raw_lines: Vec<String>,
 }
 
@@ -347,12 +321,8 @@ impl Document {
             .sum()
     }
 
-    /// The **document-wide** color slot for the sub-list headed by
-    /// `parent_index` in list `list_index`: the count of sub-lists in all
-    /// earlier lists plus the sub-list's list-local ordinal. Every sub-list in
-    /// the document gets a distinct slot, so the guide-color cycle
-    /// (`Palette::depth_color`) never puts two neighbouring sub-lists — within a
-    /// list or across lists — on the same color until it wraps.
+    /// The document-wide color slot for a sub-list, so neighbouring sub-lists
+    /// never share a guide color until the cycle wraps.
     pub fn sublist_slot(&self, list_index: usize, parent_index: usize) -> usize {
         self.sublist_base(list_index) + self.lists[list_index].sublist_slot(parent_index)
     }
@@ -391,15 +361,8 @@ pub struct IconSet {
     pub file: &'static str,
     pub list: &'static str,
     pub update: &'static str,
-    /// The title-bar git-sync section — paired with a literal "git"
-    /// text label wherever it's used (`render_title_bar`), not relied on
-    /// alone to convey "this is git" the way the other icons here can rely
-    /// on their shape. Deliberately the *same* plain Unicode arrow symbol in
-    /// both `nerd()` and `unicode()` below — unlike every other field, this
-    /// one intentionally skips the Nerd Font Private Use Area glyphs (a
-    /// prior `fa-git`/cloud-upload attempt didn't render legibly on the
-    /// reporting user's setup); a plain Arrows-block character is far more
-    /// likely to actually be present in whatever font is active.
+    /// The title-bar git-sync icon, always paired with a "git" label. A plain
+    /// arrow in both icon sets, since the Nerd Font git glyphs rendered poorly.
     pub sync: &'static str,
 }
 
@@ -543,12 +506,8 @@ impl Palette {
         Self::for_depth(detect_color_depth())
     }
 
-    /// Hard-coded guide color for a nested sub-list: a small cycle of
-    /// distinct, legible hues, so hierarchy reads by *which* color rather than
-    /// one color fading — which was hard to tell apart. `slot` is the sub-list's
-    /// **document-wide** ordinal (`Document::sublist_slot`), so every sub-list
-    /// gets its own color and no two neighbouring ones — within a list or across
-    /// lists — collide until the cycle wraps. Resolved per color depth.
+    /// Guide color for a nested sub-list, from a small cycle of distinct hues.
+    /// `slot` is the document-wide ordinal from `Document::sublist_slot`.
     pub fn depth_color(&self, slot: usize) -> Color {
         match self.depth {
             ColorDepth::TrueColor => {
@@ -572,16 +531,9 @@ impl Palette {
         }
     }
 
-    /// Style for a `done/total` progress counter that fades with completion:
-    /// a two-stop ramp started-yellow → done-green driven by the done
-    /// ratio, so progress is glanceable from the counter's color. It starts at
-    /// yellow rather than gray so the counter is legible even at 0% done.
-    /// `total == 0` counts as complete (green), preserving the old
-    /// `done == total → green` semantics for a doc with no checkboxes.
-    ///
-    /// Resolution respects the color depth: a smooth RGB lerp on TrueColor, the
-    /// same lerp snapped to the nearest 256-cube index on Palette256, and a
-    /// coarse stepped ramp of named colors on Basic (ANSI-16 has no gradient).
+    /// Style for a `done/total` counter, ramping from yellow to green with the
+    /// done ratio. `total == 0` counts as complete. Stepped named colors on
+    /// ANSI-16.
     pub fn progress_color(&self, done: usize, total: usize) -> Style {
         let ratio = if total == 0 {
             1.0
@@ -611,10 +563,7 @@ impl Palette {
     }
 }
 
-/// The two RGB stops of the progress ramp: started-yellow (0% done) and
-/// done-green (100%). Kept in sync in spirit with `Palette::started` /
-/// `Palette::done`. The ramp starts at yellow (not gray) so the counter is
-/// readable even when nothing is done.
+/// The progress ramp's stops; yellow, not gray, so 0% stays readable.
 const PROGRESS_YELLOW: (u8, u8, u8) = (0xe5, 0xc0, 0x7b);
 const PROGRESS_GREEN: (u8, u8, u8) = (0x98, 0xc3, 0x79);
 
@@ -715,26 +664,12 @@ pub struct AppState {
     /// external edits. Updated on load and after every write we make
     /// ourselves, so our own writes are never mistaken for external changes.
     pub file_mtime: Option<SystemTime>,
-    /// Last known size of `document.file_path`, cross-checked alongside
-    /// `file_mtime` (updated in lockstep with it) so a same-instant external
-    /// edit that also changes the file's length isn't missed on a
-    /// coarse-mtime filesystem (whole-second resolution is common) — a
-    /// narrower coincidence than mtime alone, though not a complete fix.
+    /// Last known size, cross-checked with `file_mtime` to catch more edits on
+    /// a coarse-mtime filesystem.
     pub file_size: Option<u64>,
-    /// SHA-256 digest of the file content we last confirmed was on disk —
-    /// set at load and after every write we make or reload we pick up.
-    /// `commit_write` re-hashes the file immediately before writing and
-    /// compares against this: a mismatch means something else (another
-    /// markcheck instance, an external editor) changed the file since we
-    /// last saw it, so the write is refused and the file reloaded instead of
-    /// blindly overwritten — closing the lost-update window that
-    /// `file_mtime`/`file_size` alone can miss on a coarse-mtime filesystem.
-    /// A cryptographic digest rather than a 64-bit `DefaultHasher` purely on
-    /// principle — this is a same-process compare-and-swap guard against
-    /// accidental concurrent writes, not a security boundary, so a 64-bit
-    /// hash's already-astronomically-unlikely accidental collision was
-    /// never a practical risk, but the switch costs nothing once the
-    /// fingerprint abstraction already exists.
+    /// SHA-256 of the content we last confirmed on disk. `commit_write`
+    /// re-hashes before writing and refuses on a mismatch, catching changes
+    /// mtime and size can miss.
     pub file_content_hash: Option<[u8; 32]>,
     /// When the document's content last changed — set both when we write it
     /// ourselves (toggle/reset) and when an external change is reloaded.
@@ -850,95 +785,36 @@ pub struct HelpState {
 /// Background git-sync state (`--git-sync`).
 #[derive(Debug, Default)]
 pub struct GitSyncState {
-    /// Set once at startup (`--git-sync`/`git_sync_paths` requested it *and*
-    /// `GitSync::detect` confirmed the file is in a git work tree). Never
-    /// changes after that — unlike `last_at`, this isn't about a particular
-    /// sync's timing, just whether the feature is active this session at
-    /// all. Drives the persistent `⇅ git` section in the **title bar**
-    /// (`render_title_bar` in `ui/mod.rs`), which is otherwise absent
-    /// entirely — no icon, no text, no gap.
+    /// Whether git-sync is active this session; fixed at startup. Drives the
+    /// title bar's `⇅ git` section.
     pub active: bool,
-    /// When a background git-sync last committed *and pushed*
-    /// successfully. Drives the title-bar "Synced … ago" tag, the same way
-    /// `AppState.last_update_at` drives the "Updated … ago" tag. Not set for
-    /// a skipped sync (nothing to commit) or a failed one (that goes to
-    /// `set_error` instead).
+    /// When a sync last committed and pushed successfully.
     pub last_at: Option<SystemTime>,
-    /// Set after a successful write-back (or a markcheck-driven external
-    /// edit), describing what changed and capturing the exact file content
-    /// expected as a result; consumed by the main loop via
-    /// `take_git_sync_request`, which forwards it to `GitSync::request` when
-    /// git-sync is active for this file. Mirrors `editor_requested`/
-    /// `link_open_request` — `app.rs` stays free of process/thread concerns.
+    /// The latest write-back's sync request, drained by the main loop via
+    /// `take_git_sync_request`.
     pub pending: Option<PendingSync>,
 }
 
-/// A queued git-sync request: the exact file content expected once the
-/// underlying change lands, paired with a human description for the
-/// eventual commit message (e.g. `Check "Restart service"`). Carrying the
-/// expected content — not just the description — lets the sync worker build
-/// its commit directly from this snapshot via git plumbing instead of
-/// re-reading the live working-tree file, so a concurrent, unrelated write
-/// landing on disk mid-sync can't get silently swept into a commit whose
-/// message doesn't describe it.
-///
-/// `content_hash` is the SHA-256 of `content` (already computed by every
-/// call site that constructs one, so this is never extra work) — `GitSync`
-/// records it as the *latest* content it's ever been asked to sync,
-/// letting a background sync tell "the disk changed because a newer
-/// request already superseded me, which will correct things right after I
-/// finish" apart from "the disk changed because of something outside
-/// git-sync entirely, which never will" (see `GitSync::request`'s doc
-/// comment).
+/// A queued git-sync request: the exact content expected once the change
+/// lands, and a description for the commit message. The worker commits
+/// this snapshot rather than re-reading the file, so an unrelated write
+/// can't be swept in. `content_hash` lets it tell a superseded request
+/// from an outside edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingSync {
     pub content: String,
     pub content_hash: [u8; 32],
-    /// The file's content **before** this change was written — i.e. what
-    /// markcheck had loaded and is about to replace. `None` when it couldn't
-    /// be established (the file was unreadable at load).
-    ///
-    /// Used by `git_sync`'s staged-target guard, and nothing else. If the
-    /// checklist has staged changes in git's index, committing the working
-    /// tree replaces that index entry, so a staged snapshot that differs
-    /// from the working tree would be dropped without ever reaching a
-    /// commit. Comparing what is staged against *this* is what tells the two
-    /// cases apart: staged content equal to what markcheck loaded is wholly
-    /// contained in the content about to be committed (nothing is lost),
-    /// while anything else is a snapshot only the index is holding.
-    ///
-    /// The content itself rather than a digest of it, because the comparison
-    /// has to be made in git's terms: `git_sync` hands this to `hash-object
-    /// --path` so that any clean filter configured for the checklist
-    /// (`core.autocrlf`, a `.gitattributes` `text` setting) applies to both
-    /// sides. A digest could only ever be compared against the raw staged
-    /// bytes, which under such a filter never match.
-    ///
-    /// It is a second full copy of the checklist, and that was weighed
-    /// rather than overlooked — external review of `8a405dd` raised it. The
-    /// document is already held as `raw_lines: Vec<String>`, whose per-line
-    /// `String` headers make it larger than the flat text, and `content`
-    /// beside this is a full copy too, so this takes the retained content
-    /// from two copies to three rather than doubling the process. A
-    /// `PendingSync` also lives only between a write and the sync draining
-    /// it, not for the session.
-    ///
-    /// The alternative — capturing the git blob SHA at write time and
-    /// keeping only that — needs `hash-object --path` run against the
-    /// repository, which means `app.rs` reaching into git during
-    /// `commit_write`, at exactly the moment it is holding the write lock.
-    /// That trades a copy of a checklist-sized string for a subprocess
-    /// inside the critical section, and risks reintroducing the correctness
-    /// bug this field exists to fix. Not worth it at the sizes this
-    /// application is for.
+    /// The file's content before this change was written; `None` when unread.
+    /// Used only by git-sync's staged-target guard, which compares it with the
+    /// staged blob through `hash-object --path` so clean filters apply. A full
+    /// copy rather than a blob SHA, which would need a git subprocess while the
+    /// write lock is held.
     pub previous_content: Option<String>,
     pub description: String,
 }
 
-/// A full snapshot of every checkbox item's state, keyed by 1-based
-/// `line_number` (the item identity used for write-back). Undo/redo restore a
-/// snapshot by matching line numbers; a line no longer present (e.g. removed by
-/// an external edit before the history was cleared) is skipped.
+/// Every checkbox item's state, keyed by 1-based line number. Undo skips
+/// lines no longer present.
 pub type StateSnapshot = Vec<(LineNumber, TaskState)>;
 
 /// Maximum number of undo entries kept in memory. Snapshots are a few
@@ -1076,10 +952,8 @@ mod tests {
 
     #[test]
     fn sub_section_starts_are_the_divider_positions() {
-        // A start is any item introducing a heading beyond its common
-        // prefix with the previous item — the same positions the overview draws
-        // a divider. A shallower path that's an ancestor of the previous one is
-        // not a new start.
+        // A shallower path that's an ancestor of the previous one is not a new
+        // start.
         let list = List {
             title: "L".to_string(),
             banner: None,

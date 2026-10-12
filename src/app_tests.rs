@@ -60,10 +60,7 @@ fn document_with_lists(lists: Vec<List>) -> Document {
 }
 
 /// Like `document_with_lists`, but the backing file is never created, so
-/// `write_back` always fails (regression tests: a missing file is an
-/// easy, portable stand-in for any write failure — permission denied, disk
-/// full, etc. — since `write_back` bails at the same first `fs::metadata`
-/// call regardless of *why* the file is unwritable).
+/// `write_back` always fails.
 fn document_with_missing_file(lists: Vec<List>) -> Document {
     let max_line = lists
         .iter()
@@ -116,11 +113,7 @@ fn two_list_document_first_list_almost_done() -> Document {
 
 #[test]
 fn a_write_is_refused_while_another_instance_holds_the_write_lock() {
-    // Deep round 4. `commit_write` checks that the file on disk still hashes
-    // to what was last seen and *then* replaces it. Those are two
-    // operations, so two markcheck instances could both pass the check and
-    // both rename, and the second silently discarded the first's toggle.
-    // The advisory lock spans both, turning them into one compare-and-swap.
+    // The lock spans the hash check and the write.
     use crate::writer::{LockOutcome, WriteLock};
 
     let document = document_with_lists(vec![List {
@@ -414,7 +407,6 @@ fn n_unbound_and_shift_l_jumps_lists() {
 
 #[test]
 fn shift_l_at_the_last_incomplete_list_reports_it() {
-    // Shift-L used to move silently when nothing incomplete follows.
     let mut state = AppState::new(two_list_document());
     state.current_list_index = 1; // already the last (and only later) list
     state.jump_to_next_incomplete_list();
@@ -456,7 +448,6 @@ fn shift_l_with_no_incomplete_lists_at_all_reports_it() {
 
 #[test]
 fn tab_with_no_unfinished_tasks_reports_it() {
-    // Tab used to move silently when every task is already done.
     let mut state = AppState::new(document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -971,13 +962,8 @@ fn o_opens_every_safe_scheme_including_uppercase() {
         "https://example.com/a",
         "mailto:ops@example.com",
         "HTTPS://EX.COM/A",
-        // is_safe_link is a scheme-prefix allowlist, not a full URI
-        // validator — content after a genuinely-safe scheme (however oddly
-        // formed) isn't separately rejected. This is safe because the URL
-        // is handed to the opener as a single argv element
-        // (Command::new(...).arg(url)), never through a shell, so an
-        // embedded control character can't be interpreted as an argument
-        // or command separator the way it could in shell text.
+        // Only the scheme is checked; the URL reaches the opener as one argv
+        // element, never through a shell.
         "http://example.com/a\0/../etc/passwd",
         "https://example.com/a\n-oProxyCommand=x",
     ] {
@@ -1224,9 +1210,7 @@ fn navigate_next_stops_on_display_only_items() {
 
 #[test]
 fn jump_to_list_out_of_range_reports_instead_of_moving() {
-    // Deep review: this used to be a silent no-op, against the UI-feedback
-    // rule -- pressing `5` in a two-list document cleared the status bar
-    // and did nothing else, which reads exactly like a wedged app.
+    // Out of range must not be a silent no-op.
     let mut state = AppState::new(two_list_document());
     state.jump_to_list(5);
     assert_eq!(state.current_list_index, 0, "the cursor must not move");
@@ -1731,9 +1715,7 @@ fn r_with_done_tasks_opens_confirm_prompt() {
 
 #[test]
 fn r_with_only_started_tasks_opens_confirm_prompt() {
-    // Regression test: request_reset used to check only the Done count, so
-    // a document whose only progress was Started (`[/]`) items wrongly
-    // reported "nothing to reset" even though reset_all clears Started too.
+    // A document whose only progress is Started still has something to reset.
     let mut state = AppState::new(two_list_document());
     state.start_current();
     state.handle_key(KeyCode::Char('R'));
@@ -2202,12 +2184,8 @@ fn toggle_current_reports_error_and_does_not_advance_when_write_fails() {
 
 #[test]
 fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_list() {
-    // Without the rollback, a failed write still left the mutation in
-    // memory. That phantom-done item wouldn't trigger a completion screen
-    // by itself (the failing action bails out before checking), but a
-    // *later, successful* toggle of the real remaining item would count it
-    // too via `list_all_done` and show a false completion screen — even
-    // though the file on disk still has it as not-done.
+    // A failed write must roll back, or a later toggle could count the
+    // phantom item and show a false completion screen.
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -2231,11 +2209,8 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
         "no premature completion screen"
     );
 
-    // The file reappears, so toggling the *actual* remaining item succeeds.
-    // Clear the sticky error first, matching what a real keypress does
-    // (`handle_key_with_mods` clears status before dispatch) — otherwise
-    // the previous failure's message would still be sitting there and mask
-    // whether this second attempt actually succeeded.
+    // The file reappears. Clear the sticky error first, as a real keypress
+    // does.
     fs::write(&path, "").unwrap();
     state.clear_status();
     state.current_item_index = 2; // item 3, genuinely not done
@@ -2250,12 +2225,7 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
 
 #[test]
 fn toggle_refuses_and_reloads_when_disk_content_changed_since_load() {
-    // Two writers sharing one file (another markcheck instance, or an
-    // external editor) — the in-memory document is stale relative to disk
-    // by the time we're about to write, so overwriting now would silently
-    // discard whatever the other writer just did. `disk_content_diverged`
-    // must catch this even though mtime/size alone can miss it on a
-    // coarse-mtime filesystem.
+    // Another writer changed the file; the write must be refused.
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -2305,15 +2275,8 @@ fn toggle_succeeds_normally_when_disk_content_is_unchanged() {
 
 #[test]
 fn write_back_can_still_overwrite_a_change_that_lands_after_the_diverged_check() {
-    // External review, round 4: disk_content_diverged/commit_write is a
-    // pre-write content check, not an atomic compare-and-swap (see
-    // hash_bytes's and disk_content_diverged's doc comments in app.rs) —
-    // there's a real gap between this check returning "unchanged" and
-    // write_back's own rename actually landing, in which another writer
-    // can still save a change that gets silently overwritten. This
-    // documents that accepted gap directly, standing in for the two real
-    // steps `commit_write` takes with a race manually inserted between
-    // them, rather than leaving it implicit.
+    // The accepted gap between the divergence check and the rename, with a
+    // race inserted by hand.
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -2587,11 +2550,7 @@ fn reload_if_changed_returns_false_when_reload_is_skipped_or_fails() {
 
 #[test]
 fn failed_reload_does_not_advance_the_write_conflict_fingerprint() {
-    // External review: a transient malformed intermediate save (common with
-    // editors that write in stages) must not be recorded as the current
-    // disk revision, or a later write would wrongly believe the file still
-    // matches what markcheck last saw and silently overwrite the malformed
-    // content instead of detecting the divergence.
+    // A failed parse must not advance the fingerprint.
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     let good_hash = state.file_content_hash;
@@ -2718,13 +2677,7 @@ fn reload_preserves_cursor_by_title_and_line_number() {
 
 #[test]
 fn reload_disambiguates_duplicate_list_titles_by_occurrence() {
-    // Regression: nothing in the Markdown format forbids two `## H2`s
-    // sharing a title, but remap_position used to match by title alone —
-    // `.position()` always finding the *first* occurrence — so a reload
-    // while positioned on the *second* "Servers" list used to snap the
-    // cursor back to the first one instead. Ranking by occurrence (this is
-    // the second "Servers" list, land on the second "Servers" list again)
-    // fixes that as long as the duplicates' relative order is unchanged.
+    // Two lists share a title; the cursor stays on the second one.
     let path = write_real_file(
         "## Servers\n\n- [ ] `first-list-task`\n\n## Servers\n\n- [ ] `second-list-task`\n",
     );
@@ -2782,16 +2735,8 @@ fn reload_skips_when_new_content_has_no_lists() {
 
 #[test]
 fn skipped_reload_does_not_advance_the_write_conflict_fingerprint() {
-    // Deep review, round 2, reproduced end-to-end against the real binary.
-    // The "parsed fine, but no checklist items" branch declined to adopt the
-    // new document -- correctly, since AppState requires at least one list --
-    // but still advanced `file_content_hash` to the new on-disk content. The
-    // in-memory document was then the *old* one while the fingerprint said
-    // disk was current, so `disk_content_diverged` went blind and the next
-    // write overwrote the user's file with stale content, silently.
-    //
-    // Exactly the invariant `failed_reload_does_not_advance_the_write_conflict_fingerprint`
-    // pins for the sibling (failed-parse) branch.
+    // A file with no checklist items isn't adopted, so the fingerprint must
+    // not advance either.
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     let good_hash = state.file_content_hash;
@@ -3125,8 +3070,6 @@ fn external_reload_clears_undo_history() {
     fs::remove_file(&path).ok();
 }
 
-// --- Coverage gaps found by the 2026-08-19 deep code review (REVIEW.md) ---
-
 #[test]
 fn record_git_sync_sets_the_synced_timestamp() {
     let mut state = AppState::new(two_list_document());
@@ -3302,9 +3245,7 @@ fn start_current_is_a_no_op_when_no_current_item() {
 
 #[test]
 fn start_current_reports_instead_of_going_silent_on_a_display_only_card() {
-    // Deep review: `s` on an info card used to return with no message at
-    // all, unlike every neighbouring action (`y`, `o`, `}`/`{`, `R`), which
-    // all explain a no-op.
+    // `s` on an info card explains the no-op.
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -3383,12 +3324,7 @@ fn reload_reports_a_parse_error_and_keeps_the_last_good_document() {
 
 #[test]
 fn advancing_past_the_last_list_wraps_back_to_an_earlier_incomplete_list() {
-    // Deep review, round 3. advance_to_next_incomplete_list used to search
-    // *forward* only, so completing the last list while an earlier one was
-    // still untouched had nowhere forward to go and fell through to
-    // AllComplete -- a screen headed "All Tasks Complete" over a body
-    // reading `List 1  0 / 1` and `Total: 1 / 2 tasks`. It now wraps back
-    // to the earlier incomplete list instead.
+    // Completing the last list wraps back to an earlier incomplete one.
     let document = document_with_lists(vec![
         List {
             title: "List 1".to_string(),
@@ -3528,7 +3464,6 @@ fn is_safe_link_accepts_the_allowlisted_schemes_case_insensitively() {
 
 #[test]
 fn is_safe_link_rejects_non_allowlisted_or_malformed_urls() {
-    // External review: lock in the allowlist's exact boundary.
     for url in [
         "ftp://example.com",
         "file:///etc/passwd",
@@ -3544,33 +3479,14 @@ fn is_safe_link_rejects_non_allowlisted_or_malformed_urls() {
 
 #[test]
 fn is_safe_link_only_checks_the_scheme_prefix_not_the_rest_of_the_url() {
-    // External review raised control-character-containing URLs (e.g. an
-    // embedded newline that might smuggle a second "argument" into a
-    // shelled-out opener) as worth testing explicitly. `is_safe_link` only
-    // ever checks the scheme prefix, so a URL like this *is* accepted —
-    // that's safe here specifically because `open_link` (main.rs) passes
-    // the URL to `Command::arg`, never through a shell, so there is no
-    // argv-splitting on embedded whitespace/newlines to exploit. This test
-    // documents that division of responsibility: `is_safe_link` guarantees
-    // an allowlisted scheme (and, incidentally, that the string can't start
-    // with `-`); the no-shell `Command` call is what makes anything after
-    // the scheme safe to pass through unexamined.
+    // Accepted because `open_link` never uses a shell; see `is_safe_link`.
     assert!(is_safe_link("http://example.com\n--some-option"));
     assert!(is_safe_link("http://example.com\rSet-Cookie: x"));
 }
 
 #[test]
 fn an_external_reload_drops_a_queued_git_sync_request() {
-    // Deep rounds 2, round 1. A toggle queues a sync carrying the exact
-    // content it just wrote. If an external edit lands and is reloaded
-    // before the main loop drains that request, the queued content is no
-    // longer what is on disk — `run_sync` then correctly refuses it with
-    // "file changed since this request was queued", but the user sees a
-    // git-sync error for a situation where nothing actually went wrong.
-    //
-    // The reload already treats an external edit as a hard boundary for
-    // undo/redo, for the same reason: state captured against the old
-    // revision no longer applies. A queued sync request is exactly that.
+    // A reload drops the queued sync request for the replaced content.
     let path = unique_temp_path();
     fs::write(&path, "## L\n\n- [ ] alpha\n- [ ] beta\n").unwrap();
     let document = crate::parser::parse_document(path.clone()).unwrap();
@@ -3599,16 +3515,7 @@ fn an_external_reload_drops_a_queued_git_sync_request() {
 
 #[test]
 fn the_fingerprint_describes_the_loaded_document_not_a_later_read() {
-    // Deep rounds 3, round 2. The fingerprint used to come from a *second*
-    // read of the file, separate from the read the document was parsed
-    // from. If the file changed in between, the fingerprint described
-    // content the in-memory document was not — so `disk_content_diverged`
-    // reported "unchanged" and the next toggle silently overwrote the newer
-    // content. That is the same defect the reload path was fixed for in the
-    // first deep review, recurring as a race between two reads.
-    //
-    // Forced deterministically by changing the file between the parse and
-    // the construction, which is exactly the window that existed.
+    // The fingerprint comes from the parsed document, not a second read.
     let path = unique_temp_path();
     let loaded = "## L\n\n- [ ] alpha\n- [ ] beta\n";
     fs::write(&path, loaded).unwrap();
@@ -3655,12 +3562,7 @@ fn the_fingerprint_describes_the_loaded_document_not_a_later_read() {
 
 #[test]
 fn an_external_reload_disarms_a_pending_input_chord() {
-    // Deep rounds 3, round 4. `clear_pending_chords` exists because a mouse
-    // click between the two halves of a chord left it armed against
-    // whatever the click had just selected. A reload does the same thing by
-    // a different route: `remap_position` can move the cursor, so a digit
-    // pressed after `o` would open a link belonging to a card the user was
-    // never looking at.
+    // A reload cancels a pending `o` prompt.
     let path = unique_temp_path();
     fs::write(
         &path,
@@ -3702,17 +3604,8 @@ fn an_external_reload_disarms_a_pending_input_chord() {
 
 #[test]
 fn a_change_between_parse_and_construction_is_not_recorded_as_already_seen() {
-    // Deep rounds 3, round 5. The fingerprint now comes from the document,
-    // but `mtime`/`size` are still taken by a stat *after* the caller has
-    // read and parsed the file. If the file changed in between, that stat
-    // describes content the document is not — and since `reload_if_changed`
-    // short-circuits on mtime+size, the external change then looks *already
-    // seen* and is never loaded. The stale content sits in the UI until
-    // something else touches the file.
-    //
-    // The reload path doesn't have this: its stat is taken before the read,
-    // which errs the safe way (a change during the read is noticed next
-    // tick). Only construction stats afterwards.
+    // A stat taken after the parse may describe a newer revision; it must not
+    // make that change look already seen.
     let path = unique_temp_path();
     fs::write(&path, "## L\n\n- [ ] alpha\n").unwrap();
     let document = crate::parser::parse_document(path.clone()).unwrap();

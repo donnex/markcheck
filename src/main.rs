@@ -102,11 +102,8 @@ impl Drop for TerminalGuard {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // A CLI flag always wins when passed; otherwise the config file's
-    // value applies, falling back to the built-in default. A
-    // missing config file is not an error; a malformed one is, since the
-    // user asked for these defaults and a silent fallback would hide a
-    // typo rather than surface it.
+    // A passed flag wins, then the config, then the default. A malformed
+    // config is an error rather than a silent fallback.
     let config = match config::config_path(
         std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
@@ -115,16 +112,9 @@ fn main() -> anyhow::Result<()> {
         None => config::Config::default(),
     };
 
-    // Resolve symlinks and relative paths up front: write-back renames over
-    // the path (which would replace a symlink with a regular file), and the
-    // watcher watches the path's parent directory (which is the wrong
-    // directory for a cross-directory symlink). Canonicalizing once fixes
-    // both and gives dangling links a clear startup error.
-    //
-    // `--new` already writes to a canonicalized path (`scaffold` resolves
-    // the parent directory itself, since the file doesn't exist yet for
-    // `canonicalize` to resolve), so only the plain positional-file path
-    // needs canonicalizing here.
+    // Canonicalize up front: write-back would replace a symlink with a regular
+    // file, and the watcher would watch the wrong directory. `--new` already
+    // returns a canonical path.
     let (file_path, created_new) = if let Some(new_path) = &cli.new {
         let created = scaffold::create_new_checklist(new_path)
             .with_context(|| format!("cannot create {}", new_path.display()))?;
@@ -177,11 +167,8 @@ fn main() -> anyhow::Result<()> {
     // without it rather than failing to start.
     let watcher = FileWatcher::new(&state.document.file_path).ok();
 
-    // Git-sync: `--git-sync` always requests it; otherwise the file's
-    // canonical path must fall under one of the configured prefixes. Either
-    // way git-sync only actually activates once `GitSync::detect` confirms
-    // the file's directory is inside a git work tree — like the watcher,
-    // this is a convenience feature that fails open rather than erroring out.
+    // Git-sync activates only if requested and `GitSync::detect` finds a work
+    // tree.
     let git_sync_requested = cli.git_sync
         || config
             .git_sync_paths
@@ -197,14 +184,8 @@ fn main() -> anyhow::Result<()> {
     // again; `GitSyncState::last_at`/`pending` handle the per-sync timing,
     // this is just "is the feature on for this session at all".
     state.git_sync.active = git_sync.is_some();
-    // A prior session's commit can still be sitting local-only if it quit
-    // (or crashed) before `retry_push_if_due` got a chance to push it, and
-    // without another checklist edit nothing else would ever prompt a retry
-    // — see the `CommittedNotPushed` doc comment in git_sync.rs. This asks
-    // for a **push only**: it can never create a commit, which is what
-    // expressing it as an ordinary content request used to do (see
-    // `catch_up_push`, which reproduced committing and publishing a user's
-    // uncommitted editor changes purely from opening the file).
+    // A previous session may have quit before pushing its commit. This only
+    // pushes; it never commits.
     if let Some(sync) = git_sync.as_mut() {
         sync.request_catch_up_push();
     }
@@ -229,16 +210,8 @@ fn main() -> anyhow::Result<()> {
     )
 }
 
-/// The four boolean settings, each resolved from its CLI flag pair and its
-/// config value. A struct rather than four inline `resolve_flag` calls in
-/// `main` purely so the *wiring* is testable: `resolve_flag` itself has been
-/// correct and well-tested throughout, and both times these settings
-/// regressed it was a call site passing the wrong thing — `cli.x ||
-/// config.x` in round 2, then a hardcoded `false` for `cli_on` in round 3 —
-/// which a test of the pure function cannot catch. `Settings::resolve` is
-/// the one place that mapping lives now, and `settings_resolve_*` drives it
-/// through real argv via `Cli::parse_from`, so a fifth setting added later
-/// gets the same coverage by construction.
+/// The four boolean settings, resolved in one place so the wiring can be
+/// tested through real argv.
 #[derive(Debug, PartialEq, Eq)]
 struct Settings {
     nerd_font: bool,
@@ -258,29 +231,9 @@ impl Settings {
     }
 }
 
-/// Resolves one boolean setting from its CLI flags and its config value:
-/// an explicitly-passed flag always wins, then the config file, then the
-/// built-in default. `cli_on`/`cli_off` are the positive and negative flags;
-/// pass `false` for one a setting doesn't have.
-///
-/// Shared by all four booleans so they cannot drift apart again. Deep
-/// review, round 2: `primary` and `auto_copy` were `cli.x || config.x`,
-/// which can only ever turn a setting *on* — so `primary = true` in the
-/// config could not be disabled for a single run, with no `--no-primary` to
-/// reach for, while README stated (twice) that a passed flag always
-/// overrides its config value.
-///
-/// Deep review, round 3 finished the job. That fix routed all four through
-/// this function, but only *added* flags for two of them, and the docs were
-/// updated as though all four were done ("each of the four boolean settings
-/// has a flag in both directions"). `nerd_font`/`mouse` default to `true`
-/// and had only their negative flag, so `nerd_font = false` in the config
-/// still could not be overridden for a single run — the same defect in
-/// mirror image, with both `cli_on` arguments hardcoded to `false` at the
-/// call sites. `--nerd-font`/`--mouse` fill those in, so the claim is now
-/// true for all four.
-///
-/// clap enforces `conflicts_with` on each pair, so both can never be set.
+/// Resolves one boolean setting: a passed flag wins, then the config, then
+/// the default. Pass `false` for a flag a setting doesn't have. clap's
+/// `conflicts_with` keeps both from being set.
 fn resolve_flag(cli_on: bool, cli_off: bool, config: Option<bool>, default: bool) -> bool {
     if cli_on {
         return true;
@@ -291,17 +244,9 @@ fn resolve_flag(cli_on: bool, cli_off: bool, config: Option<bool>, default: bool
     config.unwrap_or(default)
 }
 
-/// Whether a configured `git_sync_paths` entry (`prefix`) covers
-/// `file_path` (already canonicalized by this point — see above).
-/// `prefix` is canonicalized before comparing, since it comes straight from
-/// the config file as written: a relative path, or one reached through a
-/// symlink, would otherwise never match a file a user would expect it to
-/// cover, because only one side of the comparison was ever resolved. A
-/// prefix that doesn't (yet) exist just never matches, the same as
-/// `starts_with` failing outright would. The comparison itself
-/// (`Path::starts_with`) matches path *components*, not string bytes — a
-/// configured `/foo/bar` prefix does not match `/foo/barn/file.md`, unlike
-/// a naive string-prefix check would.
+/// Whether a configured `git_sync_paths` entry covers the canonical
+/// `file_path`. The prefix is canonicalized too, and compared by path
+/// components, so `/foo/bar` doesn't match `/foo/barn`.
 fn git_sync_path_matches(file_path: &std::path::Path, prefix: &std::path::Path) -> bool {
     std::fs::canonicalize(prefix).is_ok_and(|canonical| file_path.starts_with(canonical))
 }
@@ -395,15 +340,8 @@ where
         }
     }
 
-    // The final action before quitting (a toggle, or an editor edit just
-    // above) can itself be exactly what queues a git-sync request — and the
-    // plumbing-based sync it kicks off (see `git_sync.rs`) is several `git`
-    // subprocesses, not a handful, so it no longer reliably finishes within
-    // one more ~100ms loop tick. Since quitting drops out of the loop
-    // immediately and dropping `git_sync` would abandon any thread it just
-    // spawned mid-flight, forward one last pending request and give it a
-    // bounded window to actually land before the process (and every thread
-    // in it) goes away.
+    // The last action may have queued a sync, which takes several git
+    // subprocesses; give it a bounded window to land before exiting.
     if let Some(sync) = git_sync.as_mut() {
         if let Some(pending) = state.take_git_sync_request() {
             sync.request(pending);
@@ -436,14 +374,9 @@ fn default_opener() -> &'static str {
     }
 }
 
-/// Shell-word-splits an env-var-sourced command (`$EDITOR`/`$VISUAL`/
-/// `$BROWSER`), returning `(program, args, warning)`. `command` is
-/// `None`/blank, or splits to nothing meaningful (e.g. a validly-quoted-empty
-/// value like `EDITOR="''"`, which `shell_words::split` returns as one empty
-/// token rather than an empty list) → falls back to `fallback` silently, the
-/// same as an unset variable. Unbalanced quotes can't be parsed at all, so
-/// they also fall back to `fallback`, but with a warning naming `var_name` —
-/// the caller surfaces it rather than failing outright.
+/// Shell-word-splits an env-var command into `(program, args, warning)`.
+/// Blank or empty values fall back silently; unbalanced quotes fall back
+/// with a warning naming `var_name`.
 fn resolve_command(
     command: Option<&str>,
     fallback: &str,
@@ -468,21 +401,13 @@ fn resolve_command(
     }
 }
 
-/// Resolves the URL opener: `$BROWSER` (shell-word-split like the editor, so
-/// `BROWSER="firefox --new-tab"` works and a quoted argument containing spaces
-/// stays one token), else the platform default. The third element is
-/// `Some(warning)` when `$BROWSER` was set but couldn't be parsed (unbalanced
-/// quotes) — the caller surfaces it and still falls back to the default
-/// rather than failing outright.
+/// `$BROWSER` (shell-word-split), else the platform default.
 fn resolve_opener(browser: Option<&str>) -> (String, Vec<String>, Option<String>) {
     resolve_command(browser, default_opener(), "$BROWSER")
 }
 
-/// Opens `url` with the resolved opener without suspending the TUI. The
-/// URL is passed as a plain argument (no shell), so it can't inject commands.
-/// Output is discarded so a chatty opener can't corrupt the screen, and the
-/// child is reaped in a detached thread so we neither block on the browser nor
-/// leave a zombie. A spawn failure is surfaced in the status bar.
+/// Opens `url` without suspending the TUI. No shell, discarded output, and
+/// the child is reaped on a detached thread.
 fn open_link(url: &str, state: &mut AppState) {
     use std::process::{Command, Stdio};
 
@@ -507,13 +432,8 @@ fn open_link(url: &str, state: &mut AppState) {
     }
 }
 
-/// Resolves the editor command: `$VISUAL`, then `$EDITOR`, then `vi`. The
-/// value is shell-word-split so `EDITOR="code --wait"` works (first token is
-/// the program, the rest are args) and a quoted argument containing spaces
-/// stays one token (`EDITOR="my-wrapper --arg='value with spaces'"`).
-/// The third element is `Some(warning)` when a value was set but couldn't be
-/// parsed (unbalanced quotes) — the caller surfaces it and still falls back
-/// to `vi` rather than failing outright.
+/// `$VISUAL`, then `$EDITOR`, then `vi`, shell-word-split so
+/// `EDITOR="code --wait"` works.
 fn resolve_editor(
     visual: Option<&str>,
     editor: Option<&str>,
@@ -526,12 +446,8 @@ fn resolve_editor(
     resolve_command(chosen, "vi", "$EDITOR/$VISUAL")
 }
 
-/// Extra arguments that place the editor's cursor on a 1-based `line`, spliced
-/// in *before* the file path. The `+N file` convention is understood by
-/// the common terminal editors below (matched on the program's basename, so
-/// `/usr/bin/vim` and `EDITOR="vim -p"` both qualify). Editors that don't use
-/// `+N` — VS Code (`code`), Sublime (`subl`), Helix (`hx`), and anything
-/// unrecognised — get no line arg and open at the top of the file, unchanged.
+/// `+N` for the terminal editors that understand it (matched on basename);
+/// nothing for the rest.
 fn editor_line_args(program: &str, line: usize) -> Vec<String> {
     let base = std::path::Path::new(program)
         .file_stem()
@@ -585,11 +501,8 @@ where
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
-    // Force a full repaint: the editor clobbered the screen ratatui thinks
-    // it drew. `resize` to the current size clears the screen and resets
-    // the back buffer without querying the cursor — unlike `Terminal::clear`,
-    // whose DSR cursor query hangs/errors on terminals that don't answer it
-    // (bare PTYs, some multiplexers).
+    // Force a full repaint by resizing: `Terminal::clear` queries the cursor,
+    // which hangs on terminals that don't answer.
     let size = terminal.size()?;
     terminal.resize(Rect::new(0, 0, size.width, size.height))?;
 
@@ -603,12 +516,8 @@ where
         Ok(_) => {}
     }
 
-    // Reload now rather than waiting for the watcher; the mtime guard makes
-    // the watcher's later events a no-op. A change here came from us
-    // spawning the editor, so — unlike a generic watcher-detected external
-    // edit from elsewhere — queue a git-sync request for it too, the same
-    // as a toggle would, instead of leaving it to piggyback on (or be
-    // missed by) some later markcheck-driven write.
+    // Reload now, and queue a git-sync request: this edit came from our own
+    // editor launch.
     if state.reload_if_changed() {
         state.request_external_edit_sync(&program);
     }
@@ -625,19 +534,14 @@ mod tests {
 
     #[test]
     fn resolve_flag_prefers_an_explicit_flag_then_config_then_the_default() {
-        // Flag/config precedence had no test at all, which is how `primary`
-        // and `auto_copy` came to be `cli || config` -- turnable on but never
-        // off -- while README claimed a passed flag always overrides.
-        // clap's `conflicts_with` rules out both flags at once, so the
-        // (true, true) row isn't reachable and isn't asserted.
+        // The (true, true) row is ruled out by clap's `conflicts_with`.
         for default in [false, true] {
             // No flag passed: the config wins, else the default.
             assert_eq!(resolve_flag(false, false, None, default), default);
             assert!(resolve_flag(false, false, Some(true), default));
             assert!(!resolve_flag(false, false, Some(false), default));
 
-            // A passed flag beats the config in *both* directions -- the
-            // half that used to be missing.
+            // A passed flag beats the config in both directions.
             for config in [None, Some(false), Some(true)] {
                 assert!(
                     resolve_flag(true, false, config, default),
@@ -706,11 +610,7 @@ mod tests {
 
     #[test]
     fn every_setting_can_be_forced_on_over_a_config_that_disables_it() {
-        // Deep review, round 3: `nerd_font` and `mouse` had no positive
-        // flag at all and their `cli_on` argument was hardcoded `false`, so
-        // `nerd_font = false` in the config could not be overridden for a
-        // single run -- while README and CHANGELOG both claimed all four
-        // settings had a flag in both directions.
+        // `nerd_font` and `mouse` need a positive flag to override the config.
         let settings = settings_from(
             &["--nerd-font", "--mouse", "--primary", "--auto-copy"],
             config_all(false),
@@ -930,11 +830,8 @@ mod tests {
 
     #[test]
     fn git_sync_path_matches_requires_a_real_directory_boundary() {
-        // Regression for an external review's claim that this was a
-        // lexical string-prefix check (it isn't — Path::starts_with
-        // matches path components, not string bytes): a configured
-        // "checklists" prefix must not match a same-prefix sibling
-        // directory like "checklists-secret".
+        // `Path::starts_with` compares components, so a sibling sharing the prefix
+        // must not match.
         let root = crate::test_support::unique_temp_path("main-gitsync", "", None);
         std::fs::create_dir_all(&root).unwrap();
         let checklists = root.join("checklists");

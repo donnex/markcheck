@@ -4,13 +4,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A unique path under the system temp dir, not created — callers that need
-/// a real file or directory on disk do that themselves. `module` names the
-/// calling source file (e.g. `"watcher"`), so leftover files from a failed
-/// test run are still traceable to their origin; `hint` further
-/// disambiguates within a module's own tests, or is empty when a module has
-/// no need for one. `ext` appends a `.{ext}` suffix (e.g. `"md"`, `"toml"`)
-/// when the path names a file.
+/// A unique, not-yet-created path under the temp dir. `module` names the
+/// caller so leftovers are traceable; `ext` adds a suffix.
 pub fn unique_temp_path(module: &str, hint: &str, ext: Option<&str>) -> PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);

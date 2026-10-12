@@ -17,11 +17,9 @@ use crate::model::AppState;
 /// through as the track. The thumb glyph is also asserted by the tests.
 const SCROLLBAR_THUMB: &str = "▓";
 
-/// Draws a vertical scrollbar over the right border of `area` (between the
-/// top/bottom borders, so it slides along the existing border with `▲`/`▼`
-/// arrows at the ends) when the content overflows the viewport. A no-op
-/// when everything fits or the area is too small. Shared by the cards, the
-/// overview, and the help overlay.
+/// Draws a vertical scrollbar over the right border of `area` when the
+/// content overflows. Shared by the cards, the overview and the help
+/// overlay.
 fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, viewport: usize, position: usize) {
     if total <= viewport || area.height < 3 {
         return;
@@ -159,27 +157,14 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "untitled".to_string());
 
-    // The update tag: hidden on narrow terminals where it would
-    // clip the left content; the status bar message still announces reloads
-    // there. Prefixed with the refresh icon instead of `[ ]` brackets —
-    // the ` │ ` separator and the dim-yellow style already set it apart from
-    // the persistent info. Lives in the right-hand cluster, not next
-    // to the filename — see below.
+    // Hidden on narrow terminals, where the status bar still announces reloads.
     let now = SystemTime::now();
     let update_label = update_label(state.last_update_at, now)
         .filter(|_| area.width >= UPDATE_LABEL_MIN_WIDTH)
         .map(|label| format!("{} {label}", state.icons.update));
-    // The git-sync section: `{icon} git` is a *persistent*
-    // "git-sync is on for this session" indicator, shown the whole time
-    // `state.git_sync.active` is set (regardless of whether anything has
-    // synced yet) — the literal "git" text is there because the icon alone
-    // couldn't be trusted to read as "this is about git" (a prior
-    // icon-only attempt didn't land). The relative "Synced Ns ago"
-    // text appends after it only while a completed sync is still recent
-    // (same mechanism/width gate as the update tag above) and drops away
-    // again once it's stale, leaving just `{icon} git`. Absent entirely —
-    // no icon, no text, no gap — when git-sync wasn't requested or the file
-    // isn't in a repo.
+    // `{icon} git` shows for the whole session while git-sync is active; the
+    // "Synced Ns ago" text follows only while recent. The literal "git" is
+    // there because the icon alone didn't read as git.
     let sync_section = (state.git_sync.active && area.width >= UPDATE_LABEL_MIN_WIDTH).then(|| {
         match sync_label(state.git_sync.last_at, now) {
             Some(label) => format!("{} git · {label}", state.icons.sync),
@@ -198,16 +183,8 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let separator = Span::styled(" │ ", Style::default().add_modifier(Modifier::DIM));
 
-    // Right-hand cluster: everything *about the file's current
-    // state* — recency, git-sync, progress — reads together on the right,
-    // rather than the update/sync tags trailing the filename on the left.
-    // The counter is still the outermost (rightmost) element, so it never
-    // shifts position on screen; the tags before it grow/shrink the
-    // cluster's width as they come and go, but that movement stays
-    // contained to their left, never touching the counter's own position
-    // or the static title/filename group. Built as plain strings first so
-    // the combined width (tags + separators + counter) can be measured
-    // before laying out the row.
+    // Right-hand cluster: tags, then the counter outermost so it never moves.
+    // Built as strings first so the width can be measured.
     let mut right_parts: Vec<(String, Style)> = Vec::new();
     if let Some(update_label) = update_label {
         right_parts.push((
@@ -270,19 +247,9 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(Line::from(spans)), left_area);
 }
 
-/// The list tabs as a full-width strip: `[n] Title` per list, the
-/// current one a black-on-accent pill, the rest dim. Rendered in its
-/// own row below the title bar on narrow terminals — where the overview is
-/// hidden — so it isn't crammed into the title bar. On wide terminals
-/// the overview lists the lists instead, so this isn't drawn.
-/// Style for the current list's tab pill: black text on the accent
-/// background. `Color::Black` here is a deliberate, narrow exception to the
-/// "read every color from `state.palette`" rule — it isn't a
-/// semantic UI color the way `Palette`'s fields are, just the contrasting
-/// text color for a solid-accent pill, and plain black reads fine against
-/// `palette.current` at all three color depths (`Palette::basic`/`256`/
-/// `truecolor` all pick light/vivid hues for `current`). Not worth adding a
-/// dedicated `Palette` field for the one call site that needs it.
+/// Black text on the accent background. `Color::Black` is a deliberate
+/// exception to reading colors from the palette: it reads fine on
+/// `palette.current` at every color depth.
 fn current_tab_pill_style(state: &AppState) -> Style {
     Style::default().fg(Color::Black).bg(state.palette.current)
 }
@@ -325,12 +292,9 @@ fn render_list_tabs(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Per-tab title character budgets so every list tab is shown.
-/// Each tab costs `TAB_DECORATION + title` columns; when the untruncated
-/// titles fit in `avail` they're shown full, otherwise the title budget is
-/// shared proportionally to title length (never below `MIN_TITLE`). Returns
-/// `None` when even minimally-truncated tabs won't fit, signalling the
-/// current-tab-only fallback.
+/// Per-tab title budgets so every list tab fits in `avail`: full titles
+/// when they fit, otherwise shared proportionally (never below
+/// `MIN_TITLE`). `None` falls back to the current tab alone.
 fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
     const TAB_DECORATION: usize = 7; // " [n] " brackets, spaces, separator
     const MIN_TITLE: usize = 3;
@@ -354,12 +318,8 @@ fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
         .iter()
         .map(|&len| (title_budget * len / total_len).max(MIN_TITLE))
         .collect();
-    // The `.max(MIN_TITLE)` floor above can push the total over `title_budget`
-    // when one title is short enough that its proportional share would
-    // otherwise fall under it; claw the excess back from the largest shares
-    // (never below MIN_TITLE, which `title_budget >= MIN_TITLE * n` above
-    // guarantees is always possible) so the total never exceeds what was
-    // actually determined to fit.
+    // The `MIN_TITLE` floor can push the total over budget; take the excess
+    // back from the largest shares.
     let mut overflow = shares.iter().sum::<usize>().saturating_sub(title_budget);
     while overflow > 0 {
         let (largest, _) = shares
@@ -385,13 +345,9 @@ fn truncate(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// A relative "time since X" label shared by the update tag and the
-/// sync tag: `{verb} just now` under 5s, `{verb} Ns ago` under a
-/// minute, `{verb} Nm ago` under two, and `None` at/after
-/// `UPDATE_LABEL_LIFETIME` (or when `at` is `None`). The seconds are floored
-/// to `UPDATE_LABEL_STEP_SECS` so the value changes at most every ~5s rather
-/// than every render; the idle event loop redraws several times a
-/// second, so it still refreshes without a timer.
+/// A relative "time since X" label for the update and sync tags, `None`
+/// once `UPDATE_LABEL_LIFETIME` passes. Floored to `UPDATE_LABEL_STEP_SECS`
+/// so it changes at most every few seconds.
 fn relative_label(verb: &str, at: Option<SystemTime>, now: SystemTime) -> Option<String> {
     let at = at?;
     let elapsed = now.duration_since(at).ok()?;
@@ -485,10 +441,7 @@ mod tests {
 
     #[test]
     fn tabs_proportional_shares_never_exceed_the_title_budget() {
-        // Regression: a very short title's proportional share floors up to
-        // MIN_TITLE while the rest keep their full proportional (rounded
-        // down) share, which used to let the shares sum above what
-        // fit_tab_titles itself determined would fit.
+        // A short title's share flooring up to `MIN_TITLE` must not overflow.
         let titles = ["x".repeat(19), "x".repeat(2)];
         let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
         let maxes = fit_tab_titles(&titles, 34).unwrap();
@@ -648,9 +601,7 @@ mod tests {
 
     #[test]
     fn overview_marks_info_items_with_the_note_glyph_not_a_pending_circle() {
-        // A display-only row used to fall through to the pending marker
-        // (☐), identical to a not-started task. It now shows the note glyph (▪),
-        // so information reads apart from a step.
+        // A display-only row shows the note glyph, not the pending marker.
         let mut state = state_with(vec![List {
             title: "L".to_string(),
             banner: None,
@@ -1463,9 +1414,6 @@ mod tests {
 
     #[test]
     fn dynamic_tags_cluster_with_the_counter_not_the_filename() {
-        // The update/sync tags used to trail the filename directly on
-        // the left; they now group with the done/total counter on the right
-        // instead, leaving the left side purely static (title │ filename).
         let mut state = sample_state();
         state.last_update_at = Some(SystemTime::now());
         state.git_sync.active = true;
@@ -2374,11 +2322,7 @@ mod tests {
 
     #[test]
     fn completion_screens_render_on_a_short_terminal_without_panic() {
-        // Regression test: completion_card used to clamp its height directly
-        // against the raw content area, which panics (min > max) once the
-        // area drops under MIN_CARD_HEIGHT rows — exactly what a short
-        // terminal produces on the very screens shown when a checklist (or
-        // the whole document) is finished.
+        // Must not panic once the area is shorter than `MIN_CARD_HEIGHT`.
         let mut list_complete = sample_state();
         list_complete.screen = Screen::ListComplete;
         let _ = buffer_text(&mut list_complete, 40, 6);
@@ -2443,13 +2387,8 @@ mod tests {
 
     #[test]
     fn overflowing_card_with_many_items_never_loses_the_current_dot() {
-        // The dots strip and the scroll indicator used to be sized
-        // independently, so ratatui's title truncation could silently eat
-        // exactly the current-item marker (`◉`) to make room for the
-        // indicator — leaving a strip of dots with no "you are here" marker.
-        // Now the two are budgeted together, so either both show, or the
-        // dots are dropped entirely in favor of the indicator; the marker
-        // itself is never the thing that gets clipped.
+        // The dots and scroll indicator are budgeted together: either both show
+        // or the dots are dropped, never the current-item marker alone.
         let long = (0..300)
             .map(|i| format!("word{i}"))
             .collect::<Vec<_>>()
@@ -2536,21 +2475,8 @@ mod tests {
 
     #[test]
     fn overview_sticky_header_click_rects_stay_consistent_near_a_scroll_boundary() {
-        // Exercises the sticky-header fixed-point loop (src/ui/overview.rs)
-        // under the conditions that could trigger its non-convergence edge
-        // case: several stacked ### H3+ sub-heading levels (so the pinned
-        // ancestor-row count swings sharply between adjacent rows — 3
-        // dropping straight to 0 at the group boundary below) in a short
-        // overview panel, scrolled to the bottom so the offset sits right at
-        // that boundary. A brute-force sweep over many terminal sizes and
-        // selections did not reproduce actual non-convergence (ratatui's
-        // real scroll offsets appear to keep the loop settling within its
-        // 4-pass budget for realistic content), so this doesn't prove the
-        // fixed-point loop can fail to converge — but it does pin the
-        // invariant the fix (see safe fallback to `rendered_reserved` in
-        // overview.rs) guarantees regardless: every recorded click Rect
-        // must map back to the task it visually labels, never a neighboring
-        // row shifted by a stale reserved-row count.
+        // Stacked sub-heading levels in a short panel scrolled to a group
+        // boundary: every click rect must map to the task it labels.
         let sub = |level: u8, text: &str| crate::model::SubHeading {
             level,
             text: text.to_string(),

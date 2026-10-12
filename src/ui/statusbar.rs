@@ -65,11 +65,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .or(armed_prompt.as_deref())
         .unwrap_or(legend);
 
-    // Failure / "nothing happened" messages are shown in error red so problems
-    // stand out from passive confirmations (this supersedes the earlier
-    // file-deleted-only case, which now sets an error message like the rest).
-    // The flag only applies to a real status message, never the armed prompt or
-    // legend, so a message that expired but left the flag set can't mis-color.
+    // The error color applies only to a real message, never the prompt or
+    // legend.
     let line = if state.status_is_error && state.status_message.is_some() {
         Line::raw(text).fg(state.palette.error)
     } else {

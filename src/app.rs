@@ -88,52 +88,24 @@ fn first_undone_index(list: &List) -> Option<usize> {
 }
 
 impl AppState {
-    /// Wraps a parsed [`Document`] for interactive use.
-    ///
-    /// **Invariant:** `document.lists` must be non-empty. `AppState` navigation
-    /// (e.g. [`AppState::current_list`]) indexes `lists` by `current_list_index`
-    /// without a bounds fallback, so a list-less document would panic on the
-    /// first access. Both entry points uphold this: startup rejects a list-less
-    /// file in `main.rs`, and reload refuses a new document with no lists
-    /// (`reload_if_changed`). The `debug_assert!` below turns a future violation
-    /// into a clear, immediate failure in debug/test builds instead of an
-    /// opaque out-of-bounds panic somewhere downstream.
+    /// Wraps a parsed [`Document`] for interactive use. `document.lists` must
+    /// be non-empty: navigation indexes it without a fallback.
     pub fn new(document: Document) -> Self {
         debug_assert!(
             !document.lists.is_empty(),
             "AppState requires a document with at least one list; the empty case \
              is rejected at load (main.rs) and reload (reload_if_changed)",
         );
-        // The stat is taken *after* the caller has read and parsed the file,
-        // so it can describe a revision the document is not. Recording it
-        // anyway would be worse than recording nothing: `reload_if_changed`
-        // short-circuits on mtime+size, so an external change that landed in
-        // that window would look *already seen* and never be loaded, leaving
-        // stale content on screen until something else touched the file. The
-        // reload path has no such problem — its stat precedes the read, which
-        // errs the safe way.
-        //
-        // The document's own byte length is the cheap cross-check: if it
-        // disagrees with what the stat reports, the file moved under us and
-        // neither value is worth keeping. Dropping both makes the next tick
-        // reload, which is exactly right. A change that preserves the byte
-        // length still slips through, which is the same limitation mtime and
-        // size already carry and why the content hash exists.
+        // The stat follows the caller's read, so it may describe a newer revision
+        // than the document. If the sizes disagree, drop both so the next tick
+        // reloads instead of treating the change as already seen.
         let contents = writer::document_contents(&document);
         let (file_mtime, file_size) = match current_stat(&document.file_path) {
             Some((modified, size)) if size == contents.len() as u64 => (Some(modified), Some(size)),
             _ => (None, None),
         };
-        // Derived from the document itself, never from a second read of the
-        // file. `raw_lines` concatenates to exactly the bytes it was parsed
-        // from — the invariant `write_back` already depends on — so this is
-        // the same content by construction. Re-reading the path would open a
-        // window in which the file changes between the parse and the hash,
-        // leaving the fingerprint describing content the in-memory document
-        // is not; `disk_content_diverged` would then report "unchanged" and
-        // the next toggle would silently overwrite the newer content. That
-        // is the same defect the reload path was fixed for, and the only
-        // durable cure is to stop reading twice.
+        // Hashed from the document, not a second read, so the fingerprint can't
+        // describe a different revision than the one in memory.
         let file_content_hash = Some(hash_bytes(contents.as_bytes()));
         // Start on the first not-done item: prefer the first list, then
         // fall back to the first list with remaining work, then item 0
@@ -229,11 +201,8 @@ impl AppState {
         self.maybe_auto_copy();
     }
 
-    /// Jump to list `index` (0-based). Out of range is reported rather than
-    /// ignored: only the `1`-`9` digit binding can ask for a list that
-    /// doesn't exist (every internal caller passes a bounds-checked index),
-    /// and pressing `5` in a two-list document used to clear the status bar
-    /// and do nothing at all — indistinguishable from the app being wedged.
+    /// Jump to list `index` (0-based); out of range is reported, since the
+    /// `1`-`9` binding can ask for a list that doesn't exist.
     pub fn jump_to_list(&mut self, index: usize) {
         let count = self.document.lists.len();
         if index >= count {
@@ -651,13 +620,8 @@ impl AppState {
         self.status_is_error = false;
     }
 
-    /// Sets a **sticky, error-colored** status message: failures
-    /// (copy/reload/open/editor) and "your keypress did nothing" feedback (a `y`
-    /// with no code or an ambiguous set, an `o` with no/unsupported link, an `R`
-    /// with nothing to reset, a search with no matches). Persists until the
-    /// next input, so it can't silently vanish before it's read, and the
-    /// status bar renders it in `palette.error` so problems stand out from
-    /// passive confirmations.
+    /// Sets a **sticky, error-colored** status message for failures and "your
+    /// keypress did nothing" feedback. Persists until the next input.
     pub fn set_error(&mut self, msg: String) {
         self.status_message = Some(msg);
         self.status_expiry = None;
@@ -671,13 +635,9 @@ impl AppState {
         self.status_is_error = false;
     }
 
-    /// Cancels any armed input chord (`gg` via `pending_g`, `o`'s digit prompt
-    /// via `pending_open_link`) along with the status message. Mouse
-    /// input doesn't go through `handle_key_with_mods` — the only place that
-    /// otherwise consumes these flags — so without this, a click between the
-    /// two halves of a chord left it armed to misfire against whatever the
-    /// click just did (e.g. jump to a different card, then have a stray digit
-    /// press treated as that *new* card's link-open prompt).
+    /// Cancels any armed input chord (`gg`, `o`'s digit prompt) and the status
+    /// message. Mouse input bypasses `handle_key_with_mods`, so a click between
+    /// the two halves of a chord would otherwise leave it armed.
     fn clear_pending_chords(&mut self) {
         self.clear_status();
         self.pending_g = false;
@@ -709,11 +669,8 @@ impl AppState {
     }
 
     /// With `--auto-copy`, copy the current card's code when it has exactly
-    /// one candidate. On a successful copy, surface the same status
-    /// message as manual `y`; stay silent for no-code / ambiguous /
-    /// failure so passive navigation isn't spammed. A refusal over hidden
-    /// characters is the exception: it is a warning about the checklist
-    /// itself, so it is always shown.
+    /// one candidate. Silent for no-code, ambiguous or failure, except a
+    /// refusal over hidden characters, which is always shown.
     fn maybe_auto_copy(&mut self) {
         if !self.auto_copy {
             return;
@@ -875,11 +832,7 @@ impl AppState {
         };
         let kind = current.kind;
         let state = match kind {
-            // Space/Enter can't toggle an info card, so page past it like
-            // `l`/next instead of doing nothing — crossing into the
-            // next list at a list edge, per `navigate_forward`. On the very
-            // last card there's nowhere to page to, so say so rather than
-            // leaving the keypress looking broken.
+            // An info card can't be toggled, so page past it like `l`.
             ItemKind::DisplayOnly => {
                 let before = (self.current_list_index, self.current_item_index);
                 self.navigate_forward();
@@ -911,13 +864,9 @@ impl AppState {
         }
     }
 
-    /// Toggle an *arbitrary* task done/not-done in place, without moving the
-    /// cursor or the card view (the overview marker click). Uses the
-    /// same done↔not-started rule as `toggle_current`, writes back, and reports
-    /// a confirmation since the toggled task may not be the focused card. A
-    /// non-task (display-only) index is ignored. Unlike the keyboard toggle it
-    /// never *promotes* to a completion screen (that would steal focus), but it
-    /// does drop a now-stale completion screen back to the checklist.
+    /// Toggle an arbitrary task in place without moving the cursor (the
+    /// overview marker click). Never promotes to a completion screen, but drops
+    /// a now-stale one.
     pub fn toggle_item(&mut self, list_index: usize, item_index: usize) {
         if self.blocked_by_deletion() {
             return;
@@ -988,13 +937,7 @@ impl AppState {
         );
     }
 
-    /// `s` toggles the *started* state: Started reverts to NotStarted,
-    /// anything else (including Done) becomes Started. Never completes and
-    /// never auto-advances — the cursor stays put on `Checklist`.
-    ///
-    /// An info card has no state to start, which is reported rather than
-    /// ignored — the same "your keypress did nothing, and here's why"
-    /// treatment `copy_current_code` and `open_current_link` already give.
+    /// `s` toggles the *started* state. Never completes and never advances.
     pub fn start_current(&mut self) {
         let Some(current) = self.current_item() else {
             return;
@@ -1017,11 +960,8 @@ impl AppState {
         self.screen = Screen::Checklist;
     }
 
-    /// Sets the current checkbox's state and writes it back, refreshing the
-    /// self-write mtime guard and the "Updated" tag on success. Returns
-    /// whether the write succeeded — callers should skip any further
-    /// success-implying screen transition when it didn't, since a
-    /// write failure here also sets a sticky error status.
+    /// Sets the current checkbox's state and writes it back. Returns whether
+    /// the write succeeded.
     fn set_current_state(&mut self, state: TaskState) -> bool {
         if self.blocked_by_deletion() {
             return false;
@@ -1050,49 +990,26 @@ impl AppState {
         true
     }
 
-    /// Writes the document back to disk, refreshing the self-write mtime
-    /// guard and the "Updated" tag on success. Every mutating action
-    /// (toggle/start/reset/undo/redo) ends with exactly this sequence, so
-    /// it's shared here rather than repeated at each call site. On failure,
-    /// restores the document to `pre_state` (the checkbox snapshot captured
-    /// before the mutation) before reporting the error — a failed write
-    /// must never leave memory diverged from what's actually on disk, since
-    /// that phantom state can otherwise persist for the rest of the session
-    /// (the file watcher only reloads on a real mtime/size change, and a
-    /// failed write never touches the file) and even cascade into a false
-    /// "all complete" screen. Returns whether the write succeeded; on
-    /// failure sets a sticky error with `fail_msg` so callers can bail out
-    /// with `if !self.commit_write(...) { return; }`. On success,
-    /// `change_desc` (e.g. `Check "Restart service"`) is stashed as the
-    /// pending git-sync request — consumed by the main loop via
-    /// `take_git_sync_request`, regardless of whether git-sync is actually
-    /// active for this file.
+    /// Writes the document back to disk; every mutating action ends here. On
+    /// failure, restores `pre_state` so memory never diverges from disk, and
+    /// sets a sticky error with `fail_msg`. On success, stashes `change_desc`
+    /// as the pending git-sync request.
     fn commit_write(
         &mut self,
         pre_state: &StateSnapshot,
         fail_msg: &str,
         change_desc: &str,
     ) -> bool {
-        // Held across the divergence check *and* the write below, which is
-        // what turns two separate operations into one compare-and-swap.
-        // Without it both instances can pass the check and both rename, and
-        // the second silently discards the first's toggle — the hash check
-        // narrows that window a great deal but cannot close it on its own.
-        //
-        // `Unavailable` proceeds unlocked on purpose: this is a safety net
-        // over an already-existing check, so a machine with no writable temp
-        // directory must not lose the ability to save at all. The guard is
-        // bound for the rest of the function and released on return.
+        // Held across the divergence check and the write, making the two one
+        // compare-and-swap. `Unavailable` proceeds unlocked so a machine without a
+        // writable temp directory can still save.
         let _write_lock = match writer::WriteLock::acquire(&self.document.file_path) {
             writer::LockOutcome::Acquired(lock) => Some(lock),
             writer::LockOutcome::Unavailable => None,
             writer::LockOutcome::Busy(lock_path) => {
                 self.apply_snapshot(pre_state);
-                // Naming the file matters: the lock is only ever released by
-                // its owner or recovered on that owner's proven death, so if
-                // a PID was recycled this refusal persists until the file is
-                // removed by hand. Silently telling the user to "retry"
-                // forever would be worse than telling them where to look.
+                // Name the file: a lock held by a recycled PID persists until removed by
+                // hand.
                 self.set_error(format!(
                     "Another markcheck is saving this file — change not saved, please retry \
                      (if this persists, remove {})",
@@ -1110,16 +1027,8 @@ impl AppState {
             );
             return false;
         }
-        // The content this write is about to replace — the pre-write
-        // working-tree content, which is what git-sync's staged-target guard
-        // compares the index against. Read here, under the write lock and
-        // immediately after `disk_content_diverged` confirmed the file still
-        // hashes to what was last seen, so it is the same bytes that check
-        // just validated. Captured before the write replaces them.
-        //
-        // The content rather than its hash: the guard has to compare in
-        // git's terms, through `hash-object --path`, so that a clean filter
-        // configured for the checklist applies to both sides.
+        // The pre-write content for git-sync's staged-target guard, which compares
+        // in git's terms so clean filters apply.
         let previous_content = fs::read_to_string(&self.document.file_path).ok();
         let Ok(content) = writer::write_back(&self.document) else {
             self.apply_snapshot(pre_state);
@@ -1141,30 +1050,9 @@ impl AppState {
         true
     }
 
-    /// True when the file's current on-disk content no longer matches
-    /// `file_content_hash` — the content we last confirmed was there, at
-    /// load or after our own last write/reload. A mismatch means something
-    /// else (another markcheck instance, an external editor) changed the
-    /// file since, so writing now would silently discard that change — the
-    /// classic lost-update problem for two writers sharing one file, which
-    /// `file_mtime`/`file_size` alone can miss within a single coarse-mtime
-    /// timestamp tick. Fails open (`false`, i.e. "proceed") when the file
-    /// can't be read at all: that's a distinct failure `write_back` itself
-    /// is about to surface with its own, more specific error.
-    ///
-    /// External review, round 4: this check and the write it guards
-    /// (`commit_write`'s call into `writer::write_back`) aren't one atomic
-    /// operation — there's a real gap between this returning `false` and
-    /// `write_back`'s rename actually landing, in which another writer could
-    /// still save a change that this write then silently overwrites. This is
-    /// accepted, not eliminated, the same "narrowed, not closed" tradeoff
-    /// `commit_via_temp_index` makes on the git-sync side (see
-    /// `git_sync.rs`'s doc comments) rather than reaching for a repository-
-    /// or file-level lock: the check still catches the far more common case
-    /// (a change that landed before this call runs at all), and two
-    /// markcheck instances — or an external editor — racing to save the
-    /// exact same file within this narrow a window is rare enough not to be
-    /// worth the added platform-dependent locking machinery.
+    /// True when the file's on-disk content no longer matches
+    /// `file_content_hash`, i.e. someone else changed it since we last saw it.
+    /// Fails open when the file can't be read; `write_back` reports that.
     fn disk_content_diverged(&self) -> bool {
         match current_content_hash(&self.document.file_path) {
             Some(hash) => Some(hash) != self.file_content_hash,
@@ -1185,19 +1073,8 @@ impl AppState {
         }
     }
 
-    /// Re-reads the file if its mtime or size differs from what we last saw.
-    /// Cheap enough to call every event-loop tick since it's just a stat()
-    /// call when nothing has changed. The size cross-check (alongside mtime)
-    /// narrows the window where a same-instant external edit could be missed
-    /// on a coarse-mtime filesystem (whole-second resolution is common) — an
-    /// edit landing in the same resolution window as our own write, or a
-    /// prior external edit, that also happens to leave the size unchanged is
-    /// still missed, but that's a much narrower coincidence than mtime alone.
-    /// Returns whether new content was actually loaded (as opposed to
-    /// nothing changing, or a reload being skipped/failed) — callers that
-    /// themselves triggered the on-disk change (e.g. `e`, the editor) use
-    /// this to know whether there's now something worth a git-sync request;
-    /// see [`request_external_edit_sync`](Self::request_external_edit_sync).
+    /// Re-reads the file if its mtime or size changed. Cheap enough for every
+    /// tick. Returns whether new content was loaded.
     pub fn reload_if_changed(&mut self) -> bool {
         let Some((modified, size)) = current_stat(&self.document.file_path) else {
             // Distinguish a confirmed deletion from a transient unreadable state.
@@ -1225,19 +1102,9 @@ impl AppState {
         self.reload_from_disk(modified, size, was_deleted)
     }
 
-    /// Unconditionally re-reads and applies the file, bypassing the
-    /// mtime/size "unchanged" short-circuit in [`reload_if_changed`]. Used
-    /// by [`commit_write`](Self::commit_write) when `disk_content_diverged`
-    /// has already proven the file changed via its content hash — mtime/size
-    /// can still read as "unchanged" on a coarse-mtime filesystem even
-    /// though the hash caught a real change, and in that case
-    /// `reload_if_changed` would otherwise wrongly skip the reload, leaving
-    /// the conflict undetected on every retry.
+    /// Reloads unconditionally, for when the content hash caught a change that
+    /// mtime and size missed on a coarse-mtime filesystem.
     fn force_reload(&mut self) {
-        // The file vanishing in the instant between disk_content_diverged's
-        // read and this stat is a real but effectively untestable race
-        // (nothing yields between the two calls); reload_if_changed's own
-        // next tick will pick up and report the deletion normally.
         let Some((modified, size)) = current_stat(&self.document.file_path) else {
             return;
         };
@@ -1245,33 +1112,10 @@ impl AppState {
         self.reload_from_disk(modified, size, was_deleted);
     }
 
-    /// Shared reload body for [`reload_if_changed`] and [`force_reload`]:
-    /// parses the file fresh and swaps it in on success.
-    ///
-    /// `file_mtime`/`file_size` (reload-optimization only, per
-    /// `reload_if_changed`'s unchanged-check) are refreshed on **every**
-    /// branch to the just-observed disk state, so a file we decline to load
-    /// isn't re-parsed on every watcher tick.
-    ///
-    /// `file_content_hash` — the write-conflict-detection fingerprint
-    /// `disk_content_diverged` compares against — is advanced **only on the
-    /// branch that actually adopts the new content**. The rule is "the
-    /// fingerprint names the revision the in-memory document came from," and
-    /// both non-adopting branches must therefore leave it pinned:
-    ///
-    /// * a failed parse (a transient malformed intermediate save, common
-    ///   with editors that write in stages);
-    /// * a successful parse with **no checklist items**, which is declined
-    ///   because `AppState` requires at least one list.
-    ///
-    /// Deep review, round 2, reproduced end-to-end: the second case used to
-    /// fall through to a shared tail that advanced the fingerprint anyway.
-    /// The in-memory document was then the *old* one while the fingerprint
-    /// claimed disk was current, so `disk_content_diverged` returned false
-    /// and the next toggle wrote stale content straight over whatever the
-    /// user had just put in the file — silently, with no error and nothing
-    /// to undo. Keeping it pinned makes that write correctly report
-    /// "File changed on disk — reloaded; change not saved, please retry".
+    /// Parses the file fresh and swaps it in on success. `file_mtime` and
+    /// `file_size` are refreshed on every branch, but `file_content_hash` only
+    /// when the new content is adopted: it must name the revision the in-memory
+    /// document came from, or the next toggle would overwrite the newer file.
     fn reload_from_disk(&mut self, modified: SystemTime, size: u64, was_deleted: bool) -> bool {
         // Refreshed on every path below, including the two that decline to
         // load; only the fingerprint distinguishes them.
@@ -1288,26 +1132,12 @@ impl AppState {
                 // snapshots no longer apply cleanly.
                 self.undo_stack.clear();
                 self.redo_stack.clear();
-                // And for exactly the same reason, any git-sync request still
-                // waiting to be drained. It carries the precise content a
-                // previous write put on disk, which this reload has just
-                // replaced — `run_sync` would correctly refuse to commit it
-                // ("file changed since this request was queued"), but that
-                // surfaces as a git-sync *error* for a situation where
-                // nothing went wrong. The content it described is gone; the
-                // request describing it should go with it. The new content
-                // deliberately queues nothing of its own: an external edit
-                // markcheck didn't make is not something it commits.
+                // A queued git-sync request describes content this reload replaced. The
+                // new content queues nothing: markcheck doesn't commit edits it didn't
+                // make.
                 self.git_sync.pending = None;
-                // Any half-finished input chord goes too. `remap_position`
-                // above can move the cursor to a different card, and an
-                // armed `o` prompt or pending `gg` would then act against
-                // content the user never chose it for — the same hazard
-                // `clear_pending_chords` exists to prevent when a mouse
-                // click lands between the two halves, arriving here by a
-                // different route. The numbered link list the user was
-                // reading is gone; the digit they type next must not be
-                // read as a choice from it.
+                // The cursor may now be on a different card, so a half-typed chord must
+                // not act on it.
                 self.pending_g = false;
                 self.pending_open_link = false;
                 let msg = if was_deleted {
@@ -1317,21 +1147,13 @@ impl AppState {
                 };
                 self.set_status(msg);
                 self.last_update_at = Some(SystemTime::now());
-                // The only branch that adopted the new content, so the only
-                // one that may advance the fingerprint — and it is taken from
-                // the adopted document, not from a fresh read of the file, so
-                // the two cannot describe different revisions. See
-                // `AppState::new` for what re-reading here used to risk.
+                // Taken from the adopted document, never a fresh read.
                 self.file_content_hash = Some(hash_bytes(
                     writer::document_contents(&self.document).as_bytes(),
                 ));
                 true
             }
-            // Parsed, but nothing to work through. Sticky (`set_error`, not
-            // `set_status`): this describes a state that persists until the
-            // file gains tasks again, and an ephemeral message would expire
-            // long before the user next reaches for a key — which is exactly
-            // how the silent overwrite above went unnoticed.
+            // Sticky: the state persists until the file gains tasks again.
             Ok(_) => {
                 self.set_error(
                     "Reload skipped: file has no checklist items — changes cannot be saved \
@@ -1347,24 +1169,14 @@ impl AppState {
         }
     }
 
-    /// Queues a git-sync request for an edit that happened *outside*
-    /// `write_back` — currently just `e`, the external editor — so it isn't
-    /// silently left uncommitted until (or missed entirely, if there isn't)
-    /// some later markcheck-driven change. Mirrors `commit_write`'s
-    /// unconditional stash: `AppState` has no notion of whether git-sync is
-    /// even active, `main.rs` decides that when it drains the request.
-    /// `editor` is the resolved program name (e.g. `vim`, `code`), not the
-    /// literal `$EDITOR`/`$VISUAL` env var.
+    /// Queues a git-sync request for an edit made outside `write_back` (the
+    /// `e` editor). `editor` is the resolved program name.
     pub fn request_external_edit_sync(&mut self, editor: &str) {
         let content = writer::document_contents(&self.document);
         let content_hash = hash_bytes(content.as_bytes());
         self.git_sync.pending = Some(PendingSync {
-            // markcheck wrote nothing here — the editor did, and the reload
-            // has already adopted it. So the content this request would
-            // replace *is* the content it carries, and the staged-target
-            // guard's question becomes "does the index hold exactly what is
-            // in the working tree?", which is the right test for this path
-            // too: anything else is a snapshot only the index holds.
+            // The editor wrote this, so the content being replaced is the content
+            // carried.
             previous_content: Some(content.clone()),
             content,
             content_hash,
@@ -1372,10 +1184,8 @@ impl AppState {
         });
     }
 
-    /// Keeps the cursor on the same list (by title, disambiguated by
-    /// occurrence — see below) and item (by line number) after a reload,
-    /// falling back to the start of the document when either can no longer
-    /// be found in the new content.
+    /// Keeps the cursor on the same list (by title and occurrence) and item (by
+    /// line number) after a reload, falling back to the start.
     fn remap_position(&mut self, new_document: &Document) {
         let old_title = self
             .document
@@ -1384,16 +1194,8 @@ impl AppState {
             .map(|s| s.title.clone());
         let old_line_number = self.current_item().map(|item| item.line_number);
 
-        // Two `## H2` lists can share a title (nothing in the Markdown
-        // format forbids it), so title alone doesn't identify a list — a
-        // reload used to always snap back to the *first* same-titled list,
-        // even when the cursor was genuinely on the second one. Ranking the
-        // old list among same-titled lists, then landing on the new
-        // document's list at that same rank, disambiguates the common case
-        // (the duplicate lists' relative order is unchanged) without
-        // needing a real stable list identity; a rank that no longer exists
-        // (e.g. a duplicate got removed) falls back to the first list
-        // overall, the same as a title that vanished entirely.
+        // Two lists can share a title, so the old list's rank among same-titled
+        // lists picks the new one.
         let old_occurrence = old_title.as_deref().map(|title| {
             self.document.lists[..self.current_list_index]
                 .iter()
@@ -1431,29 +1233,9 @@ impl AppState {
         self.maybe_auto_copy();
     }
 
-    /// From a finished list, jump to the next list that still has
-    /// incomplete work (landing on its first not-done item), skipping any
-    /// already-complete lists in between; wrap back to an *earlier*
-    /// incomplete list when nothing follows, and show the all-complete
-    /// summary only when the document genuinely has no unfinished task left.
-    ///
-    /// Deep review, round 3, reproduced: the search used to run forward only
-    /// (`next_incomplete_list_after` is `(from + 1..len)`), so completing the
-    /// *last* list while an earlier one was untouched fell straight through
-    /// to `AllComplete`. The summary then asserted "All Tasks Complete" over
-    /// a body that contradicted it — an untouched list listed as `0 / 1`,
-    /// directly above `Total: 1 / 2 tasks`. Confirming nothing was missed is
-    /// the entire point of a pilot-style checklist, so claiming completion
-    /// while a whole list is untouched is the one thing this screen must
-    /// never do. Wrapping matches `Tab`'s existing document-wide behaviour;
-    /// the sibling `Shift-L` path (`jump_to_next_incomplete_list`) already
-    /// distinguished the two cases correctly via
-    /// `no_further_incomplete_list_message`.
-    ///
-    /// The current list is complete whenever this runs (that is what put the
-    /// `ListComplete` screen up, and `toggle_item` demotes the screen if a
-    /// task is un-done from the overview), so next-then-previous covers every
-    /// other list and `None` really does mean "everything is done".
+    /// From a finished list, jump to the next list with incomplete work,
+    /// wrapping to an earlier one; show the all-complete summary only when
+    /// nothing is left anywhere.
     fn advance_to_next_incomplete_list(&mut self) {
         let target = self
             .next_incomplete_list_after(self.current_list_index)
@@ -1481,12 +1263,8 @@ impl AppState {
         std::mem::take(&mut self.editor_requested)
     }
 
-    /// `o`: open the current card's link. Opens when the card has exactly
-    /// one link with a safe scheme. With several links, `o` arms a follow-up
-    /// digit that opens link `[N]` (matching the card's `[N]` markers);
-    /// otherwise it gives a sticky hint (nothing to open, or unsupported scheme)
-    /// so the keypress is never silent. The actual spawn happens in the main
-    /// loop via `take_link_open_request` (keeping `app.rs` process-free).
+    /// `o`: open the current card's link. With several links, arm a digit that
+    /// picks link `[N]`. The spawn happens in the main loop.
     fn open_current_link(&mut self) {
         let urls: Vec<String> = self
             .current_item()
@@ -1499,18 +1277,13 @@ impl AppState {
             }
             [url] => self.set_error(format!("Not opened: unsupported link type ({url})")),
             [] => self.set_error("Nothing to open: card has no link".to_string()),
-            // Several links: keep the numbered list visible in the status bar
-            // and arm a digit to pick one. No sticky message — that would
-            // hide the very list the user is choosing from; the status bar adds
-            // a short `press 1–N …` prompt while `pending_open_link` is set.
+            // Several links: arm a digit. No sticky message, which would hide the list
+            // being chosen from.
             _ => self.pending_open_link = true,
         }
     }
 
-    /// Opens link `[n]` (1-based) after `o` on a multi-link card. Mirrors
-    /// the single-link `o` result: a safe scheme opens; an unsupported scheme or
-    /// an out-of-range number gives a sticky hint. `n` is always 1–9 here (the
-    /// arming digit), so `n - 1` is the URL index.
+    /// Opens link `[n]` (1-based) after `o` on a multi-link card.
     fn open_link_number(&mut self, n: usize) {
         let urls: Vec<String> = self
             .current_item()
@@ -1531,11 +1304,8 @@ impl AppState {
         self.link_open_request.take()
     }
 
-    /// Consumed by the main loop each tick: the expected content and change
-    /// description of the most recent write-back, forwarded to
-    /// `GitSync::request` when git-sync is active for this file. Returned
-    /// unconditionally — `app.rs` has no notion of whether git-sync is
-    /// enabled, matching `take_editor_request`/`take_link_open_request`.
+    /// The most recent write-back's git-sync request, drained by the main loop
+    /// whether or not git-sync is active.
     pub fn take_git_sync_request(&mut self) -> Option<PendingSync> {
         self.git_sync.pending.take()
     }
@@ -1597,15 +1367,8 @@ impl AppState {
             .collect()
     }
 
-    /// Commits `pre_state` (the checkbox snapshot captured before a mutation
-    /// that has just been confirmed written to disk) onto the undo stack,
-    /// and clears the redo stack (a fresh change invalidates redo). The
-    /// history is capped at [`UNDO_HISTORY_CAP`] — the oldest entry is
-    /// dropped once it's exceeded. Called only *after* `commit_write`
-    /// reports success — a failed write already rolled the document back
-    /// to `pre_state` itself, so it must never reach the undo/redo stacks:
-    /// pushing it anyway would leave a no-op undo entry and wipe out a
-    /// valid redo stack for a change that never actually happened.
+    /// Pushes `pre_state` onto the capped undo stack and clears redo. Only
+    /// called after a successful write.
     fn push_undo_point(&mut self, pre_state: StateSnapshot) {
         self.undo_stack.push(pre_state);
         if self.undo_stack.len() > UNDO_HISTORY_CAP {
@@ -1614,12 +1377,8 @@ impl AppState {
         self.redo_stack.clear();
     }
 
-    /// Applies a checkbox-state snapshot to the document, matching items by line
-    /// number (a line no longer present is skipped). Returns the line numbers
-    /// whose state actually changed, so the caller can report and focus the
-    /// change. Snapshot lookups go through a line-number map built once up
-    /// front rather than a linear scan per item, so this stays O(items +
-    /// snapshot) instead of O(items × snapshot) on a large checklist.
+    /// Applies a snapshot by line number, returning the lines whose state
+    /// changed.
     fn apply_snapshot(&mut self, snapshot: &StateSnapshot) -> Vec<usize> {
         let wanted: std::collections::HashMap<usize, TaskState> =
             snapshot.iter().copied().collect();
@@ -1640,13 +1399,8 @@ impl AppState {
         changed
     }
 
-    /// `u`: undo the last state-changing action. Restores the previous
-    /// checkbox snapshot, writes it back, and pushes the pre-undo state onto the
-    /// redo stack so `Ctrl-R` can replay it. Refuses when the file is deleted,
-    /// and reports a sticky "Nothing to undo" when the history is empty. If
-    /// the write fails, the popped entry goes back onto the undo stack
-    /// unchanged — the undo never took effect, so it must still be there to
-    /// retry.
+    /// `u`: undo the last state-changing action. If the write fails, the entry
+    /// goes back onto the stack.
     pub fn undo(&mut self) {
         if self.blocked_by_deletion() {
             return;
@@ -1683,16 +1437,7 @@ impl AppState {
         self.undo_stack.push(undo_point);
     }
 
-    /// Shared tail for [`undo`]/[`redo`]: writes the restored state back,
-    /// refreshes the self-write mtime guard and the "Updated" tag, drops any
-    /// completion screen to the checklist, focuses the changed task when exactly
-    /// one changed, and reports what happened. `verb` is "Undo" or "Redo".
-    /// `pre_state` is the snapshot from just before this history application
-    /// mutated the document — passed through to `commit_write` so a failed
-    /// write rolls the document back to it rather than leaving the
-    /// half-applied undo/redo in memory. Returns whether the write
-    /// succeeded, so the caller knows whether to commit the swapped
-    /// undo/redo stacks or put the popped entry back.
+    /// Shared tail for [`undo`]/[`redo`]. Returns whether the write succeeded.
     fn finish_history_apply(
         &mut self,
         pre_state: &StateSnapshot,
@@ -1781,12 +1526,8 @@ impl AppState {
         self.handle_key_with_mods(code, KeyModifiers::NONE);
     }
 
-    /// Top-level key dispatch: modal overlays first (so their keys
-    /// aren't shadowed by global bindings), then the Checklist-only card
-    /// scroll, then the truly global single-key actions, then whatever's
-    /// left falls to the current screen's own bindings. The dispatch *order*
-    /// is what each of the early guards' comments below is protecting —
-    /// keep it front-to-back exactly as laid out here.
+    /// Top-level key dispatch: modal overlays first, then card scroll, then
+    /// global keys, then the current screen's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         self.clear_status();
 
@@ -1846,14 +1587,9 @@ impl AppState {
         }
     }
 
-    /// A pending `o` (a card with several links) waits for the link number to
-    /// open. This runs before the global digit→list jump (so the digit
-    /// selects a link, not a list) and before the global q/Esc quit (so Esc
-    /// cancels the prompt rather than quitting the app). A digit 1–9 opens
-    /// that link; Esc cancels — both consumed here (`true`). Any other key is
-    /// a soft cancel that still takes its normal action (like the `gg`
-    /// chord), so it returns `false` even though the prompt itself is already
-    /// cleared (the `mem::take` runs regardless of the key).
+    /// A pending `o` waits for a link digit. Runs before the digit list jump and
+    /// the Esc quit. Any other key cancels the prompt and still takes its normal
+    /// action, returning `false`.
     fn handle_pending_open_link_key(&mut self, code: KeyCode) -> bool {
         if !std::mem::take(&mut self.pending_open_link) {
             return false;

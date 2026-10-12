@@ -1,14 +1,5 @@
-//! Asking git questions about the repository.
-//!
-//! Every read-only lookup the sync depends on: what is in the index, what a
-//! blob is at some commit, where `HEAD` points, what the upstream is, and
-//! whether a branch still exists on the remote. These answer questions;
-//! nothing here decides anything or changes the repository.
-//!
-//! Several return deliberately three-way answers (`Result<Option<_>, _>`,
-//! `RemoteBranch`) because "could not tell" is not the same as "no", and
-//! collapsing the two is the defect class this module has repeatedly been
-//! bitten by.
+//! Read-only git queries. Several return three-way answers because "could
+//! not tell" must not be confused with "no".
 
 use std::path::{Path, PathBuf};
 
@@ -17,33 +8,13 @@ use super::process::{
     run_with_timeout, run_with_timeout_and_stdin,
 };
 
-/// Whether `HEAD` is ahead of its upstream tracking branch — i.e. there's a
-/// local commit not yet on the remote. Used to tell "already fully synced"
-/// apart from "committed locally, but a previous push attempt failed" when
-/// the file's content already matches `HEAD` (see `run_sync`): without this
-/// distinction, a push failure followed by no further checklist edits would
-/// leave the commit local-only forever, since nothing else would ever
-/// re-trigger a push for content that's already committed.
-///
-/// Fails open (`true`, i.e. "assume there's something to push") when the
-/// check itself can't be answered — no upstream configured, detached-ish
-/// tracking state, or any other `git rev-list` failure — so a push is
-/// attempted (and its real failure reason reported) rather than the sync
-/// going quiet with no explanation.
+/// Fails open (`true`), so a push is attempted and its real failure
+/// reported rather than the sync going quiet.
 pub(super) fn ahead_of_upstream(repo_root: &Path, tip: &str) -> bool {
     commits_ahead_of_upstream(repo_root, tip).unwrap_or(1) > 0
 }
-/// How many commits `HEAD` is ahead of its upstream, or `None` when the
-/// question can't be answered at all (no upstream configured, detached
-/// `HEAD`, any other `git rev-list` failure).
-///
-/// Split out of `ahead_of_upstream` so the two callers can choose opposite
-/// failure directions from the same one subprocess. `ahead_of_upstream`
-/// folds `None` into "assume yes" because it runs *after* a change the user
-/// just made, where going quiet would hide a real problem.
-/// `catch_up_push` needs the opposite: it runs unprompted at startup, so it
-/// must act only on a positively-known unpushed commit and stay silent
-/// otherwise, rather than nagging about a missing upstream on every launch.
+/// `None` when it can't be answered. Unlike `ahead_of_upstream`, the
+/// startup catch-up push acts only on a positively-known answer.
 pub(super) fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u64> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-list", "--count", &format!("@{{u}}..{tip}")]);
@@ -53,50 +24,21 @@ pub(super) fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u
     }
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
-/// Whether `branch_ref` still exists on `remote`, asked of the remote itself
-/// rather than of the local tracking ref.
-///
-/// **The local tracking ref is not evidence the branch still exists.**
-/// `refs/remotes/<remote>/<branch>` is a cache, updated only by a fetch, so
-/// after somebody deletes the branch upstream it keeps pointing at the last
-/// commit this clone saw and `@{u}` keeps resolving happily. Pushing an
-/// explicit `<sha>:refs/heads/<branch>` refspec at that point is not a
-/// rejected non-fast-forward — there is nothing to be non-fast-forward
-/// *against* — so git simply creates the branch again. Confirmed against a
-/// real remote: `* [new branch]`.
-///
-/// That is unattended republication of a branch somebody deliberately
-/// removed, triggered by ticking a checkbox, and it is the same hazard the
-/// refuse-without-an-upstream rule and the explicit-SHA refspec exist to
-/// prevent — arriving by a route neither of them watches. External review of
-/// `8a405dd`.
-///
-/// Three-way rather than a bool, because "could not ask" is a different
-/// answer from "not there" and collapsing the two is the defect class this
-/// module keeps relearning (see `UnpushedHistory`, `LockOutcome`,
-/// `parse_first_parent`).
+/// Whether a branch exists on the remote, asked of the remote itself: the
+/// local tracking ref survives an upstream deletion, and pushing an explicit
+/// refspec then silently recreates the branch.
 pub(super) enum RemoteBranch {
-    /// The branch exists, and this is the commit it points at. The SHA is
-    /// carried because existence alone is not enough to push safely: it
-    /// becomes the lease the push is made against, so a branch that is
-    /// deleted or moved between this answer and the push is rejected by git
-    /// rather than overwritten. See `push`.
+    /// The SHA becomes the lease the push is made against.
     Present(String),
     Absent,
-    /// The remote could not be consulted at all — offline, credentials,
-    /// transport failure.
     Unknown,
 }
-/// Costs one extra network round trip on the push path, which already spends
-/// one; nothing is asked of the network when there is nothing to push, since
-/// the callers reach here only with a commit in hand.
 pub(super) fn remote_branch_state(repo_dir: &Path, remote: &str, branch_ref: &str) -> RemoteBranch {
     let mut cmd = git_command(repo_dir);
     cmd.args(["ls-remote", "--heads", remote, branch_ref]);
     match run_with_timeout(cmd, PUSH_TIMEOUT) {
         Ok(output) if output.status.success() => {
-            // `<sha>\t<ref>` per line; exactly one line, since one ref was
-            // asked for. No output means the branch is not there.
+            // No output means the branch is not there.
             let stdout = String::from_utf8_lossy(&output.stdout);
             match stdout.split_whitespace().next() {
                 Some(sha) => RemoteBranch::Present(sha.to_string()),
@@ -107,35 +49,15 @@ pub(super) fn remote_branch_state(repo_dir: &Path, remote: &str, branch_ref: &st
     }
 }
 
-/// Whether `ancestor` is reachable from `descendant` — i.e. whether moving a
-/// ref from `ancestor` to `descendant` is a fast-forward.
-///
-/// `false` whenever the question cannot be answered, including when
-/// `ancestor` is not an object this repository has (a remote that has moved
-/// on to commits never fetched). That is the safe direction: the one caller
-/// uses this to decide whether a push can only ever add history, and an
-/// unanswerable question must not be read as a yes.
+/// `false` when unanswerable (e.g. `ancestor` was never fetched), so a
+/// fast-forward is never assumed.
 pub(super) fn is_ancestor(repo_root: &Path, ancestor: &str, descendant: &str) -> bool {
     let mut cmd = git_command(repo_root);
     cmd.args(["merge-base", "--is-ancestor", ancestor, descendant]);
     run_with_timeout(cmd, PLUMBING_TIMEOUT).is_ok_and(|out| out.status.success())
 }
-/// The commit the branch's upstream tracking ref points at. `Ok(None)` when
-/// there is no resolvable upstream — either none is configured, or one is
-/// configured whose tracking ref doesn't exist locally yet (a remote added
-/// but never fetched, or `branch.<name>.remote`/`.merge` set by hand).
-/// Confirmed empirically: `git rev-parse --verify -q @{u}` exits **1** for
-/// both, and 0 with the SHA when it resolves — the same exit-code
-/// distinction `resolve_parent` relies on, so any *other* failure (128, a
-/// timeout, a spawn error) becomes `Err` rather than being mistaken for
-/// "no upstream".
-///
-/// Resolving to a concrete SHA also means `unpushed_history`'s range walk
-/// names two real commits instead of the symbolic `@{u}`, matching the
-/// captured-tip rule the rest of this module now follows: `upstream_parts`
-/// reads the *config*, which can say an upstream exists while `@{u}` still
-/// won't resolve — precisely the case that made an earlier version of this
-/// check report a hard failure where "no upstream yet" was the truth.
+/// `Ok(None)` when no upstream resolves (exit 1); any other failure is
+/// `Err`.
 pub(super) fn resolve_upstream(repo_root: &Path) -> Result<Option<String>, String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-parse", "--verify", "-q", "@{u}"]);
@@ -148,14 +70,8 @@ pub(super) fn resolve_upstream(repo_root: &Path) -> Result<Option<String>, Strin
         Err(err) => Err(format!("git rev-parse failed: {err}")),
     }
 }
-/// Resolves `(remote, upstream-branch-ref)` for the current branch via its
-/// `branch.<name>.remote`/`branch.<name>.merge` config — the same two keys
-/// several tests already set up manually (via `-u` push or explicit `git
-/// config` calls) — rather than parsing `@{u}`'s abbreviated form, which
-/// would need guessing where the remote name ends and a branch name that
-/// itself contains `/` begins. `None` when either key is unset (no
-/// upstream configured at all), or the branch itself can't be resolved
-/// (detached `HEAD`).
+/// Read from `branch.<name>.remote`/`.merge`, since a remote name can't be
+/// split reliably from `@{u}` when the branch name contains `/`.
 pub(super) fn upstream_parts(repo_root: &Path) -> Option<(String, String)> {
     let branch_ref = current_branch_ref(repo_root)?;
     let branch = branch_ref.strip_prefix("refs/heads/")?;
@@ -163,8 +79,6 @@ pub(super) fn upstream_parts(repo_root: &Path) -> Option<(String, String)> {
     let merge_ref = git_config(repo_root, &format!("branch.{branch}.merge"))?;
     Some((remote, merge_ref))
 }
-/// `git config --get <key>`, trimmed — `None` on any failure (key unset,
-/// not a repo, `git` itself failing to run).
 fn git_config(repo_root: &Path, key: &str) -> Option<String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["config", "--get", key]);
@@ -174,12 +88,7 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-/// The blob SHA the **real** index currently holds for `relpath`, or `None`
-/// when it has no entry for it (or the lookup fails). `git ls-files --stage`
-/// prints `<mode> <object> <stage>\t<path>`, so the object is the second
-/// whitespace-separated field of the part before the tab; `-z` keeps a path
-/// containing a newline or a quotable character intact, as `index_entry`
-/// already relies on.
+/// The blob SHA the real index holds for `relpath`.
 pub(super) fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
     let mut cmd = literal_pathspec_command(repo_root);
     cmd.args(["ls-files", "--stage", "-z", "--"]).arg(relpath);
@@ -192,37 +101,15 @@ pub(super) fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
     let (info, _path) = record.split_once('\t')?;
     info.split_whitespace().nth(1).map(str::to_string)
 }
-/// The first parent in a `git rev-list --parents -n 1 <commit>` listing:
-/// `Some(None)` for a root commit, `Some(Some(sha))` otherwise, and `None`
-/// when the output says nothing at all.
-///
-/// That last distinction is the whole point, and its absence was a real
-/// defect. `undo_commit` used `.lines().next().unwrap_or_default()`, so an
-/// **empty** listing produced no parent — indistinguishable from a genuine
-/// root commit, whose undo path *deletes the branch ref* rather than moving
-/// it back one commit. Deep rounds 3, round 1: this is the same ambiguous
-/// `None` that `resolve_parent` exists to eliminate for `current_head`,
-/// recurring here.
-///
-/// It is reachable, not theoretical. When output was piped, a drain that
-/// timed out against a lingering descendant returned empty output while the
-/// command's own exit status was still success; output now goes to a file,
-/// which removes that particular route, but not the premise. A scratch file
-/// that cannot be read back still yields empty output beside a successful
-/// status, and `git` is under no obligation to have written anything.
-/// Refusing to rewind is the safe answer either way; the commit stays and
-/// the next sync reports on it.
+/// `None` when the listing is empty, which must not be read as a root
+/// commit: undoing a root commit deletes the branch ref.
 pub(super) fn parse_first_parent(listing: &str) -> Option<Option<String>> {
     let mut fields = listing.split_whitespace();
-    // The commit itself is always the first field when there is any output.
     fields.next()?;
     Some(fields.next().map(str::to_string))
 }
-/// The branch `HEAD` symbolically points at (e.g. `refs/heads/main`),
-/// resolved regardless of whether that branch has any commits yet — `git
-/// init` makes `HEAD` a symref to the default branch immediately, before
-/// the first commit exists, so this works the same before and after the
-/// root-commit case `undo_commit` needs it for.
+/// Works before the first commit, since `git init` already points `HEAD` at
+/// the default branch.
 pub(super) fn current_branch_ref(repo_root: &Path) -> Option<String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["symbolic-ref", "-q", "HEAD"]);
@@ -232,11 +119,7 @@ pub(super) fn current_branch_ref(repo_root: &Path) -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-/// Absolute path to the repository's git directory. Resolved relative to
-/// `repo_root` when `git` reports a relative one (its own behavior differs
-/// depending on whether it's invoked from the work tree root or a
-/// subdirectory) — `repo_sync_blocked` needs an absolute path to check for
-/// marker files regardless of which one `git` happened to hand back.
+/// Absolute even when git reports a relative path.
 pub(super) fn git_dir(repo_root: &Path) -> Option<PathBuf> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-parse", "--git-dir"]);
@@ -252,9 +135,6 @@ pub(super) fn git_dir(repo_root: &Path) -> Option<PathBuf> {
         repo_root.join(path)
     })
 }
-/// The file's tracked mode and its path relative to the repo root, read from
-/// the index in one call (`git ls-files --stage --full-name`). Only called
-/// once `status` has already confirmed the path is tracked (not `??`).
 pub(super) fn index_entry(
     repo_dir: &Path,
     file_path: &Path,
@@ -267,26 +147,13 @@ pub(super) fn index_entry(
     if !output.status.success() {
         return Err(command_error("git ls-files", &output));
     }
-    // `-z` NUL-delimits records instead of newline-delimiting them, and
-    // (unlike the default form) never C-quotes/escapes the path — needed
-    // for a tracked path containing a literal newline, which would
-    // otherwise either get truncated by a newline-based split or come back
-    // quoted-and-escaped with no unquoting done here. Exactly one record is
-    // expected, since exactly one path was queried; a tab within the path
-    // itself is harmless to `split_once('\t')` since the single separator
-    // tab is always the leftmost one (the `<mode> <object> <stage>` prefix
-    // before it never itself contains a tab).
-    // No record at all means the path simply isn't in the index — the file
-    // is untracked. That is a normal answer, not a failure, and the caller
-    // needs it separated from "the lookup itself went wrong": `git status`
-    // cannot be trusted to report untrackedness on its own (see `run_sync`).
+    // `-z` keeps paths with newlines or quotable characters intact. No record
+    // means untracked, which is not an error.
     let mut records = output.stdout.split(|&b| b == 0).filter(|r| !r.is_empty());
     let Some(record) = records.next() else {
         return Ok(None);
     };
-    // More than one record means the pathspec matched more than the one
-    // file asked for (#70). Taking the first would commit the checklist's
-    // content under someone else's path, so refuse instead.
+    // More than one record means the pathspec matched other files (#70).
     if records.next().is_some() {
         return Err(format!(
             "git ls-files: {} matched more than one tracked file",
@@ -303,21 +170,12 @@ pub(super) fn index_entry(
         .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
     Ok(Some((mode.to_string(), path.to_string())))
 }
-/// `commit`'s committed bytes for `relpath` (repo-root-relative), or `None`
-/// if the path has no entry at `commit` (e.g. staged but never committed)
-/// or `git show` otherwise fails.
 pub(super) fn blob_bytes_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<Vec<u8>> {
     let mut cmd = git_command(repo_root);
     cmd.args(["show", &format!("{commit}:{relpath}")]);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output.status.success().then_some(output.stdout)
 }
-/// The blob SHA at `commit:relpath` (repo-root-relative), or `None` if that
-/// path doesn't exist at `commit` or `git rev-parse` otherwise fails —
-/// the object-identity counterpart to `blob_bytes_at`, which fetches content
-/// *bytes*; this fetches just the SHA, which is all a comparison against
-/// an already-known blob SHA needs (see `commit_temp_index`'s ownership
-/// check on a timeout).
 pub(super) fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-parse", &format!("{commit}:{relpath}")]);
@@ -327,16 +185,8 @@ pub(super) fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<S
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-/// Whether `commit` is a direct child of `parent` — exactly one parent,
-/// equal to it — or, when `parent` is `None`, a root commit with no parents
-/// at all. Anything else (including a merge, or a commit one further step
-/// removed) is `false`, as is any `git` failure: this only ever *grants*
-/// trust, so failing closed leaves the caller reporting a failure rather
-/// than acting on an unverified SHA.
-///
-/// `git rev-list --parents -n 1 <commit>` prints `<sha> <parent>…` on one
-/// line — the same shape (and the same `split_whitespace` parsing)
-/// `range_has_unrelated_commits` already reads, just for a single commit.
+/// Exactly one parent equal to `parent`, or a root commit when `parent` is
+/// `None`. Fails closed.
 pub(super) fn descends_directly_from(
     repo_root: &Path,
     commit: &str,
@@ -360,8 +210,6 @@ pub(super) fn descends_directly_from(
         None => parents.is_empty(),
     }
 }
-/// Writes `content` into the object database without touching the working
-/// tree or index, returning its blob SHA — the blob a later commit stages.
 pub(super) fn hash_object(
     repo_root: &Path,
     relpath: &str,
@@ -369,26 +217,12 @@ pub(super) fn hash_object(
 ) -> Result<String, String> {
     hash_object_inner(repo_root, relpath, content, true)
 }
-/// The blob SHA `content` *would* have at `relpath`, computed without
-/// writing anything. Used to compare against what is already staged, where
-/// writing a throwaway object on every check would only litter the
-/// repository with unreferenced loose blobs.
+/// Computed without writing, to avoid littering loose blobs.
 pub(super) fn blob_sha_for(repo_root: &Path, relpath: &str, content: &str) -> Option<String> {
     hash_object_inner(repo_root, relpath, content, false).ok()
 }
-/// **`--path` is what makes this agree with git.** Without it, `hash-object`
-/// hashes the bytes verbatim; with it, git applies whatever clean filter
-/// that path is configured for — `core.autocrlf`, a `.gitattributes` `text`
-/// setting — exactly as `git add` would.
-///
-/// Omitting it was a real defect, not a nicety. On a repository with
-/// `core.autocrlf` and CRLF endings, the same two lines hash to
-/// `508b5d62…` verbatim but `c83684de…` through the filter, and `git add`
-/// stores the latter — so markcheck was committing a blob git itself would
-/// never have written, publishing un-normalised content to everyone who
-/// pulls it. It also broke `staged_target_would_be_lost`, which compared a
-/// filtered blob against unfiltered bytes and so could never match, and
-/// refused a sync that was in fact safe.
+/// `--path` applies the path's clean filter (`core.autocrlf`,
+/// `.gitattributes`) exactly as `git add` would.
 fn hash_object_inner(
     repo_root: &Path,
     relpath: &str,
@@ -408,19 +242,8 @@ fn hash_object_inner(
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-/// The current commit `HEAD` points at, or `None` for a branch with no
-/// commits yet (so the next commit is created as a root commit).
-///
-/// This `None` is ambiguous — `git rev-parse HEAD`'s failure looks
-/// identical (`output.status.success() == false`) whether the repository
-/// genuinely has no commits yet, or the command failed for any other
-/// reason (a timeout, a spawn failure, a corrupted ref) — confirmed
-/// empirically: a real empty repo exits with code 128 and "fatal: ambiguous
-/// argument 'HEAD': unknown revision", the same shape of failure
-/// `run_with_timeout` itself produces for a genuine timeout. That ambiguity
-/// is harmless at every call site *except* where `run_sync` first
-/// establishes the parent for a possible new commit — see `resolve_parent`,
-/// used there specifically instead of this function.
+/// `None` is ambiguous between "no commits yet" and a failed check; see
+/// `resolve_parent` where that matters.
 pub(super) fn current_head(repo_root: &Path) -> Option<String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-parse", "HEAD"]);
@@ -430,26 +253,9 @@ pub(super) fn current_head(repo_root: &Path) -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-/// Like `current_head`, but distinguishes "no commits yet" from "the check
-/// itself failed" — self-review finding: `run_sync` treats `parent: None`
-/// as "build a root commit," which skips seeding the temporary index from
-/// any existing tree (`populate_temp_index`). If `current_head` merely
-/// failed *transiently* here (a wedged filesystem, a timeout on the
-/// simplest possible git read) on an otherwise non-empty repository, the
-/// resulting commit's tree would contain **only the checklist path** —
-/// silently dropping every other tracked file — and `verify_commit_scope`
-/// wouldn't catch it, since its own baseline is equally wrong under the
-/// same bad assumption. `git rev-parse --verify -q HEAD` exits with status
-/// **1** specifically for "no commits yet" (confirmed empirically, silent
-/// thanks to `-q`) — distinctly from 128 or a timeout for any other
-/// failure — so only that exact exit code is treated as `Ok(None)`;
-/// anything else becomes `Err`, a hard sync failure rather than a silent
-/// wrong assumption. Every other `current_head` call site keeps using that
-/// function unchanged — traced through each one and confirmed the
-/// ambiguity is harmless there (a transient failure only ever causes an
-/// unnecessary refusal or retry, never a silent wrong action), so this
-/// stays a narrow fix at the one genuinely dangerous call site rather than
-/// a signature change rippling through the whole module.
+/// Exit 1 from `rev-parse --verify -q HEAD` means no commits yet; any other
+/// failure is `Err`. Treating a transient failure as "no commits" would build
+/// a root commit containing only the checklist.
 pub(super) fn resolve_parent(repo_root: &Path) -> Result<Option<String>, String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-parse", "--verify", "-q", "HEAD"]);
@@ -469,10 +275,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// markcheck must stage the blob git itself would stage. Without
-    /// `--path`, `hash-object` hashes the bytes verbatim and skips the clean
-    /// filter, so markcheck published un-normalised content that `git add`
-    /// would never have produced — everyone pulling the repository got it.
+    /// markcheck must stage the blob git itself would stage.
     #[test]
     fn a_staged_blob_matches_what_git_add_would_have_stored() {
         let work = init_repo_with_crlf_filter();
@@ -480,7 +283,6 @@ mod tests {
 
         let ours = hash_object(&work, "tracked.md", content).unwrap();
 
-        // What git produces for the same content through its own porcelain.
         fs::write(work.join("tracked.md"), content).unwrap();
         run(&work, &["add", "tracked.md"]);
         let theirs = index_blob(&work, "tracked.md").unwrap();
@@ -494,10 +296,8 @@ mod tests {
     }
     #[test]
     fn index_entry_refuses_a_pathspec_that_matches_more_than_one_file() {
-        // #70, defence in depth: exactly one path is asked for, so more than
-        // one record means the match went wider than the checklist, and the
-        // first record may well be someone else's file. A directory is the
-        // one pathspec that still matches several files literally.
+        // A directory is the one pathspec that still matches several files
+        // literally.
         let (work, _remote) = init_repo_with_remote();
         fs::write(work.join("other.md"), "x\n").unwrap();
         run(&work, &["add", "other.md"]);
@@ -528,18 +328,11 @@ mod tests {
     fn index_entry_reports_failure_outside_a_git_repo() {
         let dir = unique_dir("not-a-repo-index-entry");
         fs::create_dir_all(&dir).unwrap();
-        // Outside a repository `ls-files` itself fails, which is a genuine
-        // error — distinct from the `Ok(None)` that means "this repo simply
-        // has no index entry for that path".
         assert!(index_entry(&dir, &dir.join("nope.md")).is_err());
         fs::remove_dir_all(&dir).ok();
     }
     #[test]
     fn index_entry_reports_an_absent_path_as_untracked_not_an_error() {
-        // The other half of the three-way result: inside a healthy repo, a
-        // path with no index entry is untracked. `run_sync` depends on that
-        // distinction, since `git status` cannot be trusted to report
-        // untrackedness on its own.
         let (work, _remote) = init_repo_with_remote();
         fs::write(work.join("untracked.md"), "- [ ] new\n").unwrap();
 
@@ -601,11 +394,7 @@ mod tests {
     }
     #[test]
     fn git_dir_resolves_correctly_from_a_subdirectory() {
-        // `git rev-parse --git-dir` itself returns an already-absolute path
-        // when run from a subdirectory of the work tree (unlike the
-        // relative "./.git" it returns from the root) — exercises that
-        // branch specifically, distinct from the join-with-repo_root
-        // fallback the root-invocation test above exercises.
+        // From a subdirectory `--git-dir` is already absolute.
         let work = init_repo_without_remote();
         let sub = work.join("sub");
         fs::create_dir_all(&sub).unwrap();
@@ -623,11 +412,6 @@ mod tests {
     }
     #[test]
     fn resolve_parent_is_ok_none_for_a_genuinely_empty_repo() {
-        // Self-review finding: current_head's None is ambiguous between
-        // "no commits yet" and "the check itself failed" (both look like
-        // `output.status.success() == false`). resolve_parent must
-        // distinguish them -- confirmed here against a real empty repo,
-        // where `git rev-parse --verify -q HEAD` exits 1 specifically.
         let work = unique_dir("repo-empty-resolve-parent").join("work");
         fs::create_dir_all(&work).unwrap();
         run(&work, &["init", "-q", "-b", "main"]);
@@ -649,9 +433,6 @@ mod tests {
     }
     #[test]
     fn resolve_parent_is_err_outside_a_repo() {
-        // Not "no commits yet" (exit 1) -- a completely different failure
-        // shape (128, "not a git repository") -- must not be silently
-        // treated the same as an empty repo.
         let dir = unique_dir("not-a-repo-resolve-parent");
         fs::create_dir_all(&dir).unwrap();
         assert!(resolve_parent(&dir).is_err());
@@ -659,12 +440,6 @@ mod tests {
     }
     #[test]
     fn parse_first_parent_tells_a_root_commit_from_unreadable_output() {
-        // Deep rounds 3, round 1. `undo_commit` collapsed both into "no
-        // parent", and its no-parent path *deletes the branch ref* rather
-        // than moving it back one commit. An empty listing is reachable:
-        // output read back as empty alongside a successful exit status is
-        // not a contradiction — see `parse_first_parent`'s own doc comment —
-        // so an unreadable listing could have deleted the branch.
         assert_eq!(
             parse_first_parent(""),
             None,

@@ -5,15 +5,8 @@ use std::process::{Command, Stdio};
 
 use crate::model::{Document, ItemKind, TaskState};
 
-/// A per-call random `u64`, used to widen a temp file's name beyond just its
-/// PID so two processes racing to create a same-named temp file (or a
-/// crashed run whose PID gets reused) is vanishingly unlikely rather than
-/// merely unlikely. `RandomState`'s keys are freshly drawn from the OS RNG
-/// on each `new()` (the same mechanism `HashMap`'s default hasher uses for
-/// DoS resistance), so hashing nothing and reading `finish()` is a
-/// dependency-free way to get process-random entropy without pulling in a
-/// dedicated `rand` crate for one temp-file suffix. `pub(crate)`: also used
-/// by `scaffold::create_new_checklist`'s equivalent temp file.
+/// A per-call random `u64` widening temp-file names beyond the PID, drawn
+/// from `RandomState`'s OS-seeded keys to avoid a `rand` dependency.
 pub(crate) fn random_suffix() -> u64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
@@ -34,42 +27,14 @@ pub(crate) enum LockOutcome {
     Unavailable,
 }
 
-/// An advisory lock covering a checklist's read-check-then-write sequence.
+/// An advisory lock held across `AppState::commit_write`'s hash check and
+/// write, turning them into one compare-and-swap between instances.
 ///
-/// `AppState::commit_write` verifies the file on disk still hashes to what
-/// was last seen and *then* replaces it. Those are two operations, so two
-/// markcheck instances could both pass the check and both rename, and the
-/// second silently discards the first's toggle. The content hash narrows
-/// that window a great deal but cannot close it, because it is not a
-/// compare-and-swap. Holding this across both makes it one.
-///
-/// **Deliberately in the temp directory, not beside the checklist.** A
-/// sibling lock file lands inside the user's repository, where a
-/// `git add -A` pre-commit hook can sweep it into a commit — which
-/// `verify_commit_scope` would then correctly abort the sync over. Keying a
-/// temp-dir path by the digest of the canonical checklist path keeps it
-/// entirely out of git's way. The trade is that it only serialises
-/// instances that share a temp directory: same machine, same user. Two
-/// machines writing one file over a network share are not covered, and were
-/// not covered before either.
-///
-/// **Recovery is by proven death, never by elapsed time.** External review
-/// of `d885c88`: the previous version treated a lock older than 30 seconds
-/// as abandoned, which meant a *live* holder could be displaced simply for
-/// being slow — a stalled `sync_all`, a FUSE or network filesystem, storage
-/// under recovery. Both instances then entered the critical section and the
-/// second write silently won, which is precisely the loss this lock exists
-/// to prevent; the unique token stopped one from deleting the other's file
-/// but never stopped both from writing. Age is no longer consulted at all.
-/// A lock is only recovered when its recorded owner is *demonstrably* gone,
-/// and anything else — owner alive, owner unknowable, file unreadable —
-/// refuses. That fails closed in the one direction that matters.
-///
-/// The cost is the honest one: if the owning process died and its PID was
-/// recycled by an unrelated live process, the lock is honoured forever and
-/// saving stays blocked. The refusal names the file so it can be removed by
-/// hand. That is strictly better than the alternative it replaces, where the
-/// same uncertainty silently permitted two writers.
+/// Kept in the temp directory, not beside the checklist, so a `git add -A`
+/// hook can't commit it; it therefore only serialises instances on one
+/// machine. A stale lock is recovered only when its owner is provably gone,
+/// never by age, so a slow live holder is never displaced; a recycled PID
+/// blocks saving until the file is removed by hand.
 pub(crate) struct WriteLock {
     path: PathBuf,
     /// Unique per guard, written into the lock file. Ownership is checked
@@ -114,12 +79,7 @@ impl WriteLock {
         let token = format!("markcheck {} {:x}", std::process::id(), random_suffix());
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
-        // The lock lives in a shared temp directory at a path anyone can
-        // derive (it is the digest of the checklist's path), so it is
-        // readable by every account on the machine unless narrowed. Nothing
-        // secret is in it — a PID and a random token — but there is no
-        // reason for it to be legible either, and the two files this module
-        // creates that *do* hold user content are already 0600.
+        // The path is derivable by anyone, so keep it unreadable to others.
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -151,31 +111,10 @@ impl Drop for WriteLock {
     }
 }
 
-/// How many directory entries point at `target`'s inode, when that can be
-/// determined. `Some(1)` is the ordinary case; anything greater means the
-/// checklist is hard-linked and `write_back`'s rename will break the link.
-///
-/// Reported rather than enforced. The atomic temp-then-rename in
-/// `write_back` gives the path a **new inode**, so a hard-linked alias stops
-/// tracking the checklist the moment anything is toggled — verified: two
-/// links to one inode become two independent files with different content,
-/// and neither the content fingerprint nor the write lock notices, since
-/// both reason about paths while this is about inodes. External review of
-/// `5c51d81` raised it.
-///
-/// Refusing the write was the reviewer's preference and is not what this
-/// does, deliberately. Every atomic-save editor breaks hard links the same
-/// way — vim with `backupcopy=no`, emacs, VS Code — so refusing would leave
-/// markcheck unable to open a file the user edits elsewhere without trouble,
-/// and with no flag to override it the checklist would simply be unusable.
-/// No data is lost either: both aliases keep valid, readable content, they
-/// just stop being the same file. The defect the review names is that this
-/// happens *silently*, and a warning at startup — before anything is
-/// written, while quitting is still free — removes the silence without
-/// removing the capability.
-///
-/// `None` on a platform or filesystem that cannot answer, which is treated
-/// as "nothing to warn about" rather than guessed at.
+/// How many directory entries point at `target`'s inode, or `None` when it
+/// can't be told. Above 1, `write_back`'s rename will break the hard link,
+/// which is warned about at startup rather than refused, as atomic-save
+/// editors do the same.
 #[cfg(unix)]
 pub fn hard_link_count(target: &Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
@@ -187,30 +126,10 @@ pub fn hard_link_count(_target: &Path) -> Option<u64> {
     None
 }
 
-/// Where `target`'s lock lives: one file per checklist, named by the digest
-/// of its path so two different checklists never share a lock and the name
-/// can't collide with anything the user owns.
-///
-/// **The path is canonicalized first, so every spelling of one file maps to
-/// one lock.** Mutual exclusion keyed on an unresolved path is exclusion in
-/// name only: `/checklists/server.md` and `/current/server.md` (a symlink to
-/// it), or a path carrying `..`, hash differently and would each get their
-/// own lock while writing the same bytes — two writers inside the section
-/// that exists to hold one. External review of `5c51d81` raised exactly
-/// this.
-///
-/// `main.rs` already canonicalizes at startup, which is why that scenario
-/// does not reproduce against the real binary today, and this is defence in
-/// depth rather than the primary mechanism. It is worth having anyway: an
-/// invariant maintained in a different module is one refactor away from
-/// being silently dropped, and a lock is the wrong place to discover that.
-/// Resolving it here makes the guarantee local to the code that depends on
-/// it.
-///
-/// Falling back to the given path when canonicalization fails is safe rather
-/// than lax: it fails when the target does not exist, and `write_back` reads
-/// the file's metadata before writing anything, so a vanished checklist is
-/// refused there instead.
+/// One lock file per checklist, named by the digest of its canonical path so
+/// every spelling of one file (symlink, `..`) shares a lock. Falls back to
+/// the given path when canonicalization fails; `write_back` then refuses
+/// the missing file.
 fn lock_path(target: &Path) -> PathBuf {
     let resolved = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
     let digest = crate::model::hash_bytes(resolved.as_os_str().as_encoded_bytes());
@@ -218,15 +137,9 @@ fn lock_path(target: &Path) -> PathBuf {
     std::env::temp_dir().join(format!("markcheck-write-lock-{name}"))
 }
 
-/// Whether the process that wrote the lock at `path` is **demonstrably** no
-/// longer running. Anything short of proof — an unreadable or unparseable
-/// lock, a liveness check that cannot be run — answers `false`, so the lock
-/// is honoured. Only a definite "that process does not exist" recovers it.
-///
-/// `ps -p <pid>` rather than `kill -0`: `kill` cannot distinguish "no such
-/// process" from "not permitted to signal it", so a lock held by another
-/// user's markcheck would look dead and be stolen. `ps` answers regardless
-/// of ownership, and exists on both platforms this project supports.
+/// Whether the lock's owner is demonstrably gone; anything short of proof
+/// is `false`. `ps -p` rather than `kill -0`, which can't tell a dead
+/// process from another user's.
 fn owner_is_gone(path: &Path) -> bool {
     let Some(pid) = fs::read_to_string(path)
         .ok()
@@ -251,17 +164,9 @@ fn owner_is_gone(path: &Path) -> bool {
     }
 }
 
-/// Replaces the task checkbox on the line with `target`, leaving everything
-/// else untouched. Recognizes `[ ]`, `[x]`, `[X]` (pulldown parses uppercase
-/// `[X]` as done, so we must be able to rewrite it), and `[/]`; rewriting
-/// normalizes the marker to `target`'s casing.
-///
-/// The checkbox is the *leftmost* marker on the line — it sits right after the
-/// list bullet, before any body text. We must replace it by position, not the
-/// first marker *type* in some fixed order: a body containing a literal marker
-/// token (e.g. ``press the `[ ]` button``) would otherwise get its body token
-/// rewritten while the real checkbox is left untouched, silently desyncing the
-/// on-disk state from the app and corrupting the body.
+/// Replaces the line's task checkbox (`[ ]`, `[x]`, `[X]`, `[/]`) with
+/// `target`. The leftmost marker is the checkbox, so a marker token in the
+/// body is never the one rewritten.
 fn set_task_marker(line: &mut String, target: &str) {
     let leftmost = ["[ ]", "[x]", "[X]", "[/]"]
         .into_iter()
@@ -280,28 +185,15 @@ fn join_lines(lines: &[String]) -> String {
     lines.concat()
 }
 
-/// The document's current content exactly as it stands in memory — no
-/// checkbox mutation. Used to capture the expected git-sync snapshot for a
-/// change that already landed on disk outside `write_back` (e.g. an external
-/// editor edit picked up by a reload).
+/// The document's content as it stands in memory.
 pub fn document_contents(document: &Document) -> String {
     join_lines(&document.raw_lines)
 }
 
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
-/// over the target so a crash or full disk mid-write can't leave the
-/// checklist truncated or corrupted; the original content stays intact
-/// until the rename (atomic on the same filesystem) succeeds. The temp
-/// file's data is fsynced before the rename (`write_temp`), and on unix its
-/// parent directory is fsynced (best-effort) after the rename, so the
-/// rename itself survives a crash — a bare temp-then-rename without fsync
-/// can still lose the write on a crash/power-loss at the wrong moment on
-/// many filesystems (ext4 `data=ordered` included). The original file's
-/// permissions are applied to the temp file before the rename so they
-/// survive the swap. Hard links and ownership are not preserved — the
-/// rename gives the path a new inode, the same trade-off atomic-save
-/// editors make. Returns the exact content that was written, so callers
-/// (git-sync) can capture it as the expected snapshot for a later commit.
+/// over the target, so a crash can't leave the checklist truncated; the
+/// parent directory is fsynced too on unix. Permissions are kept; hard links
+/// and ownership are not. Returns the content written.
 pub fn write_back(document: &Document) -> io::Result<String> {
     let mut lines = document.raw_lines.clone();
     for list in &document.lists {
@@ -337,11 +229,7 @@ pub fn write_back(document: &Document) -> io::Result<String> {
         random_suffix()
     ));
 
-    // `write_temp` returns the *actual* path it wrote to, which can differ
-    // from `temp_path_base` if that name was already taken (see its own
-    // doc comment) — cleans up after itself on any failure past file
-    // creation, so there's no separate `fs::remove_file` needed here on
-    // that path, only for the rename step below.
+    // `write_temp` cleans up after its own failures.
     let temp_path = write_temp(&temp_path_base, &contents, source_perms)?;
     if let Err(err) = fs::rename(&temp_path, &document.file_path) {
         let _ = fs::remove_file(&temp_path);
@@ -352,15 +240,8 @@ pub fn write_back(document: &Document) -> io::Result<String> {
     Ok(contents)
 }
 
-/// Best-effort fsync of `path`'s parent directory so the rename's directory
-/// entry itself survives a crash, not just the file's data (which
-/// `write_temp` already fsyncs before the rename). Errors are ignored: by
-/// this point the rename has already succeeded and the content is safely on
-/// disk under normal operation, and some filesystems don't support or need
-/// directory fsync at all — this is a best-effort strengthening of the
-/// crash-safety guarantee, not a correctness requirement. `pub(crate)`: also
-/// used by `scaffold::create_new_checklist`, whose hard-link-into-place has
-/// the identical need to make a fresh directory entry durable.
+/// Best-effort fsync of `path`'s parent directory so the rename survives a
+/// crash. Errors are ignored: the rename already succeeded.
 #[cfg(unix)]
 pub(crate) fn sync_parent_dir(path: &Path) {
     if let Some(parent) = path.parent()
@@ -370,24 +251,10 @@ pub(crate) fn sync_parent_dir(path: &Path) {
     }
 }
 
-/// Creates the temp file at `base_temp_path` (or, if that name is already
-/// taken, at a freshly-suffixed retry path — see below) with mode 0600
-/// (never more permissive than the most restrictive plausible source, even
-/// for an instant), writes the contents, applies the exact source
-/// permissions through the file handle — fchmod semantics, immune to the
-/// process umask — then fsyncs the data to disk before returning the
-/// *actual* path written to, so the caller's rename always targets a
-/// flushed temp file at the right name regardless of which path was used.
-///
-/// The PID+random-suffix name makes a genuine collision with another live
-/// process astronomically unlikely; a stale temp left behind by a crashed
-/// prior run reusing the same PID is the only realistic cause. Retried
-/// once at a freshly-suffixed path — never by deleting the existing file
-/// and reusing its name: a *genuine* collision with another live,
-/// legitimate writer using this exact name would otherwise have its temp
-/// file deleted out from under it. The crashed-run scenario is inherently
-/// racy to simulate deterministically, so this path is exercised by
-/// inspection rather than a dedicated regression test.
+/// Creates the temp file 0600, writes the contents, applies the source
+/// permissions through the handle (immune to umask) and fsyncs. If the name
+/// is taken it retries once at a fresh name, never deleting the existing
+/// file, which may belong to a live writer. Returns the path written.
 #[cfg(unix)]
 fn write_temp(
     base_temp_path: &Path,
@@ -540,9 +407,7 @@ mod tests {
         fs::remove_file(&target).ok();
     }
 
-    /// External review of `5c51d81`: mutual exclusion keyed on an unresolved
-    /// path excludes nothing when two callers spell the same file
-    /// differently. Each spelling here must map to the *same* lock file.
+    /// Every spelling of one file must map to the same lock.
     #[test]
     fn every_spelling_of_one_checklist_maps_to_the_same_lock() {
         let target = write_temp_file(EXAMPLE);
@@ -566,8 +431,6 @@ mod tests {
             "a `..` component must not create a second lock"
         );
 
-        // A symlink pointing at the checklist — the case the review called
-        // out as most important, and the one canonicalization is really for.
         let link = dir.join(format!(
             "link-to-{}",
             crate::test_support::unique_temp_path("l", "", None)
@@ -598,9 +461,7 @@ mod tests {
         fs::remove_file(&other).ok();
     }
 
-    /// The end the review actually cares about: not that the names match,
-    /// but that a second writer reaching the file by another spelling is
-    /// genuinely kept out of the critical section.
+    /// A second writer reaching the file by another spelling is kept out.
     #[test]
     fn a_writer_arriving_through_a_symlink_is_locked_out_by_the_first() {
         let target = write_temp_file(EXAMPLE);
@@ -670,17 +531,8 @@ mod tests {
 
     #[test]
     fn a_live_owner_is_never_displaced_however_long_it_holds_the_lock() {
-        // External review of `d885c88`. Recovery used to be a pure age test,
-        // so a *live* holder could be displaced simply for being slow — a
-        // stalled `sync_all`, a FUSE or network filesystem, storage under
-        // recovery. Both instances then entered the critical section and the
-        // second write silently won, which is exactly the loss this lock
-        // exists to prevent. The unique token stopped one from deleting the
-        // other's file; it never stopped both from writing.
-        //
-        // Our own PID is the one process guaranteed to be alive here. No
-        // sleeping is needed to make the point any more, which is itself the
-        // fix: elapsed time is no longer part of the decision.
+        // Our own PID is guaranteed alive: an old lock held by a live process must
+        // not be recovered.
         let path = write_temp_file(EXAMPLE);
         let lock_file = plant_lock(&path, std::process::id());
 
@@ -922,12 +774,7 @@ mod tests {
 
     #[test]
     fn write_back_on_an_empty_document_leaves_the_file_empty() {
-        // Not reachable through normal app use (there's nothing to toggle
-        // with zero items), but write_back itself makes no assumption that
-        // the document is non-empty — an empty source (no lists, no
-        // raw_lines, no trailing newline) must round-trip to exactly the
-        // same empty file, not gain a stray newline from an unconditional
-        // join-and-push.
+        // An empty source must round-trip without gaining a newline.
         let path = write_temp_file("");
         let document = parse_document(path.clone()).unwrap();
         assert!(document.lists.is_empty());
@@ -984,18 +831,8 @@ mod tests {
 
     #[test]
     fn a_toggle_changes_one_marker_and_no_other_byte_for_any_line_ending() {
-        // Deep review, round 2. The old whole-file `uses_crlf` flag was only
-        // ever right for an all-LF or all-CRLF file:
-        //
-        //   * CR-only: `str::lines()` doesn't split on a lone `\r`, so every
-        //     item landed on `raw_lines[0]` and the per-item writes clobbered
-        //     each other -- the toggle was silently discarded entirely.
-        //   * mixed: one CRLF anywhere rewrote *every* line to CRLF, so a
-        //     one-marker change produced a whole-file diff (and, under
-        //     git-sync, an automatically pushed whole-file commit).
-        //
-        // Each line now carries its own terminator, so the guarantee README
-        // states -- only the checkbox changes -- holds for all four.
+        // Each line keeps its own terminator, so only the checkbox changes for
+        // CR-only and mixed endings too.
         for (name, source, expected) in [
             (
                 "LF",
@@ -1255,13 +1092,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
-        // External review: the old behavior removed whatever file was
-        // already at the generated name before retrying at that *same*
-        // name -- conceptually wrong regardless of how unlikely a genuine
-        // collision with another live process is, since that file could
-        // belong to one. Deterministically forceable now that write_temp
-        // takes an explicit base path: pre-create a file there and confirm
-        // write_temp writes somewhere else instead, leaving it untouched.
+        // A pre-existing file at the temp name must be left untouched.
         let base = crate::test_support::unique_temp_path("writer", "collision", None);
         fs::write(&base, "a live process's own temp file, not markcheck's\n").unwrap();
 
