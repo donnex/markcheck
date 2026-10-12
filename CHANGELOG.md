@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Card text written in East Asian scripts (Chinese, Japanese, Korean) or
+  with emoji now wraps onto further lines instead of losing its end off the
+  right edge of the card. These characters take two terminal columns each,
+  but were measured as one, so a line up to twice the card's width was drawn
+  as if it fit and the rest could never be read, not even by scrolling. List
+  tabs, the header title, breadcrumbs and section dividers had the same
+  mis-measurement and could overflow or cut such text wrongly. (#12)
+
 - A status message too long for the bottom row now wraps onto a few more
   rows instead of being cut off at the right edge. Previously the end of the
   longest messages was never visible: the "Another markcheck is saving this
