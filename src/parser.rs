@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -122,6 +123,38 @@ fn heading_level_number(level: HeadingLevel) -> u8 {
 /// see exactly the same block structure.
 const PARSE_OPTIONS: Options = Options::ENABLE_TASKLISTS.union(Options::ENABLE_STRIKETHROUGH);
 
+/// Front matter is blanked rather than parsed: unparsed, CommonMark reads a
+/// YAML block's closing `---` as a setext `## H2` underline. The metadata
+/// options are confined to this probe because pulldown-cmark accepts a
+/// metadata block at *any* block start, so enabling them for the real parse
+/// would swallow a `---` ... `---` span in the middle of a checklist.
+const FRONT_MATTER_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+    .union(Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS);
+
+/// Replaces a leading YAML (`---`) or TOML (`+++`) front-matter block with
+/// spaces, keeping line endings and byte length so offsets and line numbers
+/// still index `raw_lines`.
+fn blank_front_matter(source: &str) -> Cow<'_, str> {
+    let front_matter_end = match Parser::new_ext(source, FRONT_MATTER_OPTIONS)
+        .into_offset_iter()
+        .next()
+    {
+        Some((Event::Start(Tag::MetadataBlock(_)), range)) if range.start == 0 => range.end,
+        _ => return Cow::Borrowed(source),
+    };
+    let (front_matter, rest) = source.split_at(front_matter_end);
+    let mut blanked = String::with_capacity(source.len());
+    for ch in front_matter.chars() {
+        if ch == '\n' || ch == '\r' {
+            blanked.push(ch);
+        } else {
+            blanked.extend(std::iter::repeat_n(' ', ch.len_utf8()));
+        }
+    }
+    blanked.push_str(rest);
+    Cow::Owned(blanked)
+}
+
 /// pulldown-cmark only recognizes `[ ]` and `[x]`. This pre-pass parses
 /// `raw` once and records the offset of every `[/]` exactly where a task
 /// marker would be, rewrites those to `[ ]` (same length, so offsets hold),
@@ -221,7 +254,8 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     // as task items; `started_offsets` records which `TaskListMarker`s to
     // promote to `Started`. Offsets are preserved, so line numbers still
     // index `raw_lines`.
-    let (source, started_offsets) = extract_started_markers(raw_for_parsing);
+    let without_front_matter = blank_front_matter(raw_for_parsing);
+    let (source, started_offsets) = extract_started_markers(&without_front_matter);
 
     let mut lists: Vec<List> = Vec::new();
     let mut default_items: Vec<Item> = Vec::new();
@@ -1102,6 +1136,72 @@ mod tests {
                 BodySpan::Code("thing".to_string()),
             ]
         );
+    }
+
+    const YAML_FRONT_MATTER: &str = "\
+---
+title: Weekly ops
+tags: [ops]
+---
+
+# Weekly
+
+- [ ] first task
+- [ ] second task
+";
+
+    #[test]
+    fn yaml_front_matter_is_skipped_not_read_as_a_list_heading() {
+        let document = parse(YAML_FRONT_MATTER);
+        assert_eq!(document.title.as_deref(), Some("Weekly"));
+        assert_eq!(document.lists.len(), 1);
+        let list = &document.lists[0];
+        assert_eq!(list.title, "(Default)");
+        let texts: Vec<&str> = list.items.iter().map(|i| i.display_text.as_str()).collect();
+        assert_eq!(texts, ["first task", "second task"]);
+        assert_eq!(list.items[0].line_number, 8);
+    }
+
+    #[test]
+    fn toml_front_matter_is_skipped_and_the_next_h2_names_the_list() {
+        let source = "+++\ntitle = \"Ops\"\n+++\n\n## Morning\n\n- [ ] task\n";
+        let document = parse(source);
+        assert_eq!(document.title, None);
+        assert_eq!(document.lists.len(), 1);
+        assert_eq!(document.lists[0].title, "Morning");
+        assert_eq!(document.lists[0].items[0].line_number, 7);
+    }
+
+    #[test]
+    fn front_matter_after_a_bom_is_still_skipped() {
+        let source = format!("\u{FEFF}{YAML_FRONT_MATTER}");
+        let document = parse(&source);
+        assert_eq!(document.lists.len(), 1);
+        assert_eq!(document.lists[0].title, "(Default)");
+    }
+
+    #[test]
+    fn a_block_not_on_the_first_line_is_not_front_matter() {
+        let source = format!("\n{YAML_FRONT_MATTER}");
+        let document = parse(&source);
+        assert_eq!(document.lists[0].title, "title: Weekly ops tags: [ops]");
+    }
+
+    #[test]
+    fn front_matter_with_crlf_and_non_ascii_keeps_line_numbers() {
+        let source = "---\r\ntitle: Café\r\n---\r\n\r\n- [ ] task\r\n";
+        let document = parse(source);
+        assert_eq!(document.lists[0].title, "(Default)");
+        assert_eq!(document.lists[0].items[0].line_number, 5);
+        assert_eq!(crate::writer::document_contents(&document), source);
+    }
+
+    #[test]
+    fn a_dash_line_further_down_is_not_front_matter() {
+        let source = "## S\n\n- [ ] task\n\n---\nkey: value\n---\n\n- [ ] later\n";
+        let document = parse(source);
+        let titles: Vec<&str> = document.lists.iter().map(|l| l.title.as_str()).collect();
+        assert_eq!(titles, ["S", "key: value"]);
     }
 
     #[test]
