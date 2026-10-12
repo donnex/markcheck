@@ -28,8 +28,9 @@ markcheck examples/basics.md
   both render as a non-interactive note rather than a live task, inline vs
   fenced code,
   multi-command tasks (inline and fenced) numbered `[1]`/`[2]` for `y` then a
-  digit, a long
-  mid-sentence command that wraps but still copies whole on click, inline
+  digit, fenced lines and a long
+  mid-sentence command that wrap with a dim `↩` on every continued row (and
+  still copy whole on click), inline
   styling (emphasis / mid-line bold / strikethrough), links whose URL shows
   centered below the card rather than on it — including a long URL that
   no longer wraps and a two-link task with `[1]`/`[2]` markers keyed to the

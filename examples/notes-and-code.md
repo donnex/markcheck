@@ -36,6 +36,14 @@ Non-task content and the ways code is handled.
   sync-now
   ```
 
+- [ ] A task with fenced lines too long for a narrow card — every row a line
+  wraps onto ends in a dim `↩`, so one wrapped command can't be read as two:
+
+  ```sh
+  clear-cache --path /var/lib/example-app/cache/sessions --older-than 7d
+  restart-service example-app --graceful --wait-for-health-checks
+  ```
+
 - [ ] A task with two commands `first` and `second` — each gets a `[1]`/`[2]`
   marker; `y` then `1` or `2` copies that one (or click it)
 - [ ] A task with a command for each server — the boxes are numbered in their
@@ -50,8 +58,8 @@ Non-task content and the ways code is handled.
   ```
 
 - [ ] Fetch `curl -fsSL https://example.com/install.sh --output /tmp/install.sh`
-  first — on a narrow card this long inline command wraps across rows, and a
-  click on any of them copies it whole
+  first — on a narrow card this long inline command wraps across rows, each
+  continued row ending in a dim `↩`, and a click on any of them copies it whole
 - [ ] A task with *emphasis*, mid-line **bold**, and ~~struck-through~~ text to
   show inline styling in the card body
 - [ ] Open the [project runbook](https://example.com/runbook) with `o` — the

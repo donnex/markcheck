@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A command too long for the card now shows a dim `↩` at the end of every
+  row it wraps onto. Previously the wrapped part was drawn exactly like a new
+  line, so on a narrow terminal a single command — say a delete whose path
+  wrapped mid-way — read as two separate commands, which matters when typing
+  it by hand rather than copying it. Copied text was always correct. (#136)
+
 - A task's indented code block — the older Markdown way to write a command,
   indented four spaces instead of fenced with backticks, and what converters
   such as pandoc produce — is now shown on the card and copied with `y`, just
