@@ -29,7 +29,7 @@ Data flows one way: `parser.rs` reads a Markdown file into `Document` (via `pull
 
 Key non-obvious design points:
 
-- **`[/]` started-state pre-processing** (`parser.rs`): `pulldown-cmark` only recognises `[ ]`/`[x]`. Before parsing, `extract_started_markers` rewrites `[/]` → `[ ]` (same byte length, so offsets are preserved) and records which lines had `[/]`; those items are promoted to `Started` in `End(Item)`.
+- **`[/]` started-state pre-processing** (`parser.rs`): `pulldown-cmark` only recognises `[ ]`/`[x]`. `extract_started_markers` first parses with `pulldown-cmark` to find each `[/]` that opens a list item, rewrites only those to `[ ]` (same byte length, so offsets are preserved) and records their offsets; the matching `TaskListMarker`s become `Started` in the real parse. Never guess block structure from raw text there.
 - **Items are a flat `Vec`, sorted by `line_number`** after parsing. Nesting depth is metadata on each `Item`, not a tree. Items are pushed at `End(Item)` — post-order — so a sort is needed to restore document order.
 - **File watcher watches the *parent directory***, not the file path, because atomic saves (temp-then-rename, used by both `write_back` and most editors) silently lose a file-path watch. Self-writes are filtered via `AppState.file_mtime`.
 - **Color capability** is sniffed from `COLORTERM`/`TERM` into a `Palette` at startup; all `ui/` code reads from `state.palette` rather than hardcoding `Color::*`.

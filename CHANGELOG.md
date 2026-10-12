@@ -74,6 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `GIT_GLOB_PATHSPECS` is set in your shell, and a lookup that still
   matches more than one file stops the sync with an error. (#70)
 
+- A started task (`- [/] ...`) no longer disappears from the checklist when
+  something earlier in the file merely looks like a code fence — a line of
+  backticks inside an HTML comment, or indented four spaces. Everything
+  after such a line used to be treated as code, so a started task there
+  vanished outright or showed up as a plain note reading `[/] ...`. The
+  reverse case is fixed too: a `[/]` line inside a code block that opens on
+  a list bullet (`` - ``` ``) is no longer shown — and copied with `y` — as
+  `[ ]`. Started tasks are now recognised by the same Markdown parser that
+  reads the rest of the file, so the two can no longer disagree. (#3)
+
 - Git-sync will not recreate or overwrite a remote branch that changed while
   it was pushing. The previous fix checked with the remote first, but the
   check and the push were separate steps, so a branch deleted in between
