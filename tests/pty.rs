@@ -88,6 +88,9 @@ enum Step {
     /// Simulates the file being deleted out from under the running binary,
     /// then pauses for the watcher to detect it.
     ExternalDelete,
+    /// Waits with nothing observable to poll for, e.g. a shell resuming the
+    /// binary, so the next key isn't typed into the shell instead.
+    Pause(u64),
 }
 
 /// Pacing delay between plain keys: generous enough for the 100ms event loop
@@ -202,6 +205,7 @@ fn run_with_pty_capturing(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -
                     std::fs::remove_file(md_path).unwrap();
                     thread::sleep(Duration::from_millis(300));
                 }
+                Step::Pause(ms) => thread::sleep(Duration::from_millis(*ms)),
             }
         }
     } // writer dropped
@@ -1623,6 +1627,59 @@ fn an_ordinary_checklist_is_not_warned_about() {
     assert!(
         !screen.contains("hard links"),
         "a single-linked file must not be warned about; screen was:\n{screen}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// Ctrl-Z under a job-control shell: markcheck must stop (not exit), hand the
+/// terminal back, and come back on `fg` responsive and with the edit the
+/// shell made meanwhile loaded. The shell only reaches its `fg` once the
+/// binary has stopped or exited, and `fg` fails if it exited, so a clean exit
+/// after a further toggle proves a real suspend and resume.
+#[test]
+fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
+    let path = unique_path("suspend");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+
+    let mut cmd = CommandBuilder::new("sh");
+    cmd.arg("-c");
+    cmd.arg(concat!(
+        "set -m; \"$0\" --no-nerd-font \"$1\"; ",
+        "printf -- '- [ ] `gamma`\\n' >> \"$1\"; ",
+        "echo SUSPENDED-IN-SHELL; fg",
+    ));
+    cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg(&path);
+    cmd.env_remove("DISPLAY");
+    cmd.env_remove("WAYLAND_DISPLAY");
+    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    let (ok, screen) = run_with_pty_capturing(
+        cmd,
+        &path,
+        &[
+            Step::Key("\x1a"), // Ctrl-Z
+            Step::WaitForFile(|s| s.contains("`gamma`")),
+            Step::Pause(600),
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+
+    assert!(ok, "fg should resume the binary and it should exit cleanly");
+    let after_suspend = screen
+        .split_once("SUSPENDED-IN-SHELL")
+        .unwrap_or_else(|| panic!("the shell never got the terminal; screen was:\n{screen}"))
+        .1;
+    assert!(
+        after_suspend.contains("gamma"),
+        "the shell's edit is shown after resuming; screen was:\n{after_suspend}"
+    );
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        contents.contains("[x] `alpha`") && contents.contains("`gamma`"),
+        "toggle after resume keeps the shell's edit: {contents:?}"
     );
 
     std::fs::remove_file(&path).ok();

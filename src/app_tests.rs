@@ -1758,6 +1758,77 @@ fn e_requests_editor_from_completion_screen() {
     assert!(state.take_editor_request());
 }
 
+// --- Suspend (Ctrl-Z) ---
+
+#[test]
+fn ctrl_z_requests_suspend_and_is_consumed_once() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key_with_mods(KeyCode::Char('z'), KeyModifiers::CONTROL);
+    assert!(state.take_suspend_request());
+    assert!(!state.take_suspend_request(), "request is consumed");
+}
+
+#[test]
+fn plain_z_does_not_request_suspend() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('z'));
+    assert!(!state.take_suspend_request());
+}
+
+#[test]
+fn ctrl_z_suspends_from_search_input_without_typing_a_z() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task");
+    state.handle_key_with_mods(KeyCode::Char('z'), KeyModifiers::CONTROL);
+    assert!(state.take_suspend_request());
+    assert_eq!(state.search.query, "task");
+    assert_eq!(state.screen, Screen::Search);
+}
+
+#[test]
+fn ctrl_z_cancels_a_pending_gg() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('g'));
+    state.handle_key_with_mods(KeyCode::Char('z'), KeyModifiers::CONTROL);
+    assert!(!state.pending_g);
+}
+
+#[test]
+fn finish_suspend_failure_is_a_sticky_error() {
+    let mut state = AppState::new(two_list_document());
+    state.finish_suspend(Err("kill exited with exit status: 1".to_string()));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Couldn't suspend: kill exited with exit status: 1")
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
+fn finish_suspend_with_no_change_confirms_the_resume() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_suspend(Ok(()));
+    assert_eq!(state.status_message.as_deref(), Some("Resumed"));
+    assert!(!state.status_is_error);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn finish_suspend_reloads_an_edit_made_while_suspended() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
+    state.finish_suspend(Ok(()));
+    assert_eq!(state.current_list().items.len(), 2);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
+    );
+    fs::remove_file(&path).ok();
+}
+
 // --- Reset with confirmation ---
 
 #[test]

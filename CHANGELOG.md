@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Ctrl-Z` suspends markcheck and drops you back to your shell, the way it
+  does in vim, less and most other full-screen terminal programs; `fg`
+  brings it back, picking up any change made to the checklist meanwhile.
+  Previously the key did nothing, so running a step's command without a
+  second terminal meant quitting and starting markcheck again. (#107)
+
 - Support for the `NO_COLOR` convention (<https://no-color.org/>): when the
   `NO_COLOR` environment variable is set to any non-empty value, markcheck
   draws no color at all. Commands are shown in reverse video, and states are

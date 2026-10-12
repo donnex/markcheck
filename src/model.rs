@@ -751,6 +751,9 @@ pub struct AppState {
     /// Set by `e`; consumed by the main loop, which suspends the TUI and
     /// launches the editor.
     pub editor_requested: bool,
+    /// Set by `Ctrl-Z`; consumed by the main loop, which restores the
+    /// terminal and stops the process with `SIGTSTP` until the shell's `fg`.
+    pub suspend_requested: bool,
     /// Screen to return to if the reset confirmation is cancelled.
     pub screen_before_confirm: Screen,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
