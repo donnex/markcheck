@@ -215,40 +215,72 @@ pub(super) fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), 
         Err(err) => Err(format!("git update-ref failed: {err}")),
     }
 }
-/// Refuses while a merge, cherry-pick, revert, bisect or rebase is in
-/// progress, `HEAD` is detached, or any path is conflicted.
+/// Refuses while a merge, cherry-pick, revert, bisect, sequencer run or
+/// rebase is in progress, `HEAD` is detached, or any path is conflicted — and
+/// when any of that can't be checked.
 pub(super) fn repo_sync_blocked(repo_root: &Path) -> Option<String> {
-    let git_dir = git_dir(repo_root)?;
+    let Some(git_dir) = git_dir(repo_root) else {
+        return Some(
+            "could not locate the repository's git directory to check for a merge or rebase \
+             in progress; not syncing"
+                .to_string(),
+        );
+    };
     for (marker, label) in [
         ("MERGE_HEAD", "a merge"),
         ("CHERRY_PICK_HEAD", "a cherry-pick"),
         ("REVERT_HEAD", "a revert"),
         ("BISECT_LOG", "a bisect"),
+        ("sequencer", "a multi-commit cherry-pick or revert"),
+        ("rebase-merge", "a rebase"),
+        ("rebase-apply", "a rebase"),
     ] {
-        if git_dir.join(marker).exists() {
-            return Some(format!("{label} is in progress"));
+        match git_dir.join(marker).try_exists() {
+            Ok(false) => {}
+            Ok(true) => return Some(format!("{label} is in progress")),
+            Err(err) => {
+                return Some(format!(
+                    "could not check for {label} in progress ({err}); not syncing"
+                ));
+            }
         }
-    }
-    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-        return Some("a rebase is in progress".to_string());
     }
     let mut symbolic_ref_cmd = git_command(repo_root);
     symbolic_ref_cmd.args(["symbolic-ref", "-q", "HEAD"]);
-    let on_a_branch = run_with_timeout(symbolic_ref_cmd, PLUMBING_TIMEOUT)
-        .is_ok_and(|output| output.status.success());
-    if !on_a_branch {
-        return Some(
-            "the repository is not on a branch (detached HEAD); check one out to sync".to_string(),
-        );
+    match run_with_timeout(symbolic_ref_cmd, PLUMBING_TIMEOUT) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) if output.status.code() == Some(1) => {
+            return Some(
+                "the repository is not on a branch (detached HEAD); check one out to sync"
+                    .to_string(),
+            );
+        }
+        Ok(output) => {
+            return Some(format!(
+                "could not check whether the repository is on a branch ({}); not syncing",
+                command_error("git symbolic-ref", &output)
+            ));
+        }
+        Err(err) => {
+            return Some(format!(
+                "could not check whether the repository is on a branch ({err}); not syncing"
+            ));
+        }
     }
     let mut ls_files_cmd = git_command(repo_root);
     ls_files_cmd.args(["ls-files", "-u"]);
-    let unmerged = run_with_timeout(ls_files_cmd, PLUMBING_TIMEOUT);
-    match unmerged {
-        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
+    match run_with_timeout(ls_files_cmd, PLUMBING_TIMEOUT) {
+        Ok(output) if output.status.success() && output.stdout.is_empty() => None,
+        Ok(output) if output.status.success() => {
             Some("the repository has unresolved merge conflicts".to_string())
         }
-        _ => None,
+        Ok(output) => Some(format!(
+            "could not check for unresolved merge conflicts ({}); not syncing",
+            command_error("git ls-files", &output)
+        )),
+        Err(err) => Some(format!(
+            "could not check for unresolved merge conflicts ({err}); not syncing"
+        )),
     }
 }
 
@@ -592,6 +624,47 @@ mod tests {
         let reason = repo_sync_blocked(&work);
         assert!(
             reason.as_ref().is_some_and(|r| r.contains("conflict")),
+            "{reason:?}"
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn repo_sync_blocked_detects_a_multi_commit_cherry_pick_after_a_plain_commit() {
+        // `git commit` instead of `--continue` removes CHERRY_PICK_HEAD but
+        // leaves the sequence in progress.
+        let work = init_repo_without_remote();
+        fs::create_dir_all(work.join(".git").join("sequencer")).unwrap();
+        let reason = repo_sync_blocked(&work);
+        assert!(
+            reason
+                .as_ref()
+                .is_some_and(|r| r.contains("cherry-pick or revert is in progress")),
+            "{reason:?}"
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn repo_sync_blocked_refuses_when_the_git_dir_cannot_be_found() {
+        let dir = unique_dir("no-git-dir");
+        fs::create_dir_all(&dir).unwrap();
+        let reason = repo_sync_blocked(&dir);
+        assert!(
+            reason
+                .as_ref()
+                .is_some_and(|r| r.contains("could not locate the repository's git directory")),
+            "{reason:?}"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn repo_sync_blocked_refuses_when_the_conflict_check_fails() {
+        let work = init_repo_without_remote();
+        fs::write(work.join(".git").join("index"), "not an index").unwrap();
+        let reason = repo_sync_blocked(&work);
+        assert!(
+            reason
+                .as_ref()
+                .is_some_and(|r| r.contains("could not check for unresolved merge conflicts")),
             "{reason:?}"
         );
         fs::remove_dir_all(work.parent().unwrap()).ok();
