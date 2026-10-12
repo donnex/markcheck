@@ -29,8 +29,19 @@ Non-task content and the ways code is handled.
   sync-now
   ```
 
-- [ ] A task with two commands `first` and `second` — ambiguous for `y`, so
-  click the specific command you want to copy
+- [ ] A task with two commands `first` and `second` — each gets a `[1]`/`[2]`
+  marker; `y` then `1` or `2` copies that one (or click it)
+- [ ] A task with a command for each server — the boxes are numbered in their
+  top borders for `y` then a digit:
+
+  ```sh
+  on-primary --promote
+  ```
+
+  ```sh
+  on-replica --follow
+  ```
+
 - [ ] Fetch `curl -fsSL https://example.com/install.sh --output /tmp/install.sh`
   first — on a narrow card this long inline command wraps across rows, and a
   click on any of them copies it whole

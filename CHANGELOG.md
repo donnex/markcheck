@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A task with several commands can now be copied from the keyboard. The card
+  numbers them — a dim `[1]`, `[2]` after each inline command, or in the top
+  border of each fenced block — and `y` then a digit copies that command,
+  just as `o` then a digit opens one of several links. Previously `y` refused
+  with "item has N code candidates" and the only way to copy one was a mouse
+  click, which isn't available with `--no-mouse`, on many terminal and tmux
+  setups, or to anyone who doesn't use a mouse. (#116)
+
 - `Ctrl-Z` suspends markcheck and drops you back to your shell, the way it
   does in vim, less and most other full-screen terminal programs; `fg`
   brings it back, picking up any change made to the checklist meanwhile.

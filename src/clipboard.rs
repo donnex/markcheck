@@ -41,8 +41,9 @@ fn has_hidden_characters(text: &str) -> bool {
     })
 }
 
-/// Fenced code blocks take priority; inline spans are the fallback.
-fn candidates(item: &Item) -> &[String] {
+/// The commands `y` chooses between, in card order: fenced code blocks take
+/// priority; inline spans are the fallback.
+pub fn candidates(item: &Item) -> &[String] {
     if !item.code_blocks.is_empty() {
         &item.code_blocks
     } else {
@@ -52,7 +53,7 @@ fn candidates(item: &Item) -> &[String] {
 
 /// Copies the item's single code candidate, or refuses: exactly one
 /// candidate is required — zero or several produce no copy and a
-/// distinct outcome so the UI can explain why. When `primary` is set the
+/// distinct outcome so the UI can explain why (or, for several, ask which). When `primary` is set the
 /// copy also targets the X11 PRIMARY selection.
 pub fn copy_item_code(item: &Item, primary: bool) -> CopyOutcome {
     let candidates = candidates(item);

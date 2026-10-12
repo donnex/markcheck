@@ -835,6 +835,37 @@ mod tests {
     }
 
     #[test]
+    fn y_on_a_multi_command_card_numbers_them_and_prompts_for_one() {
+        let mut item = checkbox(1, "cmds", false);
+        item.body = vec![
+            crate::model::BodySpan::Text("Run".to_string()),
+            crate::model::BodySpan::Code("stop-svc".to_string()),
+            crate::model::BodySpan::Text("then".to_string()),
+            crate::model::BodySpan::Code("start-svc".to_string()),
+        ];
+        item.code_spans = vec!["stop-svc".to_string(), "start-svc".to_string()];
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![item],
+        }]);
+        state.handle_key(KeyCode::Char('y'));
+        let rows = buffer_rows(&mut state, 120, 26);
+        assert!(
+            rows.iter().any(|r| r.contains("stop-svc [1]")),
+            "card numbers command 1: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("start-svc [2]")),
+            "card numbers command 2: {rows:?}"
+        );
+        assert_eq!(
+            rows.last().unwrap().trim(),
+            "press 1–2 to copy · esc cancels"
+        );
+    }
+
+    #[test]
     fn overview_pins_the_sub_section_header_when_its_divider_scrolls_off() {
         // Deep inside a long sub-section, its `── divider` scrolls above
         // the panel, so the deepest active sub-heading is pinned on the first

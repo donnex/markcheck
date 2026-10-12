@@ -4,6 +4,7 @@ use ratatui::style::Stylize as _;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::clipboard;
 use crate::model::{AppState, Screen};
 
 // Trimmed to the essentials; the `?` overlay is the full reference.
@@ -44,18 +45,22 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Screen::ListPicker => PICKER_LEGEND,
         _ => KEYBIND_LEGEND,
     };
-    // While a multi-link `o` is armed, the status bar shows the open prompt.
+    // While a multi-link `o` or multi-command `y` is armed, the status bar shows
+    // its digit prompt.
     // The URLs themselves now live in the panel below the
     // card, so the status bar only carries the "press a number" instruction.
     // Priority: search (handled above) > status message > armed prompt > legend.
-    let armed_prompt = if state.status_message.is_none()
-        && state.screen == Screen::Checklist
-        && state.pending_open_link
-    {
-        let n = state
-            .current_item()
-            .map_or(0, |item| item.link_urls().len());
-        Some(format!("press 1–{n} to open · esc cancels"))
+    let armed_prompt = if state.status_message.is_none() && state.screen == Screen::Checklist {
+        let item = state.current_item();
+        if state.pending_open_link {
+            let n = item.map_or(0, |item| item.link_urls().len());
+            Some(format!("press 1–{n} to open · esc cancels"))
+        } else if state.pending_copy_code {
+            let n = item.map_or(0, |item| clipboard::candidates(item).len());
+            Some(format!("press 1–{n} to copy · esc cancels"))
+        } else {
+            None
+        }
     } else {
         None
     };

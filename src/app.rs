@@ -145,6 +145,7 @@ impl AppState {
             overview_rows: Vec::new(),
             pending_g: false,
             pending_open_link: false,
+            pending_copy_code: false,
             icons: IconSet::nerd(),
             editor_requested: false,
             suspend_requested: false,
@@ -637,13 +638,14 @@ impl AppState {
         self.status_is_error = false;
     }
 
-    /// Cancels any armed input chord (`gg`, `o`'s digit prompt) and the status
+    /// Cancels any armed input chord (`gg`, `o`/`y`'s digit prompt) and the status
     /// message. Mouse input bypasses `handle_key_with_mods`, so a click between
     /// the two halves of a chord would otherwise leave it armed.
     fn clear_pending_chords(&mut self) {
         self.clear_status();
         self.pending_g = false;
         self.pending_open_link = false;
+        self.pending_copy_code = false;
     }
 
     /// Shared guard for every mutating action: once the watched file
@@ -1172,6 +1174,7 @@ impl AppState {
                 // not act on it.
                 self.pending_g = false;
                 self.pending_open_link = false;
+                self.pending_copy_code = false;
                 if let Some(cancelled) = cancelled {
                     self.set_error(format!("File changed on disk — {cancelled} cancelled"));
                 } else if was_deleted {
@@ -1612,9 +1615,9 @@ impl AppState {
             CopyOutcome::NoCandidates => {
                 self.set_error("Nothing to copy: item has no code".to_string())
             }
-            CopyOutcome::Ambiguous(n) => {
-                self.set_error(format!("Not copied: item has {n} code candidates"))
-            }
+            // Several commands: arm a digit that picks command `[N]`. No sticky
+            // message, so the status bar shows the prompt instead.
+            CopyOutcome::Ambiguous(_) => self.pending_copy_code = true,
             CopyOutcome::TooLarge => self.set_error(
                 "Not copied: this command is too large for the terminal clipboard".to_string(),
             ),
@@ -1622,6 +1625,17 @@ impl AppState {
             CopyOutcome::Failed => {
                 self.set_error("Copy failed: no clipboard available".to_string())
             }
+        }
+    }
+
+    /// Copies command `[n]` (1-based) after `y` on a card with several.
+    fn copy_code_number(&mut self, n: usize) {
+        let text = self
+            .current_item()
+            .and_then(|item| clipboard::candidates(item).get(n - 1).cloned());
+        match text {
+            Some(text) => self.copy_specific(&text),
+            None => self.set_error(format!("No command [{n}] on this card")),
         }
     }
 
@@ -1650,7 +1664,7 @@ impl AppState {
         // Any key other than a second `g` cancels a pending `gg` motion.
         let pending_g = std::mem::take(&mut self.pending_g);
 
-        if self.handle_pending_open_link_key(code) {
+        if self.handle_pending_open_link_key(code) || self.handle_pending_copy_code_key(code) {
             return;
         }
 
@@ -1713,6 +1727,21 @@ impl AppState {
         match code {
             KeyCode::Char(c @ '1'..='9') => {
                 self.open_link_number((c as u8 - b'0') as usize);
+                true
+            }
+            KeyCode::Esc => true,
+            _ => false,
+        }
+    }
+
+    /// A pending `y` waits for a command digit, exactly like `o`'s link prompt.
+    fn handle_pending_copy_code_key(&mut self, code: KeyCode) -> bool {
+        if !std::mem::take(&mut self.pending_copy_code) {
+            return false;
+        }
+        match code {
+            KeyCode::Char(c @ '1'..='9') => {
+                self.copy_code_number((c as u8 - b'0') as usize);
                 true
             }
             KeyCode::Esc => true,
