@@ -358,10 +358,21 @@ Toggling a task rewrites only its `[ ]`/`[/]`/`[x]` marker character; the rest
 of the file (formatting, comments, other lines) is left untouched. Writes are
 atomic — a temp file is written and renamed over the original — so a crash
 or full disk can never leave the runbook truncated, and the file's
-permissions (standard Unix mode bits) are preserved. POSIX ACLs, extended
-attributes, ownership, and **hard links** are not preserved — the rename
-gives the file a new inode, and only ordinary permissions are carried
-forward onto it — which matters if the file lives somewhere ACL-managed.
+permissions (standard Unix mode bits) and its group are preserved. POSIX
+ACLs, extended attributes, another user's ownership, and **hard links** are
+not preserved — the rename gives the file a new inode, and only ordinary
+permissions, the group and (when you are its owner, or root) the owner are
+carried forward onto it — which matters if the file lives somewhere
+ACL-managed.
+
+Shared checklists are the other case to know about. Keeping the group means
+a runbook in a shared group directory stays writable by the rest of the
+group after you save it (as long as you are in that group yourself). But a
+file that belongs to someone else becomes yours on the first save, because
+only root can give a file away; opening one shows a warning up front ("this
+file belongs to user N — saving makes it yours"), so you can quit first. In
+a sticky directory (`chmod +t`) the save of someone else's file is refused
+outright and reported as a write failure.
 Opening the file through a symlink writes through to the real target and
 keeps the link intact.
 

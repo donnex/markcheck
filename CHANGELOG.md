@@ -72,6 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Saving a checklist no longer moves it out of its group. Every toggle
+  writes a fresh file over the old one, and that file used to take the
+  group of whoever ran markcheck, so in a shared runbook directory the
+  first save could leave the rest of the team unable to write the file. The
+  group is now carried over (provided you belong to it), and opening a file
+  owned by another user shows a warning that saving will make it yours,
+  since only root can keep the original owner. (#106)
+
 - Long text is no longer cut off silently at the edge of the screen. A list's
   warning banner (a list's leading bold-only bullet) and a card's title now
   wrap onto as many rows as they need, so the whole warning and the whole
