@@ -512,6 +512,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Saving a checklist now clears its setuid, setgid and sticky bits, keeping
+  the rest of its permissions as before. Each save writes a brand-new file
+  owned by whoever ticked the box, so a checklist planted in a shared,
+  group-writable directory with one of those bits set came back as a
+  special-bit file owned by the person who saved it, with content someone
+  else chose — exactly what the system normally prevents by clearing those
+  bits when anyone but a file's owner writes to it. (#122)
+
 - Copying a command (`y`, clicking a command on the card, or `--auto-copy`)
   now refuses one that contains hidden control characters — escape,
   backspace, carriage return and the like, or Unicode bidi overrides — and
