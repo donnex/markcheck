@@ -685,7 +685,8 @@ Sublime, Helix, …) open at the top of the file. `R` resets every task to not-d
 confirmation prompt (press `y` to confirm — any other key cancels). When
 you quit with every task already done, `markcheck` first asks whether to
 reset the checklist so it's ready to run again: `y` resets and quits, `n`
-quits as-is, `Esc` stays in the app.
+quits as-is, `Esc` stays in the app. If the reset can't be saved, markcheck
+stays open and shows why instead of quitting.
 
 ## Architecture
 

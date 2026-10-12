@@ -86,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Answering `y` to "reset and quit" (offered when you quit a checklist with
+  every task done) no longer exits when the reset can't be saved. Previously
+  markcheck quit anyway, so the reason — another instance saving, the file
+  changed or deleted on disk, a write error — was never shown, and the
+  checklist opened as already complete next time. It now stays open with the
+  error shown. (#7)
+
 - Two markcheck instances saving the same checklist could both write at once,
   silently losing one toggle, on systems whose `ps` doesn't support `-p` —
   BusyBox, as found in Alpine and other minimal images. markcheck checks
