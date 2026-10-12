@@ -260,7 +260,7 @@ Walk events:
 - `Event::Start`/`End(Tag::Emphasis | Tag::Strikethrough)` → toggle the corresponding flag in the builder's active `TextStyle`; body `Text` runs read while any flag is set are emitted as `BodySpan::Styled` instead of `BodySpan::Text`. `Options::ENABLE_STRIKETHROUGH` is enabled alongside `ENABLE_TASKLISTS`.
 - `Event::Start(Tag::Link { dest_url, .. })` → begin buffering the link; its text still flows into `display_text` (so search matches it) and on `End(Tag::Link)` a `BodySpan::Link { text, url }` is emitted. `Item::link_urls()` collects these for the `o` open action. **Known limitation:** a link entirely inside the leading-bold title (`capturing_header`) is gated out — its anchor text still folds into `header` as plain text, but the URL is discarded and `link_urls()` never sees it, so `o` can't open it. Put the link in the body instead if it needs to be openable.
 - `Event::Code(text)` inside item → push to `code_spans`, and append `BodySpan::Code` to `body`
-- `Event::Start/End(Tag::CodeBlock)` → buffer fenced block content into `code_blocks` (kept out of `display_text`); indented code blocks are discarded
+- `Event::Start/End(Tag::CodeBlock)` → buffer the block's content into the open item's `code_blocks` (kept out of `display_text`) — fenced and indented blocks alike, since an indented block is how older runbooks and converters such as pandoc write a command. Outside an item, only a *fenced* block can attach to the previous list's last item (`attach_fence_to_last_item`); a stray top-level indented block is discarded
 - `Event::Text` → accumulate `display_text` (or the header/code-block buffer when one is active), and append `BodySpan::Text` to `body` when in an item's body
 - `Event::End(Tag::Item)` → classify and buffer item
 

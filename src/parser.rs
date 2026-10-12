@@ -476,16 +476,17 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
                 code_block = Some((fenced, String::new()));
             }
             Event::End(TagEnd::CodeBlock) => {
-                // Indented code blocks are never copy candidates; their
-                // text is also kept out of display_text.
-                if let Some((true, content)) = code_block.take() {
+                // Inside an item, fenced and indented blocks are both the
+                // item's code. Outside one, only a fence may attach to the
+                // previous list; a stray indented block is dropped.
+                if let Some((fenced, content)) = code_block.take() {
                     let content = content
                         .strip_suffix('\n')
                         .map(str::to_string)
                         .unwrap_or(content);
                     if let Some(item) = item_stack.last_mut() {
                         item.code_blocks.push(content);
-                    } else if attach_fence_to_last_item {
+                    } else if fenced && attach_fence_to_last_item {
                         let target = match lists.last_mut() {
                             Some(list) => &mut list.items,
                             None => &mut default_items,
@@ -1931,11 +1932,43 @@ second
     }
 
     #[test]
+    fn indented_code_block_inside_a_task_is_its_code() {
+        let source = "\
+## Restart
+
+- [ ] Restart the service:
+
+      systemctl restart example-service
+
+- [ ] Check the health endpoint
+";
+        let document = parse(source);
+        let items = &document.lists[0].items;
+        assert_eq!(
+            items[0].code_blocks,
+            vec!["systemctl restart example-service".to_string()]
+        );
+        assert!(!items[0].display_text.contains("systemctl"));
+        assert!(items[1].code_blocks.is_empty());
+    }
+
+    #[test]
+    fn bold_only_first_bullet_with_indented_code_is_not_a_banner() {
+        let source = "## S\n\n- **Export first:**\n\n      export APP_ENV=staging\n\n- [ ] Run\n";
+        let document = parse(source);
+        let list = &document.lists[0];
+        assert_eq!(list.banner, None);
+        assert_eq!(
+            list.items[0].code_blocks,
+            vec!["export APP_ENV=staging".to_string()]
+        );
+    }
+
+    #[test]
     fn indented_code_block_is_ignored() {
         // A top-level 4-space indented code block (outside any list) is
-        // never a copy candidate and never attaches to an item. (Inside a
-        // list item, 4-space content is a continuation paragraph per
-        // CommonMark, not a code block.)
+        // never a copy candidate and never attaches to an item, unlike a
+        // fence right after a list.
         let source = "\
 ## S
 

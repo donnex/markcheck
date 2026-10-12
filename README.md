@@ -201,12 +201,13 @@ How each piece maps to the UI:
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. |
 | `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. A long title wraps inside the card, which grows to fit. |
-| `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries a command — `` `code` `` inside the bold, or a fenced block under the bullet — is never the banner: it stays a display-only card so the command is shown and copyable with `y`. |
+| `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries a command — `` `code` `` inside the bold, or a fenced or indented code block under the bullet — is never the banner: it stays a display-only card so the command is shown and copyable with `y`. |
 | `- **Bold**` (bold only), later in a list | A display-only card titled with the bold text. |
 | `- plain text` | A display-only **note card** (rounded border). In the overview it shows a distinct note marker rather than a task circle, so information reads apart from steps. |
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |
 | `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. With several, each chip gets a dim `[1]`/`[2]` marker for `y` then a digit. |
 | a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. With several, each box shows `[1]`/`[2]` in its top border for `y` then a digit. |
+| an indented (4-space) code block inside a task or note | Treated exactly like a fenced block: shown in a box and copyable with `y`. An indented block outside any list item is ignored. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
@@ -219,7 +220,7 @@ Finer points:
   below a blank line, so the lead-in and the command read as two tidy blocks.
   Inline code that has text after it stays in the sentence.
 - **Copying (`y`)** copies a task's command — a single inline `` `code` `` span
-  or a single fenced block. When there are several, each is numbered on the
+  or a single fenced (or indented) block. When there are several, each is numbered on the
   card and `y` then a digit copies that one. Fenced blocks take priority: if a
   task has any, only they are numbered, and its inline spans can be copied by
   clicking them. A command containing control
@@ -292,6 +293,10 @@ Finer points:
   document title; use a `# H1` for that. A `---` ... `---` pair anywhere but
   the first line is ordinary Markdown (a horizontal rule, and possibly an
   `##`-style heading underline), exactly as in any other Markdown renderer.
+- **An indented code block outside a list item is ignored.** Inside a task or
+  note it is that item's command (above), but one standing on its own between
+  lists belongs to no card and is not shown. A fenced block right after a list
+  still attaches to its last item.
 - **Files are read as UTF-8.**
 
 ## Keybindings

@@ -86,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A task's indented code block — the older Markdown way to write a command,
+  indented four spaces instead of fenced with backticks, and what converters
+  such as pandoc produce — is now shown on the card and copied with `y`, just
+  like a fenced block. Previously it was silently dropped: the card showed only
+  the lead-in ("Restart the service:"), the command was missing from the card,
+  the overview and search, and `y` said there was nothing to copy. (#130)
+
 - With git sync on, markcheck no longer leaves a stale `.git/index.lock`
   behind that breaks your own git commands. A git command that ran past
   markcheck's time limit was killed outright, which could leave the lock file
