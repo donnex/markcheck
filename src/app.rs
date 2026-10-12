@@ -2233,7 +2233,9 @@ impl AppState {
             return true;
         }
 
-        if matches!(code, KeyCode::Char('q') | KeyCode::Esc) {
+        if matches!(code, KeyCode::Char('q'))
+            || (code == KeyCode::Esc && self.view != View::Checklist)
+        {
             // When everything is done, offer to reset before quitting
             // instead of quitting outright.
             let (done, total) = self.document.checkbox_stats();
@@ -2242,6 +2244,11 @@ impl AppState {
             } else {
                 self.effects.push(Effect::Quit);
             }
+            return true;
+        }
+        // Esc on the Checklist screen is a no-op (vim convention: Esc
+        // cancels or returns to normal mode, it does not quit).
+        if code == KeyCode::Esc {
             return true;
         }
 
