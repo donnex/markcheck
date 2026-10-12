@@ -47,6 +47,9 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, viewport: usize
 
 const OVERVIEW_MIN_WIDTH: u16 = 60;
 const UPDATE_LABEL_MIN_WIDTH: u16 = 80;
+/// The columns the title bar guarantees the filename (or its full length,
+/// if shorter) before the document title gets the rest.
+const FILENAME_MIN_WIDTH: usize = 24;
 const UPDATE_LABEL_LIFETIME: Duration = Duration::from_secs(120);
 /// The update tag's relative time is floored to this granularity so it
 /// changes at most this often, instead of ticking every render.
@@ -238,7 +241,25 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ),
     };
-    let filename_span = Span::styled(file_name, Style::default().add_modifier(Modifier::DIM));
+    // The filename keeps up to `FILENAME_MIN_WIDTH` columns however long the
+    // title is, since it is the only thing naming the open file; the title
+    // takes the rest and ends in `…` when cut. One column stays free so the
+    // filename never runs into the right-hand cluster.
+    let available = (left_area.width as usize).saturating_sub(separator.width() + 1);
+    let (title_budget, file_budget) = split_width(
+        title_span.content.chars().count(),
+        file_name.chars().count(),
+        available,
+        FILENAME_MIN_WIDTH,
+    );
+    let title_span = Span::styled(
+        truncate(&title_span.content, title_budget),
+        title_span.style,
+    );
+    let filename_span = Span::styled(
+        truncate(&file_name, file_budget),
+        Style::default().add_modifier(Modifier::DIM),
+    );
 
     // Left group: just the static identity — title │ filename.
     // Nothing dynamic lives here any more; the list tabs are their own row
@@ -335,6 +356,19 @@ fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
         overflow -= 1;
     }
     Some(shares)
+}
+
+/// Splits `total` columns between two texts of `first` and `second`
+/// characters sharing one row. Both keep their full length when they fit;
+/// otherwise `second` keeps at least `second_floor` columns (or its own
+/// length, if shorter) and `first` takes the rest, so neither text can push
+/// the other off the row.
+fn split_width(first: usize, second: usize, total: usize, second_floor: usize) -> (usize, usize) {
+    if first + second <= total {
+        return (first, second);
+    }
+    let second_budget = second.min(second_floor.max(total.saturating_sub(first)).min(total));
+    (total - second_budget, second_budget)
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
@@ -2738,6 +2772,156 @@ mod tests {
                 .iter()
                 .any(|c| c.style().fg == Some(state.palette.note)),
             "note icon keeps the note-colored accent"
+        );
+    }
+
+    const LONG_BANNER: &str =
+        "WARNING: do not run this on the production database cluster before draining";
+    const LONG_TITLE: &str =
+        "Restart the primary application server process and confirm health checks pass";
+
+    fn long_heading_state() -> AppState {
+        let mut task = checkbox(1, "Restart it", false);
+        task.header = Some(LONG_TITLE.to_string());
+        let mut state = state_with(vec![
+            List {
+                title: "Maintenance".to_string(),
+                banner: Some(LONG_BANNER.to_string()),
+                items: vec![task, checkbox(2, "next", false)],
+            },
+            List {
+                title: "Other".to_string(),
+                banner: None,
+                items: vec![checkbox(3, "x", false)],
+            },
+        ]);
+        state.document.title = Some(
+            "Quarterly database failover and recovery procedure for the primary cluster".into(),
+        );
+        state.git_sync.active = true;
+        state
+    }
+
+    /// Every word of `text`, in order, somewhere in `screen` (rows joined),
+    /// so a wrapped text counts as shown in full.
+    fn words_in_order(screen: &str, text: &str) -> bool {
+        let mut rest = screen;
+        text.split_whitespace().all(|word| match rest.find(word) {
+            Some(at) => {
+                rest = &rest[at + word.len()..];
+                true
+            }
+            None => false,
+        })
+    }
+
+    #[test]
+    fn long_banner_and_card_title_wrap_in_full() {
+        for width in [80, 50] {
+            let mut state = long_heading_state();
+            let screen = buffer_rows(&mut state, width, 24).join("\n");
+            assert!(
+                words_in_order(&screen, LONG_BANNER),
+                "whole banner shown at {width} columns:\n{screen}"
+            );
+            assert!(
+                words_in_order(&screen, LONG_TITLE),
+                "whole card title shown at {width} columns:\n{screen}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_row_copies_of_long_text_end_in_an_ellipsis() {
+        let mut state = long_heading_state();
+        let rows = buffer_rows(&mut state, 80, 24);
+        let title = &rows[0];
+        assert!(
+            title.contains("render-test.md "),
+            "filename kept beside a long document title: {title:?}"
+        );
+        assert!(title.contains("Quarterly"), "title start shown: {title:?}");
+        assert!(title.contains('…'), "cut title marked: {title:?}");
+
+        let overview: Vec<String> = rows
+            .iter()
+            .map(|r| r.chars().skip(80 - 30).collect())
+            .collect();
+        let banner = overview
+            .iter()
+            .find(|r| r.contains("WARNING"))
+            .expect("overview banner row");
+        assert!(
+            banner.contains('…'),
+            "overview banner marked as cut: {banner:?}"
+        );
+        let task = overview
+            .iter()
+            .find(|r| r.contains("Restart"))
+            .expect("overview task row");
+        assert!(
+            task.contains('…'),
+            "overview task row marked as cut: {task:?}"
+        );
+    }
+
+    #[test]
+    fn long_list_heading_ends_in_an_ellipsis() {
+        let mut state = long_heading_state();
+        state.document.lists[0].title = LONG_TITLE.to_string();
+        let screen = buffer_rows(&mut state, 50, 24).join("\n");
+        assert!(
+            screen.contains("Restart the primary") && screen.contains('…'),
+            "heading cut with an ellipsis:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn picker_keeps_the_context_suffix_beside_a_long_label() {
+        let mut state = long_heading_state();
+        state.document.lists[0].title = "Ops".to_string();
+        state.document.lists[0].items[0].section = vec![SubHeading {
+            level: 3,
+            text: "Node B".to_string(),
+        }];
+        state.screen = Screen::ListPicker;
+        let rows = buffer_rows(&mut state, 80, 24);
+        let row = rows
+            .iter()
+            .find(|r| r.contains("Restart the primary"))
+            .expect("picker row for the long task");
+        assert!(
+            row.contains("— Ops › Node B"),
+            "context suffix kept: {row:?}"
+        );
+        assert!(
+            row.contains('…'),
+            "long label cut with an ellipsis: {row:?}"
+        );
+    }
+
+    #[test]
+    fn split_width_keeps_both_texts_on_the_row() {
+        assert_eq!(split_width(5, 5, 20, 8), (5, 5), "both fit");
+        assert_eq!(
+            split_width(30, 5, 20, 8),
+            (15, 5),
+            "short second kept whole"
+        );
+        assert_eq!(
+            split_width(30, 30, 20, 8),
+            (12, 8),
+            "second keeps its floor"
+        );
+        assert_eq!(
+            split_width(3, 30, 20, 8),
+            (3, 17),
+            "short first leaves the rest"
+        );
+        assert_eq!(
+            split_width(30, 30, 5, 8),
+            (0, 5),
+            "floor capped at the total"
         );
     }
 }
