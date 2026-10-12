@@ -115,14 +115,28 @@ fn copy_text_with(
     }
 }
 
+/// The session's one arboard instance. On X11 the owning instance serves the
+/// clipboard to whoever pastes, and dropping the last one takes the contents
+/// with it unless a clipboard manager picks them up, so it must outlive each
+/// copy rather than being created and dropped per copy.
+#[cfg(not(test))]
+static SYSTEM_CLIPBOARD: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
+
 /// Sets the clipboard, plus PRIMARY when requested (best-effort). Returns
-/// whether the main write succeeded.
+/// whether the main write succeeded. A failed write discards the instance
+/// so the next copy starts from a fresh connection.
 ///
 /// Not compiled into tests, which must not touch the developer's real
 /// clipboard; it needs a live clipboard session anyway.
 #[cfg(not(test))]
 fn set_via_arboard(text: &str, primary: bool) -> bool {
-    let Ok(mut clipboard) = arboard::Clipboard::new() else {
+    let mut slot = SYSTEM_CLIPBOARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if slot.is_none() {
+        *slot = arboard::Clipboard::new().ok();
+    }
+    let Some(clipboard) = slot.as_mut() else {
         return false;
     };
     let clipboard_ok = clipboard.set_text(text.to_string()).is_ok();
@@ -136,8 +150,26 @@ fn set_via_arboard(text: &str, primary: bool) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = primary; // PRIMARY selection is X11/Wayland-only
+    if !clipboard_ok {
+        *slot = None;
+    }
     clipboard_ok
 }
+
+/// Drops the session's arboard instance, which on X11 hands the last copy
+/// to a running clipboard manager. Call once, on quit.
+#[cfg(not(test))]
+pub fn release_system_clipboard() {
+    let clipboard = SYSTEM_CLIPBOARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    drop(clipboard);
+}
+
+/// Tests never create an arboard instance, so there is nothing to release.
+#[cfg(test)]
+pub fn release_system_clipboard() {}
 
 /// Pure, unit-testable sequence builder for an OSC 52 write to the given
 /// selection (`c` = clipboard, `p` = primary). `None` if the payload
@@ -353,6 +385,12 @@ mod tests {
             assert_eq!(c.system_attempts, vec![("hello".to_string(), false)]);
             assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07");
         });
+    }
+
+    #[test]
+    fn releasing_the_system_clipboard_leaves_copying_working() {
+        release_system_clipboard();
+        assert_eq!(copy_text("hello", false), CopyOutcome::CopiedOsc52);
     }
 
     #[test]

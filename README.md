@@ -574,6 +574,12 @@ which travels over SSH to your local terminal emulator (kitty, alacritty,
 wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
 bar distinguishes a system-clipboard copy from an OSC 52 one.
 
+On X11 the program that copied something has to stay running to hand it over
+when you paste. markcheck holds the clipboard for as long as it runs, so a
+copy is always pasteable while it is open. When you quit, a running clipboard
+manager takes over the last copy; without one, X11 clipboard contents last
+only while markcheck is running.
+
 A command that contains hidden control characters — anything the card can't
 display, such as escape, backspace or a carriage return, plus Unicode bidi
 overrides that reorder what is shown — is refused with `Not copied: command

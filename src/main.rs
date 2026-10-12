@@ -202,13 +202,15 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    run(
+    let result = run(
         &mut terminal,
         &mut state,
         watcher.as_ref(),
         &mut git_sync,
         mouse,
-    )
+    );
+    clipboard::release_system_clipboard();
+    result
 }
 
 /// The four boolean settings, resolved in one place so the wiring can be

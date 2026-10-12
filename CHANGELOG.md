@@ -72,6 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux X11 desktops without a clipboard manager, a command copied with
+  `y` (or a click, or `--auto-copy`) can now actually be pasted. Previously
+  markcheck said "Copied to clipboard" but the copy vanished at once, because
+  on X11 the copying program has to stay around to hand the text over and
+  markcheck let go of it straight away. It now holds the clipboard for as long
+  as it runs; without a clipboard manager, the copy lasts until you quit
+  markcheck. (#58)
+
 - Pasting text into markcheck no longer runs it as commands. Previously a
   paste arrived as one keystroke per character, so a shell command pasted
   into the markcheck pane by mistake would toggle tasks with its spaces,
