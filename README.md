@@ -288,7 +288,10 @@ Finer points:
 
 - **A list with no checkboxes is skipped** — a `##` list (or the pre-heading
   area) whose list contains no `- [ ]` items is dropped entirely: no tab, and
-  it isn't navigable.
+  it isn't navigable. Blockquoted checkboxes don't count, since they are never
+  live tasks: a `##` list whose only checkboxes are quoted (`> - [ ]`) is
+  dropped too, and a file with no other checkboxes reports that it has no
+  checklist items.
 - **`###`+ headings are sub-section labels, not titles** — only `#` and `##`
   are structural (document title / list). `###` and deeper now label
   sub-sections *within* a list (above), rather than being ignored, but they

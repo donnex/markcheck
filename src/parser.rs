@@ -627,7 +627,12 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
         }
     }
 
-    let has_default_list = !default_items.is_empty();
+    let has_checkbox = |items: &[Item]| {
+        items
+            .iter()
+            .any(|item| matches!(item.kind, ItemKind::Checkbox(_)))
+    };
+    let has_default_list = has_checkbox(&default_items);
     if has_default_list {
         lists.insert(
             0,
@@ -639,9 +644,10 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
         );
     }
 
-    // A list left without any items (its lists had no checkboxes, or it
-    // never had a list) is dropped entirely.
-    lists.retain(|list| !list.items.is_empty());
+    // A list without a live checkbox is dropped entirely: one that never had
+    // a list, whose lists had no checkbox syntax, or whose only checkboxes are
+    // blockquoted examples (forced to display-only).
+    lists.retain(|list| has_checkbox(&list.items));
 
     Document {
         file_path: path,
@@ -1454,6 +1460,8 @@ tags: [ops]
 >   ```
 >   - [/] literal example line
 >   ```
+
+- [ ] live task
 ";
         let document = parse(source);
         let item = &document.lists[0].items[0];
@@ -1535,6 +1543,28 @@ tags: [ops]
             list.items[2].kind,
             ItemKind::Checkbox(TaskState::NotStarted)
         ); // real task
+    }
+
+    #[test]
+    fn list_whose_only_checkboxes_are_blockquoted_is_dropped() {
+        let source = "## Examples\n\n> - [ ] quoted\n\n## Real\n\n- [ ] task\n";
+        let document = parse(source);
+        assert_eq!(document.lists.len(), 1, "{:?}", document.lists);
+        assert_eq!(document.lists[0].title, "Real");
+        assert_eq!(document.lists[0].checkbox_stats(), (0, 1));
+    }
+
+    #[test]
+    fn default_list_with_only_blockquoted_checkboxes_is_dropped() {
+        let document = parse("> - [ ] quoted\n\n## Real\n\n- [ ] task\n");
+        assert!(!document.has_default_list);
+        assert_eq!(document.lists.len(), 1);
+        assert_eq!(document.lists[0].title, "Real");
+    }
+
+    #[test]
+    fn document_with_only_blockquoted_checkboxes_has_no_lists() {
+        assert!(parse("## Examples\n\n> - [ ] quoted\n").lists.is_empty());
     }
 
     // --- Lists without checkboxes / empty lists are dropped ---

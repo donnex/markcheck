@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `##` section whose only checkboxes are quoted in a blockquote
+  (`> - [ ] ...`) is now skipped, like any other section without tasks.
+  Quoted checkboxes are examples, never live tasks, yet such a section used
+  to appear as its own list with nothing to do: shown as complete (`0 / 0`)
+  in the all-done summary, counted by the tabs and the `1`–`9` jump keys,
+  and a file whose only checkboxes were quoted opened instead of reporting
+  that it has no checklist items. (#27)
+
 - The `R` reset confirmation now says how many done and how many started
   tasks it will clear. It used to count only done tasks, so with a few
   tasks started and none done it asked to reset "all 0 completed tasks" —
