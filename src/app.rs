@@ -1168,7 +1168,7 @@ impl AppState {
                 } else if writer::is_read_only(&self.document.file_path) {
                     self.set_error(READ_ONLY_MESSAGE.to_string());
                 } else {
-                    self.set_error(fail_msg.to_string());
+                    self.set_error(format!("{fail_msg}: {err}"));
                 }
                 return false;
             }
