@@ -1,13 +1,6 @@
-//! The sync itself: one request, start to finish.
-//!
-//! `run_sync` is the sequence every other module in `git_sync` exists to
-//! serve — classify the file, run the guards, build the commit, verify what
-//! landed, publish it. Reading it top to bottom is the shortest description
-//! of what the feature actually does, and the order of its steps is load
-//! bearing: each guard runs before the work it protects, never after.
-//!
-//! Also `commit_message`, which turns a change description into the one-line
-//! message that commit carries.
+//! The sync itself: `run_sync` classifies the file, runs the guards, builds
+//! the commit, verifies what landed and publishes it. Each guard runs before
+//! the work it protects.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,22 +21,13 @@ use super::process::{
 use super::push::{push, push_if_head_unchanged};
 use super::{RacePoint, SyncOutcome, lock_hash, race_point};
 
-/// Commit messages are kept to one line and capped here so a long task
-/// title (the usual source of `change_desc`) can't produce an unwieldy
-/// `git log` entry; the description is what gets cut, with a trailing `…`
-/// marking the cut, and the file-name prefix is kept intact — unless the
-/// file name is itself long enough to blow the cap on its own, in which
-/// case it's cut too (see `MAX_FILE_NAME_LEN`).
+/// One-line commit messages are capped here; the description is cut first,
+/// marked with `…`.
 const MAX_COMMIT_MESSAGE_LEN: usize = 80;
-/// The smallest description budget worth leaving room for, so a truncated
-/// message still says *something* about the change instead of degenerating
-/// to a bare ellipsis.
+/// The smallest description budget worth keeping after a cut.
 const MIN_DESC_LEN: usize = 8;
-/// How much of the file name the prefix may use. Without this bound,
-/// `budget` below saturates to 0 for a file name of ~79 characters or more
-/// and the result is `<prefix>…` — *longer* than `MAX_COMMIT_MESSAGE_LEN`,
-/// which is the one property that constant exists to guarantee. Accounts
-/// for the prefix's own `": "` plus a minimum description and its ellipsis.
+/// Bounds the file-name prefix so a very long name can't push the message
+/// past `MAX_COMMIT_MESSAGE_LEN`.
 const MAX_FILE_NAME_LEN: usize = MAX_COMMIT_MESSAGE_LEN - (2 + MIN_DESC_LEN + 1);
 pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
     let file_name = file_path
@@ -66,8 +50,7 @@ pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
     }
     let budget = MAX_COMMIT_MESSAGE_LEN.saturating_sub(prefix.chars().count() + 1);
     let truncated: String = change_desc.chars().take(budget).collect();
-    // change_desc is usually `Verb "item text"`; if the cut lands inside the
-    // quoted item text, the opening `"` would otherwise never be closed.
+    // Close a quote the cut left open.
     if truncated.matches('"').count() % 2 == 1 {
         let shorter: String = change_desc.chars().take(budget.saturating_sub(1)).collect();
         format!("{prefix}{shorter}\u{2026}\"")
@@ -75,48 +58,13 @@ pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
         format!("{prefix}{truncated}\u{2026}")
     }
 }
-/// Runs the commit+push sequence synchronously; called from the background
-/// thread spawned by `spawn`, kept as a free function so tests can drive it
-/// directly without waiting on a thread.
+/// Runs the commit+push sequence synchronously; a free function so tests
+/// can drive it without a thread.
 ///
-/// The commit is built entirely from `expected_content` rather than
-/// re-reading the working tree at commit time — despite appearances, `git
-/// commit --only`/a plain pathspec always re-reads the file's *current
-/// working-tree content* for the named path (it stages it fresh, ignoring
-/// whatever's already in the index for that path), never a manually staged
-/// index entry. That's the hazard the exact-content approach closes: if
-/// some other change (another markcheck write, an external editor,
-/// anything) lands on disk between a request being queued and this function
-/// actually running, a working-tree-reading commit would silently absorb it
-/// under a message that only describes the *original* request. A later,
-/// unrelated change still gets synced — as its own, separately labeled
-/// commit — *whenever something actually requests one*, which it just can
-/// never bleed into this one. External review, round 5: that qualifier
-/// matters — a passive file-watcher reload never requests one (see
-/// `AppState::request_external_edit_sync`'s doc comment), so a request that
-/// goes stale that way would otherwise never be corrected. See the
-/// staleness check below (`latest_requested_hash`) for how this function
-/// refuses rather than publishing a request once that's happened, without
-/// weakening the guarantee in this paragraph.
-///
-/// The commit itself is built via a **temporary index** (`GIT_INDEX_FILE`)
-/// populated from `HEAD` plus exactly one replaced path, committed with a
-/// normal `git commit` — not by hand-assembling tree/commit objects and
-/// moving `HEAD` with `update-ref`, which an earlier version of this
-/// function did. That manual-plumbing approach used the *real* repo index
-/// for `write-tree`, which silently pulled in anything else the user had
-/// staged (`git add`ed but not yet committed) into markcheck's commit, and
-/// used a bare `update-ref HEAD <new>` with no compare-and-swap against a
-/// concurrently-moving `HEAD`. A temporary index sidesteps the first
-/// problem entirely (the real index is never read or written), and a
-/// normal `git commit` sidesteps the second (it does its own HEAD read as
-/// part of one locked operation, not a separate read-then-blindly-write
-/// step on markcheck's side) while also running the repo's normal commit
-/// hooks and honoring `commit.gpgsign`, neither of which `commit-tree`
-/// ever did. `repo_sync_blocked` (called first, below) covers the one
-/// thing a normal commit *doesn't* refuse on its own: committing while the
-/// repository is mid-merge/rebase/cherry-pick/etc., which would otherwise
-/// silently resolve a conflict or advance past unfinished work.
+/// The commit is built from `expected_content`, never by re-reading the
+/// working tree, so a later change on disk can't be absorbed under this
+/// request's message. It goes through a temporary index and an ordinary
+/// `git commit`, so the user's staged content never rides along.
 pub(super) fn run_sync(
     repo_dir: &Path,
     file_path: &Path,
@@ -125,10 +73,7 @@ pub(super) fn run_sync(
     latest_requested_hash: &Mutex<[u8; 32]>,
     previous_content: Option<&str>,
 ) -> SyncOutcome {
-    // All plumbing commands run from the repo root with a root-relative
-    // path, sidestepping any ambiguity between CWD-relative and
-    // repo-root-relative pathspec handling. Resolved first (before even
-    // `status`) since every other check below needs it.
+    // Plumbing runs from the repo root with a root-relative path.
     let mut cmd = git_command(repo_dir);
     cmd.args(["rev-parse", "--show-toplevel"]);
     let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
@@ -139,21 +84,12 @@ pub(super) fn run_sync(
         Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
     };
 
-    // Refuse outright while the repository is in a state where an automatic
-    // commit could do real damage (see repo_sync_blocked's own doc comment)
-    // — checked before anything else, so a mid-merge repository never even
-    // reaches the status check below.
     if let Some(reason) = repo_sync_blocked(&repo_root) {
         return SyncOutcome::Failed(reason);
     }
 
-    // Scoped to exactly this one file (`--`), so there's at most one
-    // porcelain line to interpret: absent, `?? ` (untracked), or any other
-    // two-letter code (a real change to commit). A leading `??` is taken as
-    // untracked here because it is unambiguous, but **empty output is not
-    // taken as "tracked and unchanged"** — see the index lookup below, which
-    // is what actually settles trackedness. `status` is only trusted for the
-    // question it can always answer: has anything changed.
+    // Empty output is not taken as "tracked and unchanged"; the index lookup
+    // below settles trackedness.
     let mut cmd = literal_pathspec_command(repo_dir);
     cmd.args(["status", "--porcelain", "--"]).arg(file_path);
     let status = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
@@ -167,23 +103,9 @@ pub(super) fn run_sync(
         return SyncOutcome::SkippedUntracked;
     }
 
-    // The path relative to the repo root (required by the plumbing commands
-    // below, several of which don't share `status`/`commit`/`push`'s
-    // CWD-relative pathspec handling) plus the file's tracked mode, in one
-    // call. Safe to read from the real index now that repo_sync_blocked has
-    // already confirmed there's no unmerged (conflicted) entry for it.
-    //
-    // Deliberately resolved **before** the empty-status short-circuit below.
-    // Deep round 2: `git status` is not a reliable untrackedness oracle, and
-    // is silent about an untracked file in two ordinary configurations —
-    // `status.showUntrackedFiles=no`, and the checklist matching a
-    // `.gitignore` rule (both confirmed). Either one produced empty output,
-    // which the short-circuit read as "nothing to do" and reported as
-    // `Skipped` — silently, forever, which is exactly the "git-sync can
-    // never do anything and looks like a bug" case `SkippedUntracked` exists
-    // to surface. The index is the authority on whether a path is tracked,
-    // so trackedness is settled here first and `status` is left to answer
-    // only the question it can: has anything changed.
+    // Resolved before the empty-status short-circuit: `git status` is silent
+    // about an untracked file under `status.showUntrackedFiles=no` or a
+    // matching `.gitignore` rule.
     let (mode, relpath) = match index_entry(repo_dir, file_path) {
         Ok(Some(entry)) => entry,
         Ok(None) => return SyncOutcome::SkippedUntracked,
@@ -194,42 +116,10 @@ pub(super) fn run_sync(
         return SyncOutcome::Skipped;
     }
 
-    // Refuse if the branch already has unpushed history that touches
-    // something other than this file, rather than publishing it as a side
-    // effect — checked before *both* branches below that can push (see
-    // `unpushed_history`'s doc comment for why plain
-    // ahead-of-upstream isn't the right test here — several of markcheck's
-    // own commits can legitimately stack up while offline). External
-    // review, round 7: this used to run only right before building a new
-    // commit, on the assumption that the `blob_bytes_at`-matches fast path
-    // below is always "markcheck's own prior commit, always legitimate to
-    // push" — false whenever an unrelated commit lands on top of that
-    // prior commit without touching the checklist file at all: the
-    // checklist's blob at `HEAD` still matches `expected_content` (the
-    // unrelated commit never touched it), so the fast path would push
-    // `HEAD` — and the unrelated commit riding along with it — without
-    // this check ever running. Reachable whenever a request queued
-    // earlier gets processed after both a newer, not-yet-committed edit
-    // has landed on disk (so `status` above is non-empty, reaching this
-    // far) *and* an unrelated commit has landed on the branch — see the
-    // fast path's own comment below for why `status` can be non-empty
-    // even once this older request is already satisfied at `HEAD`.
-    //
-    // Resolve the branch tip **once**, and ask every question below about
-    // that exact commit — this guard, the already-committed fast path, the
-    // push, and the parent a new commit is built on.
-    //
-    // External review, round 10: these used to re-resolve `HEAD`
-    // independently at each step, so this guard validated the range ending
-    // at one commit while the fast path pushed whatever `HEAD` had become by
-    // the time it ran, a few subprocesses later. A commit landing in that
-    // window was published without ever having been checked. Capturing the
-    // SHA closes it outright rather than narrowing it: `push` targets an
-    // explicit SHA, so the ancestry it can publish is exactly the range that
-    // was validated, no matter what `HEAD` does afterwards — no re-check and
-    // no retry path needed. `resolve_parent` rather than `current_head`
-    // because only it tells "no commits yet" apart from a failed lookup,
-    // which the commit path below depends on.
+    // Resolve the branch tip once and ask every question below about that
+    // exact commit — the unrelated-history guard, the fast path, the push and
+    // the new commit's parent — so what is published is what was validated.
+    // The guard runs before both paths that can push.
     let tip = match resolve_parent(&repo_root) {
         Ok(tip) => tip,
         Err(err) => return SyncOutcome::Failed(err),
@@ -240,28 +130,9 @@ pub(super) fn run_sync(
     }
     race_point(RacePoint::AfterHistoryValidation);
 
-    // If HEAD already holds exactly this content, the commit half of this
-    // request was already satisfied by an earlier sync (e.g. it sat
-    // coalesced behind one that committed the same or newer content) —
-    // even though `status` above is non-empty because of someone else's
-    // still-uncommitted change to the file. That's not the same as the
-    // request being *fully* satisfied, though: if the commit hasn't reached
-    // upstream yet (a prior push failed), there's still a push worth
-    // retrying — see `ahead_of_upstream`'s doc comment for why this matters.
-    //
-    // Both the content check and the push name `tip` — the same SHA the
-    // guard above validated — so this path can only ever publish history
-    // that was actually checked. It used to read the blob at the symbolic
-    // `HEAD` and then separately re-resolve `HEAD` for the push, which are
-    // not guaranteed to be the same commit.
-    //
-    // A `tip` of `None` (no commits yet) simply isn't this path: there is no
-    // committed blob to match, so it falls through to build the first
-    // commit. That also subsumes the old unresolvable-`HEAD` failure here,
-    // which existed because `current_head(...).unwrap_or_default()` produced
-    // `""`, and `push` formats that into the refspec `<remote> :<branch>` —
-    // git's *delete a remote ref* form, which succeeds and reports `Synced`
-    // while the branch is gone. `push` still rejects an empty SHA outright.
+    // HEAD already holds this content (an earlier sync committed it), though
+    // `status` is non-empty from a newer edit. There may still be a push to
+    // retry.
     if let Some(tip) = tip.as_deref()
         && blob_bytes_at(&repo_root, tip, &relpath).as_deref() == Some(expected_content.as_bytes())
     {
@@ -271,37 +142,10 @@ pub(super) fn run_sync(
         return SyncOutcome::Skipped;
     }
 
-    // `expected_content` is a snapshot captured whenever the request was
-    // queued — possibly well before this background thread actually gets
-    // to it (coalesced behind a slow push, a busy worker). External
-    // review, round 5: nothing above re-confirms that snapshot is still
-    // accounted for by the file's *current* revision before committing it.
-    //
-    // A naive "disk must equal expected_content" check is too strict,
-    // though: several of markcheck's own toggles can legitimately land on
-    // disk in quick succession (each one queuing its own request) before
-    // the *first* request's background thread ever gets scheduled — by
-    // the time it runs, disk already reflects a *later*, already-queued
-    // request, not an unrelated external change. That's fine (the later
-    // request's own sync will commit that content momentarily); it's not
-    // the case this check needs to catch.
-    //
-    // What actually matters: does the file's current content correspond
-    // to *some* request git-sync knows about — either this one, or a newer
-    // one already queued to run next — or is it something entirely
-    // outside that system (an edit not made through markcheck's own `e`,
-    // or a deletion)? `latest_requested_hash` is updated on every
-    // `request()` call, including coalesced ones, so it always reflects
-    // the newest content git-sync has ever been asked to sync. If disk
-    // matches that, whatever's there is already accounted for (either by
-    // this commit or a following one); if it doesn't, the change is
-    // unaccounted for and must not be silently published. The passive
-    // file-watcher reload deliberately never queues a request of its own
-    // (see "Isolated commits" below), so without this check, nothing would
-    // ever correct the record for that case. `fs::read` failing (the file
-    // was deleted) is always unaccounted for, regardless of
-    // `latest_requested_hash` — committing `expected_content` regardless
-    // would otherwise silently resurrect a file the user just deleted.
+    // `expected_content` may be stale by now. Disk must match the newest
+    // request git-sync knows about (`latest_requested_hash`); anything else is
+    // an outside edit or a deletion, which must not be published, and which a
+    // passive reload never requests a sync for.
     match fs::read(file_path) {
         Ok(bytes) if hash_bytes(&bytes) == *lock_hash(latest_requested_hash) => {}
         _ => {
@@ -312,10 +156,7 @@ pub(super) fn run_sync(
         }
     }
 
-    // Refuse if committing the working tree would drop a staged version of
-    // the checklist that exists nowhere else. Checked here, after the fast
-    // path (which never builds a commit, so it can't lose anything) and
-    // before any commit is constructed.
+    // Checked after the fast path, which never builds a commit.
     let head_blob = tip
         .as_deref()
         .and_then(|t| blob_at(&repo_root, t, &relpath));
@@ -328,10 +169,7 @@ pub(super) fn run_sync(
         Err(err) => return SyncOutcome::Failed(err),
     };
 
-    // The same tip captured before the guards ran — not a fresh resolution,
-    // so the commit is built on exactly the history that was validated.
-    // `commit_via_temp_index` re-checks `HEAD == parent` immediately before
-    // committing and refuses if anything moved in between.
+    // `commit_via_temp_index` re-checks `HEAD == parent` before committing.
     let parent = tip;
     let created_commit =
         match commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
@@ -352,15 +190,8 @@ mod tests {
     use std::fs;
     use std::process::Command;
 
-    /// A repository with a clean filter configured, where the working tree
-    /// and the blob git stores differ by exactly that filter.
-    /// External review of `8a405dd`. The local remote-tracking ref is a
-    /// cache, so after somebody deletes the branch upstream it still points
-    /// at the last commit this clone saw and `@{u}` still resolves. An
-    /// explicit `<sha>:refs/heads/<branch>` refspec then *creates* the
-    /// branch again rather than being rejected — confirmed against a real
-    /// remote, which reports `* [new branch]`. Ticking a checkbox must not
-    /// republish history somebody deliberately removed.
+    /// The local tracking ref survives an upstream deletion; a sync must not
+    /// recreate the branch.
     #[test]
     fn a_branch_deleted_on_the_remote_is_not_recreated_by_a_sync() {
         let (work, remote) = init_repo_with_remote();
@@ -368,8 +199,7 @@ mod tests {
         let content = "- [x] one\n";
         fs::write(&file, content).unwrap();
 
-        // The remote drops the branch; nothing fetches, so the local view
-        // goes stale exactly as it would in practice.
+        // Nothing fetches, so the local view goes stale.
         run(&remote, &["update-ref", "-d", "refs/heads/main"]);
         assert!(
             !git_stdout(&work, &["rev-parse", "--verify", "-q", "origin/main"]).is_empty(),
@@ -399,8 +229,6 @@ mod tests {
             "",
             "the deleted branch must still be absent from the remote"
         );
-        // The work is not lost — it is committed locally, waiting for the
-        // user to decide where it should go.
         assert!(
             git_stdout(&work, &["log", "--format=%s", "-1", "main"]).contains("Check"),
             "the commit itself must have been made locally"
@@ -425,7 +253,6 @@ mod tests {
             ),
             SyncOutcome::SkippedUntracked
         );
-        // Confirm it really never got added.
         let status = Command::new("git")
             .current_dir(&work)
             .args(["status", "--porcelain"])
@@ -484,13 +311,8 @@ mod tests {
     }
     #[test]
     fn run_sync_leaves_the_real_index_matching_head_after_a_commit() {
-        // External review, round 9: reproduced empirically against a
-        // freshly cloned repo with no staged content at all -- before this
-        // fix, the temp-index commit advanced HEAD for `tracked.md` without
-        // ever advancing the real index's own entry for it, so `git
-        // status` permanently showed the file as both staged (stale index
-        // vs. new HEAD) and not staged (current working tree vs. that same
-        // stale index), starting from the very first sync.
+        // The real index must be realigned, or `git status` shows the file as both
+        // staged and unstaged.
         let (work, _remote) = init_repo_with_remote();
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
         let file_path = work.join("tracked.md");
@@ -534,19 +356,14 @@ mod tests {
             &no_race("- [x] one\n"),
             None,
         );
-        // The commit itself succeeded (nothing was lost); only the push
-        // failed, which is why this is `CommittedNotPushed` rather than
-        // `Failed` — see the `SyncOutcome` doc comments.
         assert!(matches!(outcome, SyncOutcome::CommittedNotPushed { .. }));
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
     #[test]
     fn run_sync_commits_and_pushes_on_a_non_default_branch() {
-        // Every other git-sync test runs on `main`, which a bare remote
-        // refuses to delete out from under itself — masking any refspec
-        // mistake. A topic branch has no such protection and is the shape
-        // of every real branch this project's own workflow uses.
+        // A bare remote refuses to delete `main`, which would mask a refspec
+        // mistake; a topic branch has no such protection.
         let (work, remote, branch) = init_repo_with_remote_on_a_topic_branch();
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] one\n").unwrap();
@@ -579,21 +396,8 @@ mod tests {
     }
     #[test]
     fn run_sync_never_publishes_unrelated_work_when_no_upstream_is_configured() {
-        // Deep review, reproduced empirically. Two fail-safe decisions that
-        // are each locally reasonable compose into the exact hazard
-        // `unpushed_history` exists to prevent:
-        //
-        //   * that guard resolves `@{u}..HEAD`, which *fails* with no
-        //     upstream configured, and it deliberately fails closed
-        //     ("don't refuse") so a fresh repo's first commit isn't blocked;
-        //   * `push` used to fall back to a bare `git push` for the same
-        //     "no upstream" case, justified on the premise that a bare push
-        //     reports a clear error.
-        //
-        // With `push.default = current` a bare push resolves a destination
-        // and succeeds, so both guards were off at once and an unrelated
-        // local commit rode out with the checklist change. `push` now
-        // refuses instead.
+        // With no upstream and `push.default = current`, a bare `git push` would
+        // publish the unrelated local commit too.
         let root = unique_dir("repo-no-upstream");
         let remote = root.join("remote.git");
         let work = root.join("work");
@@ -607,9 +411,7 @@ mod tests {
         fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
         run(&work, &["add", "tracked.md"]);
         run(&work, &["commit", "-q", "-m", "init"]);
-        // A remote, but deliberately no `-u`: `branch.main.remote` and
-        // `branch.main.merge` stay unset, so `upstream_parts` is `None` and
-        // `@{u}` can't be resolved.
+        // No `-u`, so `@{u}` can't be resolved.
         run(
             &work,
             &["remote", "add", "origin", remote.to_str().unwrap()],
@@ -619,7 +421,6 @@ mod tests {
             "test setup: no upstream must be configured"
         );
 
-        // The user's own unrelated work-in-progress commit.
         fs::write(work.join("other.md"), "unrelated work\n").unwrap();
         run(&work, &["add", "other.md"]);
         run(&work, &["commit", "-q", "-m", "unrelated local commit"]);
@@ -641,7 +442,6 @@ mod tests {
                 if message.contains("no upstream yet")),
             "{outcome:?}"
         );
-        // Nothing reached the remote at all -- it has no branches yet.
         let branches = Command::new("git")
             .current_dir(&remote)
             .args(["branch", "--format=%(refname:short)"])
@@ -657,16 +457,7 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_to_commit_content_that_went_stale_before_the_worker_ran() {
-        // External review, round 5: an earlier version of this test asserted
-        // the opposite of what's checked here — that committing exactly the
-        // queued snapshot, even once the working tree has more written to
-        // it, was correct, on the theory that "a later sync picks up the
-        // rest." That's false whenever nothing ever triggers a later sync —
-        // a plain file-watcher reload (unlike the explicit `e`-editor
-        // return path) never queues one, on purpose (see "Isolated
-        // commits" below). A request that's gone stale must now be
-        // refused rather than published, without ever absorbing B into
-        // this commit either.
+        // A request gone stale must be refused, without absorbing B.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         let message = commit_message(&file_path, "Check \"A\"");
@@ -697,8 +488,6 @@ mod tests {
             "nothing must be committed at all -- neither the stale snapshot nor a mix with B"
         );
 
-        // B is untouched on disk -- refusing never resurrects, reverts, or
-        // otherwise rewrites the working tree.
         assert_eq!(
             fs::read_to_string(&file_path).unwrap(),
             "- [x] A\n- [x] B\n"
@@ -708,12 +497,7 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_to_recommit_a_file_deleted_after_the_request_was_queued() {
-        // External review, round 5: the same staleness gap, but for a
-        // deletion -- git status still sees a deleted-in-worktree tracked
-        // file (not `??`, not empty) as something to proceed on, so without
-        // this check the stale queued content would be committed via the
-        // temp index regardless, resurrecting a file the user just deleted
-        // locally.
+        // A deleted file must not be resurrected by stale queued content.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         let message = commit_message(&file_path, "Check \"one\"");
@@ -749,9 +533,7 @@ mod tests {
     }
     #[test]
     fn run_sync_recovers_on_the_next_request_after_a_stale_refusal() {
-        // A refusal must be a one-shot skip of this specific stale request,
-        // not a stuck state -- the very next sync, carrying the file's
-        // actual current content, must succeed normally.
+        // A refusal skips only this request; the next sync succeeds.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
 
@@ -791,14 +573,7 @@ mod tests {
     }
     #[test]
     fn run_sync_never_includes_an_unrelated_staged_file() {
-        // External review, empirically reproduced against the prior
-        // implementation before this fix: `write-tree` against the *real*
-        // index serialized everything in it, not just the checklist path —
-        // so a file the user had `git add`ed but not yet committed
-        // silently rode along inside markcheck's commit, under a message
-        // describing only the checklist change, then got pushed. The
-        // temp-index rewrite must never see the real index's staged
-        // content at all.
+        // A file the user staged must never ride along in markcheck's commit.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] one\n").unwrap();
@@ -829,8 +604,6 @@ mod tests {
             "the unrelated staged file must never appear in the pushed commit: {stat}"
         );
 
-        // The real index must be completely untouched — secret.env is
-        // still exactly as the user staged it, ready for their own commit.
         let index = Command::new("git")
             .current_dir(&work)
             .args(["ls-files", "--stage", "secret.env"])
@@ -846,15 +619,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
-        // External review: the temp-index rewrite closes the *staged
-        // file* contamination path (the test above), but a normal `git
-        // commit` still runs the repository's commit hooks, and a hook
-        // that itself runs `git add` inherits the same `GIT_INDEX_FILE` --
-        // so it can stage extra files into the *temporary* index instead,
-        // defeating the same guarantee through a different door. This is
-        // that door: a real, executable `pre-commit` hook that stages an
-        // unrelated file, verifying markcheck detects it and undoes the
-        // whole commit rather than letting it stand (let alone push it).
+        // A `pre-commit` hook staging an unrelated file into the temporary index:
+        // the commit must be undone.
         use std::os::unix::fs::PermissionsExt;
 
         let work = init_repo_without_remote();
@@ -923,11 +689,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_sync_undoes_a_hook_violated_root_commit_by_deleting_the_branch_ref() {
-        // The root-commit case (parent: None) needs its own undo path --
-        // there's no prior SHA to move the branch ref back to, so
-        // undo_commit must resolve the branch's symref and delete it
-        // entirely instead, returning to the pre-commit "no commits yet"
-        // state.
+        // A root commit is undone by deleting the branch ref.
         use std::os::unix::fs::PermissionsExt;
 
         let work = unique_dir("repo-root-commit-hook").join("work");
@@ -945,8 +707,6 @@ mod tests {
         .unwrap();
         fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
 
-        // Staged (so index_entry can read it) but never committed -- a
-        // fresh repo's first sync, with no HEAD yet at all.
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] one\n").unwrap();
         run(&work, &["add", "tracked.md"]);
@@ -980,15 +740,8 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_during_an_unresolved_merge_conflict() {
-        // External review, empirically reproduced against the prior
-        // implementation before this fix: with a genuine unresolved merge
-        // conflict on the checklist file, the plumbing sequence silently
-        // collapsed the 3-stage conflict entry to markcheck's own expected
-        // content, wrote a normal (non-merge) commit, and advanced HEAD
-        // past the in-progress merge — while `MERGE_HEAD` and the
-        // conflict-marked working tree were left behind, exactly as if the
-        // merge had never been dealt with. run_sync must now refuse
-        // outright instead, leaving the merge exactly as the user left it.
+        // A conflicted merge on the checklist must be refused, leaving the merge
+        // as the user left it.
         let work = init_repo_without_remote();
         run(&work, &["checkout", "-q", "-b", "branch-a"]);
         fs::write(work.join("tracked.md"), "- [x] a\n").unwrap();
@@ -1017,9 +770,6 @@ mod tests {
         );
         assert!(matches!(outcome, SyncOutcome::Failed(_)), "{outcome:?}");
 
-        // Nothing about the in-progress merge was touched: HEAD never
-        // moved, MERGE_HEAD still marks the merge as unfinished, and the
-        // conflict markers are still in the working tree.
         assert_eq!(current_head(&work).unwrap(), head_before_merge_attempt);
         assert!(work.join(".git").join("MERGE_HEAD").exists());
         let contents = fs::read_to_string(&file_path).unwrap();
@@ -1032,15 +782,8 @@ mod tests {
     }
     #[test]
     fn a_later_request_commits_the_concurrent_change_separately() {
-        // The disk already holds "A\nB\n" before either sync runs, standing
-        // in for a rapid double-toggle: the first request (content "A") was
-        // queued, then a second toggle wrote "A\nB\n" and queued its own
-        // request before the first one's worker got scheduled. That second
-        // request is why `latest` is set to "A\nB\n" for both calls here --
-        // git-sync already knows about it (it's `pending`, about to be
-        // spawned the moment the first finishes), so the first request's
-        // own staleness check must not refuse just because disk has moved
-        // past its own content.
+        // Disk already holds the second toggle's content, which is also `latest`,
+        // so the first request must not refuse.
         let (work, remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
         fs::write(&file_path, "- [x] A\n- [x] B\n").unwrap();
@@ -1092,17 +835,11 @@ mod tests {
     }
     #[test]
     fn run_sync_skips_when_expected_content_already_matches_head_and_upstream() {
-        // A remote is required here (unlike most `run_sync` tests): a
-        // truly `Skipped` result now requires HEAD to both match the
-        // expected content *and* already be pushed — see `ahead_of_upstream`.
+        // A remote is required: `Skipped` needs HEAD both matching and pushed.
         let (work, _remote) = init_repo_with_remote();
         let file_path = work.join("tracked.md");
-        // Working tree has drifted further (an unrelated concurrent change)
-        // so `git status` is non-empty, but this specific request's
-        // expected content is already what's committed at HEAD *and*
-        // already pushed (by `init_repo_with_remote`'s own setup) — e.g. it
-        // sat coalesced behind an earlier sync that already committed and
-        // pushed it.
+        // The working tree has drifted, but this request is already committed
+        // and pushed.
         fs::write(&file_path, "- [ ] one\n- [x] two\n").unwrap();
 
         assert_eq!(
@@ -1121,12 +858,7 @@ mod tests {
     }
     #[test]
     fn run_sync_retries_the_push_when_expected_content_matches_head_but_is_unpushed() {
-        // External review: HEAD matching the expected content used to be
-        // treated as proof the request was fully satisfied, even when the
-        // matching commit had never actually reached upstream (e.g. a prior
-        // push failed). That silently stranded the commit local-only
-        // forever unless another checklist edit happened to come along.
-        // `run_sync` must instead retry the push in that case.
+        // HEAD matching but unpushed must retry the push.
         let work = init_repo_without_remote();
         run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
         run(&work, &["config", "branch.main.remote", "origin"]);
@@ -1151,11 +883,8 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_when_branch_has_unrelated_unpushed_commits() {
-        // External review: markcheck's own commit scope is carefully
-        // restricted (temp index, hook-scope enforcement), but `git push`
-        // sends the whole branch -- so an unrelated local commit made
-        // outside markcheck would get published right alongside the
-        // checklist change unless sync refuses outright first.
+        // `git push` sends the whole branch, so an unrelated local commit must
+        // make the sync refuse.
         let (work, _remote) = init_repo_with_remote(); // origin/main = A, pushed.
         fs::write(work.join("other.md"), "unrelated work\n").unwrap();
         run(&work, &["add", "other.md"]);
@@ -1193,41 +922,20 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commits() {
-        // External review, round 7: the unrelated-unpushed-commits guard
-        // used to run only right before building a *new* commit, on the
-        // assumption that the blob_bytes_at-matches fast path is always
-        // "markcheck's own prior commit, always legitimate to push." That's
-        // false whenever an unrelated commit lands on top without touching
-        // the checklist file at all: the checklist's blob at HEAD still
-        // matches an older, already-satisfied request's expected_content,
-        // so the fast path would push HEAD -- and the unrelated commit
-        // riding along with it.
-        //
-        // Reaching the fast path (rather than the earlier `git status`
-        // empty-check, or the new-commit path) needs `expected_content` to
-        // match HEAD while the *working tree* currently holds something
-        // else -- exactly the fast path's own doc comment scenario ("status
-        // is non-empty because of someone else's still-uncommitted
-        // change"): a request queued earlier (content "one", now already
-        // satisfied at HEAD) executes after both a newer, not-yet-committed
-        // edit lands on disk *and* an unrelated commit lands on the branch.
+        // The fast path must run the unrelated-history guard too: the checklist's
+        // blob at HEAD still matches even with an unrelated commit on top.
         let (work, remote) = init_repo_with_remote(); // origin/main = A, pushed.
 
-        // A1: a checklist commit that's ahead of upstream (standing in for
-        // one whose push failed -- the fast path doesn't care why it's
-        // unpushed, only that it is).
+        // A1: a checklist commit ahead of upstream.
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
         run(&work, &["commit", "-q", "-am", "Check \"one\""]);
 
-        // A2: an unrelated commit on top that never touches the checklist.
         fs::write(work.join("other.md"), "unrelated work\n").unwrap();
         run(&work, &["add", "other.md"]);
         run(&work, &["commit", "-q", "-m", "unrelated local commit"]);
         let head_before = current_head(&work).unwrap();
 
-        // A newer edit sits on disk, uncommitted -- makes `git status`
-        // non-empty, so the stale "one"-content request below reaches the
-        // fast path instead of the earlier empty-status Skip.
+        // A newer uncommitted edit carries the request into the fast path.
         fs::write(work.join("tracked.md"), "- [x] one\n- [x] two\n").unwrap();
 
         let file_path = work.join("tracked.md");
@@ -1265,16 +973,8 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_when_an_unrelated_commit_is_reverted_before_the_checklist_commit() {
-        // External review, round 8, empirically confirmed: a plain net
-        // tree diff between upstream and HEAD nets an unrelated commit and
-        // its own revert out to zero, even though both commits are still
-        // in the unpushed range and still get published (they're ancestors
-        // of the checklist commit, and an explicit-SHA push sends a
-        // commit's whole ancestry regardless of any single commit's net
-        // effect on the tree). Reproduced directly: `git diff --name-only`
-        // between the pre-unrelated-commit state and HEAD here shows only
-        // tracked.md, despite `other.md` genuinely appearing and
-        // disappearing in between.
+        // A commit and its revert net out in a plain diff, but both are still
+        // published.
         let (work, _remote) = init_repo_with_remote(); // origin/main = A, pushed.
 
         fs::write(work.join("other.md"), "unrelated work\n").unwrap();
@@ -1314,12 +1014,7 @@ mod tests {
     }
     #[test]
     fn run_sync_refuses_when_a_merge_commit_is_in_the_unpushed_range() {
-        // A merge commit's own diff-tree needs a combined-diff
-        // interpretation that's genuinely ambiguous to check safely against
-        // a single path (conflict resolutions, content changed only during
-        // the merge) -- treated as unrelated unconditionally instead, even
-        // when the merge itself is trivial and touches nothing but the
-        // checklist.
+        // Merges count as unrelated, even trivial ones.
         let (work, _remote) = init_repo_with_remote(); // origin/main = A, pushed.
 
         run(&work, &["checkout", "-q", "-b", "side"]);
@@ -1354,18 +1049,13 @@ mod tests {
     }
     #[test]
     fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
-        // The refusal above must not fire just because markcheck's own
-        // earlier commits (from toggling while offline) are what's ahead of
-        // upstream -- only genuinely unrelated history should be refused.
+        // markcheck's own earlier commits (stacked while offline) are allowed.
         let work = init_repo_without_remote();
         run(&work, &["remote", "add", "origin", "/does/not/exist.git"]);
         run(&work, &["config", "branch.main.remote", "origin"]);
         run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
         let file_path = work.join("tracked.md");
 
-        // First edit: commits locally (via run_sync's own temp-index path),
-        // push fails against the unreachable remote -- exactly the
-        // "markcheck's own commit is what's ahead" state this must allow.
         fs::write(&file_path, "- [x] one\n").unwrap();
         let first = run_sync(
             &work,
@@ -1377,9 +1067,6 @@ mod tests {
         );
         assert!(matches!(first, SyncOutcome::CommittedNotPushed { .. }));
 
-        // Second, different edit: must still be allowed to commit, not
-        // refused just because the branch is now ahead of upstream by
-        // markcheck's own first commit.
         fs::write(&file_path, "- [x] one\n- [x] two\n").unwrap();
         let second = run_sync(
             &work,
@@ -1402,10 +1089,7 @@ mod tests {
     }
     #[test]
     fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
-        // `repo_dir` (the file's own parent) isn't the repo root here,
-        // exercising the plumbing commands' repo-root-relative path
-        // handling (`index_entry`/`blob_bytes_at`/`stage_blob`) rather than the
-        // CWD-relative handling `status`/`push` rely on.
+        // `repo_dir` isn't the repo root here.
         let root = unique_dir("repo-nested");
         let remote = root.join("remote.git");
         let repo = root.join("repo");
@@ -1451,28 +1135,8 @@ mod tests {
     }
     #[test]
     fn run_sync_handles_filenames_with_spaces_dashes_colons_and_unicode() {
-        // External review: the git plumbing path (`index_entry`/
-        // `blob_bytes_at`/`stage_into_temp_index`) was never exercised against
-        // anything but a plain `tracked.md`. None of these need `--`
-        // protection to matter in practice (every command that takes a
-        // pathspec already uses it — see `run_sync`'s own doc comment) but
-        // are exactly the filenames most likely to break naive text
-        // parsing of `git` output, like the `ls-files --stage` line this
-        // module parses in `index_entry`. Confirmed against the pre-fix,
-        // newline-delimited version of `index_entry` locally: it actually
-        // failed on the *unicode* case first (not embedded-tab/newline as
-        // expected) — `git ls-files --stage` C-quotes/escapes non-ASCII
-        // bytes by default without `-z`, so `relpath` came back as that
-        // quoted-and-escaped literal string rather than the real path,
-        // silently committing to the wrong index entry instead of erroring
-        // (this sync test's mismatch was `HEAD:<real name>` still showing
-        // the old content). The embedded-tab and embedded-newline cases
-        // are still worth keeping per the review's own callout: `-z` is
-        // what avoids the quoting *and* is what makes a raw newline in the
-        // record safe to split on, even though neither case reaches the
-        // ambiguous `split_once('\t')` call in a way that would actually
-        // break it — see `index_entry`'s doc comment for why a tab in the
-        // path is harmless there regardless.
+        // Names that break naive parsing of `git` output; non-ASCII is C-quoted
+        // without `-z`.
         for file_name in [
             "with space.md",
             "-leading-dash.md",
@@ -1515,10 +1179,7 @@ mod tests {
     }
     #[test]
     fn run_sync_commits_a_checklist_whose_name_has_glob_characters_as_itself() {
-        // #70: a pathspec is a glob by default, so `notes[1].md` also
-        // matched the tracked `notes1.md`, which `ls-files` lists first. The
-        // sync then committed and pushed the checklist's content *as
-        // `notes1.md`*, and reported `Synced`.
+        // #70: `notes[1].md` must not match the tracked `notes1.md`.
         let (work, remote) = init_repo_with_remote_named("notes[1].md");
         fs::write(work.join("notes1.md"), "unrelated\n").unwrap();
         run(&work, &["add", "notes1.md"]);
@@ -1553,12 +1214,8 @@ mod tests {
     }
     #[test]
     fn run_sync_commits_a_glob_named_checklist_as_itself_under_ambient_icase_pathspecs() {
-        // #70's ambient half: an exported `GIT_ICASE_PATHSPECS` changes
-        // what every pathspec matches, and git refuses to combine it with
-        // the literal setting outright. It has to be set on the *process*
-        // to test that, and `set_var` would race every other test in this
-        // binary, so the test above is re-run in a child copy of the test
-        // binary with the variable exported there instead.
+        // The ambient half of #70 needs `GIT_ICASE_PATHSPECS` on the process, so
+        // the test above is re-run in a child copy of the test binary.
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -1612,10 +1269,6 @@ mod tests {
     }
     #[test]
     fn commit_message_stays_within_the_cap_for_a_very_long_file_name() {
-        // Deep review: the file-name prefix used to be kept whole
-        // unconditionally, so a long enough name saturated the description
-        // budget to 0 and produced `<prefix>…` -- longer than
-        // MAX_COMMIT_MESSAGE_LEN, the one thing the constant guarantees.
         for name_len in [MAX_FILE_NAME_LEN - 1, MAX_FILE_NAME_LEN, 79, 100, 200] {
             let name = format!("{}.md", "x".repeat(name_len));
             let message = commit_message(
@@ -1635,8 +1288,7 @@ mod tests {
     }
     #[test]
     fn commit_message_keeps_an_ordinary_file_name_intact() {
-        // The clamp above must only ever engage for pathological names --
-        // a normal checklist file name is untouched.
+        // A normal file name is untouched.
         let message = commit_message(Path::new("/a/b/deployment-runbook.md"), "Check \"x\"");
         assert!(message.starts_with("deployment-runbook.md: "), "{message}");
     }
@@ -1648,12 +1300,7 @@ mod tests {
     }
     #[test]
     fn an_untracked_checklist_is_reported_even_when_git_status_stays_silent() {
-        // Deep round 2. `git status --porcelain -- <file>` prints nothing for
-        // an untracked file in two ordinary configurations, so the
-        // empty-output short-circuit reported `Skipped` and git-sync sat
-        // silent forever — the exact "looks like a bug" case
-        // `SkippedUntracked` was introduced to surface. Both confirmed
-        // against real git before this test was written.
+        // `git status` is silent about an untracked file in both configurations.
         for (label, configure) in [
             (
                 "status.showUntrackedFiles=no",
@@ -1672,7 +1319,6 @@ mod tests {
             let untracked = work.join("untracked.md");
             fs::write(&untracked, "- [ ] new\n").unwrap();
 
-            // Precondition: status really is silent about it here.
             assert_eq!(
                 git_stdout(&work, &["status", "--porcelain", "--", "untracked.md"]),
                 "",
@@ -1695,26 +1341,20 @@ mod tests {
             fs::remove_dir_all(work.parent().unwrap()).ok();
         }
     }
-    // --- Genuine check-then-race-then-use interleavings (round 3) ---
+    // --- Check-then-race-then-use interleavings ---
 
     #[test]
     fn an_unrelated_commit_landing_after_validation_is_not_published_by_the_fast_path() {
-        // The ordering every previous review asked for and none of the tests
-        // actually exercised: the guard clears the branch, *then* an
-        // unrelated commit lands, *then* the push runs. Before the
-        // captured-tip work this published the unrelated commit; the hook
-        // makes that ordering deterministic instead of hoping for a race.
+        // The guard clears the branch, then an unrelated commit lands, then the
+        // push runs.
         let (work, remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
         let content = "- [x] one\n";
-        // Commit the content but leave it unpushed, so the branch is ahead
-        // of upstream and `HEAD` already holds exactly what is being synced.
+        // Committed but unpushed, so HEAD already holds the synced content.
         fs::write(&file, content).unwrap();
         run(&work, &["commit", "-q", "-am", "checklist"]);
         let validated = git_stdout(&work, &["rev-parse", "HEAD"]);
-        // A further uncommitted edit keeps `git status` non-empty, which is
-        // what carries the request past the nothing-to-do short-circuit and
-        // into the already-committed fast path.
+        // Keeps `git status` non-empty, reaching the fast path.
         fs::write(&file, "- [x] one\n- [ ] two\n").unwrap();
 
         let racer = work.clone();
@@ -1742,9 +1382,8 @@ mod tests {
     }
     #[test]
     fn a_commit_landing_before_ours_is_detected_rather_than_built_on_stale_state() {
-        // HEAD moves between the guards and the commit itself. The temp
-        // index was seeded from the old parent, so committing anyway would
-        // produce a tree that silently reverts the commit that raced in.
+        // HEAD moves between the guards and the commit; committing anyway would
+        // revert the commit that raced in.
         let (work, _remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
         let content = "- [x] one\n";
@@ -1765,8 +1404,7 @@ mod tests {
             None,
         );
 
-        // The commit is aborted either way; what matters is that the commit
-        // markcheck did *not* make is still on the branch afterwards.
+        // The commit markcheck did not make must still be on the branch.
         assert!(
             matches!(&outcome, SyncOutcome::Failed(_)),
             "the sync must not succeed on a superseded parent: {outcome:?}"
@@ -1787,8 +1425,6 @@ mod tests {
     }
     #[test]
     fn a_version_staged_during_the_sync_survives_index_alignment() {
-        // Round 10's guard, finally tested as the race it defends against
-        // rather than by pre-staging before the call.
         let (work, _remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
         let content = "- [x] one\n";
@@ -1824,20 +1460,13 @@ mod tests {
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
-    // --- Two concurrent syncs in one repository (deep rounds 2, round 4) ---
+    // --- Two concurrent syncs in one repository ---
 
     #[test]
     fn a_second_sync_committing_mid_flight_cannot_revert_the_first() {
-        // The realistic multi-process shape: two markcheck instances open on
-        // *different* checklists in the *same* repository. The write lock
-        // serialises writes per file, and `GitSync` serialises syncs within
-        // one process — neither does anything across processes, so two
-        // `run_sync` calls really can interleave here.
-        //
-        // The danger is that both seed a temp index from the same tip: the
-        // loser's tree then reverts the winner's file. The racer here is a
-        // complete second `run_sync`, not a bare `git commit`, so the whole
-        // pipeline participates.
+        // Two instances on different checklists in the same repository: the
+        // loser's temp index, seeded from the same tip, must not revert the
+        // winner's file.
         let (work, _remote) = init_repo_with_remote();
         let a = work.join("a.md");
         let b = work.join("b.md");
@@ -1847,7 +1476,6 @@ mod tests {
         run(&work, &["commit", "-q", "-m", "add both checklists"]);
         run(&work, &["push", "-q", "origin", "main"]);
 
-        // The other instance finishes its whole sync while ours is mid-commit.
         let racer_dir = work.clone();
         let racer_a = a.clone();
         let _hook = RaceHook::at(RacePoint::BeforeCommit, move || {
@@ -1879,12 +1507,10 @@ mod tests {
             None,
         );
 
-        // Ours must not succeed on a tree seeded from the superseded tip.
         assert!(
             matches!(&outcome, SyncOutcome::Failed(_)),
             "the losing sync must refuse, not commit a reverting tree: {outcome:?}"
         );
-        // And the winner's work must be intact, both in history and on disk.
         assert_eq!(
             git_stdout(&work, &["show", "HEAD:a.md"]),
             "- [x] a",
@@ -1900,18 +1526,8 @@ mod tests {
     }
     #[test]
     fn a_configured_but_unresolvable_upstream_does_not_bypass_the_unrelated_guard() {
-        // Deep rounds 3, round 3. Two functions answered "is there an
-        // upstream?" differently: `push` asks the *config*
-        // (`branch.<n>.remote`/`.merge` via `upstream_parts`), while
-        // `unpushed_history` resolves `@{u}`. Confirmed against real git that
-        // those disagree when the config names an upstream whose
-        // remote-tracking ref does not exist — set by hand, or pruned.
-        //
-        // The guard then answers `NoUpstream` and is skipped, while `push`
-        // happily builds a refspec and publishes, creating the branch on the
-        // remote. That reopens exactly the hazard the "refuse without an
-        // upstream" work closed: unrelated local commits get published by a
-        // checklist toggle.
+        // The config names an upstream whose tracking ref doesn't exist. `push` and
+        // the guard must agree there is no upstream.
         let root = unique_dir("upstream-disagreement");
         let remote = root.join("remote.git");
         let work = root.join("work");
@@ -1928,7 +1544,7 @@ mod tests {
             &work,
             &["remote", "add", "origin", remote.to_str().unwrap()],
         );
-        // Config only — never `push -u`, so no remote-tracking ref exists.
+        // Config only, so no remote-tracking ref exists.
         run(&work, &["config", "branch.main.remote", "origin"]);
         run(&work, &["config", "branch.main.merge", "refs/heads/main"]);
         assert!(
@@ -1941,7 +1557,6 @@ mod tests {
             "test setup: but @{{u}} does not resolve"
         );
 
-        // Unrelated local work that must not be published.
         fs::write(work.join("secret.txt"), "unrelated\n").unwrap();
         run(&work, &["add", "secret.txt"]);
         run(&work, &["commit", "-q", "-m", "unrelated work"]);
@@ -1970,11 +1585,9 @@ mod tests {
 
         fs::remove_dir_all(&root).ok();
     }
-    // --- Randomised operation sequences (deep rounds 4, round 1) ---
+    // --- Randomised operation sequences ---
 
-    /// A tiny deterministic PRNG. Seeded per case so a failure reproduces
-    /// exactly, and written inline rather than pulling in a dependency for
-    /// what is two lines of arithmetic.
+    /// A tiny deterministic PRNG, seeded per case so a failure reproduces.
     struct Rng(u64);
     impl Rng {
         fn next(&mut self) -> u64 {
@@ -1991,15 +1604,7 @@ mod tests {
     }
     #[test]
     fn randomised_sequences_never_lose_a_commit_markcheck_did_not_make() {
-        // Deep rounds 4, round 1. Every previous round reasoned about one
-        // interleaving at a time. This drives *sequences* of them against
-        // the strongest invariant the module has — markcheck never moves the
-        // branch across a commit it did not create — which is the one that
-        // produced the worst bug found so far (the rollback that rewound a
-        // concurrent commit off the branch).
-        //
-        // Deterministic: every case is seeded, so a failure names the exact
-        // sequence that produced it.
+        // markcheck must never move the branch across a commit it did not create.
         for seed in 0..10u64 {
             let (work, remote) = init_repo_with_remote();
             let file = work.join("tracked.md");
@@ -2013,7 +1618,6 @@ mod tests {
 
             for step in 0..10 {
                 match rng.below(5) {
-                    // A markcheck toggle and the sync it queues.
                     0 => {
                         let previous = content.clone();
                         content = if content.contains("- [ ] one") {
@@ -2031,12 +1635,10 @@ mod tests {
                             Some(previous.as_str()),
                         );
                     }
-                    // Somebody edits the checklist outside markcheck.
                     1 => {
                         content = format!("{content}- [ ] edit{step}\n");
                         fs::write(&file, &content).unwrap();
                     }
-                    // A commit markcheck did not make.
                     2 => {
                         let name = format!("foreign{step}.txt");
                         fs::write(work.join(&name), "not the checklist\n").unwrap();
@@ -2044,11 +1646,9 @@ mod tests {
                         run(&work, &["commit", "-q", "-m", &format!("foreign {step}")]);
                         foreign.push(git_stdout(&work, &["rev-parse", "HEAD"]));
                     }
-                    // The user stages the checklist themselves.
                     3 => {
                         run(&work, &["add", "tracked.md"]);
                     }
-                    // The remote comes and goes.
                     _ => {
                         let url = if rng.below(2) == 0 {
                             broken.to_str().unwrap()
@@ -2059,7 +1659,6 @@ mod tests {
                     }
                 }
 
-                // The invariant, checked after every single step.
                 for sha in &foreign {
                     assert!(
                         still_on_branch(&work, sha),
@@ -2067,15 +1666,11 @@ mod tests {
                          and must still be on the branch"
                     );
                 }
-                // And the checklist must never be destroyed.
                 assert!(
                     fs::read_to_string(&file).is_ok_and(|on_disk| !on_disk.is_empty()),
                     "seed {seed}, step {step}: the checklist must survive every sequence"
                 );
-                // The publication promise: a commit markcheck did not make
-                // must never be pushed. The unrelated-history guard is what
-                // enforces this, so any sequence that gets one onto the
-                // remote is a hole in it.
+                // A commit markcheck did not make must never be pushed.
                 for sha in &foreign {
                     assert!(
                         !reached_the_remote(&remote, sha),
@@ -2088,13 +1683,10 @@ mod tests {
             fs::remove_dir_all(work.parent().unwrap()).ok();
         }
     }
-    // --- Hostile repository shapes (deep rounds 2, round 2) ---
+    // --- Hostile repository shapes ---
 
     #[test]
     fn run_sync_works_when_the_checklist_lives_in_a_subdirectory() {
-        // `repo_dir` is the checklist's own parent, so for anything but a
-        // root-level checklist it differs from `repo_root`. Several plumbing
-        // commands run in one and take root-relative paths from the other.
         let (work, remote) = init_repo_with_remote();
         let sub = work.join("docs").join("runbooks");
         fs::create_dir_all(&sub).unwrap();
@@ -2126,9 +1718,8 @@ mod tests {
     }
     #[test]
     fn run_sync_works_inside_a_linked_worktree() {
-        // A linked worktree's `.git` is a *file*, and `rev-parse --git-dir`
-        // points at `.git/worktrees/<name>` — which is where its MERGE_HEAD
-        // and the temp index have to live, not the main repo's git dir.
+        // A linked worktree's MERGE_HEAD and temp index live under
+        // `.git/worktrees/<name>`.
         let (work, remote) = init_repo_with_remote();
         let linked = work.parent().unwrap().join("linked");
         run(
@@ -2172,9 +1763,7 @@ mod tests {
     }
     #[test]
     fn detect_and_sync_cope_with_a_shallow_clone() {
-        // A shallow clone has grafted history: `rev-list` over a range that
-        // reaches the graft boundary behaves differently, and the
-        // unrelated-history guard walks exactly such a range.
+        // The unrelated-history guard walks a range reaching the graft boundary.
         let (origin, remote) = init_repo_with_remote();
         for n in 1..=3 {
             fs::write(origin.join("tracked.md"), format!("- [ ] {n}\n")).unwrap();
@@ -2217,16 +1806,11 @@ mod tests {
 
         fs::remove_dir_all(origin.parent().unwrap()).ok();
     }
-    // --- Staged-target guard (round 11) ---
+    // --- Staged-target guard ---
 
     #[test]
     fn run_sync_refuses_when_a_staged_checklist_version_would_be_dropped() {
-        // External review, round 11, reproduced end-to-end before this
-        // guard: the commit is built from the working tree and the real
-        // index is realigned to it afterwards, so a staged snapshot that
-        // differs from the working tree is neither committed nor still
-        // staged — it survives only as a dangling blob, reachable through no
-        // ordinary git workflow.
+        // A staged snapshot that differs from the working tree would be lost.
         let (work, remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
 
@@ -2239,7 +1823,6 @@ mod tests {
         let pre_write = "- [ ] one\n- [ ] later\n";
         fs::write(&file, pre_write).unwrap();
 
-        // markcheck toggles a task, writing the post-toggle content to disk.
         let expected = "- [x] one\n- [ ] later\n";
         fs::write(&file, expected).unwrap();
 
@@ -2272,11 +1855,7 @@ mod tests {
     }
     #[test]
     fn run_sync_proceeds_when_the_staged_checklist_matches_the_working_tree() {
-        // The deliberately permitted case: staging the checklist and *then*
-        // toggling loses nothing, because everything staged is already
-        // contained in the content about to be committed. Refusing here
-        // would break an ordinary workflow for no safety gain — which is why
-        // this guard is not "refuse whenever the target is staged".
+        // Staging and then toggling loses nothing, so it is allowed.
         let (work, remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
 
@@ -2284,7 +1863,6 @@ mod tests {
         fs::write(&file, pre_write).unwrap();
         run(&work, &["add", "tracked.md"]);
 
-        // An unrelated staged file must survive this untouched, as always.
         fs::write(work.join("other.txt"), "unrelated staged\n").unwrap();
         run(&work, &["add", "other.txt"]);
         let other_staged = index_blob(&work, "other.txt");

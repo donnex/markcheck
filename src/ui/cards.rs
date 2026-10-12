@@ -33,14 +33,8 @@ fn clamp_to_u16(n: usize) -> u16 {
     n.min(u16::MAX as usize) as u16
 }
 
-/// The accent color for a task's state: the palette's `done` when done,
-/// `started` when started, none otherwise. Drives borders and the
-/// position status.
-/// `info_state` is the display-only parent's aggregate child state
-/// (`List::info_parent_state`); `None` for a checkbox item, which
-/// carries its own state. A display-only parent thus borrows the same accent a
-/// task would — green all-done, yellow in-progress — while its rounded border
-/// keeps saying "information": shape encodes kind, color encodes state.
+/// The accent color for a task's state. `info_state` is a display-only
+/// parent's aggregate child state, so it borrows a task's accent.
 fn state_color(item: &Item, info_state: Option<TaskState>, palette: Palette) -> Option<Color> {
     let state = match item.kind {
         ItemKind::Checkbox(state) => Some(state),
@@ -53,13 +47,8 @@ fn state_color(item: &Item, info_state: Option<TaskState>, palette: Palette) -> 
     }
 }
 
-/// The accent color for a card's frame decorations — the border and the ` n/m `
-/// position status. It's `state_color`, but a **display-only note** with no
-/// active sub-list state falls back to `palette.note` (blue) so an idle info
-/// card's frame matches its blue note icon and inside-title. Tasks are
-/// unaffected: a pending task still returns `None` (default), done/started keep
-/// their state color. When a note's sub-list becomes active the border still
-/// takes the green/yellow state accent.
+/// `state_color`, but an idle display-only note falls back to
+/// `palette.note` to match its icon.
 fn accent_color(item: &Item, info_state: Option<TaskState>, palette: Palette) -> Option<Color> {
     match state_color(item, info_state, palette) {
         Some(color) => Some(color),
@@ -68,21 +57,14 @@ fn accent_color(item: &Item, info_state: Option<TaskState>, palette: Palette) ->
     }
 }
 
-/// Responsive tiers are driven by the *card-area* width (the space
-/// left after the overview split, if any): at/above `NARROW_THRESHOLD` the
-/// three-card stack is shown; below it, a single current card. Combined
-/// with `OVERVIEW_MIN_WIDTH` (in `mod.rs`), this yields three tiers —
-/// narrow (single card, no overview), medium (single card + overview), and
-/// wide (stack + overview).
+/// Below this card-area width a single card is shown instead of the
+/// three-card stack.
 const NARROW_THRESHOLD: u16 = 80;
 /// Below this card-row width the side cards don't have room to tuck.
 const MIN_STACK_WIDTH: u16 = 44;
 const MIN_CARD_HEIGHT: u16 = 8;
-/// The center (current) card's share of the card-row width in the stack
-/// layout. Wider than the side cards so long commands fit; the side
-/// cards split the remainder. Used both to measure card height
-/// (`current_card_width`) and to place the rendered Rect (`center_width`),
-/// which must stay in sync.
+/// The center card's share of the stack width. Used both to measure card
+/// height and to place the card, which must agree.
 const CENTER_CARD_PCT: u16 = 72;
 /// How far the side cards extend underneath the center card.
 const STACK_OVERLAP: u16 = 4;
@@ -103,11 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     }
 }
 
-/// The `T` "go to task" overlay: a filterable list of every task, with
-/// its state marker and (when there are several lists) its list name. Typing
-/// filters via `AppState::picker_matches`; the highlighted row is `Enter`ed to
-/// jump. Always gives feedback — the filter text and a match count / no-match
-/// state (per the UI Feedback rule).
+/// The `T` "go to task" overlay: a filterable list of every task.
 fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let icons = state.icons;
     let palette = state.palette;
@@ -304,19 +282,8 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
     super::render_scrollbar(frame, row, total, inner_h, state.help.scroll as usize);
 }
 
-/// Renders the current card's link URLs in the empty space **below the card**,
-/// one per line and horizontally centered, with a one-row blank spacer
-/// between the card and the list. Single link → `→ url`; multiple → `[N] url`
-/// keyed to the card's `[N]` markers and the `o`-then-digit open. The card
-/// itself is positioned as if this panel didn't exist (see `render_checklist`),
-/// so the card never moves when links come and go — no layout jitter. The full
-/// URL always lives in `Item.body`, so this is display-only; a URL wider than
-/// the content area is clipped (rare) rather than wrapped.
-/// Whether there's room to draw at least one row of the link panel below
-/// `card` within `area` — the one blank spacer row plus at least one URL
-/// row. Shared with `render_current_card`, which falls back to an in-border
-/// hint when this is false so a card with a link never renders with no
-/// visual cue at all.
+/// Whether there's room below `card` for the spacer and one link row.
+/// Otherwise the card shows an in-border hint instead.
 fn link_panel_fits(area: Rect, card: Rect) -> bool {
     card.bottom().saturating_add(1) < area.bottom()
 }
@@ -372,13 +339,8 @@ fn card_row(area: Rect, height: u16) -> Rect {
     row
 }
 
-/// Clamps a desired card height into a safe range: never below
-/// `MIN_CARD_HEIGHT`, never above the available area. Unlike
-/// `desired.clamp(MIN_CARD_HEIGHT, area_height)`, this can't panic when
-/// `area_height < MIN_CARD_HEIGHT` (a short terminal) — `u16::clamp` requires
-/// `min <= max` and panics otherwise, since its bounds come from two
-/// unrelated sources (a floor we choose, a ceiling the terminal imposes) that
-/// can invert on a small enough window.
+/// Clamps without panicking when `area_height < MIN_CARD_HEIGHT`, which
+/// `u16::clamp` would.
 fn safe_card_height(desired: u16, area_height: u16) -> u16 {
     desired.max(MIN_CARD_HEIGHT).min(area_height)
 }
@@ -421,11 +383,8 @@ fn desired_card_height(item: &Item, area: Rect, code_bg: Color) -> u16 {
 }
 
 fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    // List header: show the current list's `## H2` title above the
-    // cards, unless this is the synthesized `(Default)` list (no real H2).
-    // A leading bold-only bullet renders as a warning banner just below the
-    // title (or at the top for a title-less default list). Each of the
-    // title and banner is preceded by a blank spacer row for breathing room.
+    // The `## H2` title above the cards, except for the synthesized default
+    // list, and a leading bold-only bullet as a banner.
     let has_h2 = !(state.current_list_index == 0 && state.document.has_default_list);
     let banner = state.current_list().banner.clone();
     // The current item's `### H3`+ sub-section path, shown as a dim breadcrumb
@@ -435,11 +394,8 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let breadcrumb = state
         .current_item()
         .and_then(|item| section_breadcrumb(&item.section));
-    // The heading rows sit directly above the card: the `## H2` title and the
-    // banner (sub-header) are adjacent with no blank between them, then the
-    // sub-section breadcrumb (nearest the card), then a single blank spacer
-    // separates the block from the card — mirroring the one-row gap below the
-    // card before the link panel, so the card sits symmetrically.
+    // Title, banner and breadcrumb sit together, then one blank row before
+    // the card.
     let heading_rows = (has_h2 as u16) + (banner.is_some() as u16) + (breadcrumb.is_some() as u16);
     let reserved = if heading_rows > 0 {
         heading_rows + 1
@@ -656,16 +612,8 @@ fn header_line(
     Line::from(Span::styled(format!(" {icon} "), icon_style))
 }
 
-/// The card title shown inside the card: the item's leading
-/// `**bold**` (`Item.header`), prefixed with the info icon like a list banner
-/// but in `palette.note` (blue) rather than the banner's amber. Returns
-/// the title line plus a blank separator, or nothing when the item has no
-/// leading bold.
-/// A dim "you are here" breadcrumb of the current item's parent chain, shown
-/// above the card title for a nested item — the sub-list header.
-/// `None` for a top-level item. Labels are each parent's card title (`header`)
-/// or `display_text`, joined with ` › ` and terminated with ` ›`; truncated
-/// from the front (keeping the nearest parent) when it doesn't fit.
+/// A dim breadcrumb of a nested item's parent chain, truncated from the
+/// front. `None` for a top-level item.
 fn breadcrumb_line(
     list: &List,
     sublist_base: usize,
@@ -922,13 +870,8 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         ));
     }
 
-    // Pilot-style position strip in the bottom border, and the
-    // right-aligned ` first–last/total ` scroll indicator when the body
-    // overflows. Budgeted together against the card width — the two
-    // used to be decided independently, so ratatui's title truncation could
-    // silently eat the dots' current-item marker (`◉`) to make room for the
-    // indicator. The indicator is the harder functional need once the body
-    // overflows, so it wins and the dots are dropped instead of truncated.
+    // The position dots and the scroll indicator are budgeted together; when
+    // both don't fit, the indicator wins and the dots are dropped whole.
     let list = state.current_list();
     let scroll_title = (max_scroll > 0).then(|| {
         let first = state.card_scroll as usize + 1;
@@ -996,15 +939,8 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     }
 }
 
-/// Splits an item's body into flowed prose tokens `(text, is_code)` and, when
-/// the last *meaningful* span is inline code, that trailing command — which
-/// renders on its own line. Trailing whitespace-only text is ignored
-/// when deciding whether code is last, and only the final span is split off
-/// (earlier inline spans stay in the flow).
-/// How a body word-token should be styled. `code` renders the
-/// padded chip on `code_bg` (and is what click-to-copy keys off); the rest are
-/// inline text modifiers. `link`/`url` mark a link's text (underlined) and its
-/// trailing `(url)` (dim).
+/// How a body word-token is styled. `code` is the chip click-to-copy keys
+/// off.
 #[derive(Clone, Copy, Default)]
 struct SpanStyle {
     code: bool,
@@ -1020,11 +956,8 @@ struct SpanStyle {
 /// styled/code/link span stays attached, e.g. `emphasis,` not `emphasis ,`).
 type Token = (String, SpanStyle, bool);
 
-/// Splits `text` into word tokens under `style`, appending them to `tokens`.
-/// The first word is glued to the previous token unless there was whitespace at
-/// the boundary (the previous run ended with space, per `prev_ws`, or this run
-/// starts with one). `prev_ws` is updated to this run's trailing-whitespace
-/// state for the next call.
+/// Splits `text` into word tokens, glued to the previous token unless
+/// there was whitespace at the boundary.
 fn push_words(tokens: &mut Vec<Token>, prev_ws: &mut bool, text: &str, style: SpanStyle) {
     let leading_ws = text.starts_with(char::is_whitespace);
     let mut first = true;
@@ -1131,20 +1064,13 @@ fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
     (tokens, trailing)
 }
 
-/// Builds the current card's body as styled, word-wrapped lines:
-/// prose in the base style, inline code and fenced blocks in `code_bg`.
-/// Char-count based like `wrap_text`, so line counts stay exact for
-/// scroll clamping. Fenced `code_blocks` are appended below the flowed body,
-/// preserving their own line breaks (hard-wrapped, not word-wrapped).
+/// The current card's body as styled, word-wrapped lines, with fenced
+/// blocks appended below. Char-count based so scroll clamping stays exact.
 fn body_lines(item: &Item, width: u16, code_bg: Color) -> Vec<Line<'static>> {
     body_layout(item, width, code_bg).0
 }
 
-/// The inline code on a flowed prose line, recovered from the first
-/// code-background span (its text is the padded chip ` cmd `), trimmed to the
-/// clean command — the row's copyable text for click-to-copy. `None`
-/// when the line carries no inline code. Fenced-block and trailing-command
-/// rows carry their clean text directly, so this is only used for prose.
+/// The trimmed inline code on a prose line, for click-to-copy.
 fn line_inline_code(line: &Line, code_bg: Color) -> Option<String> {
     line.spans
         .iter()
@@ -1153,11 +1079,7 @@ fn line_inline_code(line: &Line, code_bg: Color) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-/// Builds the current card's body as styled, word-wrapped lines (see
-/// `body_lines`) **and**, in lockstep, the copyable code text per output line
-/// for row-based click-to-copy: `Some(clean code)` for an inline-code
-/// row, the trailing command, or a fenced-block row; `None` otherwise. The two
-/// vecs are the same length and index-aligned.
+/// `body_lines` plus, index-aligned, the copyable code text per line.
 fn body_layout(
     item: &Item,
     width: u16,
@@ -1347,23 +1269,8 @@ fn wrap_tokens(tokens: &[Token], width: usize, code_bg: Color) -> Vec<Line<'stat
     lines
 }
 
-/// Display width of `text` in terminal cells, via ratatui's own width-aware
-/// measurement (`unicode-width` underneath) rather than a character count —
-/// so an East Asian wide character counts as the two cells it actually
-/// occupies. `Span::raw` borrows a `&str`, so this doesn't allocate.
-///
-/// Used by the fenced-code-block box, where a character count is not merely
-/// imprecise but visibly wrong: the box is drawn by padding content out to a
-/// fixed inner width, so measuring a wide-character row as half its real
-/// width pushes the closing `│` past the card's inner edge, where it is
-/// clipped away and the box renders open on that row. Deep review, round 3,
-/// reproduced against ratatui's `TestBackend`.
-///
-/// Deliberately *not* applied to `wrap_text`/`wrap_tokens`: those feed the
-/// exact line counts that all card scroll clamping depends on, and their
-/// char-count wrapping is a documented cosmetic limitation (prose wrapping a
-/// little early) rather than a broken frame. Changing them is a larger
-/// regression surface for a much smaller payoff.
+/// Display width in terminal cells, used by the fenced-code box, whose
+/// closing `│` is placed by padding to a fixed width.
 fn display_width(text: &str) -> usize {
     Span::raw(text).width()
 }
@@ -1403,14 +1310,9 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Greedy word wrap on character counts, hard-splitting overlong words.
-/// Used instead of ratatui's internal wrapping so line counts are exact
-/// for scroll clamping. Known limitation: counts chars, not display
-/// width, so wide glyphs may wrap a little early. That stays a cosmetic
-/// imprecision here — prose just breaks sooner than it had to. The fenced
-/// code box does *not* get to share it, since padding to a fixed inner
-/// width turns the same mis-measurement into a visibly broken frame; see
-/// `display_width`, which `code_block_lines`/`hard_wrap` use instead.
+/// Greedy word wrap on character counts, hard-splitting overlong words, so
+/// line counts are exact for scroll clamping. Counts chars, not display
+/// width.
 fn wrap_text(text: &str, width: u16) -> Vec<String> {
     let width = width.max(1) as usize;
     let mut lines = Vec::new();
@@ -1514,11 +1416,7 @@ fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
     let (total_done, total_all) = state.document.checkbox_stats();
     for list in &state.document.lists {
         let (done, total) = list.checkbox_stats();
-        // Defence in depth for the same defect `advance_to_next_incomplete_list`
-        // fixes: this screen *asserts* completion, so every row must be able to
-        // contradict it rather than rubber-stamp a green check over its own
-        // numbers. A row here should be unreachable while incomplete; if one
-        // ever is again, it says so loudly instead of hiding behind the icon.
+        // This screen asserts completion, so an incomplete row must say so.
         let (marker, marker_style) = if done == total {
             (icons.done, Style::default().fg(state.palette.done))
         } else {
@@ -1673,11 +1571,7 @@ mod tests {
 
     #[test]
     fn code_block_box_closes_on_rows_with_wide_characters() {
-        // Deep review, round 3, reproduced via TestBackend. The box pads
-        // content out to a fixed inner width using a *character* count, so
-        // a row of East Asian wide characters (2 cells each) came out wider
-        // than the border rows above and below it and the closing `│` was
-        // pushed off the row and clipped — the box rendered open.
+        // Wide characters must not push the closing `│` off the row.
         for block in ["abcde", "日本語テスト", "mixed 日本 text"] {
             let rows = code_box_rows(block, 24);
             for row in &rows {

@@ -1,15 +1,6 @@
-//! Publishing a commit, and the startup catch-up.
-//!
-//! Every push in this module goes through `push`, which targets an explicit
-//! `<sha>:<branch-ref>` refspec rather than running a bare `git push`. That
-//! is deliberate: a bare push sends whatever the branch tip has become by
-//! the time it runs, so a commit landing in the gap between validation and
-//! the push would be published unnoticed.
-//!
-//! Publishing is also the one place that talks to the network, so it is
-//! where the local view of the world stops being trustworthy — hence the
-//! remote-state check before publishing, and the `CommittedNotPushed`
-//! outcome that keeps work safely local when anything is uncertain.
+//! Publishing a commit, and the startup catch-up. Every push names an
+//! explicit `<sha>:<branch-ref>`, so it can never publish more than what was
+//! validated.
 
 use std::path::{Path, PathBuf};
 
@@ -23,70 +14,18 @@ use super::process::{
 };
 use super::{RacePoint, SyncOutcome, race_point};
 
-/// Pushes `expected_commit` — explicitly, as `<remote>
-/// <expected_commit>:<upstream-branch>` rather than a bare `git push` —
-/// translating the result into a `SyncOutcome`. A failure here is always
-/// `CommittedNotPushed`, never `Failed`, with one carve-out below: by the
-/// time this is called, either a commit was just made or `HEAD` was already
-/// confirmed to hold the desired content — either way, a local commit
-/// exists and the only thing to retry is the push itself.
+/// Pushes `expected_commit` as an explicit refspec. A failure is
+/// `CommittedNotPushed`, since the commit is safely local.
 ///
-/// The carve-out is an **empty** `expected_commit`, which is rejected
-/// outright as `Failed` (the one case where no local commit can be claimed,
-/// since there's no SHA naming one). This is defence in depth, not a
-/// reachable path: every caller resolves a real SHA first. It exists because
-/// the consequence of getting here with `""` is severe and silent — the
-/// refspec below would become `<remote> :<branch>`, git's *delete a remote
-/// ref* form, which succeeds and reports `Synced` while deleting the branch.
-/// A caller that regressed into passing an unresolved SHA (as `run_sync`'s
-/// fast path once did, via `unwrap_or_default()`) must fail loudly rather
-/// than delete anything.
-///
-/// External review, round 5: both of this function's callers
-/// (`push_if_head_unchanged`, `retry_commit`) verify `HEAD ==
-/// expected_commit` immediately beforehand, but that check and the actual
-/// push used to be two separate steps regardless — a bare `git push`
-/// sends whatever the local branch tip has become by the time it runs, so
-/// a commit landing in the gap between the check and the push would still
-/// ride along. Targeting `expected_commit` explicitly closes this rather
-/// than merely re-narrowing it: the push can never publish more than that
-/// commit's own ancestry, no matter what the local branch has become by
-/// push-time.
-///
-/// When `upstream_parts` can't resolve a remote/branch to target — no
-/// upstream tracking configured for this branch — the push is **refused**
-/// rather than falling back to a bare `git push`. Deep review, reproduced
-/// empirically: that fallback was justified on the premise that a bare push
-/// "already reports a clear, git-native error" in this situation, which is
-/// false for an ordinary configuration. With a remote added but `-u` never
-/// used, and `push.default = current`, a bare push resolves a destination
-/// and **succeeds**, publishing the whole branch tip — every unpushed
-/// commit, not just `expected_commit`. That is exactly what targeting the
-/// commit explicitly exists to prevent, and it composes badly with
-/// the unrelated-history guard, which independently fails
-/// *closed* in the same configuration (its `@{u}..HEAD` range can't be
-/// resolved either, so it declines to refuse): both guards are off at once,
-/// and an unrelated local commit gets published by a checklist toggle.
-/// Refusing keeps the commit safely local, reuses the existing retry
-/// machinery, and gives the user a one-off action to take.
+/// An empty `expected_commit` is `Failed`: `<remote> :<branch>` would delete
+/// the remote branch. With no resolvable upstream the push is refused rather
+/// than falling back to a bare `git push`, which can publish the whole branch.
 pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("could not work out which commit to push".to_string());
     }
-    // `push` and the unpushed-history guard must agree about what "has an
-    // upstream" means, and they used to answer it from different sources:
-    // this asked the *config* (`upstream_parts`), while `unpushed_history`
-    // resolves `@{u}`. Deep rounds 3, round 3, confirmed against real git —
-    // those disagree whenever the config names an upstream whose
-    // remote-tracking ref does not exist (set by hand, or pruned). The guard
-    // then reports `NoUpstream` and stands down, while this built a refspec
-    // and published anyway, *creating* the branch on the remote — reopening
-    // the very hazard the refuse-without-an-upstream rule closed, since
-    // unrelated local commits went out with it.
-    //
-    // The resolvable ref is the authority for both. A branch whose upstream
-    // has never been created still commits locally; only publishing waits
-    // for the one-off `git push -u`.
+    // The resolvable `@{u}`, not the config, decides whether there is an
+    // upstream, so this agrees with the unpushed-history guard.
     let no_upstream = SyncOutcome::CommittedNotPushed {
         message: "this branch has no upstream yet; \
                   run `git push -u` once"
@@ -99,9 +38,7 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
         return no_upstream;
     };
-    // Ask the remote, not the tracking ref — see `remote_branch_state`. An
-    // explicit-SHA refspec *creates* a branch that is no longer there, so
-    // without this a toggle silently republishes history somebody deleted.
+    // Ask the remote: an explicit-SHA refspec recreates a deleted branch.
     let remote_tip = match remote_branch_state(repo_dir, &remote, &branch_ref) {
         RemoteBranch::Present(sha) => sha,
         RemoteBranch::Absent => {
@@ -113,12 +50,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
                 commit: expected_commit.to_string(),
             };
         }
-        // Refusing rather than pushing blind: the hazard above needs only a
-        // stale local view to fire, and this is exactly the state where the
-        // local view cannot be trusted. Little is given up in practice —
-        // `ls-remote` and `push` share a transport and credentials, so a
-        // remote that cannot be consulted is one the push would not have
-        // reached either, and the retry machinery re-checks on its own.
+        // Refuse when the remote can't be consulted; the push would not have
+        // reached it either.
         RemoteBranch::Unknown => {
             return SyncOutcome::CommittedNotPushed {
                 message: format!(
@@ -130,17 +63,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
         }
     };
 
-    // Only ever a fast-forward. Checked here, before the push, because the
-    // push below carries a lease — and a lease permits a non-fast-forward
-    // whenever it matches, which is exactly what an ordinary `git push`
-    // refuses. Verified against real git: with the lease satisfied, pushing
-    // a commit that does not descend from the remote tip reports `(forced
-    // update)` and rewrites the branch. Establishing the fast-forward
-    // ourselves means the lease can only ever *reject*, never force.
-    //
-    // `is_ancestor` answers `false` when it cannot tell, including when the
-    // remote tip is a commit this clone has never fetched, so a remote that
-    // has moved ahead refuses rather than being overwritten.
+    // Only ever a fast-forward. Checked here because the lease below permits a
+    // non-fast-forward whenever it matches.
     if !is_ancestor(repo_dir, &remote_tip, expected_commit) {
         return SyncOutcome::CommittedNotPushed {
             message: format!(
@@ -152,14 +76,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 
     race_point(RacePoint::BeforePush);
 
-    // The lease is what makes the check above *hold* rather than merely
-    // having been true a moment ago. `ls-remote` and `push` are two network
-    // round trips, and a branch deleted or moved in between would otherwise
-    // be recreated or clobbered by this push — external review of `2322436`
-    // named exactly that window. `--force-with-lease=<ref>:<sha>` hands the
-    // expectation to git itself, which rejects with "stale info" if the ref
-    // is no longer that commit, missing included. Confirmed against real
-    // git for both the deleted and the moved case.
+    // The lease makes the remote check hold across the two round trips: git
+    // rejects the push if the branch was deleted or moved in between.
     let mut cmd = git_command(repo_dir);
     cmd.args([
         "push",
@@ -180,20 +98,8 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
         },
     }
 }
-/// Pushes `expected_commit` (the commit `run_sync` just made and verified),
-/// but only if `HEAD` still equals it — external review, round 4:
-/// the unrelated-history guard (`unpushed_history`) only ever ran as a snapshot
-/// *before* the commit, so a commit landing on the branch after
-/// verification but before this point (another markcheck instance, a
-/// human, an IDE) would otherwise get pushed right alongside markcheck's
-/// own, unnoticed. Unlike `retry_commit`'s silent `Skipped` on the same
-/// mismatch (correct there — it's abandoning a *retry* of an
-/// already-reported failure), a first attempt at a freshly-made commit
-/// must surface something rather than going quiet, so a mismatch here is
-/// reported as `CommittedNotPushed` instead: nothing is lost (the commit
-/// is safely local either way) and this reuses the existing automatic
-/// retry machinery (`GitSync::poll`/`retry_push_if_due` → `retry_commit`,
-/// which performs the same check again once due).
+/// Pushes only if `HEAD` is still `expected_commit`; otherwise reports
+/// `CommittedNotPushed` so the retry machinery tries again.
 pub(super) fn push_if_head_unchanged(
     repo_dir: &Path,
     repo_root: &Path,
@@ -207,17 +113,8 @@ pub(super) fn push_if_head_unchanged(
     }
     push(repo_dir, expected_commit)
 }
-/// Re-attempts pushing a specific commit that previously failed to push
-/// (`GitSync::retry_push_if_due`), rather than replaying the file content
-/// that produced it through the generic commit-or-skip logic in `run_sync`.
-/// That distinction is the whole point: if `expected_commit` is no longer
-/// `HEAD` (something else — most plausibly another concurrent markcheck/
-/// git-sync process — committed on top since the failed push), silently
-/// abandoning the retry is strictly safer than `run_sync` would be here,
-/// since `run_sync` would build a *new* commit from the stale content,
-/// reverting whatever superseded it. Whatever superseded `expected_commit`
-/// gets its own sync opportunity through the normal request path, so
-/// nothing is lost by giving up on this specific stale retry.
+/// Retries pushing a specific commit, silently giving up if `HEAD` has moved
+/// on: rebuilding from the stale content would revert what superseded it.
 pub(super) fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     let mut cmd = git_command(repo_dir);
     cmd.args(["rev-parse", "--show-toplevel"]);
@@ -233,31 +130,9 @@ pub(super) fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcom
     }
     push(repo_dir, expected_commit)
 }
-/// Pushes a commit an earlier session left local-only, and **never builds a
-/// commit of its own** — the startup counterpart to `retry_commit`'s timed
-/// retry, run once by `main.rs` when git-sync activates.
-///
-/// Deep review, round 3, reproduced end-to-end. Startup used to express this
-/// as an ordinary `GitSync::request` carrying the file's *current disk
-/// content* as `expected_content`, described as `Catch up a pending push`.
-/// That defeats every guard `run_sync` has, by construction: `status` is
-/// non-empty, `HEAD`'s blob differs, and the staleness check compares disk
-/// against `latest_requested_hash` — which that same request had just set to
-/// that same content. So a checklist with ordinary uncommitted edits (made
-/// in an editor, no markcheck involvement) was committed *and pushed* purely
-/// by opening the file and quitting, under a message describing a push
-/// catch-up rather than the change it actually published. Publishing is not
-/// undoable the way a local commit is, and nothing about opening a viewer
-/// should publish anything.
-///
-/// So this path only ever pushes. It also fails **closed** throughout —
-/// unlike `run_sync`, which fails open in several places because it runs
-/// after a change the user just made, where silence would hide a problem.
-/// Nothing has happened here, so every unanswerable question means "do
-/// nothing, quietly": no upstream, no commits, an unreadable count, all
-/// return `Skipped`. The one thing worth reporting is an untracked file,
-/// which `run_sync` would have reported at startup before this change and
-/// which means git-sync can never do anything at all for this file.
+/// Pushes a commit an earlier session left local-only, and never builds a
+/// commit: opening a checklist must not publish uncommitted edits. Fails
+/// closed throughout (`Skipped`), except for reporting an untracked file.
 pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     let mut cmd = git_command(repo_dir);
     cmd.args(["rev-parse", "--show-toplevel"]);
@@ -271,18 +146,10 @@ pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(&repo_root) {
         return SyncOutcome::Failed(reason);
     }
-    // Capture the tip **before** validating anything, and push that exact
-    // SHA. External review, round 10: this used to validate the range
-    // ending at the symbolic `HEAD` and then separately re-resolve `HEAD`
-    // for the push, so an unrelated commit landing between those two
-    // subprocesses was published without ever having been checked — the
-    // same defect as `run_sync`'s fast path, in the one path that runs
-    // unprompted at startup. Naming the SHA closes it: `push` targets an
-    // explicit commit, so what it can publish is exactly what was validated.
+    // Capture the tip before validating anything, and push that exact SHA.
     let Some(head) = current_head(&repo_root) else {
         return SyncOutcome::Skipped;
     };
-    // Positively-known unpushed commits only — see `commits_ahead_of_upstream`.
     if commits_ahead_of_upstream(&repo_root, &head).is_none_or(|ahead| ahead == 0) {
         return SyncOutcome::Skipped;
     }
@@ -291,8 +158,6 @@ pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
         Ok(None) => return SyncOutcome::SkippedUntracked,
         Err(err) => return SyncOutcome::Failed(err),
     };
-    // The same refusal `run_sync` makes: an explicit-SHA push still sends the
-    // commit's whole ancestry, so unrelated unpushed work must not ride along.
     if let Some(refusal) = unpushed_history_blocks(&repo_root, Some(&head), &relpath) {
         return refusal;
     }
@@ -309,11 +174,6 @@ mod tests {
 
     #[test]
     fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verification() {
-        // External review, round 4: the unrelated-history guard
-        // only ever runs as a snapshot before markcheck's own commit — a
-        // commit landing on the branch after that commit was made and
-        // verified, but before the push actually runs, would otherwise get
-        // pushed right alongside it, unnoticed.
         let (work, remote) = init_repo_with_remote();
 
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
@@ -370,15 +230,7 @@ mod tests {
     }
     #[test]
     fn push_refuses_an_empty_commit_instead_of_deleting_the_remote_branch() {
-        // Deep review, critical finding. `<remote> :<branch>` is git's
-        // *delete a remote ref* refspec, so an empty `expected_commit`
-        // formatted into `{expected_commit}:{branch_ref}` doesn't fail — it
-        // deletes the branch and exits 0, which `push` would then report as
-        // `Synced`. Reproduced directly against git before the fix. The
-        // reachable route was `run_sync`'s fast path, which used to write
-        // `current_head(...).unwrap_or_default()`; this test guards `push`
-        // itself, so no future caller can reintroduce it from a different
-        // direction.
+        // `<remote> :<branch>` would delete the branch and exit 0.
         let (work, remote, branch) = init_repo_with_remote_on_a_topic_branch();
 
         let outcome = push(&work, "");
@@ -400,15 +252,8 @@ mod tests {
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
-    /// External review of `2322436`. Asking the remote whether the branch
-    /// exists and then pushing are two round trips, so a deletion landing
-    /// between them would recreate the branch anyway — the check narrowed
-    /// the window the previous fix closed, it did not close it.
-    ///
-    /// The deletion here fires at `BeforePush`, which sits *after*
-    /// `remote_branch_state` has already answered `Present`. That is what
-    /// distinguishes this from the plain deleted-branch test, which never
-    /// reaches the push at all.
+    /// A deletion between the remote check and the push must not recreate the
+    /// branch.
     #[test]
     fn a_branch_deleted_between_the_check_and_the_push_is_not_recreated() {
         let (work, remote) = init_repo_with_remote();
@@ -441,15 +286,6 @@ mod tests {
     }
 
     /// The same window, but the branch moves instead of vanishing.
-    ///
-    /// Worth being precise about what this pins: verified by mutation, it
-    /// still passes with the lease removed, because a plain push already
-    /// refuses this as a non-fast-forward. The lease's unique contribution
-    /// is the *deleted* case above, where there is no tip to be
-    /// non-fast-forward against and git would happily create the branch.
-    /// This test pins that the ordinary refusal keeps holding across the
-    /// check-then-push window — a contract a future change to the refspec
-    /// could break without either other test noticing.
     #[test]
     fn a_branch_that_moves_between_the_check_and_the_push_is_not_clobbered() {
         let (work, remote) = init_repo_with_remote();
@@ -457,7 +293,6 @@ mod tests {
         run(&work, &["commit", "-q", "-am", "markcheck commit"]);
         let commit = current_head(&work).unwrap();
 
-        // Somebody else publishes to the branch inside the window.
         let racer = work.clone();
         let racer_remote = remote.clone();
         let _hook = RaceHook::at(RacePoint::BeforePush, move || {
@@ -493,17 +328,12 @@ mod tests {
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
-    /// The lease permits a non-fast-forward whenever it matches, which is
-    /// what an ordinary push refuses. `push` therefore establishes the
-    /// fast-forward itself, before the lease can ever license a rewrite.
+    /// The lease must never license a non-fast-forward.
     #[test]
     fn a_commit_not_based_on_the_remote_tip_is_refused_rather_than_forced() {
         let (work, remote) = init_repo_with_remote();
 
-        // The remote moves ahead to a commit this clone's `main` is not on.
-        // Made on a side branch so `main` stays where it was: checking out
-        // the base commit instead would detach HEAD and lose the upstream,
-        // which is a different refusal entirely.
+        // Made on a side branch so `main` keeps its upstream.
         run(&work, &["checkout", "-q", "-b", "side"]);
         let ahead = commit_unrelated(&work, "ahead.md");
         run(
@@ -516,7 +346,6 @@ mod tests {
             ],
         );
 
-        // markcheck's commit is based on the older tip instead.
         run(&work, &["checkout", "-q", "main"]);
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
         run(&work, &["commit", "-q", "-am", "markcheck commit"]);
@@ -540,16 +369,7 @@ mod tests {
 
     #[test]
     fn push_never_sends_more_than_the_explicitly_targeted_commit() {
-        // External review, round 5: push_if_head_unchanged/retry_commit
-        // both verify HEAD == expected_commit immediately before calling
-        // push, but that check and the push itself used to be two separate
-        // steps regardless -- a commit landing in between would still ride
-        // along, since a bare `git push` sends whatever the local branch
-        // tip has become by push-time. Proving the fix directly (push an
-        // older commit explicitly, with a newer one already sitting on top
-        // locally) is far more deterministic than trying to time a race
-        // into that now-vanishingly-small window -- the same reasoning
-        // round 4's own verify_commit_scope/undo_commit tests already use.
+        // Push an older commit explicitly with a newer one already on top.
         let (work, remote) = init_repo_with_remote();
 
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
@@ -579,18 +399,11 @@ mod tests {
     }
     #[test]
     fn retry_commit_abandons_silently_when_head_has_moved_on() {
-        // The actual regression test for the stale-retry bug: a retry must
-        // never rebuild a commit from old content when something else has
-        // moved HEAD past the commit it was trying to push -- it must give
-        // up on this specific retry instead, leaving whatever superseded it
-        // alone.
+        // A stale retry gives up rather than rebuilding from old content.
         let work = init_repo_without_remote();
         let file_path = work.join("tracked.md");
         let stale_commit = current_head(&work).unwrap();
 
-        // Something else advances HEAD past the commit this retry is stale
-        // for -- standing in for a concurrent markcheck/git-sync process,
-        // or any other actor, committing in between.
         fs::write(&file_path, "- [x] one\n- [x] two\n").unwrap();
         run(&work, &["commit", "-q", "-am", "newer content"]);
         let newer_commit = current_head(&work).unwrap();
@@ -634,8 +447,6 @@ mod tests {
     }
     #[test]
     fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
-        // Same interleaving through the startup path, which runs unprompted
-        // and so is the one where publishing something unchecked is worst.
         let (work, remote) = init_repo_with_remote();
         fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
         run(&work, &["commit", "-q", "-am", "checklist"]);
@@ -657,17 +468,11 @@ mod tests {
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
-    // --- Startup catch-up push (`catch_up_push`) ---
 
     #[test]
     fn catch_up_push_never_commits_uncommitted_working_tree_changes() {
-        // Deep review, round 3, reproduced end-to-end against a real repo
-        // and bare remote before this fix. Startup expressed the catch-up
-        // as an ordinary content request carrying the file's *current disk
-        // bytes*, which satisfies every `run_sync` guard by construction --
-        // so merely opening a checklist that had ordinary uncommitted
-        // editor changes committed *and pushed* them, under the message
-        // `Catch up a pending push`. Opening a viewer must publish nothing.
+        // Opening a checklist with uncommitted editor changes must publish
+        // nothing.
         let (work, remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
         let edited = "- [x] edited outside markcheck\n";
@@ -700,15 +505,11 @@ mod tests {
     }
     #[test]
     fn catch_up_push_pushes_a_local_only_commit_without_committing_a_dirty_tree() {
-        // The case the startup hook exists for -- a prior session committed
-        // but quit before its push landed -- combined with the case above,
-        // to pin both halves at once: the existing commit goes out, and the
-        // unrelated uncommitted edit sitting next to it does not.
+        // The existing commit goes out; the uncommitted edit does not.
         let (work, remote) = init_repo_with_remote();
         let file = work.join("tracked.md");
         fs::write(&file, "- [x] one\n").unwrap();
         run(&work, &["commit", "-q", "-am", "tracked.md: Check \"one\""]);
-        // ... and then the user keeps editing, without committing.
         let dirty = "- [x] one\n- [ ] two\n";
         fs::write(&file, dirty).unwrap();
 
@@ -743,9 +544,6 @@ mod tests {
     }
     #[test]
     fn catch_up_push_stays_silent_when_no_upstream_is_configured() {
-        // Fails closed, unlike `ahead_of_upstream`: nothing has happened
-        // here, so an unanswerable question means "do nothing, quietly"
-        // rather than nagging about the missing upstream on every launch.
         let work = init_repo_without_remote();
 
         assert_eq!(
@@ -757,8 +555,6 @@ mod tests {
     }
     #[test]
     fn catch_up_push_refuses_when_unrelated_commits_are_unpushed() {
-        // An explicit-SHA push still sends the commit's whole ancestry, so
-        // the same refusal `run_sync` makes has to apply here too.
         let (work, remote) = init_repo_with_remote();
         fs::write(work.join("other.txt"), "unrelated work\n").unwrap();
         run(&work, &["add", "other.txt"]);
@@ -781,8 +577,6 @@ mod tests {
     }
     #[test]
     fn catch_up_push_reports_an_untracked_checklist() {
-        // Preserves what the old startup request reported: git-sync being
-        // permanently unable to do anything for this file is worth saying.
         let (work, _remote) = init_repo_with_remote();
         fs::write(work.join("other.txt"), "unrelated work\n").unwrap();
         run(&work, &["add", "other.txt"]);

@@ -5,13 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 
-/// Default values for the CLI flags, loaded from a TOML file so
-/// users don't have to pass the same flags on every invocation. Keys use
-/// the flag's positive sense (`nerd_font`, not `no_nerd_font`) even though
-/// two of the CLI flags are negations — merging a config value with its
-/// flag happens in `main.rs`, not here. Unknown keys are a hard error
-/// (`deny_unknown_fields`) rather than silently ignored, so a typo in the
-/// file surfaces instead of silently not doing what the user asked.
+/// Defaults for the CLI flags, from a TOML file. Keys use the positive
+/// sense (`nerd_font`). Unknown keys are an error so typos surface.
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -19,21 +14,12 @@ pub struct Config {
     pub mouse: Option<bool>,
     pub primary: Option<bool>,
     pub auto_copy: Option<bool>,
-    /// Path prefixes that auto-activate git-sync: a file whose
-    /// canonical path starts with one of these commits and pushes after
-    /// every write-back, the same as passing `--git-sync` for that one
-    /// invocation. The odd one out among these fields — a list rather than
-    /// a single CLI-flag default, since `--git-sync` is a blanket override
-    /// rather than a per-key default (main.rs ORs the two together).
+    /// Path prefixes under which git-sync activates, like `--git-sync`.
     pub git_sync_paths: Option<Vec<PathBuf>>,
 }
 
-/// Resolves the config file path from `XDG_CONFIG_HOME` (falling back to
-/// `$HOME/.config`), pure and testable — `main.rs` passes the real
-/// environment values in rather than this function reading them, so tests
-/// don't need to mutate global process state. `None` only when neither
-/// variable is set, in which case the caller proceeds with built-in
-/// defaults.
+/// `$XDG_CONFIG_HOME`, falling back to `$HOME/.config`. Takes the values
+/// as arguments so tests don't touch the environment.
 pub fn config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
     let base = xdg_config_home
         .filter(|v| !v.is_empty())

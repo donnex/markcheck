@@ -66,17 +66,9 @@ pub fn validate_new_path(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Creates a new starter checklist at `path` and returns its canonicalized
-/// location. The existence check and the write are kept atomic — a file
-/// that appears between a separate check and the write can't be silently
-/// clobbered — while also never leaving a partially-written file behind if
-/// the write itself fails partway: the template is written to a temp file
-/// in the same directory (fsynced) first, then hard-linked into place.
-/// Unlike `rename`, `hard_link` fails with `AlreadyExists` instead of
-/// silently replacing an existing target, so it preserves the same
-/// never-overwrite guarantee `create_new` gave directly; the temp name is
-/// removed either way (on success it and `full_path` are the same inode, so
-/// nothing is lost by removing it).
+/// Creates a starter checklist at `path` and returns its canonical path.
+/// Written to a temp file and hard-linked into place, which fails rather
+/// than overwrite an existing file and never leaves a partial one.
 pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     validate_new_path(path)?;
 
@@ -102,11 +94,7 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
         std::process::id(),
         crate::writer::random_suffix()
     ));
-    // `write_temp` returns the *actual* path it wrote to, which can differ
-    // from `temp_path_base` if that name was already taken (see its own doc
-    // comment) — and cleans up after itself on any failure past file
-    // creation, so there's no separate `fs::remove_file` needed here on that
-    // path, only for the hard-link step below. Mirrors `writer::write_back`.
+    // `write_temp` cleans up after its own failures.
     let temp_path = write_temp(&temp_path_base, &contents)?;
     let link_result = fs::hard_link(&temp_path, &full_path);
     let _ = fs::remove_file(&temp_path);
@@ -118,25 +106,9 @@ pub fn create_new_checklist(path: &Path) -> io::Result<PathBuf> {
     Ok(full_path)
 }
 
-/// Creates the temp file at `base_temp_path` (or, if that name is already
-/// taken, at a freshly-suffixed retry path — see below), writes `contents`,
-/// then fsyncs it before returning the *actual* path written to, so the
-/// caller's hard-link always targets a flushed temp file at the right name
-/// regardless of which path was used. No explicit permissions are set —
-/// unlike `writer::write_temp`, there's no source file's permissions to
-/// protect or restore, so this keeps the same default (umask-masked)
-/// permissions `create_new` on the final path gave directly.
-///
-/// The PID+random-suffix name makes a genuine collision with another live
-/// process astronomically unlikely; a stale temp left behind by a crashed
-/// prior run reusing the same PID is the only realistic cause. Retried once
-/// at a freshly-suffixed path — never by deleting the existing file and
-/// reusing its name: a *genuine* collision with another live, legitimate
-/// writer using this exact name would otherwise have its temp file deleted
-/// out from under it. This mirrors `writer::write_temp` exactly, which is
-/// what an earlier version of this function only *claimed* to do while in
-/// fact deleting the collision — the precise behavior `writer::write_temp`
-/// had already been changed away from.
+/// Like `writer::write_temp`, without explicit permissions: a new file gets
+/// the umask default. Retries once at a fresh name if taken, never deleting
+/// the existing file.
 fn write_temp(base_temp_path: &Path, contents: &str) -> io::Result<PathBuf> {
     let open = |path: &Path| {
         fs::OpenOptions::new()
@@ -181,13 +153,7 @@ mod tests {
 
     #[test]
     fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
-        // Deep review: this function used to delete whatever file was
-        // already at the generated name and reuse that name -- the exact
-        // behavior `writer::write_temp` had already been changed away from,
-        // while a comment here claimed to mirror it. A genuine collision
-        // with another live process would have had its temp file deleted
-        // out from under it. Mirrors
-        // `writer::tests::write_temp_retries_at_a_new_name_instead_of_deleting_a_collision`.
+        // A file at the generated name must be left untouched.
         let dir = unique_temp_dir();
         let base = dir.join(".todo.md.markcheck-new-collision");
         fs::write(&base, "a live process's own temp file, not markcheck's\n").unwrap();
@@ -315,11 +281,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn create_new_checklist_uses_default_umask_permissions() {
-        // No explicit mode is set on the temp file (unlike writer::write_temp,
-        // which protects an existing source file's permissions) — the final
-        // file should get the same default, umask-masked permissions any
-        // plain `create_new` file in this environment would, regardless of
-        // what the umask actually is here.
         use std::os::unix::fs::PermissionsExt;
 
         let dir = unique_temp_dir();
@@ -341,11 +302,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn create_new_checklist_cleans_up_and_errors_when_the_temp_write_fails() {
-        // A read-only directory lets canonicalize succeed (needs only
-        // read+execute) while the temp file's own create_new fails with
-        // PermissionDenied — exercising create_new_checklist's cleanup
-        // branch for a write_temp failure, distinct from the AlreadyExists
-        // path covered by create_new_checklist_refuses_to_overwrite_existing_file.
+        // A read-only directory makes the temp file's creation fail.
         use std::os::unix::fs::PermissionsExt;
 
         let dir = unique_temp_dir();

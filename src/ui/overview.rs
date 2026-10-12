@@ -8,11 +8,8 @@ use crate::model::{
     AppState, Document, IconSet, ItemKind, OverviewTarget, Palette, SubHeading, TaskState,
 };
 
-/// Resolves the color for the ancestor at `level` in an item's `chain`
-/// (outermost-first, from `List::parent_chain`) — its document-wide
-/// `sublist_slot`, mapped through `Palette::depth_color`. Shared by the
-/// depth-guide loop and the selected-marker tint so both key off the exact
-/// same slot a sub-list's guides use elsewhere.
+/// The ancestor's document-wide sub-list color, shared by the depth guides
+/// and the selected-marker tint.
 fn ancestor_color(
     document: &Document,
     list_index: usize,
@@ -103,11 +100,8 @@ fn list_header_line(
     ))
 }
 
-/// The pinnable ancestor context of an overview row: the list's header
-/// row (multi-list only) and the active `### H3`+ sub-heading path, each paired
-/// with the row index it was drawn at. When the row is the first visible one and
-/// an ancestor's source row has scrolled above the viewport, that ancestor is
-/// pinned as a sticky header so orientation isn't lost in a long group.
+/// A row's ancestor context (list header and sub-heading path, with their
+/// row indices), pinned as sticky headers once scrolled off.
 #[derive(Clone, Default)]
 struct StickyContext {
     /// `(row index, list index)` of the `[n] Title` header, when one is shown.
@@ -219,13 +213,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             // Depth guides and the selected-marker tint both key off the item's
             // ancestor chain (outermost-first), so compute it once up front.
             let chain = list.parent_chain(item_index);
-            // A nested current row's `❯` marker would otherwise take
-            // `palette.current` as its reversed background (the row uses
-            // `Modifier::REVERSED`), clashing with the colored depth guides on
-            // the same row. Tint it with the item's own sub-list color —
-            // the same slot as its deepest guide — so the highlighted
-            // background matches instead; top-level rows (no guides) keep the
-            // cyan current accent.
+            // Tint a nested current row's marker with its sub-list color so the
+            // reversed background matches its guides.
             let current_marker_fg = if item.depth > 0 {
                 ancestor_color(
                     &state.document,
@@ -283,15 +272,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 ),
             };
 
-            // Nesting depth guides: the has_list_header base stays blank
-            // (it aligns items under the list title, not a nesting level), then
-            // one `│` guide per depth level. Each guide is colored by the
-            // sub-list it belongs to — the ancestor at that level, via
-            // `sublist_slot` — so distinct sub-lists (even at the same depth)
-            // get distinct colors and don't blend. Each guide and the marker
-            // are single display cells, so the marker prefix keeps the same
-            // on-screen width and the click toggle-zone (`marker_cells`) is
-            // unchanged.
+            // One `│` guide per depth, colored by its sub-list. Single cells, so the
+            // click toggle zone is unchanged.
             let mut spans: Vec<Span> = Vec::new();
             if has_list_header {
                 spans.push(Span::raw("  "));
@@ -325,12 +307,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     let total_rows = list_items.len();
 
-    // Draw the panel frame ourselves: the sticky header reserves rows at
-    // the *top* of the content area and the scrollable list renders below it, so
-    // a pinned header never covers a list row — reserve-space, not overlay. The
-    // border + 1 col of horizontal padding matches the card body's BODY_PAD;
-    // the panel carries no `done/total` counter since the title-bar counter
-    // above it is always shown in this wide layout.
+    // The sticky header reserves rows at the top rather than overlaying the
+    // list.
     let block = Block::default()
         .borders(Borders::ALL)
         .padding(Padding::horizontal(1))
@@ -342,11 +320,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let list_widget =
         List::new(list_items).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-    // The ancestor rows to pin when the row at content `offset` is the first
-    // visible one: the `[n] Title` list header and each `── divider` of the
-    // active `### H3`+ path whose own row has scrolled above the content area.
-    // Always a prefix of the chain (an ancestor's row precedes its descendants'),
-    // capped so it can't fill the whole panel.
+    // The ancestor rows to pin when the row at `offset` is first visible.
     let sticky_lines = |offset: usize| -> Vec<Line<'static>> {
         let mut lines: Vec<Line> = Vec::new();
         let Some(ctx) = row_sticky.get(offset) else {
@@ -372,23 +346,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         lines
     };
 
-    // How many rows to reserve depends on the scroll offset, which depends on
-    // the reserved rows (they shrink the list viewport). Iterate to a fixed
-    // point — it converges immediately while the top row stays in one group,
-    // since that group's ancestor chain is constant. The last render in the loop
-    // is the one that stays: its list content sits in the content area below the
-    // reserved rows.
-    //
-    // `rendered_reserved` tracks the `reserved` value the *last actual render*
-    // used for its content rect — not necessarily the newly-`want`ed value,
-    // which may not have been rendered against yet if the loop exhausts its
-    // pass budget without converging (a scroll boundary between two
-    // differently-nested sub-section groups can plausibly oscillate). Using
-    // `rendered_reserved` below (instead of trusting the last `want`) keeps
-    // the pinned header, the content viewport, and the click-rects always
-    // consistent with what's actually on screen for this frame, even on a
-    // non-converged pass — at worst the sticky header is momentarily short a
-    // deeper ancestor line, never misaligned with the list beneath it.
+    // The reserved rows depend on the scroll offset and vice versa, so iterate
+    // to a fixed point. `rendered_reserved` is what the last render actually
+    // used, which keeps header, viewport and click rects consistent if the loop
+    // runs out of passes.
     let mut reserved = 0usize;
     let mut offset = 0usize;
     let mut rendered_reserved = 0usize;
@@ -410,11 +371,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         reserved = want;
     }
 
-    // Pin the reserved rows at the top of the content area. Clear each first so
-    // no stale content from an earlier loop pass shows through. Truncated to
-    // `rendered_reserved` (not the possibly-unrendered `want`) so a
-    // non-converged pass never pins more/fewer header rows than the content
-    // below was actually laid out for.
+    // Clear each row first so an earlier pass can't show through.
     let pinned = sticky_lines(offset);
     reserved = rendered_reserved.min(inner_height.saturating_sub(1));
     let mut pinned = pinned.into_iter();
@@ -435,11 +392,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let content_viewport = inner_height - reserved;
     super::render_scrollbar(frame, area, total_rows, content_viewport, offset);
 
-    // Record each visible clickable row's on-screen Rect for hit-testing left
-    // clicks. List rows render below the reserved header rows, each
-    // exactly one line tall (the List truncates rather than wraps): the item at
-    // list index `i` sits at `inner.y + reserved + (i - offset)`. The reserved
-    // header rows carry no click target (non-interactive, like a divider).
+    // Each list row is one line tall, below the reserved header rows.
     state.overview_rows.clear();
     let row_end = area.x + area.width; // one past the row's last column
     for (i, click) in row_clicks.iter().enumerate() {
@@ -459,11 +412,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 item_index,
                 marker_cells,
             } => {
-                // The marker prefix begins at the content origin (inner.x —
-                // left border + the block's Padding::horizontal, whatever
-                // that currently is). The toggle zone spans the whole left
-                // edge through the marker; the label to the right edge
-                // navigates. The two tile the row with no gap.
+                // The marker prefix toggles; the label navigates.
                 let marker_end = (inner.x + marker_cells).min(row_end);
                 state.overview_rows.push((
                     Rect::new(area.x, y, marker_end - area.x, 1),
@@ -525,8 +474,6 @@ mod tests {
 
     #[test]
     fn section_divider_line_truncates_a_long_heading_with_an_ellipsis() {
-        // A long sub-heading used to hard-clip mid-word with no indication,
-        // unlike the equivalent card-side breadcrumb.
         let heading = sub(3, "A very long sub-section heading that will not fit");
         let line = section_divider_line(&heading, true, 20);
         let text: String = line

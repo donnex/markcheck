@@ -4,13 +4,8 @@ use base64::Engine;
 
 use crate::model::Item;
 
-/// tmux truncates OSC 52 payloads around 74 KB; stay under that so a
-/// refused-as-too-large payload here is never one tmux would have silently
-/// truncated instead had this cap been laxer. Measures only the base64
-/// payload, not the full `ESC ] 52 ; c ; <base64> BEL` escape sequence
-/// (~8 bytes of framing beyond that) — the name says so explicitly since
-/// the margin to tmux's limit is generous enough that the difference
-/// doesn't need to be accounted for.
+/// tmux truncates OSC 52 payloads around 74 KB. Measures the base64 payload
+/// only.
 const OSC52_MAX_BASE64_BYTES: usize = 70_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,23 +21,16 @@ pub enum CopyOutcome {
     Ambiguous(usize),
     /// No clipboard backend usable at all.
     Failed,
-    /// The text is too large for the OSC 52 fallback (see
-    /// `OSC52_MAX_BASE64_BYTES`). Distinct from `Failed` because the cause
-    /// and the remedy are different: the clipboard is fine, the payload just
-    /// won't fit through a terminal escape sequence. Reporting this as
-    /// `Failed` told the user their clipboard was unavailable and pointed
-    /// them at a setup that was working.
+    /// Too large for OSC 52. Distinct from `Failed`: the clipboard is fine.
     TooLarge,
     /// The text contains characters the card never shows (see
     /// `has_hidden_characters`); nothing was copied.
     HiddenCharacters,
 }
 
-/// Control characters other than `\n`/`\t` are dropped by ratatui when the
-/// card is drawn, and bidi controls reorder what is shown, so a command
-/// containing either would paste as something other than what the user
-/// read — an embedded `ESC [201~` can even end a bracketed paste early and
-/// run the rest. Such text is refused rather than copied.
+/// Control characters other than `\n`/`\t` are dropped when drawn and bidi
+/// controls reorder text, so the paste would differ from what was read; an
+/// embedded `ESC [201~` can end a bracketed paste early.
 fn has_hidden_characters(text: &str) -> bool {
     text.chars().any(|c| {
         (c.is_control() && c != '\n' && c != '\t')
@@ -111,13 +99,11 @@ fn copy_text(text: &str, primary: bool) -> CopyOutcome {
     }
 }
 
-/// Sets the system clipboard via arboard, plus the PRIMARY selection when
-/// requested (best-effort — a PRIMARY failure doesn't fail the copy).
-/// Returns whether the main clipboard write succeeded.
+/// Sets the clipboard, plus PRIMARY when requested (best-effort). Returns
+/// whether the main write succeeded.
 ///
-/// Coverage note: exercising the success path requires a live X11/Wayland
-/// (or macOS/Windows) clipboard session, not reachable headlessly — CI and
-/// most dev sandboxes only ever hit the `Clipboard::new()` failure branch.
+/// The success path needs a live clipboard session, not reachable
+/// headlessly.
 fn set_via_arboard(text: &str, primary: bool) -> bool {
     let Ok(mut clipboard) = arboard::Clipboard::new() else {
         return false;
@@ -226,15 +212,7 @@ mod tests {
 
     #[test]
     fn an_oversized_payload_is_reported_as_too_large_not_as_a_missing_clipboard() {
-        // Deep review, round 2: an over-cap payload collapsed into
-        // `Failed`, which the UI renders as "no clipboard available" --
-        // telling the user to fix a clipboard that was working, for a
-        // command that simply won't fit through an OSC 52 escape.
-        //
-        // Only reachable where arboard is unavailable (a headless host), so
-        // this drives `copy_text`'s fallback path directly. In a session
-        // *with* a working system clipboard the copy succeeds first and this
-        // never applies, hence the tolerance for `CopiedSystem` here.
+        // Only reachable without arboard, so `CopiedSystem` is tolerated.
         let huge = "x".repeat(OSC52_MAX_BASE64_BYTES);
         assert!(
             osc52_sequence(&huge, 'c').is_none(),
@@ -264,19 +242,7 @@ mod tests {
 
     #[test]
     fn copy_text_with_primary_also_targets_the_primary_selection() {
-        // The PRIMARY write is fire-and-forget (best-effort — see
-        // `copy_text`'s doc comment), so it never changes the returned
-        // outcome; this just exercises the `primary` branch, on whichever
-        // backend (arboard or the OSC 52 fallback) the environment
-        // `cargo test` runs in actually has available. Deliberately not
-        // asserting a specific non-`Failed` outcome here: `Failed` requires
-        // both no live clipboard session (the CI-typical case) *and* the
-        // OSC 52 write to stdout itself failing, which is unlikely but not
-        // impossible depending on how the test harness has stdout wired up
-        // — an environment-dependent assertion here would make this test
-        // flaky rather than actually verifying anything about `primary`.
-        // The `selection` parameter's own correctness (`c` vs `p`) is
-        // covered directly by `osc52_sequence_uses_the_given_selection`.
+        // No specific outcome is asserted: it depends on the test environment.
         let outcome = copy_text("hello", true);
         assert!(matches!(
             outcome,

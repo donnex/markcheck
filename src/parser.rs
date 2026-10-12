@@ -8,27 +8,10 @@ use crate::model::{
     BodySpan, Document, Item, ItemKind, LineNumber, List, SubHeading, TaskState, TextStyle,
 };
 
-/// Splits `raw` into lines, **keeping each line's own terminator** on the
-/// end of it, using CommonMark's definition of a line ending: `\r\n`, a
-/// lone `\n`, or a lone `\r`. A final line with no terminator is returned
-/// as-is; an empty input yields no lines at all.
-///
-/// This is the project's single line model, shared by `raw_lines` (which
-/// `writer::write_back` indexes by `Item::line_number` and rejoins), by the
-/// `[/]` pre-scan, and by `LineCounter`. Deep review, round 2: it used to be
-/// `str::lines()`, which splits only on `\n` and strips a trailing `\r`,
-/// while pulldown-cmark follows CommonMark and *also* breaks on a lone `\r`.
-/// On a CR-only file the two disagreed completely — pulldown saw N list
-/// items, `raw_lines` was a single element, and `LineCounter` (finding no
-/// `\n`) gave every item `line_number == 1`, so `write_back`'s per-item
-/// writes all landed on the same physical line and clobbered each other.
-/// Reproduced: every toggle was silently discarded, with the UI showing the
-/// task done and the file never changing.
-///
-/// Keeping the terminator on each line is what also retired the old
-/// whole-file `uses_crlf`/`trailing_newline` flags: a mixed-ending file now
-/// round-trips every line exactly as authored, instead of the single flag
-/// rewriting all of them to whichever ending appeared first.
+/// Splits `raw` into lines, keeping each line's own terminator, using
+/// CommonMark's line endings (`\r\n`, `\n` or a lone `\r`). The single line
+/// model shared by `raw_lines`, `LineCounter` and the `[/]` pre-pass, so it
+/// must agree with pulldown-cmark on CR-only files.
 pub(crate) fn split_lines_keeping_endings(raw: &str) -> Vec<&str> {
     let bytes = raw.as_bytes();
     let mut lines = Vec::new();
@@ -87,12 +70,8 @@ fn count_line_endings(s: &str) -> usize {
     count
 }
 
-/// Converts byte offsets into 1-indexed line numbers by counting preceding
-/// line endings. Amortizes to O(n) total across the many non-decreasing
-/// offsets pulldown-cmark's single-pass event stream naturally produces,
-/// instead of the O(n) per call / O(n·m) total of rescanning from byte 0
-/// every time. Falls back to a full rescan if a query ever goes backwards,
-/// so it stays correct even if that assumption doesn't hold in some case.
+/// Converts byte offsets into 1-indexed line numbers, amortized O(n) over
+/// non-decreasing offsets; rescans if a query goes backwards.
 struct LineCounter {
     offset: usize,
     line: LineNumber,
@@ -143,20 +122,11 @@ fn heading_level_number(level: HeadingLevel) -> u8 {
 /// see exactly the same block structure.
 const PARSE_OPTIONS: Options = Options::ENABLE_TASKLISTS.union(Options::ENABLE_STRIKETHROUGH);
 
-/// pulldown-cmark's task-list extension only recognizes `[ ]` and `[x]`,
-/// not the `[/]` "started" marker. This pre-pass parses `raw` once with
-/// pulldown-cmark itself and records the byte offset of every `[/]` that
-/// opens a list item's first paragraph — exactly the position where a
-/// `[ ]` would have been reported as a `TaskListMarker`. Only those ranges
-/// are rewritten to `[ ]` (same three bytes, so every offset and line number
-/// is preserved), and the returned offsets let the second parse promote the
-/// matching `TaskListMarker`s to `Started`.
-///
-/// Deriving the positions from pulldown-cmark rather than from a raw-text
-/// scan is the point: an earlier line-based scan guessed fence boundaries
-/// itself and disagreed with CommonMark around HTML blocks, indented code
-/// and fences opened on a list-marker line, which made started tasks vanish
-/// or rewrote `[/]` text inside code blocks.
+/// pulldown-cmark only recognizes `[ ]` and `[x]`. This pre-pass parses
+/// `raw` once and records the offset of every `[/]` exactly where a task
+/// marker would be, rewrites those to `[ ]` (same length, so offsets hold),
+/// and returns the offsets so the second parse can promote them to
+/// `Started`.
 fn extract_started_markers(raw: &str) -> (String, HashSet<usize>) {
     let mut offsets = HashSet::new();
     let mut awaiting_first_inline = false;
@@ -199,11 +169,9 @@ fn is_started_marker_at(raw: &str, offset: usize) -> bool {
 struct ItemBuilder {
     line: LineNumber,
     depth: usize,
-    /// `current_list_items.len()` at the moment this item was pushed.
-    /// Since a bullet's descendants always finish (post-order `End(Item)`)
-    /// before the bullet's own `End(Item)`, any growth by then is exactly
-    /// this bullet's own children — used to keep a bullet with children from
-    /// being eaten as the list banner, which would orphan them.
+    /// `current_list_items.len()` when this item was pushed. Any growth by its
+    /// `End(Item)` is its own children, which keeps a bullet with children from
+    /// becoming the banner.
     items_before: usize,
     /// True if this item's bullet sits inside a `>` blockquote. A
     /// blockquoted checkbox reads as a quoted/illustrative example, not a
@@ -245,11 +213,8 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
         .map(str::to_string)
         .collect();
 
-    // A leading UTF-8 BOM defeats ATX heading recognition (CommonMark
-    // requires `#`/`##` to start the line) and would otherwise silently lose
-    // the document title or misfile a section's items into the default
-    // list. Stripped only from the parsing copy — `raw_lines` keeps the
-    // original bytes (BOM included) so write-back never touches it.
+    // A BOM defeats ATX heading recognition. Stripped from the parsing copy
+    // only, so write-back keeps it.
     let raw_for_parsing = raw.strip_prefix('\u{FEFF}').unwrap_or(raw);
 
     // Rewrite item-leading `[/]` markers to `[ ]` so pulldown recognizes them
@@ -277,11 +242,8 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     // at all contributes nothing to the document.
     let mut list_depth: usize = 0;
     let mut current_list_items: Vec<Item> = Vec::new();
-    // True once a real `TaskListMarker` has been seen in the current
-    // top-level list, reset at each new one. This is the has-checkbox
-    // signal for the drop-if-empty rule — tracked independently of item
-    // *kind* so a blockquoted checkbox (forced to `DisplayOnly`) still
-    // counts as "had real task syntax" and doesn't vanish the whole segment.
+    // Tracked apart from item kind so a blockquoted checkbox still counts for
+    // the drop-if-empty rule.
     let mut list_had_checkbox_syntax = false;
 
     // Depth of `>` blockquote nesting, so a checkbox bullet quoted inside
@@ -289,12 +251,8 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     // from a real, live task.
     let mut blockquote_depth: usize = 0;
 
-    // The first *top-level* item of a list becomes that list's banner (a
-    // non-navigable warning line) instead of a card when it's a bold-only
-    // bullet; every later bold-only bullet is a normal display-only card.
-    // `banner` is set directly on the list (for H2 lists) or on
-    // `default_banner` (for the pre-heading list). Gated to depth 0 and reset
-    // at each H2. Nested bold-only bullets never become banners.
+    // A leading bold-only top-level bullet becomes the list's banner instead of
+    // a card. Reset at each H2.
     let mut seen_first_top_item = false;
     let mut default_banner: Option<String> = None;
 
@@ -385,11 +343,7 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
                             Some(list) => &mut list.items,
                             None => &mut default_items,
                         };
-                        // Items are pushed at End(Item), so a nested subtree
-                        // arrives post-order (children before their parent,
-                        // whose End fires last). Sort by source line to restore
-                        // document/pre-order — a parent bullet always precedes
-                        // its indented children.
+                        // Items arrive post-order; sort by line to restore document order.
                         current_list_items.sort_by_key(|item| item.line_number);
                         target.append(&mut current_list_items);
                         attach_fence_to_last_item = true;
@@ -596,12 +550,8 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
                         .collect::<Vec<_>>()
                         .join(" ");
 
-                    // Only the first *top-level* bold-only bullet becomes the
-                    // list banner; nested and later bold-only bullets are
-                    // ordinary display-only cards. A bullet with its own
-                    // nested children is never banner-eligible either:
-                    // the banner emits no `Item`, which would leave those
-                    // children with no depth-0 parent in the flat list.
+                    // A bullet with children is never the banner, which emits no `Item` and
+                    // would orphan them.
                     let has_children = current_list_items.len() > builder.items_before;
                     let is_bold_only = kind == ItemKind::DisplayOnly
                         && header.is_some()
@@ -668,17 +618,8 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// The `examples/` files double as manual-test fixtures and as the
-    /// user-facing demonstration of every supported piece of Markdown, so a
-    /// change that stops one of them parsing is a real regression. The
-    /// periodic documentation review asks for exactly this confirmation, and
-    /// it was a manual step until this test existed.
-    ///
-    /// Round-tripping is the strong half: `write_back` reassembles the file
-    /// from `raw_lines` by plain concatenation, so parsing an example and
-    /// reassembling it must reproduce the original bytes exactly. Anything
-    /// else means a toggle would silently rewrite unrelated parts of a real
-    /// user's checklist.
+    /// Every `examples/` file must parse and round-trip byte for byte, since
+    /// `write_back` reassembles the file from `raw_lines`.
     #[test]
     fn every_example_file_parses_and_round_trips_byte_for_byte() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples");
@@ -1132,13 +1073,8 @@ mod tests {
 
     #[test]
     fn link_inside_the_title_loses_its_url_documented_limitation() {
-        // A link entirely inside the leading-bold title is gated out
-        // (`capturing_header`) — its text still folds into the plain title,
-        // but the URL is discarded. Documented as a known limitation
-        // (DESIGN.md/README) rather than fixed, since extracting it would
-        // need a dedicated `Item` field threaded through every construction
-        // site for a rare pattern. This test locks the documented behavior
-        // in so a future change doesn't silently alter it either way.
+        // A link inside the leading-bold title loses its URL; a documented
+        // limitation pinned here.
         let document = parse("## S\n\n- [ ] **[Link](https://example.com/x) more** body\n");
         let item = &document.lists[0].items[0];
         assert_eq!(item.header.as_deref(), Some("Link more"));
@@ -1257,8 +1193,6 @@ mod tests {
 
     #[test]
     fn leading_bom_does_not_defeat_h1_title() {
-        // A UTF-8 BOM before the `#` used to stop it being recognized as
-        // an ATX heading at all.
         let document = parse("\u{FEFF}# My Runbook\n\n## S\n\n- [ ] `a`\n");
         assert_eq!(document.title.as_deref(), Some("My Runbook"));
     }
@@ -1329,11 +1263,6 @@ mod tests {
 
     #[test]
     fn started_marker_parses_on_an_ordered_list() {
-        // `[/]` used to only be recognized after a `-`/`*`/`+` bullet, so
-        // an ordered-list `[/]` fell through unrewritten and the item
-        // showed up as a broken DisplayOnly card with the raw marker still
-        // in its text. `[ ]`/`[x]` already worked on ordered lists
-        // (`ordered_list_items_are_checkboxes`) — only `[/]` was affected.
         let source = "## S\n\n1. [ ] `a`\n2. [/] `b`\n3. [x] `c`\n";
         let document = parse(source);
         let items = &document.lists[0].items;
@@ -1364,13 +1293,8 @@ mod tests {
 
     #[test]
     fn fence_with_trailing_text_on_the_would_be_closing_line_does_not_close_it() {
-        // CommonMark requires a closing fence line to contain nothing but
-        // the fence run and trailing whitespace; a line like "```done" is
-        // NOT a closer to pulldown-cmark. Before this fix, the preprocessing
-        // scan disagreed and closed the fence early, so the `[/]` marker on
-        // the line after would have been incorrectly rewritten to `[ ]`
-        // (it's plain text inside what's still — per the real parser — a
-        // fenced code block).
+        // "```done" is not a closing fence, so the `[/]` after it is still inside
+        // the code block.
         let source = "\
 ## S
 
@@ -1475,12 +1399,7 @@ mod tests {
 
     #[test]
     fn blockquoted_started_marker_is_display_only_not_dropped() {
-        // A blockquoted `[/]` used to never be rewritten to `[ ]`, so
-        // pulldown never saw it as a checkbox at all; since that made it
-        // the *only* checkbox-like syntax in its own top-level list, the
-        // no-checkbox-list rule dropped the whole quoted item rather than
-        // keeping it as a DisplayOnly card the way a blockquoted `[ ]`/`[x]`
-        // is already treated.
+        // A blockquoted `[/]` is kept as a display-only card, like `[ ]`/`[x]`.
         let source = "## S\n\n> - [/] quoted started example\n\n- [ ] normal task\n";
         let document = parse(source);
         let items = &document.lists[0].items;
@@ -1492,11 +1411,8 @@ mod tests {
 
     #[test]
     fn blockquoted_bold_only_bullet_is_not_a_banner() {
-        // A quoted example shouldn't hijack the list's banner slot either.
-        // (The blockquoted checkbox sibling is needed so this segment isn't
-        // itself dropped by the no-checkbox-list rule before we can inspect
-        // it — banner assignment happens before that gate and would
-        // otherwise slip through undetected.)
+        // A quoted example must not take the banner slot. The blockquoted checkbox
+        // keeps the segment from being dropped.
         let source = "\
 ## S
 
@@ -1868,12 +1784,7 @@ second
 
     #[test]
     fn cr_only_line_endings_give_each_item_its_own_line_number() {
-        // Deep review, round 2: `str::lines()` doesn't break on a lone `\r`,
-        // so a CR-only file collapsed to one `raw_lines` entry while
-        // pulldown-cmark saw three list items — every item got
-        // `line_number == 1`, and `write_back`'s per-item writes then
-        // clobbered each other on that single line, silently discarding
-        // every toggle.
+        // A lone `\r` is a line ending, so each item gets its own line number.
         let document = parse("## S\r\r- [ ] alpha\r- [ ] beta\r- [ ] gamma\r");
         let items = &document.lists[0].items;
         assert_eq!(items.len(), 3);
@@ -1929,9 +1840,7 @@ Intro paragraph.
 
     #[test]
     fn indented_lookalike_before_any_list_produces_no_lists() {
-        // The review's own literal example: no preceding list context at
-        // all, so the whole thing is just an indented code block — inert,
-        // not merely harmless.
+        // No list context at all: an inert indented code block.
         let document = parse("# Example\n\n    - [/]\n");
         assert!(document.lists.is_empty());
     }
@@ -1994,13 +1903,9 @@ Intro paragraph.
 
     #[test]
     fn extract_started_markers_boundary_sweep_agrees_with_pulldown() {
-        // The pre-pass finds `[/]` markers with pulldown-cmark itself, so
-        // the property swept here is agreement: across indentation (0-4
-        // spaces and a tab), blockquote nesting, unordered/ordered markers,
-        // and every block context that can hide a `[/]` lookalike — fences
-        // of each character, length, info string and termination, HTML
-        // blocks, indented code, and a fence opened on a list-marker line —
-        // the recorded markers are exactly pulldown's task markers.
+        // The recorded markers must be exactly pulldown's task markers across
+        // indentation, blockquotes, list types and every block context that can
+        // hide a `[/]` lookalike.
         let indents = ["", " ", "  ", "   ", "    ", "\t"];
         let quote_depths = ["", "> ", "> > ", ">"];
         let markers = ["-", "*", "+", "1.", "2)"];
