@@ -205,8 +205,8 @@ How each piece maps to the UI:
 | `- **Bold**` (bold only), later in a list | A display-only card titled with the bold text. |
 | `- plain text` | A display-only **note card** (rounded border). In the overview it shows a distinct note marker rather than a task circle, so information reads apart from steps. |
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |
-| `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. |
-| a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. |
+| `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. With several, each chip gets a dim `[1]`/`[2]` marker for `y` then a digit. |
+| a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. With several, each box shows `[1]`/`[2]` in its top border for `y` then a digit. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
@@ -218,9 +218,11 @@ Finer points:
   `` `code` `` command (nothing after it), the command drops onto its own line
   below a blank line, so the lead-in and the command read as two tidy blocks.
   Inline code that has text after it stays in the sentence.
-- **Copying (`y`)** works when a task has exactly one command — a single inline
-  `` `code` `` span or a single fenced block. With none or several, nothing is
-  copied and the status bar explains why. A command containing control
+- **Copying (`y`)** copies a task's command — a single inline `` `code` `` span
+  or a single fenced block. When there are several, each is numbered on the
+  card and `y` then a digit copies that one. Fenced blocks take priority: if a
+  task has any, only they are numbered, and its inline spans can be copied by
+  clicking them. A command containing control
   characters the card can't show (escape, backspace, carriage return, bidi
   overrides) is never copied either — see [Clipboard](#clipboard).
 - **A link's URL is shown below the card, not on it.** The card shows only the
@@ -308,7 +310,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Ctrl-D` / `Ctrl-U` | scroll the card body down / up half a page |
 | `PageDown` / `PageUp` | scroll the card body down / up one page |
 | mouse wheel | scroll an overflowing card, otherwise navigate tasks |
-| left-click a command on the card | copy that specific command; clicking elsewhere on the card copies its sole command (same as `y`). Needs mouse capture, so not with `--no-mouse` |
+| left-click a command on the card | copy that specific command; clicking elsewhere on the card acts like `y`. Needs mouse capture, so not with `--no-mouse` |
 | left-click an overview row | on a task row, click its **icon** to toggle it done/not-done (cursor stays put), or its **label** to jump to that task; click a list title to jump to that list. Needs mouse capture, so not with `--no-mouse` |
 | `Space` / `Enter` | toggle the current task done; on an info card (nothing to toggle) advance to the next card instead |
 | `s` | mark the current task started / in progress (`[/]`) |
@@ -320,6 +322,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `}` / `{` | jump to the first task of the next / previous sub-section (within the current list) |
 | `T` | open the "go to task" overlay: a filterable list of every task |
 | `y` | copy the task's command to the clipboard |
+| `y` then `1`–`9` | when a card has several commands, copy command `[N]` |
 | `o` | open the current card's link in your browser |
 | `o` then `1`–`9` | when a card has several links, open link `[N]` |
 | `e` | edit the file in `$EDITOR` (at the current task's line for editors that support it) |
@@ -595,8 +598,9 @@ highlighted task, `Esc` to close.
 ### Clipboard
 
 `y` copies a task's command. If the task has a single inline `` `code` ``
-span or a single fenced code block, that content is copied; if there are
-none or several, nothing is copied and the status bar says why. Copy uses
+span or a single fenced code block, that content is copied; if there is none,
+nothing is copied and the status bar says so. If there are several, `y` asks
+which (see below). Copy uses
 the system clipboard when available and otherwise emits an OSC 52 escape,
 which travels over SSH to your local terminal emulator (kitty, alacritty,
 wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
@@ -622,13 +626,20 @@ output. If a task's command embeds a credential or token, `y` sends it the
 same way as any other command — worth keeping in mind for a runbook shared
 in a less-trusted environment.
 
-When a task has **several** commands, `y` won't guess between them — instead
-**left-click the command** you want and that specific one is copied, in
-full (an inline command, the trailing command, or a fenced block). With two
-inline commands on one row, each copies its own; a long inline command that
-wraps across rows copies whole from any of them. Clicking anywhere else on
-the card, including the prose beside a command, copies its sole command, the
-same as `y`.
+When a task has **several** commands, `y` won't guess between them. The card
+numbers them — a dim `[1]`, `[2]` after each inline command, or in the top
+border of each fenced block — and `y` shows `press 1–N to copy · esc cancels`
+in the status bar; press the number to copy that command, or `Esc` to cancel.
+Fenced blocks take priority, as for a single command: on a task with any
+fenced block, only the blocks are numbered. Up to nine commands can be picked
+this way.
+
+With the mouse, you can also **left-click the command** you want and that
+specific one is copied, in full (an inline command, the trailing command, or
+a fenced block). With two inline commands on one row, each copies its own; a
+long inline command that wraps across rows copies whole from any of them.
+Clicking anywhere else on the card, including the prose beside a command,
+acts like `y`.
 
 Passive status messages — copy confirmations, reloads, resets — clear
 themselves after a few seconds. Messages that answer a keypress stay until your

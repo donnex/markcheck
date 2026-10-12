@@ -1998,15 +1998,99 @@ fn copy_with_no_code_shows_alert() {
 }
 
 #[test]
-fn copy_with_multiple_candidates_shows_alert() {
+fn y_with_multiple_candidates_arms_a_digit_prompt() {
+    // `y` on a multi-command card copies nothing yet: it arms a digit
+    // (matching the card's [N] markers) and sets no status message, so the
+    // status bar shows the prompt.
     let mut document = two_list_document();
     document.lists[0].items[0].code_blocks = vec!["first".to_string(), "second".to_string()];
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
+    assert!(state.pending_copy_code, "armed for a command number");
+    assert_eq!(state.status_message, None);
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn y_then_a_digit_copies_that_fenced_block_not_a_list() {
+    // The armed digit selects a command and must pre-empt the global
+    // digit→list jump.
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec!["first".to_string(), "second".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('2'));
+    assert!(!state.pending_copy_code, "consumed");
+    assert_eq!(state.current_list_index, 0, "no list jump");
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Not copied: item has 2 code candidates")
+        Some("Sent to clipboard (OSC 52)")
     );
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("second".to_string(), false)]);
+    });
+}
+
+#[test]
+fn y_then_a_digit_copies_that_inline_command() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["stop-svc".to_string(), "start-svc".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('1'));
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("stop-svc".to_string(), false)]);
+    });
+}
+
+#[test]
+fn y_then_an_out_of_range_digit_reports_no_such_command() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('3'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No command [3] on this card")
+    );
+    assert!(state.status_is_error);
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn esc_cancels_the_copy_prompt_without_quitting() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Esc);
+    assert!(!state.pending_copy_code, "cancelled");
+    assert!(!state.should_quit, "esc must not quit while arming a copy");
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn y_then_a_non_digit_cancels_the_prompt_and_acts_normally() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    let before = state.current_item_index;
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('j'));
+    assert!(!state.pending_copy_code, "cancelled");
+    assert_ne!(state.current_item_index, before, "j still navigated");
+}
+
+#[test]
+fn mouse_input_clears_a_pending_copy_prompt() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    assert!(state.pending_copy_code, "armed");
+    state.handle_scroll_down();
+    assert!(!state.pending_copy_code, "cleared by the scroll");
 }
 
 #[test]
@@ -2022,16 +2106,13 @@ fn click_inside_card_copies_current_command() {
         Some("Nothing to copy: item has no code")
     );
 
-    // Ambiguous item inside the card → the multi-candidate hint.
+    // Ambiguous item inside the card → `y`'s digit prompt.
     let mut document = two_list_document();
     document.lists[0].items[0].code_blocks = vec!["a".to_string(), "b".to_string()];
     let mut state = AppState::new(document);
     state.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.handle_left_click(12, 6);
-    assert_eq!(
-        state.status_message.as_deref(),
-        Some("Not copied: item has 2 code candidates")
-    );
+    assert!(state.pending_copy_code, "armed like `y`");
 }
 
 #[test]
@@ -2056,12 +2137,9 @@ fn click_on_code_region_copies_that_specific_row() {
         assert_eq!(c.system_attempts, vec![("b".to_string(), false)]);
     });
 
-    // Elsewhere in the card (no region): ambiguous fallback (MVP).
+    // Elsewhere in the card (no region): `y`'s digit prompt.
     state.handle_left_click(15, 6);
-    assert_eq!(
-        state.status_message.as_deref(),
-        Some("Not copied: item has 2 code candidates")
-    );
+    assert!(state.pending_copy_code);
 }
 
 #[test]
@@ -3872,6 +3950,7 @@ fn an_external_reload_disarms_a_pending_input_chord() {
         state.pending_open_link,
         "test setup: the digit prompt must be armed"
     );
+    state.pending_copy_code = true;
 
     // The file changes underneath and the reload is adopted.
     touch_with_new_mtime(
@@ -3885,6 +3964,7 @@ fn an_external_reload_disarms_a_pending_input_chord() {
         "a reload must disarm the chord rather than leave it pointed at new content"
     );
     assert!(!state.pending_g, "and the same for a pending gg");
+    assert!(!state.pending_copy_code, "and for y's digit prompt");
 
     // The consequence: the digit is no longer read as a link choice.
     state.handle_key(KeyCode::Char('2'));

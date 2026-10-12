@@ -258,6 +258,7 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
             "toggle (icon) or jump to (label) a task or list",
         ),
         key("y", "copy the task's code to the clipboard"),
+        key("y then 1-9", "copy command [N] when a card has several"),
         key(
             "click a card",
             "copy the clicked command, or the card's sole one",
@@ -1033,7 +1034,45 @@ fn push_words(tokens: &mut Vec<Token>, prev_ws: &mut bool, text: &str, style: Sp
     *prev_ws = text.split_whitespace().next().is_none() || text.ends_with(char::is_whitespace);
 }
 
-fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
+/// The `[N]` marker style keying a link or command to its digit prompt.
+fn marker_token(n: usize, glue: bool) -> Token {
+    (
+        format!("[{n}]"),
+        SpanStyle {
+            url: true,
+            ..Default::default()
+        },
+        glue,
+    )
+}
+
+/// The number `y` then a digit uses for the body's `k`th (0-based) inline
+/// command, when inline commands are what `y` chooses between and there are
+/// several. Code inside the bold title is a candidate too but has no chip,
+/// and comes first, so body chips are offset past it.
+fn inline_command_number(item: &Item, k: usize) -> Option<usize> {
+    if !item.code_blocks.is_empty() || item.code_spans.len() < 2 {
+        return None;
+    }
+    let in_body = item
+        .body
+        .iter()
+        .filter(|span| matches!(span, BodySpan::Code(_)))
+        .count();
+    Some(item.code_spans.len().saturating_sub(in_body) + k + 1)
+}
+
+/// The number `y` then a digit uses for the `k`th (0-based) fenced block,
+/// when there are several.
+fn block_number(item: &Item, k: usize) -> Option<usize> {
+    (item.code_blocks.len() >= 2).then_some(k + 1)
+}
+
+/// The body's flowed tokens, plus the split-off trailing command and its
+/// `[N]` marker number, if any.
+type BodyTokens = (Vec<Token>, Option<(String, Option<usize>)>);
+
+fn body_tokens(item: &Item) -> BodyTokens {
     if item.body.is_empty() {
         let tokens = item
             .display_text
@@ -1059,6 +1098,7 @@ fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
     // maps to the numbered status-bar list.
     let link_count = item.link_urls().len();
     let mut link_idx = 0usize;
+    let mut code_idx = 0usize;
 
     let mut tokens = Vec::new();
     let mut trailing = None;
@@ -1066,7 +1106,7 @@ fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
     for (i, span) in item.body.iter().enumerate() {
         if Some(i) == trailing_idx {
             if let BodySpan::Code(c) = span {
-                trailing = Some(c.clone());
+                trailing = Some((c.clone(), inline_command_number(item, code_idx)));
             }
             continue;
         }
@@ -1094,6 +1134,12 @@ fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
                     },
                     false,
                 ));
+                // With several commands, a dim `[N]` right after the chip keys
+                // it to `y`'s digit prompt.
+                if let Some(n) = inline_command_number(item, code_idx) {
+                    tokens.push(marker_token(n, true));
+                }
+                code_idx += 1;
                 prev_ws = true;
             }
             // A link renders as just its underlined text; the URL lives
@@ -1111,14 +1157,7 @@ fn body_tokens(item: &Item) -> (Vec<Token>, Option<String>) {
                 );
                 link_idx += 1;
                 if link_count >= 2 {
-                    tokens.push((
-                        format!("[{link_idx}]"),
-                        SpanStyle {
-                            url: true,
-                            ..Default::default()
-                        },
-                        false,
-                    ));
+                    tokens.push(marker_token(link_idx, false));
                     prev_ws = false;
                 }
             }
@@ -1206,7 +1245,7 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     // A trailing command drops onto its own line, with a blank line
     // separating it from any prose above (nothing to separate when the body
     // is only the command).
-    if let Some(cmd) = trailing_code {
+    if let Some((cmd, number)) = trailing_code {
         if !lines.is_empty() {
             lines.push(Line::from(""));
             code_rows.push(Vec::new());
@@ -1215,7 +1254,9 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
             code: true,
             ..Default::default()
         };
-        for (line, _) in wrap_tokens(&[(format!(" {cmd} "), chip, false)], width, code) {
+        let mut trailing = vec![(format!(" {cmd} "), chip, false)];
+        trailing.extend(number.map(|n| marker_token(n, true)));
+        for (line, _) in wrap_tokens(&trailing, width, code) {
             lines.push(align(line));
             code_rows.push(full_row(width, &cmd));
         }
@@ -1224,12 +1265,12 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     // Fenced blocks below, left-aligned in a light box, with a blank
     // separator when there's flowed prose above them. Every box row maps to
     // the block's clean text so a click anywhere on the box copies it.
-    for block in &item.code_blocks {
+    for (k, block) in item.code_blocks.iter().enumerate() {
         if !lines.is_empty() {
             lines.push(Line::from(""));
             code_rows.push(Vec::new());
         }
-        for line in code_block_lines(block, width, code) {
+        for line in code_block_lines(block, width, code, block_number(item, k)) {
             lines.push(line);
             code_rows.push(full_row(width, block));
         }
@@ -1246,12 +1287,20 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
 /// light box. Preserves the block's own line breaks (hard-wrapped to
 /// fit); falls back to plain left-aligned lines when the card is too narrow
 /// for a box. Deterministic line count, so scroll clamping stays exact.
-fn code_block_lines(block: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+/// A `marker` number, set when the card has several blocks, is drawn into the
+/// top border (`┌─[N]──┐`) to key the block to `y`'s digit prompt.
+fn code_block_lines(
+    block: &str,
+    width: usize,
+    style: Style,
+    marker: Option<usize>,
+) -> Vec<Line<'static>> {
+    let marker = marker.map(|n| format!("[{n}]"));
     // Not enough room for "│ x │": drop the box, keep left-aligned code.
     if width < 6 {
-        return block
-            .lines()
-            .flat_map(|raw| hard_wrap(raw, width))
+        return marker
+            .into_iter()
+            .chain(block.lines().flat_map(|raw| hard_wrap(raw, width)))
             .map(|c| Line::styled(c, style).left_aligned())
             .collect();
     }
@@ -1272,7 +1321,11 @@ fn code_block_lines(block: &str, width: usize, style: Style) -> Vec<Line<'static
     let blank = || Line::styled(format!("│ {} │", " ".repeat(box_w)), style).left_aligned();
 
     let mut out = Vec::with_capacity(chunks.len() + 4);
-    out.push(Line::styled(format!("┌{}┐", "─".repeat(box_w + 2)), style).left_aligned());
+    let top = match marker.filter(|m| m.len() < box_w + 2) {
+        Some(m) => format!("┌─{m}{}┐", "─".repeat(box_w + 1 - m.len())),
+        None => format!("┌{}┐", "─".repeat(box_w + 2)),
+    };
+    out.push(Line::styled(top, style).left_aligned());
     out.push(blank());
     for c in &chunks {
         let pad = box_w.saturating_sub(display_width(c));
@@ -1721,7 +1774,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::widgets::Paragraph;
 
-        let lines = code_block_lines(block, width as usize, code_bg(Color::DarkGray));
+        let lines = code_block_lines(block, width as usize, code_bg(Color::DarkGray), None);
         let mut terminal = Terminal::new(TestBackend::new(width, lines.len() as u16)).unwrap();
         terminal
             .draw(|f| f.render_widget(Paragraph::new(lines), f.area()))
@@ -2164,7 +2217,7 @@ mod tests {
         // A short one-line block still fills the full card-body width, so
         // every box row (borders, blanks, content) is exactly `width` wide.
         let width = 30usize;
-        let lines = code_block_lines("hi", width, code_bg(Color::Magenta));
+        let lines = code_block_lines("hi", width, code_bg(Color::Magenta), None);
         assert!(lines.len() >= 5, "top + blank + content + blank + bottom");
         for line in &lines {
             let w: usize = line.spans.iter().flat_map(|s| s.content.chars()).count();
@@ -2181,7 +2234,7 @@ mod tests {
     fn narrow_code_block_falls_back_without_a_box() {
         // Below the box minimum the fallback is still plain left-aligned
         // code lines (no border), unchanged by the full-width change.
-        let lines = code_block_lines("hello world", 4, code_bg(Color::Magenta));
+        let lines = code_block_lines("hello world", 4, code_bg(Color::Magenta), None);
         let all: String = lines
             .iter()
             .flat_map(|l| l.spans.iter())
@@ -2291,6 +2344,82 @@ mod tests {
             .iter()
             .find(|(cols, _)| cols.contains(&col))
             .map(|(_, t)| t.as_str())
+    }
+
+    #[test]
+    fn several_inline_commands_get_numbered_markers_for_y() {
+        let mut item = body_item(
+            vec![
+                BodySpan::Text("Run".to_string()),
+                BodySpan::Code("stop-svc".to_string()),
+                BodySpan::Text("then".to_string()),
+                BodySpan::Code("start-svc".to_string()),
+            ],
+            vec![],
+            "Run stop-svc then start-svc",
+        );
+        item.code_spans = vec!["stop-svc".to_string(), "start-svc".to_string()];
+        let whole = line_texts(&body_lines(&item, 60, code_bg(Color::Magenta))).join("\n");
+        assert!(whole.contains(" stop-svc [1]"), "{whole:?}");
+        assert!(
+            whole.contains(" start-svc [2]"),
+            "the trailing command is numbered too: {whole:?}"
+        );
+
+        // A lone command needs no number.
+        item.body.truncate(2);
+        item.code_spans.truncate(1);
+        let whole = line_texts(&body_lines(&item, 60, code_bg(Color::Magenta))).join("\n");
+        assert!(!whole.contains("[1]"), "{whole:?}");
+    }
+
+    #[test]
+    fn title_code_offsets_the_body_command_numbers() {
+        // Code in the bold title is candidate [1] but has no chip, so the
+        // body's first chip is [2], matching what `y` then `2` copies.
+        let mut item = body_item(
+            vec![
+                BodySpan::Text("with".to_string()),
+                BodySpan::Code("restart-svc".to_string()),
+                BodySpan::Text("now".to_string()),
+            ],
+            vec![],
+            "with restart-svc now",
+        );
+        item.code_spans = vec!["svc".to_string(), "restart-svc".to_string()];
+        let whole = line_texts(&body_lines(&item, 60, code_bg(Color::Magenta))).join("\n");
+        assert!(whole.contains(" restart-svc [2]"), "{whole:?}");
+    }
+
+    #[test]
+    fn several_fenced_blocks_carry_their_number_in_the_top_border() {
+        let mut item = body_item(vec![], vec!["on-primary", "on-replica"], "");
+        item.code_spans = vec!["ignored".to_string(), "too".to_string()];
+        let rows = line_texts(&body_lines(&item, 30, code_bg(Color::Magenta)));
+        let tops: Vec<&String> = rows.iter().filter(|r| r.starts_with('┌')).collect();
+        assert_eq!(tops.len(), 2);
+        assert!(tops[0].starts_with("┌─[1]─"), "{:?}", tops[0]);
+        assert!(tops[1].starts_with("┌─[2]─"), "{:?}", tops[1]);
+        assert!(tops.iter().all(|t| t.ends_with('┐')));
+        assert_eq!(
+            display_width(tops[0]),
+            30,
+            "the marker doesn't widen the box"
+        );
+        assert!(
+            !rows.iter().any(|r| r.contains("ignored")),
+            "inline spans aren't numbered when blocks are the candidates"
+        );
+
+        // Too narrow for a box: the number gets its own row above the code.
+        let narrow = code_block_lines("x", 4, code_bg(Color::Magenta), Some(2));
+        assert_eq!(
+            line_texts(&narrow),
+            vec!["[2]".to_string(), "x".to_string()]
+        );
+        // A box too small for its number keeps a plain border.
+        let tiny = code_block_lines("x", 6, code_bg(Color::Magenta), Some(10));
+        assert_eq!(line_texts(&tiny)[0], "┌────┐");
     }
 
     #[test]

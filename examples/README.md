@@ -26,7 +26,8 @@ markcheck examples/basics.md
   (copyable, not a task), a blockquoted `> - [ ]` and `> - [/]` example that
   both render as a non-interactive note rather than a live task, inline vs
   fenced code,
-  an ambiguous multi-command task (click to copy a specific one), a long
+  multi-command tasks (inline and fenced) numbered `[1]`/`[2]` for `y` then a
+  digit, a long
   mid-sentence command that wraps but still copies whole on click, inline
   styling (emphasis / mid-line bold / strikethrough), links whose URL shows
   centered below the card rather than on it — including a long URL that

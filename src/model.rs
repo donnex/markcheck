@@ -747,6 +747,9 @@ pub struct AppState {
     /// True after `o` on a card with several links, waiting for the link
     /// number to open (`o` then a digit). Reset by any other key.
     pub pending_open_link: bool,
+    /// True after `y` on a card with several commands, waiting for the
+    /// command number to copy (`y` then a digit). Reset by any other key.
+    pub pending_copy_code: bool,
     pub icons: IconSet,
     /// Set by `e`; consumed by the main loop, which suspends the TUI and
     /// launches the editor.
