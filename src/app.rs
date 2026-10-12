@@ -975,8 +975,8 @@ impl AppState {
     /// main loop via `take_git_sync_request`, regardless of whether git-sync
     /// is actually active for this file.
     fn commit_write(&mut self, fail_msg: &str, change_desc: &str) -> bool {
-        if writer::write_back(&self.document).is_err() {
-            self.set_error(fail_msg.to_string());
+        if let Err(err) = writer::write_back(&self.document) {
+            self.set_error(format!("{fail_msg}: {err}"));
             return false;
         }
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
@@ -1632,7 +1632,9 @@ impl AppState {
             return true;
         }
 
-        if matches!(code, KeyCode::Char('q') | KeyCode::Esc) {
+        if matches!(code, KeyCode::Char('q'))
+            || (code == KeyCode::Esc && self.screen != Screen::Checklist)
+        {
             // When everything is done, offer to reset before quitting
             // instead of quitting outright.
             let (done, total) = self.document.checkbox_stats();
@@ -1642,6 +1644,11 @@ impl AppState {
             } else {
                 self.should_quit = true;
             }
+            return true;
+        }
+        // Esc on the Checklist screen is a no-op (vim convention: Esc
+        // cancels or returns to normal mode, it does not quit).
+        if code == KeyCode::Esc {
             return true;
         }
 
