@@ -219,6 +219,11 @@ Finer points:
   `` `code` `` command (nothing after it), the command drops onto its own line
   below a blank line, so the lead-in and the command read as two tidy blocks.
   Inline code that has text after it stays in the sentence.
+- **A wrapped command is marked.** A command too long for the card — a line
+  of a fenced or indented block, or an inline command longer than a whole row
+  — is split across rows, and every row that continues onto the next ends in
+  a dim `↩`. A row without it ends a real line, so a long command can't be
+  mistaken for two. Copying (`y` or a click) still gives the original text.
 - **Copying (`y`)** copies a task's command — a single inline `` `code` `` span
   or a single fenced (or indented) block. When there are several, each is numbered on the
   card and `y` then a digit copies that one. Fenced blocks take priority: if a

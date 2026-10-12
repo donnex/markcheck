@@ -1296,20 +1296,28 @@ fn code_block_lines(
     marker: Option<usize>,
 ) -> Vec<Line<'static>> {
     let marker = marker.map(|n| format!("[{n}]"));
-    // Not enough room for "│ x │": drop the box, keep left-aligned code.
+    let continued = continuation_style(style);
+    // Not enough room for "│ x │": drop the box, keep left-aligned code,
+    // still marking wrapped rows when there's a cell to spare for it.
     if width < 6 {
+        let mark = width >= 2;
+        let rows = soft_wrapped(block, if mark { width - 1 } else { width }).map(|(c, wraps)| {
+            let mut spans = vec![Span::styled(c, style)];
+            if wraps && mark {
+                spans.push(Span::styled(CONTINUATION, continued));
+            }
+            Line::from(spans)
+        });
         return marker
+            .map(|m| Line::styled(m, style))
             .into_iter()
-            .chain(block.lines().flat_map(|raw| hard_wrap(raw, width)))
-            .map(|c| Line::styled(c, style).left_aligned())
+            .chain(rows)
+            .map(Line::left_aligned)
             .collect();
     }
 
     let content_w = width - 4; // "│ " + content + " │"
-    let chunks: Vec<String> = block
-        .lines()
-        .flat_map(|raw| hard_wrap(raw, content_w))
-        .collect();
+    let chunks: Vec<(String, bool)> = soft_wrapped(block, content_w).collect();
     // The box always spans the full card-body width — the gray
     // background reaches both edges even for a short one-line block — so code
     // blocks align regardless of content length, matching a rendered Markdown
@@ -1327,13 +1335,48 @@ fn code_block_lines(
     };
     out.push(Line::styled(top, style).left_aligned());
     out.push(blank());
-    for c in &chunks {
+    // A row that a too-long source line wrapped onto the next carries a dim
+    // `↩` in its right padding column, so a wrapped command can't be read
+    // as two separate lines of the block.
+    for (c, wraps) in &chunks {
         let pad = box_w.saturating_sub(display_width(c));
-        out.push(Line::styled(format!("│ {c}{} │", " ".repeat(pad)), style).left_aligned());
+        let row = format!("│ {c}{}", " ".repeat(pad));
+        let line = if *wraps {
+            Line::from(vec![
+                Span::styled(row, style),
+                Span::styled(CONTINUATION, continued),
+                Span::styled("│", style),
+            ])
+        } else {
+            Line::styled(format!("{row} │"), style)
+        };
+        out.push(line.left_aligned());
     }
     out.push(blank());
     out.push(Line::styled(format!("└{}┘", "─".repeat(box_w + 2)), style).left_aligned());
     out
+}
+
+/// Drawn at the end of a code row that continues on the next one, so a
+/// soft-wrapped command line is distinguishable from a real line break.
+const CONTINUATION: &str = "↩";
+
+/// The continuation marker's style: the surrounding code style, dimmed.
+fn continuation_style(code: Style) -> Style {
+    code.add_modifier(Modifier::DIM)
+}
+
+/// Hard-wraps each of `block`'s lines to `width` cells, flagging every piece
+/// that continues onto the next row (all but the last piece of a line).
+fn soft_wrapped(block: &str, width: usize) -> impl Iterator<Item = (String, bool)> + '_ {
+    block.lines().flat_map(move |raw| {
+        let pieces = hard_wrap(raw, width);
+        let last = pieces.len() - 1;
+        pieces
+            .into_iter()
+            .enumerate()
+            .map(move |(i, p)| (p, i < last))
+    })
 }
 
 /// Greedy word wrap over styled tokens `(text, is_code)`, char-count based
@@ -1398,10 +1441,19 @@ fn wrap_tokens(
                 break;
             }
             if current.is_empty() {
-                // Hard-split a token longer than the whole line.
-                let split: String = rest.chars().take(width).collect();
+                // Hard-split a token longer than the whole line. A split code
+                // chip ends each continued row with the `↩` marker, so the
+                // command doesn't read as several.
+                let marked = style.code && width >= 2;
+                let take = if marked { width - 1 } else { width };
+                let split: String = rest.chars().take(take).collect();
                 let rest_start = split.len();
-                lines.push((Line::from(span_for(split, *style)), vec![origin]));
+                let mut spans = vec![span_for(split, *style)];
+                if marked {
+                    spans.push(Span::styled(CONTINUATION, continuation_style(code)));
+                }
+                let row_origins = vec![origin; spans.len()];
+                lines.push((Line::from(spans), row_origins));
                 rest = &rest[rest_start..];
                 if rest.is_empty() {
                     break;
@@ -2329,6 +2381,92 @@ mod tests {
             vec!["abcd".to_string(), "ef".to_string()]
         );
         assert_eq!(hard_wrap("", 4), vec![String::new()]);
+    }
+
+    #[test]
+    fn wrapped_code_rows_carry_a_continuation_marker_and_real_breaks_do_not() {
+        let block = "rm -rf /var/lib/example-app/cache/sessions\nsystemctl restart example-app";
+        let rows = code_box_rows(block, 30);
+        let content: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.starts_with('│') && !r.trim_matches(['│', ' ']).is_empty())
+            .collect();
+        assert_eq!(content.len(), 4, "two lines, each wrapped once: {rows:?}");
+        assert!(
+            content[0].ends_with("↩│"),
+            "first piece continues: {rows:?}"
+        );
+        assert!(content[1].ends_with(" │"), "end of the real line: {rows:?}");
+        assert!(
+            content[2].ends_with("↩│"),
+            "second line continues: {rows:?}"
+        );
+        assert!(
+            content[3].ends_with(" │"),
+            "last row has no marker: {rows:?}"
+        );
+        assert!(
+            !code_box_rows("short\nlines", 30)
+                .iter()
+                .any(|r| r.contains('↩')),
+            "real line breaks render without a marker"
+        );
+    }
+
+    #[test]
+    fn continuation_marker_is_dimmed() {
+        let lines = code_block_lines("abcdefghij", 8, code_bg(Color::DarkGray), None);
+        let marker = lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content == CONTINUATION)
+            .expect("a wrapped row carries the marker");
+        assert!(marker.style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn narrow_unboxed_code_still_marks_wrapped_rows() {
+        let texts = |w| line_texts(&code_block_lines("abcdefg\nxy", w, Style::default(), None));
+        assert_eq!(texts(4), vec!["abc↩", "def↩", "g", "xy"]);
+        assert_eq!(texts(1).len(), 9, "no room for a marker at width 1");
+        assert!(!texts(1).concat().contains('↩'));
+    }
+
+    #[test]
+    fn hard_split_trailing_command_marks_its_continued_rows() {
+        let cmd = "rm -rf /var/lib/example-app/cache/sessions";
+        let item = body_item(
+            vec![
+                BodySpan::Text("Clear".to_string()),
+                BodySpan::Code(cmd.to_string()),
+            ],
+            vec![],
+            "Clear",
+        );
+        let (lines, rows) = body_layout(&item, 20, code_bg(Color::Magenta));
+        let texts = line_texts(&lines);
+        let chip: Vec<usize> = (0..lines.len()).filter(|&r| !rows[r].is_empty()).collect();
+        assert!(chip.len() >= 3, "the command is split: {texts:?}");
+        let (last, continued) = chip.split_last().unwrap();
+        for &r in continued {
+            assert!(
+                texts[r].trim_end().ends_with('↩'),
+                "row {r} continues: {texts:?}"
+            );
+            assert!(lines[r].width() <= 20, "marker fits the row: {texts:?}");
+        }
+        assert!(
+            !texts[*last].contains('↩'),
+            "final row has no marker: {texts:?}"
+        );
+        let joined: String = chip.iter().map(|&r| texts[r].replace('↩', "")).collect();
+        assert_eq!(joined.trim(), cmd, "no character lost to the marker");
+        for &r in &chip {
+            assert!(
+                rows[r].iter().all(|(_, t)| t == cmd),
+                "every row copies the command"
+            );
+        }
     }
 
     // --- Click-to-copy code mapping. `body_layout` returns, per output
