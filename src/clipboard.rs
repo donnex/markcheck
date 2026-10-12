@@ -74,11 +74,27 @@ pub fn copy_specific(text: &str, primary: bool) -> CopyOutcome {
 /// escape travels through SSH to the local terminal emulator, which is
 /// the only option on headless servers. With `primary`, the PRIMARY
 /// selection is targeted in addition to the normal clipboard.
+#[cfg(not(test))]
 fn copy_text(text: &str, primary: bool) -> CopyOutcome {
+    copy_text_with(text, primary, set_via_arboard, &mut std::io::stdout())
+}
+
+/// Tests never reach arboard or stdout; they go through `fake` instead.
+#[cfg(test)]
+fn copy_text(text: &str, primary: bool) -> CopyOutcome {
+    fake::copy(text, primary)
+}
+
+fn copy_text_with(
+    text: &str,
+    primary: bool,
+    set_system: impl FnOnce(&str, bool) -> bool,
+    osc52_out: &mut impl Write,
+) -> CopyOutcome {
     if has_hidden_characters(text) {
         return CopyOutcome::HiddenCharacters;
     }
-    if set_via_arboard(text, primary) {
+    if set_system(text, primary) {
         return CopyOutcome::CopiedSystem;
     }
     // Fallback: emit OSC 52 for the clipboard, and for PRIMARY too when
@@ -88,9 +104,9 @@ fn copy_text(text: &str, primary: bool) -> CopyOutcome {
         // clipboard, which we never even got to try through this path.
         return CopyOutcome::TooLarge;
     }
-    let clipboard_ok = emit_osc52(text, 'c');
+    let clipboard_ok = emit_osc52(osc52_out, text, 'c');
     if primary {
-        let _ = emit_osc52(text, 'p');
+        let _ = emit_osc52(osc52_out, text, 'p');
     }
     if clipboard_ok {
         CopyOutcome::CopiedOsc52
@@ -102,8 +118,9 @@ fn copy_text(text: &str, primary: bool) -> CopyOutcome {
 /// Sets the clipboard, plus PRIMARY when requested (best-effort). Returns
 /// whether the main write succeeded.
 ///
-/// The success path needs a live clipboard session, not reachable
-/// headlessly.
+/// Not compiled into tests, which must not touch the developer's real
+/// clipboard; it needs a live clipboard session anyway.
+#[cfg(not(test))]
 fn set_via_arboard(text: &str, primary: bool) -> bool {
     let Ok(mut clipboard) = arboard::Clipboard::new() else {
         return false;
@@ -133,15 +150,59 @@ fn osc52_sequence(text: &str, selection: char) -> Option<String> {
 /// Writing directly to stdout is safe here: it happens synchronously
 /// between ratatui draws and produces no visible output. Bare OSC 52 is
 /// emitted (no tmux passthrough wrapping) — tmux needs `set-clipboard on`.
-fn emit_osc52(text: &str, selection: char) -> bool {
+fn emit_osc52(out: &mut impl Write, text: &str, selection: char) -> bool {
     let Some(sequence) = osc52_sequence(text, selection) else {
         return false;
     };
-    let mut stdout = std::io::stdout().lock();
-    stdout
-        .write_all(sequence.as_bytes())
-        .and_then(|_| stdout.flush())
+    out.write_all(sequence.as_bytes())
+        .and_then(|_| out.flush())
         .is_ok()
+}
+
+/// A per-thread stand-in for the system clipboard and the terminal, so
+/// tests can see what was copied where without side effects.
+#[cfg(test)]
+pub(crate) mod fake {
+    use std::cell::RefCell;
+
+    use super::CopyOutcome;
+
+    #[derive(Default)]
+    pub(crate) struct Clipboard {
+        /// Whether the system clipboard accepts writes; off by default,
+        /// as on a headless machine.
+        pub(crate) system_available: bool,
+        /// Every attempted system clipboard write, with its `primary` flag.
+        pub(crate) system_attempts: Vec<(String, bool)>,
+        /// Everything written to the terminal as OSC 52.
+        pub(crate) osc52: Vec<u8>,
+    }
+
+    thread_local! {
+        static CLIPBOARD: RefCell<Clipboard> = RefCell::default();
+    }
+
+    pub(crate) fn with<R>(f: impl FnOnce(&mut Clipboard) -> R) -> R {
+        CLIPBOARD.with(|c| f(&mut c.borrow_mut()))
+    }
+
+    pub(super) fn copy(text: &str, primary: bool) -> CopyOutcome {
+        with(|c| {
+            let available = c.system_available;
+            let mut system_attempts = std::mem::take(&mut c.system_attempts);
+            let outcome = super::copy_text_with(
+                text,
+                primary,
+                |t, p| {
+                    system_attempts.push((t.to_string(), p));
+                    available
+                },
+                &mut c.osc52,
+            );
+            c.system_attempts = system_attempts;
+            outcome
+        })
+    }
 }
 
 #[cfg(test)]
@@ -212,20 +273,29 @@ mod tests {
 
     #[test]
     fn an_oversized_payload_is_reported_as_too_large_not_as_a_missing_clipboard() {
-        // Only reachable without arboard, so `CopiedSystem` is tolerated.
         let huge = "x".repeat(OSC52_MAX_BASE64_BYTES);
         assert!(
             osc52_sequence(&huge, 'c').is_none(),
             "test setup: payload must exceed the cap once base64-encoded"
         );
-        match copy_text(&huge, false) {
-            CopyOutcome::TooLarge => {}
-            CopyOutcome::CopiedSystem => {
-                // A real clipboard was available and took it; the OSC 52
-                // fallback under test was never reached.
-            }
-            other => panic!("expected TooLarge, got {other:?}"),
-        }
+        assert_eq!(copy_text(&huge, false), CopyOutcome::TooLarge);
+        assert!(fake::with(|c| c.osc52.is_empty()), "nothing is emitted");
+    }
+
+    #[test]
+    fn the_system_clipboard_is_used_when_available() {
+        fake::with(|c| c.system_available = true);
+        assert_eq!(copy_text("hello", false), CopyOutcome::CopiedSystem);
+        fake::with(|c| {
+            assert_eq!(c.system_attempts, vec![("hello".to_string(), false)]);
+            assert!(c.osc52.is_empty(), "no OSC 52 fallback after success");
+        });
+    }
+
+    #[test]
+    fn osc52_is_the_fallback_without_a_system_clipboard() {
+        assert_eq!(copy_text("hello", false), CopyOutcome::CopiedOsc52);
+        fake::with(|c| assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07"));
     }
 
     #[test]
@@ -237,17 +307,52 @@ mod tests {
     #[test]
     fn emit_osc52_refuses_oversized_payload_without_writing() {
         let big = "x".repeat(OSC52_MAX_BASE64_BYTES);
-        assert!(!emit_osc52(&big, 'c'));
+        let mut out = Vec::new();
+        assert!(!emit_osc52(&mut out, &big, 'c'));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_failed_terminal_write_is_reported_as_failed() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("closed"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        assert_eq!(
+            copy_text_with("hello", false, |_, _| false, &mut Broken),
+            CopyOutcome::Failed
+        );
     }
 
     #[test]
     fn copy_text_with_primary_also_targets_the_primary_selection() {
-        // No specific outcome is asserted: it depends on the test environment.
-        let outcome = copy_text("hello", true);
-        assert!(matches!(
-            outcome,
-            CopyOutcome::CopiedSystem | CopyOutcome::CopiedOsc52 | CopyOutcome::Failed
-        ));
+        fake::with(|c| c.system_available = true);
+        assert_eq!(copy_text("hello", true), CopyOutcome::CopiedSystem);
+        fake::with(|c| {
+            assert_eq!(c.system_attempts, vec![("hello".to_string(), true)]);
+            c.system_available = false;
+            c.system_attempts.clear();
+        });
+
+        assert_eq!(copy_text("hello", true), CopyOutcome::CopiedOsc52);
+        fake::with(|c| {
+            assert_eq!(c.system_attempts, vec![("hello".to_string(), true)]);
+            assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07\x1b]52;p;aGVsbG8=\x07");
+        });
+    }
+
+    #[test]
+    fn without_primary_only_the_clipboard_selection_is_targeted() {
+        assert_eq!(copy_text("hello", false), CopyOutcome::CopiedOsc52);
+        fake::with(|c| {
+            assert_eq!(c.system_attempts, vec![("hello".to_string(), false)]);
+            assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07");
+        });
     }
 
     #[test]

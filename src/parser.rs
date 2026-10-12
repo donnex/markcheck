@@ -899,8 +899,7 @@ mod tests {
 
     #[test]
     fn non_utf8_file_is_rejected_at_load() {
-        let path =
-            std::env::temp_dir().join(format!("markcheck-nonutf8-{}.md", std::process::id()));
+        let path = crate::test_support::unique_temp_path("parser", "nonutf8", Some("md"));
         std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
         let result = parse_document(path.clone());
         let _ = std::fs::remove_file(&path);

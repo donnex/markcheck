@@ -94,6 +94,16 @@ enum Step {
 /// to read, process, and redraw before the next one arrives.
 const KEY_PACING_MS: u64 = 80;
 
+/// The binary under test, cut off from the desktop session so a copy
+/// can't overwrite the developer's real clipboard: arboard fails and the
+/// OSC 52 fallback lands in the pseudo-terminal instead.
+fn markcheck_command() -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.env_remove("DISPLAY");
+    cmd.env_remove("WAYLAND_DISPLAY");
+    cmd
+}
+
 /// Spawns the binary in a PTY, runs the steps, waits for it to exit, and
 /// returns whether it exited successfully. A background thread drains the
 /// PTY output the whole time — without it the master's buffer fills and the
@@ -104,7 +114,7 @@ fn drive(md_path: &PathBuf, env: &[(&str, &str)], steps: &[Step]) -> bool {
 
 /// Like `drive` but with extra CLI flags before the file argument.
 fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[Step]) -> bool {
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     for arg in args {
         cmd.arg(arg);
@@ -126,7 +136,7 @@ fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[S
 /// positional FILE argument, since the two conflict on the CLI. `md_path`
 /// must not already exist yet — markcheck is expected to create it.
 fn drive_new(md_path: &PathBuf, steps: &[Step]) -> bool {
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg("--new");
     cmd.arg(md_path);
@@ -1187,7 +1197,7 @@ fn git_sync_reports_when_the_file_is_untracked() {
     let path = root.join("checklist.md");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
@@ -1302,7 +1312,7 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
         ],
     );
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
@@ -1561,7 +1571,7 @@ fn a_hard_linked_checklist_warns_the_user_at_startup() {
     std::fs::remove_file(&alias).ok();
     std::fs::hard_link(&path, &alias).unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg(&path);
     cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
@@ -1584,7 +1594,7 @@ fn an_ordinary_checklist_is_not_warned_about() {
     let path = unique_path("no-hardlink-warn");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg(&path);
     cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());

@@ -1910,14 +1910,15 @@ fn click_on_code_region_copies_that_specific_row() {
     state.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.code_regions = vec![(Rect::new(11, 7, 38, 1), "b".to_string())];
 
-    // On the region: specific path (outcome is env-dependent, but never
-    // the ambiguous hint).
+    // On the region: the specific path, never the ambiguous hint.
     state.handle_left_click(15, 7);
-    let msg = state.status_message.as_deref().unwrap_or("");
-    assert!(
-        !msg.contains("candidates"),
-        "specific-region click overrides the ambiguous hint: {msg:?}"
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sent to clipboard (OSC 52)")
     );
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("b".to_string(), false)]);
+    });
 
     // Elsewhere in the card (no region): ambiguous fallback (MVP).
     state.handle_left_click(15, 6);
