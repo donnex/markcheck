@@ -86,6 +86,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two markcheck instances saving the same checklist could both write at once,
+  silently losing one toggle, on systems whose `ps` doesn't support `-p` —
+  BusyBox, as found in Alpine and other minimal images. markcheck checks
+  whether the instance holding the save lock is still running, and misread
+  `ps`'s usage error as "that instance is gone", so it took the lock from a
+  live owner. On Linux the check now reads `/proc` and needs no `ps` at all;
+  elsewhere a `ps` error keeps the lock. This also fixes the opposite case on
+  Linux systems without `ps` installed (slim and distroless containers), where
+  a lock left by a markcheck killed mid-save was never recovered and every
+  later save was refused. (#6)
+
 - A command too long for the card now shows a dim `↩` at the end of every
   row it wraps onto. Previously the wrapped part was drawn exactly like a new
   line, so on a narrow terminal a single command — say a delete whose path

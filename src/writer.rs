@@ -181,8 +181,8 @@ fn lock_path(target: &Path) -> PathBuf {
 }
 
 /// Whether the lock's owner is demonstrably gone; anything short of proof
-/// is `false`. `ps -p` rather than `kill -0`, which can't tell a dead
-/// process from another user's.
+/// is `false`. Never `kill -0`, which can't tell a dead process from
+/// another user's.
 fn owner_is_gone(path: &Path) -> bool {
     let Some(pid) = fs::read_to_string(path)
         .ok()
@@ -193,18 +193,42 @@ fn owner_is_gone(path: &Path) -> bool {
     if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    match Command::new("ps")
-        .args(["-p", &pid, "-o", "pid="])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        // A clean non-zero exit is `ps` reporting no such process.
-        Ok(status) => !status.success(),
-        // `ps` could not be run, so nothing was demonstrated.
-        Err(_) => false,
+    if let Some(gone) = proc_reports_gone(&pid) {
+        return gone;
     }
+    ps_reports_gone(Command::new("ps"), &pid)
+}
+
+/// Linux answers from `/proc`, with no external `ps` to be missing or to
+/// lack `-p` (BusyBox). `None` when `/proc` isn't mounted, so nothing was
+/// shown either way.
+#[cfg(target_os = "linux")]
+fn proc_reports_gone(pid: &str) -> Option<bool> {
+    let proc = Path::new("/proc");
+    proc.join("self").exists().then(|| !proc.join(pid).exists())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn proc_reports_gone(_pid: &str) -> Option<bool> {
+    None
+}
+
+/// Runs `ps` (given as a `Command` so a test can stand one in) with
+/// `-p <pid> -o pid=`. Gone only on positive evidence: an empty listing,
+/// nothing on stderr, and an exit of 0 or 1. A usage error, any other
+/// stderr output or exit code, or a `ps` that can't run proves nothing, so
+/// the lock is kept.
+fn ps_reports_gone(mut ps: Command, pid: &str) -> bool {
+    let Ok(output) = ps
+        .args(["-p", pid, "-o", "pid="])
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    matches!(output.status.code(), Some(0 | 1))
+        && output.stderr.is_empty()
+        && output.stdout.iter().all(u8::is_ascii_whitespace)
 }
 
 /// Replaces the line's task checkbox (`[ ]`, `[x]`, `[X]`, `[/]`) with
@@ -683,6 +707,58 @@ mod tests {
         );
 
         fs::remove_file(&path).ok();
+    }
+
+    /// A stand-in `ps` running `script` under `sh`; the real arguments
+    /// (`-p <pid> -o pid=`) arrive as `$1`...
+    fn stub_ps(script: &str) -> Command {
+        let mut ps = Command::new("sh");
+        ps.args(["-c", script, "ps"]);
+        ps
+    }
+
+    #[test]
+    fn a_ps_that_rejects_its_arguments_does_not_prove_the_owner_gone() {
+        // BusyBox `ps` has no `-p`: it prints usage and exits 1 for every
+        // PID, which must not read as "no such process".
+        let ps = stub_ps("echo 'ps: unrecognized option: p' >&2; exit 1");
+        assert!(!ps_reports_gone(ps, "4242"));
+    }
+
+    #[test]
+    fn ps_proves_the_owner_gone_only_with_an_empty_listing_and_no_stderr() {
+        assert!(ps_reports_gone(stub_ps("exit 1"), "4242"));
+        assert!(ps_reports_gone(stub_ps("exit 0"), "4242"));
+        assert!(!ps_reports_gone(stub_ps("echo \" $2\""), "4242"));
+        assert!(!ps_reports_gone(
+            stub_ps("echo warning >&2; exit 0"),
+            "4242"
+        ));
+        assert!(!ps_reports_gone(stub_ps("exit 2"), "4242"));
+    }
+
+    #[test]
+    fn a_ps_that_cannot_be_run_does_not_prove_the_owner_gone() {
+        let ps = Command::new("markcheck-test-no-such-ps-binary");
+        assert!(!ps_reports_gone(ps, "4242"));
+    }
+
+    #[test]
+    fn the_real_ps_tells_a_live_owner_from_a_dead_one() {
+        let alive = std::process::id().to_string();
+        assert!(!ps_reports_gone(Command::new("ps"), &alive));
+        assert!(ps_reports_gone(
+            Command::new("ps"),
+            &a_dead_pid().to_string()
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_tells_a_live_owner_from_a_dead_one() {
+        let alive = std::process::id().to_string();
+        assert_eq!(proc_reports_gone(&alive), Some(false));
+        assert_eq!(proc_reports_gone(&a_dead_pid().to_string()), Some(true));
     }
 
     #[test]
