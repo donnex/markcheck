@@ -597,6 +597,25 @@ fn mouse_wheel_and_click_do_not_crash() {
 }
 
 #[test]
+fn bracketed_paste_on_the_checklist_does_not_run_its_characters() {
+    // A paste arrives wrapped in ESC [ 200~ … ESC [ 201~ once bracketed paste
+    // is on; unwrapped, its spaces would toggle tasks and its `q` would quit.
+    let path = unique_path("paste");
+    let original = "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n";
+    write_file(&path, original);
+
+    let ok = drive(
+        &path,
+        &[],
+        &[Step::Key("\x1b[200~s x q R y\r\x1b[201~"), Step::Key("q")],
+    );
+    assert!(ok, "binary should exit successfully after a paste");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
 fn start_key_persists_started_marker() {
     let path = unique_path("started");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");

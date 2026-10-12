@@ -18,7 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Context;
 use clap::Parser;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEventKind, MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -96,7 +97,7 @@ impl Drop for TerminalGuard {
         if self.mouse {
             let _ = execute!(io::stdout(), DisableMouseCapture);
         }
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
 
@@ -192,7 +193,7 @@ fn main() -> anyhow::Result<()> {
 
     let mouse = settings.mouse;
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
@@ -323,6 +324,7 @@ where
                     }
                     _ => {}
                 },
+                Event::Paste(text) => state.handle_paste(&text),
                 _ => {}
             }
         }
@@ -477,7 +479,7 @@ where
     if mouse {
         execute!(io::stdout(), DisableMouseCapture)?;
     }
-    execute!(io::stdout(), LeaveAlternateScreen)?;
+    execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen)?;
 
     let (program, args, warning) = resolve_editor(
         std::env::var("VISUAL").ok().as_deref(),
@@ -497,7 +499,7 @@ where
 
     // Restore the terminal regardless of how the editor fared.
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }

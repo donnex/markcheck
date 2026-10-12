@@ -898,7 +898,7 @@ Like the editor request, `app.rs` only sets a request — the main loop consumes
 
 ## Terminal Setup (`src/main.rs`)
 
-`TerminalGuard` with `Drop` ensures the terminal is always restored even on panic — disabling raw mode, releasing mouse capture (when it was enabled), and leaving the alternate screen:
+`TerminalGuard` with `Drop` ensures the terminal is always restored even on panic — disabling raw mode, releasing mouse capture (when it was enabled), and turning bracketed paste off while leaving the alternate screen:
 
 ```rust
 struct TerminalGuard { mouse: bool }
@@ -908,7 +908,7 @@ impl Drop for TerminalGuard {
         if self.mouse {
             let _ = execute!(stdout(), DisableMouseCapture);
         }
-        let _ = execute!(stdout(), LeaveAlternateScreen);
+        let _ = execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
 ```
@@ -919,7 +919,7 @@ CLI via `clap` derive: positional `file: Option<PathBuf>` (`required_unless_pres
 
 `--version`/`-V` (clap's built-in flag, wired via `#[command(version = VERSION)]`) prints `<CARGO_PKG_VERSION> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. `build.rs` shells out to `git rev-parse --short HEAD` at compile time and exports it as the `MARKCHECK_GIT_SHA` build-time env var (`cargo:rustc-env`), falling back to `unknown` when not in a git checkout (e.g. a source tarball); `main.rs`'s `VERSION` const stitches it together with `env!("CARGO_PKG_VERSION")` via `concat!`. `cargo:rerun-if-changed` keeps the SHA current: `build.rs` watches `HEAD` (branch switches, detached checkouts), `packed-refs` (a tip that moves while staying packed), and the **directory** the current branch's loose ref lives in rather than the ref file itself — in a packed repository the loose file doesn't exist at build time, and the next commit *creates* it, which a watch on the file would miss. Only paths that exist are emitted, since a missing `rerun-if-changed` path makes cargo rebuild unconditionally; outside a git checkout nothing is emitted at all.
 
-Mouse capture is enabled by default (`EnableMouseCapture` at startup); `TerminalGuard { mouse }` disables it again on drop, before leaving the alternate screen. The event loop polls at 100ms and dispatches `Event::Key` presses to `handle_key`, `Event::Mouse` wheel events to `handle_scroll_up/down`, and left-clicks (`MouseButton::Left` down) to `handle_left_click` for click-to-copy; `Event::Resize` is handled automatically by ratatui. File reload is watch-driven, not polled — see "Reload From Disk" above.
+Mouse capture is enabled by default (`EnableMouseCapture` at startup); `TerminalGuard { mouse }` disables it again on drop, before leaving the alternate screen. The event loop polls at 100ms and dispatches `Event::Key` presses to `handle_key`, `Event::Mouse` wheel events to `handle_scroll_up/down`, and left-clicks (`MouseButton::Left` down) to `handle_left_click` for click-to-copy; `Event::Resize` is handled automatically by ratatui. Bracketed paste is always on (`EnableBracketedPaste` with the alternate screen, off again in `TerminalGuard::drop` and around `open_in_editor`), so a paste arrives as one `Event::Paste` instead of a keystroke per character — otherwise a command pasted into the wrong pane would run each letter as a binding (spaces toggle, `R`+`y` resets, `q` quits). `AppState::handle_paste` clears pending chords, then appends the text to the query on `Search`/`ListPicker` as one line (line breaks and tabs become spaces, trailing whitespace and other control characters are dropped) and on every other screen ignores it with a sticky `Paste ignored` error. File reload is watch-driven, not polled — see "Reload From Disk" above.
 
 **Platform support:** Linux and macOS only (see README's Installation section). `default_opener` (`o` link-opening) hard-codes `open` on macOS and `xdg-open` everywhere else, and `resolve_editor`'s no-`$VISUAL`/`$EDITOR` fallback is `vi` — neither exists on Windows. `writer.rs`'s `#[cfg(unix)]`/`#[cfg(not(unix))]` split (permission handling) degrades gracefully on other platforms, but that's the only Windows-aware code path in the app; nothing else has been written or tested against it.
 

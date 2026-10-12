@@ -72,6 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pasting text into markcheck no longer runs it as commands. Previously a
+  paste arrived as one keystroke per character, so a shell command pasted
+  into the markcheck pane by mistake would toggle tasks with its spaces,
+  start tasks, open the editor, and could reset the checklist or quit — each
+  change written to the file. A paste into `/` search or the `T` filter now
+  fills in the query; anywhere else it is ignored with a "Paste ignored"
+  message. (#57)
+
 - Commands are now readable on light terminal themes. Inline commands and
   command blocks set a dark gray background but left the text in the
   terminal's own color, which on a light theme is black — dark text on a dark

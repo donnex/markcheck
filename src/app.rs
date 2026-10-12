@@ -745,6 +745,34 @@ impl AppState {
         }
     }
 
+    /// A bracketed paste: on `/` search and the `T` picker it is appended to
+    /// the query as one line (line breaks and tabs become spaces, other control
+    /// characters are dropped); everywhere else it is ignored with a sticky
+    /// error, so a stray paste never runs its characters as commands.
+    pub fn handle_paste(&mut self, text: &str) {
+        self.clear_pending_chords();
+        let line: String = text
+            .trim_end()
+            .chars()
+            .filter_map(|c| match c {
+                '\n' | '\r' | '\t' => Some(' '),
+                c if c.is_control() => None,
+                c => Some(c),
+            })
+            .collect();
+        match self.screen {
+            Screen::Search => {
+                self.search.query.push_str(&line);
+                self.update_search();
+            }
+            Screen::ListPicker => {
+                self.picker.query.push_str(&line);
+                self.picker.selection = 0;
+            }
+            _ => self.set_error("Paste ignored — markcheck takes single-key commands".to_string()),
+        }
+    }
+
     /// Left-click at `(col, row)`: a click inside the current card
     /// copies its command, exactly like `y` — copying its sole code candidate
     /// or showing the same hint when there are none or several. Clicks outside
