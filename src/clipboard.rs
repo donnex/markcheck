@@ -33,6 +33,24 @@ pub enum CopyOutcome {
     /// `Failed` told the user their clipboard was unavailable and pointed
     /// them at a setup that was working.
     TooLarge,
+    /// The text contains characters the card never shows (see
+    /// `has_hidden_characters`); nothing was copied.
+    HiddenCharacters,
+}
+
+/// Control characters other than `\n`/`\t` are dropped by ratatui when the
+/// card is drawn, and bidi controls reorder what is shown, so a command
+/// containing either would paste as something other than what the user
+/// read — an embedded `ESC [201~` can even end a bracketed paste early and
+/// run the rest. Such text is refused rather than copied.
+fn has_hidden_characters(text: &str) -> bool {
+    text.chars().any(|c| {
+        (c.is_control() && c != '\n' && c != '\t')
+            || matches!(
+                c,
+                '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+            )
+    })
 }
 
 /// Fenced code blocks take priority; inline spans are the fallback.
@@ -58,7 +76,8 @@ pub fn copy_item_code(item: &Item, primary: bool) -> CopyOutcome {
 }
 
 /// Copies an exact string — a specific clicked code row — bypassing the
-/// single-candidate rule of `copy_item_code`. Returns only `Copied*`/`Failed`.
+/// single-candidate rule of `copy_item_code`. Never returns `NoCandidates`
+/// or `Ambiguous`.
 pub fn copy_specific(text: &str, primary: bool) -> CopyOutcome {
     copy_text(text, primary)
 }
@@ -68,6 +87,9 @@ pub fn copy_specific(text: &str, primary: bool) -> CopyOutcome {
 /// the only option on headless servers. With `primary`, the PRIMARY
 /// selection is targeted in addition to the normal clipboard.
 fn copy_text(text: &str, primary: bool) -> CopyOutcome {
+    if has_hidden_characters(text) {
+        return CopyOutcome::HiddenCharacters;
+    }
     if set_via_arboard(text, primary) {
         return CopyOutcome::CopiedSystem;
     }
@@ -260,5 +282,41 @@ mod tests {
             outcome,
             CopyOutcome::CopiedSystem | CopyOutcome::CopiedOsc52 | CopyOutcome::Failed
         ));
+    }
+
+    #[test]
+    fn hidden_characters_are_detected() {
+        for text in [
+            "ls\x1b[201~\nrm -rf ~",
+            "safe\x08\x08\x08\x08evil",
+            "echo ok\rrm -rf ~",
+            "echo \u{202E}txt.exe",
+            "a\u{2066}b",
+            "a\u{0085}b",
+        ] {
+            assert!(has_hidden_characters(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn newlines_and_tabs_are_not_hidden_characters() {
+        assert!(!has_hidden_characters("make\tbuild\nmake test"));
+        assert!(!has_hidden_characters("echo héllo → 世界"));
+    }
+
+    #[test]
+    fn copy_item_code_refuses_a_command_with_hidden_characters() {
+        let item = item_with_code(vec![], vec!["ls\x1b[201~\nrm -rf ~"]);
+        assert_eq!(copy_item_code(&item, false), CopyOutcome::HiddenCharacters);
+        let item = item_with_code(vec!["echo ok\rrm -rf ~"], vec![]);
+        assert_eq!(copy_item_code(&item, true), CopyOutcome::HiddenCharacters);
+    }
+
+    #[test]
+    fn copy_specific_refuses_a_command_with_hidden_characters() {
+        assert_eq!(
+            copy_specific("safe\x08\x08\x08\x08evil", false),
+            CopyOutcome::HiddenCharacters
+        );
     }
 }

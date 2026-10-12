@@ -383,6 +383,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit merely fails transiently (a wedged filesystem, a slow disk) —
   that case is no longer treated the same as a genuinely empty repository.
 
+### Security
+
+- Copying a command (`y`, clicking a command on the card, or `--auto-copy`)
+  now refuses one that contains hidden control characters — escape,
+  backspace, carriage return and the like, or Unicode bidi overrides — and
+  says so in the status bar instead. The card never shows those characters,
+  so a malicious or corrupted checklist could display a harmless command
+  while the clipboard received a different one, which could even run on
+  paste. Newlines and tabs are still copied as before. (#4)
+
 ## [1.2.2] - 2026-08-20
 
 ### Fixed

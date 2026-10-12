@@ -217,7 +217,9 @@ Finer points:
   Inline code that has text after it stays in the sentence.
 - **Copying (`y`)** works when a task has exactly one command — a single inline
   `` `code` `` span or a single fenced block. With none or several, nothing is
-  copied and the status bar explains why.
+  copied and the status bar explains why. A command containing control
+  characters the card can't show (escape, backspace, carriage return, bidi
+  overrides) is never copied either — see [Clipboard](#clipboard).
 - **A link's URL is shown below the card, not on it.** The card shows only the
   underlined link text (a long URL used to wrap awkwardly across card rows); the
   destination appears centered in the space below the card — `→ <url>` for a
@@ -548,6 +550,13 @@ the system clipboard when available and otherwise emits an OSC 52 escape,
 which travels over SSH to your local terminal emulator (kitty, alacritty,
 wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
 bar distinguishes a system-clipboard copy from an OSC 52 one.
+
+A command that contains hidden control characters — anything the card can't
+display, such as escape, backspace or a carriage return, plus Unicode bidi
+overrides that reorder what is shown — is refused with `Not copied: command
+contains hidden control characters`, whether you press `y`, click it, or
+reach it with `--auto-copy`. Otherwise a checklist could show one command and
+put another on your clipboard. Newlines and tabs copy normally.
 
 OSC 52 is an out-of-band channel: the escape sequence rides over whatever
 carries your terminal session, including a chain of SSH hops, so a copied

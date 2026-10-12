@@ -3735,3 +3735,33 @@ fn a_change_between_parse_and_construction_is_not_recorded_as_already_seen() {
 
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn every_copy_path_refuses_a_command_with_hidden_characters() {
+    use ratatui::layout::Rect;
+    // The card drops control characters when drawn, so copying them would
+    // put something on the clipboard the user never saw. `y`, a click on a
+    // code row and `--auto-copy` all refuse, with a sticky error.
+    let expected = Some("Not copied: command contains hidden control characters");
+    let hidden = "ls\x1b[201~\nrm -rf ~".to_string();
+
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec![hidden.clone()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    assert_eq!(state.status_message.as_deref(), expected);
+    assert!(state.status_is_error);
+
+    let mut state = AppState::new(two_list_document());
+    state.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.clone())];
+    state.handle_left_click(15, 7);
+    assert_eq!(state.status_message.as_deref(), expected);
+
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["echo ok\rrm -rf ~".to_string()];
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.maybe_auto_copy();
+    assert_eq!(state.status_message.as_deref(), expected);
+}

@@ -17,6 +17,8 @@ use crate::writer;
 /// How long an ephemeral status message stays before it auto-clears.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 
+const HIDDEN_CHARACTERS_MESSAGE: &str = "Not copied: command contains hidden control characters";
+
 /// The modification time and byte length of `path` from a single `stat()`
 /// call, or `None` if it can't be read. Cross-checking both narrows (but
 /// doesn't eliminate) the window where a same-instant external edit could be
@@ -709,7 +711,9 @@ impl AppState {
     /// With `--auto-copy`, copy the current card's code when it has exactly
     /// one candidate. On a successful copy, surface the same status
     /// message as manual `y`; stay silent for no-code / ambiguous /
-    /// failure so passive navigation isn't spammed.
+    /// failure so passive navigation isn't spammed. A refusal over hidden
+    /// characters is the exception: it is a warning about the checklist
+    /// itself, so it is always shown.
     fn maybe_auto_copy(&mut self) {
         if !self.auto_copy {
             return;
@@ -723,6 +727,9 @@ impl AppState {
             Some(CopyOutcome::CopiedSystem) => self.set_status("Copied to clipboard".to_string()),
             Some(CopyOutcome::CopiedOsc52) => {
                 self.set_status("Sent to clipboard (OSC 52)".to_string())
+            }
+            Some(CopyOutcome::HiddenCharacters) => {
+                self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string())
             }
             _ => {}
         }
@@ -856,6 +863,7 @@ impl AppState {
             CopyOutcome::TooLarge => self.set_error(
                 "Not copied: this command is too large for the terminal clipboard".to_string(),
             ),
+            CopyOutcome::HiddenCharacters => self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string()),
             // copy_specific only ever copies, is too large, or fails outright.
             _ => self.set_error("Copy failed: no clipboard available".to_string()),
         }
@@ -1757,6 +1765,7 @@ impl AppState {
             CopyOutcome::TooLarge => self.set_error(
                 "Not copied: this command is too large for the terminal clipboard".to_string(),
             ),
+            CopyOutcome::HiddenCharacters => self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string()),
             CopyOutcome::Failed => {
                 self.set_error("Copy failed: no clipboard available".to_string())
             }
