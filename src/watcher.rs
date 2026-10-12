@@ -100,10 +100,7 @@ mod tests {
         let target = unique_temp_path("linktarget");
         fs::write(&target, "initial").unwrap();
 
-        let link_dir = std::env::temp_dir().join(format!(
-            "markcheck-watcher-test-linkdir-{}",
-            std::process::id()
-        ));
+        let link_dir = crate::test_support::unique_temp_path("watcher", "linkdir", None);
         fs::create_dir_all(&link_dir).unwrap();
         let link = link_dir.join("linked.md");
         fs::remove_file(&link).ok();
