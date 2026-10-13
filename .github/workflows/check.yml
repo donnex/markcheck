@@ -65,7 +65,8 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - name: cargo llvm-cov (coverage >= 97%, excluding main.rs)
+      - name: cargo llvm-cov (production coverage >= 97%, excluding main.rs and tests)
         run: |
-          cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \
+          cargo llvm-cov --locked \
+            --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs' \
             --fail-under-lines 97 --fail-under-regions 97
