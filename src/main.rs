@@ -418,13 +418,14 @@ where
     );
     let mut command = Command::new(&program);
     command.args(&args);
-    // Jump to the selected task's source line for editors that support it;
-    // the arg goes before the path per the `+N file` convention.
-    if let Some(line) = state.current_item().map(|item| item.line_number) {
-        command.args(launch::editor_line_args(&program, line));
-    }
+    let line = state.current_item().map(|item| item.line_number);
+    command.args(launch::editor_file_args(
+        &program,
+        &state.document.file_path,
+        line,
+    ));
     let started = std::time::Instant::now();
-    let status = command.arg(&state.document.file_path).status();
+    let status = command.status();
     let elapsed = started.elapsed();
 
     // Restore the terminal regardless of how the editor fared.

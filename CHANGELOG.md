@@ -113,6 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `e` now opens Kakoune, micro, Helix, Sublime Text, VS Code and VSCodium on
+  the selected task's line, as it already did for vi, nano and emacs.
+  Previously they opened at the top of the file, leaving you to find the step
+  again in a long checklist. (#110)
+
 - Pressing `e` with a GUI editor that returns at once, such as VS Code
   without `--wait`, now shows a hint to add the editor's wait flag.
   Previously markcheck said nothing: the editor window opened elsewhere, and
