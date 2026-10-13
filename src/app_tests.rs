@@ -894,6 +894,101 @@ fn committing_a_single_match_search_omits_the_cycle_nudge() {
     assert_eq!(state.status_message.as_deref(), Some("Match 1/1"));
 }
 
+#[test]
+fn a_search_that_stops_matching_returns_the_cursor_to_its_origin() {
+    // Like vim's incremental search: once the query matches nothing, the
+    // cursor goes back to where the search began instead of staying on the
+    // last matching prefix's card, and committing leaves it there.
+    let mut state = AppState::new(two_list_document());
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task 1");
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    type_str(&mut state, "x");
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    state.handle_key(KeyCode::Enter);
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No matches for \"task 1x\"")
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
+fn an_emptied_search_returns_the_cursor_to_its_origin() {
+    let mut state = AppState::new(two_list_document());
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task 1");
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    for _ in 0..6 {
+        state.handle_key(KeyCode::Backspace);
+    }
+    assert_eq!(state.search.query, "");
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    state.handle_key(KeyCode::Enter);
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    assert_eq!(shown(&state), (View::Checklist, None));
+}
+
+#[test]
+fn a_failed_or_empty_search_commit_never_auto_copies() {
+    for query in ["task 1x", ""] {
+        let mut document = two_list_document();
+        for list in &mut document.lists {
+            for item in &mut list.items {
+                item.code_spans = vec![format!("cmd-{}", item.line_number)];
+            }
+        }
+        let mut state = AppState::new(document);
+        state.auto_copy = true;
+        state.focus_item(1, 1, CursorMove::Quiet);
+        crate::clipboard::fake::with(|c| {
+            c.system_attempts.clear();
+            c.osc52.clear();
+        });
+        state.handle_key(KeyCode::Char('/'));
+        type_str(&mut state, query);
+        state.handle_key(KeyCode::Enter);
+        assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+        crate::clipboard::fake::with(|c| {
+            assert!(c.system_attempts.is_empty(), "{query:?}: nothing copied");
+            assert!(c.osc52.is_empty(), "{query:?}: nothing sent over OSC 52");
+        });
+        if query.is_empty() {
+            assert_eq!(state.status_message, None);
+        } else {
+            assert_eq!(
+                state.status_message.as_deref(),
+                Some("No matches for \"task 1x\"")
+            );
+            assert!(state.status_is_error);
+        }
+    }
+}
+
+#[test]
+fn a_successful_search_commit_auto_copies_the_match() {
+    let mut document = two_list_document();
+    for list in &mut document.lists {
+        for item in &mut list.items {
+            item.code_spans = vec![format!("cmd-{}", item.line_number)];
+        }
+    }
+    let expected = document.lists[1].items[0].code_spans[0].clone();
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    crate::clipboard::fake::with(|c| c.system_attempts.clear());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task 4");
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+    state.handle_key(KeyCode::Enter);
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![(expected.clone(), false)]);
+    });
+}
+
 // --- Bracketed paste ---
 
 #[test]

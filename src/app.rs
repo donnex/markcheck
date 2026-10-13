@@ -320,37 +320,45 @@ impl AppState {
 
     /// Re-run the live query and jump the cursor to the next match from the
     /// search origin (see [`Self::search_target`]), keeping the `Search`
-    /// overlay open (the query keeps showing in the status bar). No match or an
-    /// empty query leaves the cursor put; no auto-copy mid-typing.
+    /// overlay open (the query keeps showing in the status bar). Like vim, no
+    /// match or an empty query returns the cursor to the search origin rather
+    /// than leaving it on an earlier prefix's match; no auto-copy mid-typing.
     fn update_search(&mut self) {
         let matches = self.find_matches(&self.search.query);
-        if let Some((_, (list_index, item_index))) = self.search_target(&matches) {
-            // Indices come from `find_matches`, so they are always in range.
-            self.current_list_index = list_index;
-            self.current_item_index = item_index;
-            self.reset_card_scroll();
+        let (list_index, item_index) = match self.search_target(&matches) {
+            Some((_, target)) => target,
+            None => self.search.origin,
+        };
+        if (list_index, item_index) != (self.current_list_index, self.current_item_index) {
+            self.focus_item(list_index, item_index, CursorMove::Quiet);
         }
     }
 
     /// Commit the search (`Enter`): store the query for `n`/`N`, close the
     /// overlay on the current match, and allow auto-copy now.
     /// Reports the match position, or a sticky "no matches" when the committed
-    /// query matched nothing, so a committed search is never silent.
+    /// query matched nothing, so a committed search is never silent. Only a
+    /// search that found a match auto-copies: a failed or empty one leaves the
+    /// cursor on the origin card and the clipboard untouched.
     fn commit_search(&mut self) {
         let matches = self.find_matches(&self.search.query);
         self.search.last = (!self.search.query.is_empty()).then(|| self.search.query.clone());
         self.overlay = None;
-        if !self.search.query.is_empty() {
-            match self.search_target(&matches) {
-                None => self.set_error(format!("No matches for \"{}\"", self.search.query)),
-                Some(_) if matches.len() == 1 => self.set_status("Match 1/1".to_string()),
-                Some((position, _)) => {
-                    // Nudge `n`/`N` here: they cycle matches once the search
-                    // prompt is dismissed, but the always-on legend only
-                    // advertises `/`, so a first-time user wouldn't know to
-                    // reach for them.
-                    self.set_status(format!("Match {position}/{} · n/N to cycle", matches.len()));
-                }
+        if self.search.query.is_empty() {
+            return;
+        }
+        match self.search_target(&matches) {
+            None => {
+                self.set_error(format!("No matches for \"{}\"", self.search.query));
+                return;
+            }
+            Some(_) if matches.len() == 1 => self.set_status("Match 1/1".to_string()),
+            Some((position, _)) => {
+                // Nudge `n`/`N` here: they cycle matches once the search
+                // prompt is dismissed, but the always-on legend only
+                // advertises `/`, so a first-time user wouldn't know to
+                // reach for them.
+                self.set_status(format!("Match {position}/{} · n/N to cycle", matches.len()));
             }
         }
         // A successful auto-copy (if enabled) overrides with its own message.
