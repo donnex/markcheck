@@ -426,6 +426,11 @@ the same way. `markcheck` doesn't stop you, but it does say so up front —
 opening a checklist with more than one hard link shows a warning before you
 touch anything, so you can quit if that wasn't what you wanted.
 
+A checklist you have made read-only (`chmod a-w`) is never saved to:
+opening it shows a warning up front, and each toggle is refused with a
+sticky "File is read-only — change not saved" message, leaving the file
+exactly as it was. Run `chmod u+w` on it to allow saving again.
+
 If the file changed on disk since it was last loaded — another `markcheck`
 instance, or an external editor, saved to it after you did — a toggle is
 refused rather than silently overwriting that change: the file is reloaded

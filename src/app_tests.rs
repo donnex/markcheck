@@ -2854,6 +2854,32 @@ fn toggle_refuses_and_reloads_when_disk_content_changed_since_load() {
     assert_eq!(state.document.lists[0].title, "Other");
 }
 
+#[cfg(unix)]
+#[test]
+fn toggle_is_refused_on_a_write_protected_checklist() {
+    use std::os::unix::fs::PermissionsExt;
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false)],
+    }]);
+    let path = document.file_path.clone();
+    let before = fs::read(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+    let mut state = AppState::new(document);
+
+    state.toggle_current();
+
+    assert!(state.status_is_error, "got {:?}", state.status_message);
+    assert_eq!(state.status_message.as_deref(), Some(READ_ONLY_MESSAGE));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::NotStarted)
+    );
+    assert!(state.git_sync.pending.is_none());
+}
+
 #[test]
 fn toggle_succeeds_normally_when_disk_content_is_unchanged() {
     // Sanity check alongside the conflict test above: when nothing external

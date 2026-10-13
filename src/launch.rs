@@ -244,11 +244,22 @@ pub fn startup_message(created_new: bool, warnings: &[Option<String>]) -> Option
     (!parts.is_empty()).then(|| (parts.join("; "), is_error))
 }
 
-/// The sticky warning shown at startup when a save would leave hard-linked
-/// aliases behind or take the file from another user (see
+/// The sticky warning shown at startup when the file is write-protected, so
+/// no save will happen, or a save would leave hard-linked aliases behind or
+/// take the file from another user (see `writer::is_read_only`,
 /// `writer::hard_link_count` and `writer::foreign_owner`).
-pub fn startup_warning(hard_links: Option<u64>, foreign_owner: Option<u32>) -> Option<String> {
+pub fn startup_warning(
+    read_only: bool,
+    hard_links: Option<u64>,
+    foreign_owner: Option<u32>,
+) -> Option<String> {
     let mut warnings = Vec::new();
+    if read_only {
+        warnings.push(
+            "this file is read-only — changes won't be saved (chmod u+w to allow saving)"
+                .to_string(),
+        );
+    }
     if let Some(links) = hard_links.filter(|links| *links > 1) {
         warnings.push(format!(
             "{links} hard links to this file — a save leaves the others behind"
@@ -676,17 +687,24 @@ mod tests {
 
     #[test]
     fn startup_warning_names_each_hazard() {
-        assert_eq!(startup_warning(None, None), None);
-        assert_eq!(startup_warning(Some(1), None), None);
+        assert_eq!(startup_warning(false, None, None), None);
+        assert_eq!(startup_warning(false, Some(1), None), None);
         assert_eq!(
-            startup_warning(Some(3), None).as_deref(),
+            startup_warning(true, None, None).as_deref(),
+            Some(
+                "Warning: this file is read-only — changes won't be saved (chmod u+w to allow \
+                 saving)"
+            )
+        );
+        assert_eq!(
+            startup_warning(false, Some(3), None).as_deref(),
             Some("Warning: 3 hard links to this file — a save leaves the others behind")
         );
         assert_eq!(
-            startup_warning(None, Some(1001)).as_deref(),
+            startup_warning(false, None, Some(1001)).as_deref(),
             Some("Warning: this file belongs to user 1001 — saving makes it yours")
         );
-        let both = startup_warning(Some(2), Some(1001)).unwrap();
+        let both = startup_warning(false, Some(2), Some(1001)).unwrap();
         assert!(both.contains("2 hard links") && both.contains("; this file belongs to user 1001"));
     }
 }
