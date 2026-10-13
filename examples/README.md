@@ -40,7 +40,8 @@ markcheck examples/basics.md
   centered below the card rather than on it — including a long URL that
   no longer wraps and a two-link task with `[1]`/`[2]` markers keyed to the
   numbered list below the card — an `https://` and a `mailto:` one that `o`
-  opens, plus a `file://` one that `o` refuses as an unsupported scheme,
+  opens, plus a `file://` one that `o` refuses as an unsupported scheme, a
+  bare URL in the task text that `o` opens just the same,
   a fenced block placed directly after a list that attaches to the list's last
   card, and a no-checkbox section that gets dropped.
 - **`sub-sections.md`** — `### H3`+ sub-sections *within* a list: items

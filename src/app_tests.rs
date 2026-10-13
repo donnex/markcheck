@@ -1114,6 +1114,19 @@ fn o_requests_opening_a_single_link_and_reports_it() {
 }
 
 #[test]
+fn o_opens_a_bare_url_in_the_task_text() {
+    let path =
+        write_real_file("## S\n\n- [ ] Check the dashboard at https://example.com/status.\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('o'));
+    assert_eq!(
+        state.take_link_open_request().as_deref(),
+        Some("https://example.com/status")
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn o_opens_every_safe_scheme_including_uppercase() {
     for url in [
         "http://example.com/a",

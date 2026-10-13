@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A bare URL in a task or note, such as `https://example.com/status` or
+  `www.example.com`, is now a link, the way GitHub and most Markdown viewers
+  show it: it is underlined, listed below the card and opened with `o`.
+  Previously the card showed the URL but `o` answered "Nothing to open: card
+  has no link", because only `[text](url)` and `<url>` links counted. (#81)
+
 - A task with several commands can now be copied from the keyboard. The card
   numbers them — a dim `[1]`, `[2]` after each inline command, or in the top
   border of each fenced block — and `y` then a digit copies that command,
