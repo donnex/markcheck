@@ -11,6 +11,11 @@
 //! `cargo llvm-cov` the spawned binary is instrumented, so this also lifts
 //! `main.rs` coverage.
 //!
+//! Nothing here synchronizes on a fixed sleep: every wait polls for an
+//! observable condition (the alternate screen being entered, text on the
+//! screen, the file's content, the child's exit) up to a deadline, and a
+//! deadline that passes fails the test rather than hanging it.
+//!
 //! Unix-only, matching the project's own platform support (Linux/macOS —
 //! see README's Installation section) and CI (`check.yml` runs on
 //! `ubuntu-latest` only).
@@ -18,27 +23,28 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 mod common;
 
-/// These `git_sync_*` tests each spawn a subprocess with its own
-/// background commit+push thread and then poll a bare remote for it to
-/// land. Run concurrently (the default, like every other test in this
-/// file), they compete with each other for CPU on top of whatever else the
-/// machine is doing, which can push the background thread past the poll
-/// deadline below on a busy runner. Held for a whole test's duration, this
-/// serializes just these against each other; `into_inner` recovers
+/// Every PTY test spawns a real subprocess, and the `git_sync_*` ones each
+/// have their own background commit+push thread on top. Run concurrently on
+/// a busy runner, they starved that background thread badly enough to blow
+/// even a 90s poll deadline, while the git operations themselves stay fast
+/// (~19ms) — pure self-contention. So each [`Session`] holds this for as long
+/// as its binary runs, serializing just this file's tests; the unit tests,
+/// in their own test binaries, keep full parallelism. `into_inner` recovers
 /// the guard even if an earlier holder panicked, since there's no shared
 /// data here to have been corrupted — only mutual exclusion matters.
-static GIT_SYNC_TEST_LOCK: Mutex<()> = Mutex::new(());
+static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-fn git_sync_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    GIT_SYNC_TEST_LOCK
+fn pty_test_guard() -> MutexGuard<'static, ()> {
+    PTY_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -69,33 +75,38 @@ fn wait_for_file(path: &Path, mut pred: impl FnMut(&str) -> bool) -> bool {
     false
 }
 
-/// One step of a scripted interaction: either a keypress (paced with a short
-/// fixed delay — plain sequential keys have no observable side effect worth
-/// polling for before the *next* one lands), or a poll on the target
-/// markdown file's content for a condition a preceding key is expected to
-/// have caused — used before any step, notably `Key("q")`, that
-/// depends on that condition already holding, e.g. an edit having landed or
-/// a toggle having been written back.
+/// One step of a scripted interaction: either a keypress, or a wait for a
+/// condition a preceding step is expected to have caused — on the target
+/// markdown file's content or on the screen — used before any step, notably
+/// `Key("q")`, that depends on that condition already holding.
 enum Step {
     Key(&'static str),
     WaitForFile(fn(&str) -> bool),
+    /// Waits for text to be on screen, see [`Session::wait_for_screen`].
+    WaitForScreen(&'static str),
     /// Simulates another program (e.g. an editor) writing the file while
-    /// the binary is running: writes `contents` with a bumped mtime
-    /// (avoiding coarse-mtime-resolution flakiness, mirroring
-    /// `app_tests.rs`'s `touch_with_new_mtime`), then pauses well past the
-    /// watcher's poll cycle so the reload has landed before the next step.
+    /// the binary is running, with a bumped mtime (avoiding
+    /// coarse-mtime-resolution flakiness, mirroring `app_tests.rs`'s
+    /// `touch_with_new_mtime`). Follow it with a `WaitForScreen` on the
+    /// reload's status message.
     ExternalWrite(&'static str),
-    /// Simulates the file being deleted out from under the running binary,
-    /// then pauses for the watcher to detect it.
+    /// Simulates the file being deleted out from under the running binary.
+    /// Follow it with a `WaitForScreen` on the deletion's status message.
     ExternalDelete,
-    /// Waits with nothing observable to poll for, e.g. a shell resuming the
-    /// binary, so the next key isn't typed into the shell instead.
-    Pause(u64),
 }
 
-/// Pacing delay between plain keys: generous enough for the 100ms event loop
-/// to read, process, and redraw before the next one arrives.
+/// Pacing between keys, so two keys never arrive in one read — an `Esc`
+/// followed straight away by another key would otherwise parse as one
+/// Alt-chord. Pacing input only: nothing waits on it to have taken effect.
 const KEY_PACING_MS: u64 = 80;
+
+/// How long anything drawn is given to appear, starting with the first frame.
+const SCREEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long the binary is given to exit once the script is done. Generous
+/// next to `main.rs`'s own 5s wait for a final git sync, but bounded: a
+/// binary that never quits fails the test instead of hanging CI.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The binary under test, cut off from the desktop session so a copy
 /// can't overwrite the developer's real clipboard: arboard fails and the
@@ -130,10 +141,274 @@ fn git(dir: &Path) -> std::process::Command {
     cmd
 }
 
+const ROWS: u16 = 30;
+const COLS: u16 = 100;
+
+/// What the terminal shows once `raw` has been drawn, one line per row.
+/// ratatui only redraws the cells that changed between frames, so a message
+/// is rarely one contiguous run in the byte stream; replaying the cursor
+/// moves onto a grid is what makes it matchable as plain text. Covers what
+/// the binary and a shell emit: printable characters (each one cell wide),
+/// `\r`/`\n`, cursor positioning, screen/line erasure, and entering or
+/// leaving the alternate screen (both treated as a clear). Every other
+/// escape sequence is skipped.
+fn render_screen(raw: &str) -> String {
+    let (rows, cols) = (usize::from(ROWS), usize::from(COLS));
+    let mut grid = vec![vec![' '; cols]; rows];
+    let (mut row, mut col) = (0usize, 0usize);
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    let mut params = String::new();
+                    let mut action = None;
+                    for c in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&c) {
+                            action = Some(c);
+                            break;
+                        }
+                        params.push(c);
+                    }
+                    let nums: Vec<usize> = params
+                        .split(';')
+                        .map(|n| n.trim_start_matches('?').parse().unwrap_or(0))
+                        .collect();
+                    let first = nums.first().copied().unwrap_or(0);
+                    match action {
+                        Some('H') | Some('f') => {
+                            row = first.max(1) - 1;
+                            col = nums.get(1).copied().unwrap_or(1).max(1) - 1;
+                        }
+                        Some('G') => col = first.max(1) - 1,
+                        Some('C') => col += first.max(1),
+                        Some('J') if first == 2 => grid.iter_mut().for_each(|r| r.fill(' ')),
+                        Some('K') if row < rows => grid[row][col.min(cols)..].fill(' '),
+                        Some('h') | Some('l') if params == "?1049" => {
+                            grid.iter_mut().for_each(|r| r.fill(' '))
+                        }
+                        _ => {}
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            '\r' => col = 0,
+            '\n' => row += 1,
+            c if c.is_control() => {}
+            c => {
+                if row < rows && col < cols {
+                    grid[row][col] = c;
+                }
+                col += 1;
+            }
+        }
+    }
+    grid.iter()
+        .map(|r| r.iter().collect::<String>().trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The binary running under a pseudo-terminal. A background thread drains
+/// the PTY output the whole time — without it the master's buffer fills and
+/// the child blocks on its next draw and never sees the quit key — into a
+/// buffer the waits below poll. Dropping a session that never reached
+/// [`Session::finish`] (a failed assertion mid-script) kills the child, so
+/// it can't outlive the test.
+struct Session {
+    child: Box<dyn Child + Send + Sync>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    writer: Option<Box<dyn Write + Send>>,
+    output: Arc<Mutex<Vec<u8>>>,
+    drained: Receiver<()>,
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl Session {
+    /// Spawns `cmd` and waits for its first frame: entering the alternate
+    /// screen comes right after raw mode is on, so keys sent from then on
+    /// reach the event loop rather than the terminal's line editing.
+    fn spawn(cmd: CommandBuilder) -> Session {
+        let guard = pty_test_guard();
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: ROWS,
+                cols: COLS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&output);
+        let (done, drained) = channel();
+        thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock().unwrap().extend_from_slice(&buf[..n]);
+            }
+            let _ = done.send(());
+        });
+        let writer = pair.master.take_writer().unwrap();
+
+        let session = Session {
+            child,
+            master: Some(pair.master),
+            writer: Some(writer),
+            output,
+            drained,
+            _guard: guard,
+        };
+        session.wait_until(SCREEN_TIMEOUT, "the first frame", |raw| {
+            raw.contains("\x1b[?1049h")
+        });
+        session
+    }
+
+    fn raw_output(&self) -> String {
+        String::from_utf8_lossy(&self.output.lock().unwrap()).into_owned()
+    }
+
+    /// Polls the raw output until `pred` holds, panicking with the output's
+    /// tail once `timeout` passes.
+    fn wait_until(&self, timeout: Duration, what: &str, mut pred: impl FnMut(&str) -> bool) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let raw = self.raw_output();
+            if pred(&raw) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for {what}; screen was:\n{}", tail(&raw));
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Waits for `needle` to be on screen, per [`render_screen`].
+    fn wait_for_screen(&self, needle: &str) {
+        let deadline = Instant::now() + SCREEN_TIMEOUT;
+        loop {
+            let screen = render_screen(&self.raw_output());
+            if screen.contains(needle) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for {needle:?} on screen; screen was:\n{screen}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn key(&mut self, key: &str) {
+        let writer = self
+            .writer
+            .as_mut()
+            .expect("keys are only sent before finish");
+        writer.write_all(key.as_bytes()).unwrap();
+        writer.flush().unwrap();
+        thread::sleep(Duration::from_millis(KEY_PACING_MS));
+    }
+
+    fn run(&mut self, md_path: &Path, steps: &[Step]) {
+        for step in steps {
+            match step {
+                Step::Key(k) => self.key(k),
+                Step::WaitForFile(pred) => {
+                    assert!(
+                        wait_for_file(md_path, pred),
+                        "timed out waiting for the expected file content"
+                    );
+                }
+                Step::WaitForScreen(needle) => self.wait_for_screen(needle),
+                Step::ExternalWrite(contents) => {
+                    std::fs::write(md_path, contents).unwrap();
+                    let metadata = std::fs::metadata(md_path).unwrap();
+                    let new_mtime = metadata.modified().unwrap() + Duration::from_secs(1);
+                    std::fs::File::open(md_path)
+                        .unwrap()
+                        .set_modified(new_mtime)
+                        .unwrap();
+                }
+                Step::ExternalDelete => std::fs::remove_file(md_path).unwrap(),
+            }
+        }
+    }
+
+    /// Waits up to [`EXIT_TIMEOUT`] for the binary to exit, killing it and
+    /// failing the test if it doesn't, then returns whether it exited
+    /// successfully and everything it drew. See [`Session::finish_within`].
+    fn finish(self) -> (bool, String) {
+        self.finish_within(EXIT_TIMEOUT)
+    }
+
+    fn finish_within(mut self, timeout: Duration) -> (bool, String) {
+        self.writer = None;
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child.kill();
+                panic!(
+                    "the binary did not exit within {timeout:?}; screen was:\n{}",
+                    tail(&self.raw_output())
+                );
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        self.master = None;
+        // The drain ends at EOF once nothing holds the terminal open, which
+        // a stray grandchild (an opener the binary launched) could delay.
+        // Whatever arrived by the deadline is all the tests look at anyway.
+        let _ = self.drained.recv_timeout(Duration::from_secs(5));
+        let output = self.raw_output();
+        if !status.success() {
+            // Surface the child's output (stderr is on the same PTY) so a
+            // failure is diagnosable rather than a bare "not successful".
+            eprintln!(
+                "[pty] child exited unsuccessfully; output tail:\n{}",
+                tail(&output)
+            );
+        }
+        (status.success(), output)
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Ok(None) = self.child.try_wait() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+fn tail(output: &str) -> String {
+    let skip = output.chars().count().saturating_sub(400);
+    output.chars().skip(skip).collect()
+}
+
 /// Spawns the binary in a PTY, runs the steps, waits for it to exit, and
-/// returns whether it exited successfully. A background thread drains the
-/// PTY output the whole time — without it the master's buffer fills and the
-/// child blocks on its next draw and never sees the quit key.
+/// returns whether it exited successfully.
 fn drive(md_path: &PathBuf, env: &[(&str, &str)], steps: &[Step]) -> bool {
     drive_args(md_path, &[], env, steps)
 }
@@ -171,78 +446,23 @@ fn run_with_pty(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> bool {
 /// terminal, for the few tests that need to assert on what the user actually
 /// saw rather than only on the file and the exit status.
 fn run_with_pty_capturing(cmd: CommandBuilder, md_path: &Path, steps: &[Step]) -> (bool, String) {
-    let pty = native_pty_system();
-    let pair = pty
-        .openpty(PtySize {
-            rows: 30,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
+    let mut session = Session::spawn(cmd);
+    session.run(md_path, steps);
+    session.finish()
+}
 
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let drain = thread::spawn(move || {
-        let mut sink = Vec::new();
-        let _ = reader.read_to_end(&mut sink);
-        String::from_utf8_lossy(&sink).into_owned()
-    });
-
-    {
-        let mut writer = pair.master.take_writer().unwrap();
-        thread::sleep(Duration::from_millis(600)); // first draw
-        for step in steps {
-            match step {
-                Step::Key(k) => {
-                    writer.write_all(k.as_bytes()).unwrap();
-                    writer.flush().unwrap();
-                    thread::sleep(Duration::from_millis(KEY_PACING_MS));
-                }
-                Step::WaitForFile(pred) => {
-                    assert!(
-                        wait_for_file(md_path, pred),
-                        "timed out waiting for the expected file content"
-                    );
-                }
-                Step::ExternalWrite(contents) => {
-                    std::fs::write(md_path, contents).unwrap();
-                    let metadata = std::fs::metadata(md_path).unwrap();
-                    let new_mtime = metadata.modified().unwrap() + Duration::from_secs(1);
-                    std::fs::File::open(md_path)
-                        .unwrap()
-                        .set_modified(new_mtime)
-                        .unwrap();
-                    thread::sleep(Duration::from_millis(300));
-                }
-                Step::ExternalDelete => {
-                    std::fs::remove_file(md_path).unwrap();
-                    thread::sleep(Duration::from_millis(300));
-                }
-                Step::Pause(ms) => thread::sleep(Duration::from_millis(*ms)),
-            }
-        }
-    } // writer dropped
-
-    let status = child.wait().unwrap();
-    drop(pair.master);
-    let output = drain.join().unwrap_or_default();
-    if !status.success() {
-        // Surface the child's output (stderr is on the same PTY) so a
-        // failure is diagnosable rather than a bare "not successful".
-        let tail: String = output
-            .chars()
-            .rev()
-            .take(400)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        eprintln!("[pty] child exited unsuccessfully; output tail:\n{tail}");
-    }
-    (status.success(), output)
+/// The harness's own deadline: a binary that is never told to quit must
+/// fail the test promptly instead of hanging it, and be killed rather than
+/// left running.
+#[test]
+#[should_panic(expected = "did not exit within")]
+fn a_binary_that_never_quits_fails_the_test_instead_of_hanging_it() {
+    let path = unique_path("never-quits");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg(&path);
+    Session::spawn(cmd).finish_within(Duration::from_millis(500));
 }
 
 #[test]
@@ -479,6 +699,7 @@ fn live_reload_picks_up_an_external_edit() {
         &[],
         &[
             Step::ExternalWrite("## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n"),
+            Step::WaitForScreen("Reloaded: file changed on disk"),
             Step::Key("G"),
             Step::Key(" "),
             Step::WaitForFile(|s| s.contains("[x]")),
@@ -511,8 +732,10 @@ fn file_deletion_blocks_writes_then_reloads_when_restored() {
         &[],
         &[
             Step::ExternalDelete,
+            Step::WaitForScreen("File was deleted"),
             Step::Key(" "), // attempted toggle while deleted: must not crash
             Step::ExternalWrite("## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n"),
+            Step::WaitForScreen("File restored"),
             Step::Key("G"),
             Step::Key(" "),
             Step::WaitForFile(|s| s.contains("[x]")),
@@ -778,7 +1001,6 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
     // `main.rs`'s wiring (flag parsing, `GitSync::detect`, and the poll/
     // request loop), which the `git_sync.rs` unit tests can't reach since
     // they drive `GitSync` directly rather than through the compiled binary.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -840,7 +1062,6 @@ fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes()
     // The final toggle's sync runs during the exit wait, after the TUI's own
     // error line can no longer be seen, so its failure must reach stderr. The
     // hook sleeps first so the sync is still in flight when `q` lands.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-exit-report");
     let work = root.join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -900,7 +1121,6 @@ fn git_sync_does_not_commit_uncommitted_changes_just_because_the_file_was_opened
     // The unit tests around `catch_up_push` can't cover this: the function
     // didn't exist before the fix, so only driving the real binary
     // exercises the startup path that actually regressed.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-open-only");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -932,22 +1152,18 @@ fn git_sync_does_not_commit_uncommitted_changes_just_because_the_file_was_opened
     assert!(ok, "binary should exit successfully with --git-sync");
 
     // The catch-up runs on a background thread the quit path waits on, so
-    // give a would-be commit ample room to appear before concluding it
-    // didn't: poll for several seconds and require it stays absent.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        for dir in [&work, &remote] {
-            let out = git(dir)
-                .args(["log", "--format=%s", "main"])
-                .output()
-                .unwrap();
-            assert_eq!(
-                String::from_utf8_lossy(&out.stdout).trim(),
-                "init",
-                "opening a checklist must never commit or publish anything, in {dir:?}"
-            );
-        }
-        thread::sleep(Duration::from_millis(100));
+    // with the binary gone a would-be commit has already landed if it was
+    // ever going to.
+    for dir in [&work, &remote] {
+        let out = git(dir)
+            .args(["log", "--format=%s", "main"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "init",
+            "opening a checklist must never commit or publish anything, in {dir:?}"
+        );
     }
 
     assert_eq!(
@@ -966,7 +1182,6 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     // CLI-overrides-config default, and only auto_copy's config path had PTY
     // coverage before this. A path prefix match must turn git-sync on with
     // no --git-sync on the command line at all.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-cfg");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -1037,7 +1252,6 @@ fn git_sync_paths_config_matches_through_a_symlinked_prefix() {
     // a symlink never matched, even though the file genuinely lives under
     // it. Regression test: configure the prefix as a symlink to the real
     // work dir; sync must still auto-activate.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-symlink-cfg");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -1109,7 +1323,6 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
     // editor-reload path never queued a git-sync request the way
     // commit_write does. Regression test: edit only, no toggle at all, and
     // the edit must still land in the remote's log.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-editor");
     let remote = root.join("remote.git");
     let work = root.join("work");
@@ -1242,10 +1455,9 @@ fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it
     );
     assert!(ok, "binary should exit successfully");
 
-    // Give a would-be (wrong) commit+push every chance to land before
-    // asserting it didn't: poll briefly, then confirm the log is still
-    // exactly the one "init" commit.
-    thread::sleep(Duration::from_millis(500));
+    // The binary has exited, and its exit path waits for an in-flight sync
+    // to settle, so a would-be (wrong) commit+push has already landed by
+    // now if it was ever going to.
     let out = git(&remote).args(["log", "--format=%s"]).output().unwrap();
     let log = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
@@ -1279,46 +1491,16 @@ fn git_sync_reports_when_the_file_is_untracked() {
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
-    let pty = native_pty_system();
-    let pair = pty
-        .openpty(PtySize {
-            rows: 30,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let drain = thread::spawn(move || {
-        let mut sink = Vec::new();
-        let _ = reader.read_to_end(&mut sink);
-        sink
-    });
-    {
-        let mut writer = pair.master.take_writer().unwrap();
-        thread::sleep(Duration::from_millis(600));
-        writer.write_all(b" ").unwrap(); // toggle: triggers a sync attempt
-        writer.flush().unwrap();
-        thread::sleep(Duration::from_millis(800)); // let the background sync poll land
-        writer.write_all(b"q").unwrap();
-        writer.flush().unwrap();
-    }
-    let status = child.wait().unwrap();
-    drop(pair.master);
-    let raw = drain.join().unwrap_or_default();
-    assert!(status.success(), "binary should exit successfully");
-
-    let text = String::from_utf8_lossy(&raw);
-    let visible: String = text
-        .chars()
-        .filter(|c| c.is_ascii_graphic() || *c == ' ')
-        .collect();
-    assert!(
-        visible.contains("Git sync skipped: file is not tracked in git"),
-        "expected the untracked-file message in the rendered output: {visible:?}"
+    let ok = run_with_pty(
+        cmd,
+        &path,
+        &[
+            Step::Key(" "), // toggle: triggers a sync attempt
+            Step::WaitForScreen("Git sync skipped: file is not tracked in git"),
+            Step::Key("q"),
+        ],
     );
+    assert!(ok, "binary should exit successfully");
 
     let status_out = git(&root).args(["status", "--porcelain"]).output().unwrap();
     assert!(
@@ -1343,7 +1525,6 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     // `PUSH_RETRY_INTERVAL` for the automatic retry to actually land the
     // push — proving both pieces of wiring, not just that the underlying
     // `GitSync` methods work in isolation.
-    let _guard = git_sync_test_guard();
     let root = unique_path("gitsync-retry");
     let remote = root.join("remote.git");
     let broken_remote = root.join("does-not-exist.git");
@@ -1389,63 +1570,10 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
-    let pty = native_pty_system();
-    let pair = pty
-        .openpty(PtySize {
-            rows: 30,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let drain = thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        let mut all = Vec::new();
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    all.extend_from_slice(&buf[..n]);
-                    let visible: String = String::from_utf8_lossy(&all)
-                        .chars()
-                        .filter(|c| c.is_ascii_graphic() || *c == ' ')
-                        .collect();
-                    let _ = tx.send(visible);
-                }
-                Err(_) => break,
-            }
-        }
-        all
-    });
-
-    let visible_contains = |rx: &std::sync::mpsc::Receiver<String>, needle: &str| -> bool {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut last = String::new();
-        while Instant::now() < deadline {
-            while let Ok(v) = rx.try_recv() {
-                last = v;
-            }
-            if last.contains(needle) {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        false
-    };
-
-    let mut writer = pair.master.take_writer().unwrap();
-    thread::sleep(Duration::from_millis(600));
-    writer.write_all(b" ").unwrap(); // toggle: commits locally, push fails
-    writer.flush().unwrap();
-
-    assert!(
-        visible_contains(&rx, "Committed, not pushed"),
-        "the first push failure must be reported, proving CommittedNotPushed is handled"
-    );
+    let mut session = Session::spawn(cmd);
+    session.key(" "); // toggle: commits locally, push fails
+    // Reported, proving CommittedNotPushed is handled.
+    session.wait_for_screen("Committed, not pushed");
 
     // Fix the remote while the app is still running — the background
     // worker isn't touched, only the config it reads on its next attempt.
@@ -1474,12 +1602,9 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
         "the automatic retry must land the push without any further user input"
     );
 
-    writer.write_all(b"q").unwrap();
-    writer.flush().unwrap();
-    let status = child.wait().unwrap();
-    drop(pair.master);
-    let _ = drain.join();
-    assert!(status.success(), "binary should exit successfully");
+    session.key("q");
+    let (ok, _) = session.finish();
+    assert!(ok, "binary should exit successfully");
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -1750,7 +1875,10 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
         &[
             Step::Key("\x1a"), // Ctrl-Z
             Step::WaitForFile(|s| s.contains("`gamma`")),
-            Step::Pause(600),
+            // Drawn only once the binary is back in the foreground and has
+            // reloaded the shell's edit: before the suspend the file had no
+            // `gamma`, and the shell writes it to the file, not the screen.
+            Step::WaitForScreen("gamma"),
             Step::Key(" "),
             Step::WaitForFile(|s| s.contains("[x] `alpha`")),
             Step::Key("q"),
