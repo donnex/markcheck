@@ -504,7 +504,7 @@ in `$EDITOR` (`e`) syncs too, as its own commit (`checklist.md: Edited in
 vim`, naming only the editor program, never its directory) — even if you
 only edit and quit without toggling anything afterward. An editor that
 exits with an error (vim's `:cq`) counts as an abort: the edit is reloaded
-but not synced, and the status bar keeps the error, ending in `not synced`. If something *else* changes the file in the meantime — an
+but not synced, and the status bar keeps the error, ending in `not synced`. The editor has to stay open until you close the file (see [Editor and reset](#editor-and-reset)): an edit saved later from a window it handed off to reaches markcheck as an outside change, which is not synced. If something *else* changes the file in the meantime — an
 edit made outside markcheck entirely, or the file getting deleted — while
 a sync is still queued or in flight, that sync is refused rather than
 publishing content that's since gone stale: `Git sync failed: the file
@@ -788,7 +788,13 @@ change the file underneath the undo history — your own toggles never do.
 to `vi`), and reloads on exit. For editors that use the `+N file` convention
 (`vi`/`vim`/`nvim`/`view`, `nano`, `pico`, `emacs`/`emacsclient`, `joe`,
 `gedit`) the file opens on the selected task's line; other editors (VS Code,
-Sublime, Helix, …) open at the top of the file. `R` resets every task to not-done after a
+Sublime, Helix, …) open at the top of the file. The editor has to keep running until you're done with the file, which
+terminal editors do but most GUI editors don't unless told to: set
+`EDITOR="code --wait"` (VS Code), `subl -w` (Sublime Text), `gedit --wait`,
+or leave off `-n` with `emacsclient`. An editor that exits within a second
+without changing the file gets a status-bar hint saying so, since its later
+save would otherwise be picked up as an outside change and, with git-sync,
+not committed as an edit of its own. `R` resets every task to not-done after a
 confirmation prompt that says how many done and started tasks it will clear
 (press `y` to confirm — any other key cancels). When
 you quit with every task already done, `markcheck` first asks whether to

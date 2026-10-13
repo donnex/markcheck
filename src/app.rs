@@ -18,6 +18,10 @@ use crate::writer;
 /// How long an ephemeral status message stays before it auto-clears.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 
+/// An `e` editor that exits successfully sooner than this, leaving the file
+/// unchanged, is taken to have handed off to a window instead of waiting.
+const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
+
 const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
 const HIDDEN_CHARACTERS_MESSAGE: &str = "Not copied: command contains hidden control characters";
 
@@ -1506,12 +1510,17 @@ impl AppState {
     /// launch failure or non-zero exit. Those go after the reload so its own
     /// message can't replace them. A non-zero exit is the editor's abort
     /// signal, so its edit is reloaded but never synced. `program` is the
-    /// resolved editor.
+    /// resolved editor. A successful editor that returned within
+    /// [`EDITOR_RETURNED_AT_ONCE`] without changing the file most likely
+    /// opened a window and went on editing there, where its save would reach
+    /// markcheck as an unsynced external edit, so that case gets a hint about
+    /// the editor's wait flag.
     pub fn finish_editor(
         &mut self,
         program: &str,
         warning: Option<String>,
         status: io::Result<std::process::ExitStatus>,
+        elapsed: Duration,
     ) {
         let failure = match status {
             Err(err) => Some(format!("Failed to launch {program}: {err}")),
@@ -1525,6 +1534,13 @@ impl AppState {
             self.request_external_edit_sync(program);
         }
         let mut problems: Vec<String> = warning.into_iter().chain(failure).collect();
+        if !failed && !reloaded && elapsed < EDITOR_RETURNED_AT_ONCE {
+            problems.push(format!(
+                "{} returned immediately — if it opened a window, make it wait: \
+                 EDITOR=\"code --wait\" (subl -w, gedit --wait)",
+                program_name(program)
+            ));
+        }
         if problems.is_empty() {
             return;
         }
