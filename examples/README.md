@@ -31,7 +31,8 @@ markcheck examples/basics.md
   both render as a non-interactive note rather than a live task, inline vs
   fenced code,
   multi-command tasks (inline and fenced) numbered `[1]`/`[2]` for `y` then a
-  digit, fenced lines and a long
+  digit, a tab-indented fenced block whose tabs show as indentation (and
+  copy as real tabs), fenced lines and a long
   mid-sentence command that wrap with a dim `↩` on every continued row (and
   still copy whole on click), inline
   styling (emphasis / mid-line bold / strikethrough), a task whose text

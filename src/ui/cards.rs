@@ -8,7 +8,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List as ListWidget, ListItem, ListState, Padding, Paragraph,
 };
 
-use super::{char_width, display_width, split_at_width};
+use super::{char_width, display_width, expand_tabs, split_at_width};
 use crate::model::{
     AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, SubHeading, TaskState,
     View,
@@ -1505,7 +1505,7 @@ fn continuation_style(code: Style) -> Style {
 /// that continues onto the next row (all but the last piece of a line).
 fn soft_wrapped(block: &str, width: usize) -> impl Iterator<Item = (String, bool)> + '_ {
     block.lines().flat_map(move |raw| {
-        let pieces = hard_wrap(raw, width);
+        let pieces = hard_wrap(&expand_tabs(raw), width);
         let last = pieces.len() - 1;
         pieces
             .into_iter()
@@ -1557,7 +1557,12 @@ fn wrap_tokens(
 
     for (index, (word, style, glue)) in tokens.iter().enumerate() {
         let origin = style.code.then_some(index);
-        let mut rest = word.as_str();
+        let shown = if style.code {
+            expand_tabs(word)
+        } else {
+            word.as_str().into()
+        };
+        let mut rest: &str = &shown;
         // Glued tokens abut the previous one with no separating space (unless
         // this is the first token on the line). Only the first physical piece
         // of a hard-split token inherits the glue.
@@ -2624,6 +2629,47 @@ mod tests {
             .find(|s| s.content == CONTINUATION)
             .expect("a wrapped row carries the marker");
         assert!(marker.style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn tab_indented_block_keeps_its_indentation_and_a_straight_border() {
+        let block = "deploy:\n\tbuild\n\t\tpush";
+        let width = 24;
+        let lines = code_block_lines(block, width, code_bg(Color::DarkGray), None);
+        let texts = line_texts(&lines);
+        assert!(texts.iter().all(|t| !t.contains('\t')), "{texts:?}");
+        assert!(texts.contains(&format!("│ {:<20} │", "deploy:")));
+        assert!(texts.contains(&format!("│ {:<20} │", "    build")));
+        assert!(texts.contains(&format!("│ {:<20} │", "        push")));
+        for line in &lines {
+            assert_eq!(line.width(), width, "ragged right edge: {texts:?}");
+        }
+    }
+
+    #[test]
+    fn tabbed_commands_show_spaces_but_copy_the_real_tabs() {
+        let block = "cat <<-EOF\n\tline\nEOF";
+        let chip = "printf\tx";
+        let item = body_item(
+            vec![
+                BodySpan::Text("Run".to_string()),
+                BodySpan::Code(chip.to_string()),
+                BodySpan::Text("first.".to_string()),
+            ],
+            vec![block],
+            "Run it first.",
+        );
+        let (lines, rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+        let texts = line_texts(&lines);
+        assert!(texts.iter().all(|t| !t.contains('\t')), "{texts:?}");
+        assert!(texts[0].contains(" printf x "), "{texts:?}");
+        assert!(
+            texts.iter().any(|t| t.starts_with("│     line ")),
+            "{texts:?}"
+        );
+        let copies = copy_texts(&rows);
+        assert!(copies.contains(&chip), "{copies:?}");
+        assert!(copies.contains(&block), "{copies:?}");
     }
 
     #[test]

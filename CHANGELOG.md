@@ -813,6 +813,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made a shell loop over several files hard to debug. `--help` now also
   names the config file's location. (#48)
 
+- Tabs in a command are now shown on the card as indentation. Previously a
+  tab-indented fenced block, such as a Makefile recipe or a `cat <<-EOF`
+  heredoc, was drawn flush left and the right edge of its box came out
+  ragged, because the tabs were measured but never drawn. Copying still
+  gives the original tabs. (#85)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping
