@@ -317,9 +317,6 @@ fn fit_tab_titles(titles: &[&str], avail: usize) -> Option<Vec<usize>> {
     const MIN_TITLE: usize = 3;
 
     let n = titles.len();
-    if n == 0 {
-        return Some(vec![]);
-    }
     let fixed = TAB_DECORATION * n;
     let title_budget = avail.checked_sub(fixed)?;
 

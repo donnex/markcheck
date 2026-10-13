@@ -64,8 +64,6 @@ fn accent_color(item: &Item, info_state: Option<TaskState>, palette: Palette) ->
 /// Below this card-area width a single card is shown instead of the
 /// three-card stack.
 const NARROW_THRESHOLD: u16 = 80;
-/// Below this card-row width the side cards don't have room to tuck.
-const MIN_STACK_WIDTH: u16 = 44;
 const MIN_CARD_HEIGHT: u16 = 8;
 /// The center card's share of the stack width. Used both to measure card
 /// height and to place the card, which must agree.
@@ -471,7 +469,7 @@ fn current_card_width(area: Rect) -> u16 {
     if area.width < NARROW_THRESHOLD {
         area.width
     } else {
-        (area.width * CENTER_CARD_PCT / 100).max(20)
+        area.width * CENTER_CARD_PCT / 100
     }
 }
 
@@ -572,7 +570,8 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
         card_row(area, content_h)
     };
 
-    if area.width < NARROW_THRESHOLD || row.width < MIN_STACK_WIDTH {
+    // `row` is a vertical slice of `area`, so it is always as wide as `area`.
+    if area.width < NARROW_THRESHOLD {
         render_current_card(frame, row, area, state);
         render_link_panel_below(frame, area, row, state);
         return;
@@ -581,7 +580,7 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Stack geometry: the center card is full height and painted
     // last; the side cards are tucked down and shortened, their inner
     // columns extending underneath the center card.
-    let center_width = (row.width * CENTER_CARD_PCT / 100).max(20);
+    let center_width = row.width * CENTER_CARD_PCT / 100;
     let center_x = row.x + (row.width - center_width) / 2;
     let center_right = center_x + center_width;
     let side_height = row.height.saturating_sub(2 * STACK_TUCK);

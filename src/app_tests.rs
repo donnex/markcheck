@@ -4963,19 +4963,6 @@ fn picker_enter_with_no_matches_closes_without_jumping() {
 }
 
 #[test]
-fn go_to_first_and_last_item_are_no_ops_on_a_list_less_document() {
-    // Defensive-only branches: AppState::new requires >=1 list, but
-    // go_to_first_item/go_to_last_item each guard independently, so
-    // construct the (otherwise-unreachable) empty-lists state directly.
-    let mut state = AppState::new(two_list_document());
-    state.document.lists.clear();
-    state.go_to_first_item();
-    state.go_to_last_item();
-    // Must not panic; nothing to assert beyond that since there is no
-    // valid cursor position to check.
-}
-
-#[test]
 fn toggle_item_is_blocked_when_file_deleted() {
     let mut state = AppState::new(two_list_document());
     state.file_deleted = true;

@@ -677,9 +677,12 @@ impl AppState {
 
     /// `G`: jump to the very last task in the document (literal position).
     pub fn go_to_last_item(&mut self) {
-        let Some(last) = self.document.lists.len().checked_sub(1) else {
-            return;
-        };
+        let last = self
+            .document
+            .lists
+            .len()
+            .checked_sub(1)
+            .expect("AppState ≥1-list invariant");
         self.focus_item(last, usize::MAX, CursorMove::Navigate);
     }
 
