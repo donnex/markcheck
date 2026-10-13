@@ -91,6 +91,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `o` no longer says "Opening" followed by the link when nothing opens. On a headless
+  machine — typically an SSH session to a server, with no `$BROWSER` and no
+  graphical display — it now copies the link to your clipboard instead (over
+  SSH this reaches your local terminal) and says so. Elsewhere the status bar
+  says which program the link was sent to, and if that program exits with an
+  error within a few seconds you get a sticky "Couldn't open link" message
+  naming it, rather than a confirmation followed by nothing. (#63)
+
 - A reload of the checklist file now keeps the cursor on the task you were
   on when lines are added or removed above it. Previously inserting a single
   line, by adding a step in your editor or pulling a change, sent the cursor

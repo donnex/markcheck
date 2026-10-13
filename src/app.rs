@@ -1426,7 +1426,6 @@ impl AppState {
             .unwrap_or_default();
         match urls.as_slice() {
             [url] if is_safe_link(url) => {
-                self.set_status(format!("Opening {url}"));
                 self.link_open_request = Some(url.clone());
             }
             [url] => self.set_error(format!("Not opened: unsupported link type ({url})")),
@@ -1445,11 +1444,39 @@ impl AppState {
             .unwrap_or_default();
         match urls.get(n - 1) {
             Some(url) if is_safe_link(url) => {
-                self.set_status(format!("Opening {url}"));
                 self.link_open_request = Some(url.clone());
             }
             Some(url) => self.set_error(format!("Not opened: unsupported link type ({url})")),
             None => self.set_error(format!("No link [{n}] on this card")),
+        }
+    }
+
+    /// `o`'s opener has started. Worded as an attempt, not a result: a
+    /// quick failed exit is reported afterwards (`launch::opener_failure_message`).
+    pub fn report_link_sent(&mut self, program: &str, url: &str) {
+        let name = crate::launch::program_name(program);
+        self.set_status(format!("Sent to {name}: {url}"));
+    }
+
+    /// `o` with nowhere to send the link (`launch::no_browser_available`):
+    /// copy it instead, which over SSH reaches the local terminal via OSC 52.
+    pub fn copy_link_instead(&mut self, url: &str) {
+        use clipboard::CopyOutcome;
+        match clipboard::copy_specific(url, self.clipboard_primary) {
+            CopyOutcome::CopiedSystem => {
+                self.set_status("No browser here — link copied to clipboard".to_string())
+            }
+            CopyOutcome::CopiedOsc52 => {
+                self.set_status("No browser here — link sent to clipboard (OSC 52)".to_string())
+            }
+            CopyOutcome::TooLarge => self.set_error(
+                "No browser here, and the link is too large for the terminal clipboard".to_string(),
+            ),
+            CopyOutcome::HiddenCharacters => self.set_error(
+                "No browser here, and the link contains hidden control characters — not copied"
+                    .to_string(),
+            ),
+            _ => self.set_error(format!("No browser or clipboard here — link: {url}")),
         }
     }
 
