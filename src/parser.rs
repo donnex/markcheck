@@ -231,6 +231,475 @@ struct ItemBuilder {
     link: Option<(String, String)>,
 }
 
+impl ItemBuilder {
+    /// A leading bold-only run is the card title; a bold run anywhere else
+    /// is inline strong styling in the body.
+    fn start_strong(&mut self) {
+        if !self.header_done && self.text.trim().is_empty() {
+            self.capturing_header = true;
+        } else {
+            self.style.strong = true;
+        }
+    }
+
+    fn end_strong(&mut self) {
+        if self.capturing_header {
+            self.capturing_header = false;
+            self.header_done = true;
+        } else {
+            self.style.strong = false;
+        }
+    }
+
+    fn start_link(&mut self, url: &str) {
+        if !self.capturing_header {
+            self.link = Some((url.to_string(), String::new()));
+        }
+    }
+
+    fn end_link(&mut self) {
+        if let Some((url, text)) = self.link.take() {
+            self.body.push(BodySpan::Link { text, url });
+        }
+    }
+
+    /// Link text still flows into `text` (and thus `display_text`) so search
+    /// matches it.
+    fn push_text(&mut self, text: &str) {
+        if self.capturing_header {
+            self.header.push_str(text);
+        } else if let Some((_, link_text)) = &mut self.link {
+            link_text.push_str(text);
+            self.text.push_str(text);
+        } else {
+            self.text.push_str(text);
+            let style = self.style;
+            self.body.push(if style.is_plain() {
+                BodySpan::Text(text.to_string())
+            } else {
+                BodySpan::Styled {
+                    text: text.to_string(),
+                    style,
+                }
+            });
+        }
+    }
+
+    /// A soft/hard line break within a paragraph is whitespace: without this
+    /// the words on either side would fuse ("to"+"show"→"toshow") in
+    /// display_text/search and in the card.
+    fn push_break(&mut self) {
+        if self.capturing_header {
+            self.header.push(' ');
+        } else if let Some((_, link_text)) = &mut self.link {
+            link_text.push(' ');
+            self.text.push(' ');
+        } else {
+            self.text.push(' ');
+            self.body.push(BodySpan::Text(" ".to_string()));
+        }
+    }
+
+    fn push_code(&mut self, text: &str) {
+        if let Some((_, link_text)) = &mut self.link {
+            link_text.push_str(text);
+            self.text.push_str(text);
+        } else {
+            self.code_spans.push(text.to_string());
+            if self.capturing_header {
+                self.header.push_str(text);
+            } else {
+                self.text.push_str(text);
+                self.body.push(BodySpan::Code(text.to_string()));
+            }
+        }
+    }
+
+    fn into_item(self) -> Item {
+        // A checkbox quoted inside a `>` blockquote is an illustrative
+        // example, not a real task.
+        let kind = match self.kind {
+            Some(kind) if !self.in_blockquote => kind,
+            _ => ItemKind::DisplayOnly,
+        };
+        let header = {
+            let trimmed = self.header.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        };
+        let display_text = self.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        Item {
+            line_number: self.line,
+            depth: self.depth,
+            section: self.section,
+            display_text,
+            body: self.body,
+            header,
+            code_spans: self.code_spans,
+            code_blocks: self.code_blocks,
+            kind,
+        }
+    }
+}
+
+/// Whether a finished top-level-eligible item could be its list's banner,
+/// apart from the "first top-level item" rule. A bullet with children is
+/// never the banner, which emits no `Item` and would orphan them; a command
+/// in the bold or under the bullet keeps it a card, since the one-line text
+/// banner would discard it; a blockquoted bullet is an example, not the list's.
+fn is_banner_candidate(item: &Item, has_children: bool, in_blockquote: bool) -> bool {
+    item.kind == ItemKind::DisplayOnly
+        && item.header.is_some()
+        && item.display_text.is_empty()
+        && item.code_spans.is_empty()
+        && item.code_blocks.is_empty()
+        && item.depth == 0
+        && !has_children
+        && !in_blockquote
+}
+
+/// Any block-level start other than a fenced code block breaks the
+/// fence-attaches-to-previous-list rule.
+fn keeps_fence_attachment(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_)))
+            | Event::Text(_)
+            | Event::Code(_)
+            | Event::End(_)
+            | Event::TaskListMarker(_)
+    )
+}
+
+fn strip_trailing_newline(content: String) -> String {
+    content
+        .strip_suffix('\n')
+        .map(str::to_string)
+        .unwrap_or(content)
+}
+
+/// Everything the event walk in [`parse_source`] carries between events.
+struct ParseState<'a> {
+    source: &'a str,
+    started_offsets: HashSet<usize>,
+    line_counter: LineCounter,
+
+    lists: Vec<List>,
+    default_items: Vec<Item>,
+    default_banner: Option<String>,
+
+    /// The open heading's level and the text read so far.
+    heading: Option<(HeadingLevel, String)>,
+    /// The first non-empty `# H1` becomes the document title.
+    document_title: Option<String>,
+
+    /// The active `### H3`+ sub-section path: a heading stack, reduced on
+    /// each heading (pop entries at level >= the new one, then push it) and
+    /// cleared at every `# H1` / `## H2` boundary, which start a fresh list
+    /// context. Snapshotted onto each item as it's opened.
+    section_stack: Vec<SubHeading>,
+
+    /// Items are buffered per top-level list: a list containing no checkbox
+    /// at all contributes nothing to the document.
+    list_depth: usize,
+    current_list_items: Vec<Item>,
+    /// Tracked apart from item kind so a blockquoted checkbox still counts for
+    /// the drop-if-empty rule.
+    list_had_checkbox_syntax: bool,
+
+    /// Depth of `>` blockquote nesting, so a checkbox bullet quoted inside
+    /// one can be told apart from a real, live task.
+    blockquote_depth: usize,
+
+    /// A leading bold-only top-level bullet becomes the list's banner instead
+    /// of a card. Reset at each H2.
+    seen_first_top_item: bool,
+
+    /// A fenced code block at column 0 immediately after a kept list is
+    /// attached to that list's last item. Any other block between the list
+    /// and the fence breaks the attachment.
+    attach_fence_to_last_item: bool,
+    /// The open code block: whether it is fenced, and its content so far.
+    code_block: Option<(bool, String)>,
+
+    /// One frame per open item; a stack so nested items don't clobber their
+    /// parent's in-progress fields. The innermost open item is the top.
+    item_stack: Vec<ItemBuilder>,
+}
+
+impl<'a> ParseState<'a> {
+    fn new(source: &'a str, started_offsets: HashSet<usize>) -> Self {
+        Self {
+            source,
+            started_offsets,
+            line_counter: LineCounter::new(),
+            lists: Vec::new(),
+            default_items: Vec::new(),
+            default_banner: None,
+            heading: None,
+            document_title: None,
+            section_stack: Vec::new(),
+            list_depth: 0,
+            current_list_items: Vec::new(),
+            list_had_checkbox_syntax: false,
+            blockquote_depth: 0,
+            seen_first_top_item: false,
+            attach_fence_to_last_item: false,
+            code_block: None,
+            item_stack: Vec::new(),
+        }
+    }
+
+    fn handle(&mut self, event: Event, offset: usize) {
+        if !keeps_fence_attachment(&event) {
+            self.attach_fence_to_last_item = false;
+        }
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                self.heading = Some((level, String::new()));
+            }
+            Event::End(TagEnd::Heading(level)) => self.on_heading_end(level),
+            Event::Start(Tag::List(_)) => self.on_list_start(),
+            Event::End(TagEnd::List(_)) => self.on_list_end(),
+            Event::Start(Tag::BlockQuote(_)) => self.blockquote_depth += 1,
+            Event::End(TagEnd::BlockQuote(_)) => {
+                self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+            }
+            Event::Start(Tag::Item) => self.on_item_start(offset),
+            Event::End(TagEnd::Item) => self.on_item_end(),
+            Event::TaskListMarker(checked) => self.on_task_marker(checked, offset),
+            Event::Start(Tag::Strong) => self.with_item(ItemBuilder::start_strong),
+            Event::End(TagEnd::Strong) => self.with_item(ItemBuilder::end_strong),
+            Event::Start(Tag::Emphasis) => self.with_item(|item| item.style.emphasis = true),
+            Event::End(TagEnd::Emphasis) => self.with_item(|item| item.style.emphasis = false),
+            Event::Start(Tag::Strikethrough) => {
+                self.with_item(|item| item.style.strikethrough = true);
+            }
+            Event::End(TagEnd::Strikethrough) => {
+                self.with_item(|item| item.style.strikethrough = false);
+            }
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                self.with_item(|item| item.start_link(&dest_url));
+            }
+            Event::End(TagEnd::Link) => self.with_item(ItemBuilder::end_link),
+            Event::Start(Tag::CodeBlock(kind)) => {
+                let fenced = matches!(kind, CodeBlockKind::Fenced(_));
+                self.code_block = Some((fenced, String::new()));
+            }
+            Event::End(TagEnd::CodeBlock) => self.on_code_block_end(),
+            Event::Text(text) => self.on_text(&text),
+            Event::SoftBreak | Event::HardBreak => self.on_break(),
+            Event::Code(text) => self.on_code(&text),
+            _ => {}
+        }
+    }
+
+    fn with_item(&mut self, f: impl FnOnce(&mut ItemBuilder)) {
+        if let Some(item) = self.item_stack.last_mut() {
+            f(item);
+        }
+    }
+
+    /// The items of the list currently being filled: the last `## H2` list,
+    /// or the pre-heading `(Default)` one.
+    fn target_items(&mut self) -> &mut Vec<Item> {
+        match self.lists.last_mut() {
+            Some(list) => &mut list.items,
+            None => &mut self.default_items,
+        }
+    }
+
+    fn on_heading_end(&mut self, level: HeadingLevel) {
+        let Some((open_level, text)) = self.heading.take() else {
+            return;
+        };
+        if open_level != level {
+            return;
+        }
+        let text = text.trim();
+        match level {
+            HeadingLevel::H2 => {
+                self.lists.push(List {
+                    title: text.to_string(),
+                    banner: None,
+                    items: Vec::new(),
+                });
+                self.seen_first_top_item = false;
+                self.section_stack.clear();
+            }
+            HeadingLevel::H1 => {
+                if self.document_title.is_none() && !text.is_empty() {
+                    self.document_title = Some(text.to_string());
+                }
+                self.section_stack.clear();
+            }
+            _ if !text.is_empty() => {
+                let level = heading_level_number(level);
+                self.section_stack.retain(|h| h.level < level);
+                self.section_stack.push(SubHeading {
+                    level,
+                    text: text.to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn on_list_start(&mut self) {
+        if self.list_depth == 0 {
+            self.list_had_checkbox_syntax = false;
+        }
+        self.list_depth += 1;
+    }
+
+    fn on_list_end(&mut self) {
+        self.list_depth = self.list_depth.saturating_sub(1);
+        if self.list_depth > 0 {
+            return;
+        }
+        let mut items = std::mem::take(&mut self.current_list_items);
+        self.attach_fence_to_last_item = self.list_had_checkbox_syntax;
+        if self.list_had_checkbox_syntax {
+            // Items arrive post-order; sort by line to restore document order.
+            items.sort_by_key(|item| item.line_number);
+            self.target_items().append(&mut items);
+        }
+    }
+
+    fn on_item_start(&mut self, offset: usize) {
+        // `list_depth` was already incremented by the enclosing Start(List),
+        // so depth 0 = top-level.
+        let line = self.line_counter.line_at(offset, self.source);
+        self.item_stack.push(ItemBuilder {
+            line,
+            depth: self.list_depth.saturating_sub(1),
+            section: self.section_stack.clone(),
+            items_before: self.current_list_items.len(),
+            in_blockquote: self.blockquote_depth > 0,
+            ..Default::default()
+        });
+    }
+
+    fn on_task_marker(&mut self, checked: bool, offset: usize) {
+        self.list_had_checkbox_syntax = true;
+        let state = if checked {
+            TaskState::Done
+        } else if self.started_offsets.contains(&offset) {
+            TaskState::Started
+        } else {
+            TaskState::NotStarted
+        };
+        self.with_item(|item| item.kind = Some(ItemKind::Checkbox(state)));
+    }
+
+    fn on_item_end(&mut self) {
+        let Some(builder) = self.item_stack.pop() else {
+            return;
+        };
+        let has_children = self.current_list_items.len() > builder.items_before;
+        let in_blockquote = builder.in_blockquote;
+        let mut item = builder.into_item();
+        let is_banner =
+            !self.seen_first_top_item && is_banner_candidate(&item, has_children, in_blockquote);
+        if item.depth == 0 {
+            self.seen_first_top_item = true;
+        }
+        if !is_banner {
+            self.current_list_items.push(item);
+            return;
+        }
+        let banner = item.header.take();
+        match self.lists.last_mut() {
+            Some(list) => list.banner = banner,
+            None => self.default_banner = banner,
+        }
+    }
+
+    /// Inside an item, fenced and indented blocks are both the item's code.
+    /// Outside one, only a fence may attach to the previous list; a stray
+    /// indented block is dropped.
+    fn on_code_block_end(&mut self) {
+        let Some((fenced, content)) = self.code_block.take() else {
+            return;
+        };
+        let content = strip_trailing_newline(content);
+        if let Some(item) = self.item_stack.last_mut() {
+            item.code_blocks.push(content);
+        } else if fenced && self.attach_fence_to_last_item {
+            self.attach_trailing_fence(content);
+        }
+    }
+
+    /// The attachment flag stays set: several consecutive fences all attach
+    /// (and then correctly refuse to copy).
+    fn attach_trailing_fence(&mut self, content: String) {
+        if let Some(item) = self.target_items().last_mut() {
+            item.code_blocks.push(content);
+        }
+    }
+
+    fn on_text(&mut self, text: &str) {
+        if let Some((_, buffer)) = &mut self.code_block {
+            buffer.push_str(text);
+        } else if let Some((_, heading_text)) = &mut self.heading {
+            heading_text.push_str(text);
+        } else {
+            self.with_item(|item| item.push_text(text));
+        }
+    }
+
+    /// Code block content arrives via Text events, so a break inside one is
+    /// ignored.
+    fn on_break(&mut self) {
+        if self.code_block.is_some() {
+            return;
+        }
+        if let Some((_, heading_text)) = &mut self.heading {
+            heading_text.push(' ');
+        } else {
+            self.with_item(ItemBuilder::push_break);
+        }
+    }
+
+    fn on_code(&mut self, text: &str) {
+        if let Some((_, heading_text)) = &mut self.heading {
+            heading_text.push_str(text);
+        } else {
+            self.with_item(|item| item.push_code(text));
+        }
+    }
+
+    fn finish(self, path: PathBuf, raw_lines: Vec<String>) -> Document {
+        let has_checkbox = |items: &[Item]| {
+            items
+                .iter()
+                .any(|item| matches!(item.kind, ItemKind::Checkbox(_)))
+        };
+        let mut lists = self.lists;
+        let has_default_list = has_checkbox(&self.default_items);
+        if has_default_list {
+            lists.insert(
+                0,
+                List {
+                    title: "(Default)".to_string(),
+                    banner: self.default_banner,
+                    items: self.default_items,
+                },
+            );
+        }
+        // A list without a live checkbox is dropped entirely: one that never
+        // had a list, whose lists had no checkbox syntax, or whose only
+        // checkboxes are blockquoted examples (forced to display-only).
+        lists.retain(|list| has_checkbox(&list.items));
+        Document {
+            file_path: path,
+            title: self.document_title,
+            has_default_list,
+            lists,
+            raw_lines,
+        }
+    }
+}
+
 pub fn parse_document(path: PathBuf) -> anyhow::Result<Document> {
     let raw = fs::read_to_string(&path)?;
     let document = parse_source(&raw, path);
@@ -250,412 +719,16 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     // only, so write-back keeps it.
     let raw_for_parsing = raw.strip_prefix('\u{FEFF}').unwrap_or(raw);
 
-    // Rewrite item-leading `[/]` markers to `[ ]` so pulldown recognizes them
-    // as task items; `started_offsets` records which `TaskListMarker`s to
-    // promote to `Started`. Offsets are preserved, so line numbers still
-    // index `raw_lines`.
+    // Offsets are preserved by both rewrites, so line numbers still index
+    // `raw_lines`.
     let without_front_matter = blank_front_matter(raw_for_parsing);
     let (source, started_offsets) = extract_started_markers(&without_front_matter);
 
-    let mut lists: Vec<List> = Vec::new();
-    let mut default_items: Vec<Item> = Vec::new();
-
-    let mut in_heading = false;
-    let mut heading_level: Option<HeadingLevel> = None;
-    let mut heading_text = String::new();
-    // The first non-empty `# H1` becomes the document title.
-    let mut document_title: Option<String> = None;
-
-    // The active `### H3`+ sub-section path: a heading stack, reduced on
-    // each heading (pop entries at level >= the new one, then push it) and
-    // cleared at every `# H1` / `## H2` boundary, which start a fresh list
-    // context. Snapshotted onto each item as it's opened.
-    let mut section_stack: Vec<SubHeading> = Vec::new();
-
-    // Items are buffered per top-level list: a list containing no checkbox
-    // at all contributes nothing to the document.
-    let mut list_depth: usize = 0;
-    let mut current_list_items: Vec<Item> = Vec::new();
-    // Tracked apart from item kind so a blockquoted checkbox still counts for
-    // the drop-if-empty rule.
-    let mut list_had_checkbox_syntax = false;
-
-    // Depth of `>` blockquote nesting, so a checkbox bullet quoted inside
-    // one (e.g. a runbook illustrating example output) can be told apart
-    // from a real, live task.
-    let mut blockquote_depth: usize = 0;
-
-    // A leading bold-only top-level bullet becomes the list's banner instead of
-    // a card. Reset at each H2.
-    let mut seen_first_top_item = false;
-    let mut default_banner: Option<String> = None;
-
-    // A fenced code block at column 0 immediately after a kept list is
-    // attached to that list's last item. Any other event between the
-    // list and the fence breaks the attachment.
-    let mut attach_fence_to_last_item = false;
-    let mut code_block: Option<(bool, String)> = None; // (fenced, content)
-
-    // One frame per open item; a stack so nested items don't clobber their
-    // parent's in-progress fields. The innermost open item is the top.
-    let mut item_stack: Vec<ItemBuilder> = Vec::new();
-    let mut line_counter = LineCounter::new();
-
-    let parser = Parser::new_ext(&source, PARSE_OPTIONS).into_offset_iter();
-
-    for (event, range) in parser {
-        // Any block-level start other than a fenced code block breaks the
-        // fence-attaches-to-previous-list rule.
-        let keeps_attach = matches!(
-            event,
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_)))
-                | Event::Text(_)
-                | Event::Code(_)
-                | Event::End(_)
-                | Event::TaskListMarker(_)
-        );
-        if !keeps_attach {
-            attach_fence_to_last_item = false;
-        }
-
-        match event {
-            Event::Start(Tag::Heading { level, .. }) => {
-                in_heading = true;
-                heading_level = Some(level);
-                heading_text.clear();
-            }
-            Event::End(TagEnd::Heading(level)) => {
-                if heading_level == Some(level) {
-                    let text = heading_text.trim();
-                    if level == HeadingLevel::H2 {
-                        lists.push(List {
-                            title: text.to_string(),
-                            banner: None,
-                            items: Vec::new(),
-                        });
-                        seen_first_top_item = false;
-                        // A new list is a fresh sub-section context.
-                        section_stack.clear();
-                    } else if level == HeadingLevel::H1 {
-                        // First non-empty H1 is the document title. H1 is
-                        // top-level, so it also clears any sub-section.
-                        if document_title.is_none() && !text.is_empty() {
-                            document_title = Some(text.to_string());
-                        }
-                        section_stack.clear();
-                    } else if !text.is_empty() {
-                        // `### H3`+ opens a sub-section within the current
-                        // list: pop any siblings/deeper levels, then push it.
-                        let heading_level = heading_level_number(level);
-                        section_stack.retain(|h| h.level < heading_level);
-                        section_stack.push(SubHeading {
-                            level: heading_level,
-                            text: text.to_string(),
-                        });
-                    }
-                }
-                in_heading = false;
-                heading_level = None;
-            }
-            Event::Start(Tag::List(_)) => {
-                if list_depth == 0 {
-                    list_had_checkbox_syntax = false;
-                }
-                list_depth += 1;
-            }
-            Event::Start(Tag::BlockQuote(_)) => {
-                blockquote_depth += 1;
-            }
-            Event::End(TagEnd::BlockQuote(_)) => {
-                blockquote_depth = blockquote_depth.saturating_sub(1);
-            }
-            Event::End(TagEnd::List(_)) => {
-                list_depth = list_depth.saturating_sub(1);
-                if list_depth == 0 {
-                    if list_had_checkbox_syntax {
-                        let target = match lists.last_mut() {
-                            Some(list) => &mut list.items,
-                            None => &mut default_items,
-                        };
-                        // Items arrive post-order; sort by line to restore document order.
-                        current_list_items.sort_by_key(|item| item.line_number);
-                        target.append(&mut current_list_items);
-                        attach_fence_to_last_item = true;
-                    } else {
-                        current_list_items.clear();
-                        attach_fence_to_last_item = false;
-                    }
-                }
-            }
-            Event::Start(Tag::Item) => {
-                // A stack frame per open item so nested items don't clobber
-                // their parent's fields; list_depth was already incremented by
-                // the enclosing Start(List), so depth 0 = top-level.
-                item_stack.push(ItemBuilder {
-                    line: line_counter.line_at(range.start, &source),
-                    depth: list_depth.saturating_sub(1),
-                    section: section_stack.clone(),
-                    items_before: current_list_items.len(),
-                    in_blockquote: blockquote_depth > 0,
-                    ..Default::default()
-                });
-            }
-            Event::TaskListMarker(checked) => {
-                list_had_checkbox_syntax = true;
-                if let Some(item) = item_stack.last_mut() {
-                    item.kind = Some(ItemKind::Checkbox(if checked {
-                        TaskState::Done
-                    } else if started_offsets.contains(&range.start) {
-                        TaskState::Started
-                    } else {
-                        TaskState::NotStarted
-                    }));
-                }
-            }
-            Event::Start(Tag::Strong) => {
-                if let Some(item) = item_stack.last_mut() {
-                    // A leading bold-only run is the card title; a bold
-                    // run anywhere else is inline strong styling in the body.
-                    if !item.header_done && item.text.trim().is_empty() {
-                        item.capturing_header = true;
-                    } else {
-                        item.style.strong = true;
-                    }
-                }
-            }
-            Event::End(TagEnd::Strong) => {
-                if let Some(item) = item_stack.last_mut() {
-                    if item.capturing_header {
-                        item.capturing_header = false;
-                        item.header_done = true;
-                    } else {
-                        item.style.strong = false;
-                    }
-                }
-            }
-            // Inline emphasis / strikethrough styling for body runs.
-            Event::Start(Tag::Emphasis) => {
-                if let Some(item) = item_stack.last_mut() {
-                    item.style.emphasis = true;
-                }
-            }
-            Event::End(TagEnd::Emphasis) => {
-                if let Some(item) = item_stack.last_mut() {
-                    item.style.emphasis = false;
-                }
-            }
-            Event::Start(Tag::Strikethrough) => {
-                if let Some(item) = item_stack.last_mut() {
-                    item.style.strikethrough = true;
-                }
-            }
-            Event::End(TagEnd::Strikethrough) => {
-                if let Some(item) = item_stack.last_mut() {
-                    item.style.strikethrough = false;
-                }
-            }
-            // A link: capture the destination, accumulate its text, and flush a
-            // Link span on close. Link text still flows into `text` (and thus
-            // display_text) so search matches it.
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                if let Some(item) = item_stack.last_mut()
-                    && !item.capturing_header
-                {
-                    item.link = Some((dest_url.to_string(), String::new()));
-                }
-            }
-            Event::End(TagEnd::Link) => {
-                if let Some(item) = item_stack.last_mut()
-                    && let Some((url, text)) = item.link.take()
-                {
-                    item.body.push(BodySpan::Link { text, url });
-                }
-            }
-            Event::Start(Tag::CodeBlock(kind)) => {
-                let fenced = matches!(kind, CodeBlockKind::Fenced(_));
-                code_block = Some((fenced, String::new()));
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                // Inside an item, fenced and indented blocks are both the
-                // item's code. Outside one, only a fence may attach to the
-                // previous list; a stray indented block is dropped.
-                if let Some((fenced, content)) = code_block.take() {
-                    let content = content
-                        .strip_suffix('\n')
-                        .map(str::to_string)
-                        .unwrap_or(content);
-                    if let Some(item) = item_stack.last_mut() {
-                        item.code_blocks.push(content);
-                    } else if fenced && attach_fence_to_last_item {
-                        let target = match lists.last_mut() {
-                            Some(list) => &mut list.items,
-                            None => &mut default_items,
-                        };
-                        if let Some(item) = target.last_mut() {
-                            item.code_blocks.push(content);
-                        }
-                        // Flag stays set: several consecutive fences all
-                        // attach (and then correctly refuse to copy).
-                    }
-                }
-            }
-            Event::Text(text) => {
-                if let Some((_, buffer)) = &mut code_block {
-                    buffer.push_str(&text);
-                } else if in_heading {
-                    heading_text.push_str(&text);
-                } else if let Some(item) = item_stack.last_mut() {
-                    if item.capturing_header {
-                        item.header.push_str(&text);
-                    } else if let Some((_, link_text)) = &mut item.link {
-                        // Inside a link: accumulate its text (flushed on End),
-                        // but still feed display_text so search matches it.
-                        link_text.push_str(&text);
-                        item.text.push_str(&text);
-                    } else {
-                        item.text.push_str(&text);
-                        let style = item.style;
-                        if style.is_plain() {
-                            item.body.push(BodySpan::Text(text.to_string()));
-                        } else {
-                            item.body.push(BodySpan::Styled {
-                                text: text.to_string(),
-                                style,
-                            });
-                        }
-                    }
-                }
-            }
-            // A soft/hard line break within a paragraph is whitespace: without
-            // this the words on either side would fuse ("to"+"show"→"toshow")
-            // in display_text/search and in the card.
-            Event::SoftBreak | Event::HardBreak => {
-                if code_block.is_some() {
-                    // Fenced/indented code content arrives via Text events.
-                } else if in_heading {
-                    heading_text.push(' ');
-                } else if let Some(item) = item_stack.last_mut() {
-                    if item.capturing_header {
-                        item.header.push(' ');
-                    } else if let Some((_, link_text)) = &mut item.link {
-                        link_text.push(' ');
-                        item.text.push(' ');
-                    } else {
-                        item.text.push(' ');
-                        item.body.push(BodySpan::Text(" ".to_string()));
-                    }
-                }
-            }
-            Event::Code(text) => {
-                if in_heading {
-                    heading_text.push_str(&text);
-                } else if let Some(item) = item_stack.last_mut() {
-                    if let Some((_, link_text)) = &mut item.link {
-                        // Code inside a link becomes part of the link text.
-                        link_text.push_str(&text);
-                        item.text.push_str(&text);
-                    } else {
-                        item.code_spans.push(text.to_string());
-                        if item.capturing_header {
-                            item.header.push_str(&text);
-                        } else {
-                            item.text.push_str(&text);
-                            item.body.push(BodySpan::Code(text.to_string()));
-                        }
-                    }
-                }
-            }
-            Event::End(TagEnd::Item) => {
-                if let Some(builder) = item_stack.pop() {
-                    let mut kind = builder.kind.unwrap_or(ItemKind::DisplayOnly);
-                    // A checkbox quoted inside a `>` blockquote is an
-                    // illustrative example, not a real task — force it to a
-                    // plain, non-interactive display-only card regardless of
-                    // any `TaskListMarker` pulldown-cmark reported for it.
-                    if builder.in_blockquote {
-                        kind = ItemKind::DisplayOnly;
-                    }
-                    let header = {
-                        let trimmed = builder.header.trim();
-                        (!trimmed.is_empty()).then(|| trimmed.to_string())
-                    };
-                    let display_text = builder
-                        .text
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ");
-
-                    // A bullet with children is never the banner, which emits no `Item` and
-                    // would orphan them.
-                    let has_children = current_list_items.len() > builder.items_before;
-                    // A command in the bold or under the bullet keeps it a card,
-                    // since the one-line text banner would discard it.
-                    let is_bold_only = kind == ItemKind::DisplayOnly
-                        && header.is_some()
-                        && display_text.is_empty()
-                        && builder.code_spans.is_empty()
-                        && builder.code_blocks.is_empty();
-                    let is_banner = !seen_first_top_item
-                        && is_bold_only
-                        && builder.depth == 0
-                        && !has_children
-                        && !builder.in_blockquote;
-                    if builder.depth == 0 {
-                        seen_first_top_item = true;
-                    }
-                    if is_banner {
-                        match lists.last_mut() {
-                            Some(list) => list.banner = header,
-                            None => default_banner = header,
-                        }
-                    } else {
-                        current_list_items.push(Item {
-                            line_number: builder.line,
-                            depth: builder.depth,
-                            section: builder.section,
-                            display_text,
-                            body: builder.body,
-                            header,
-                            code_spans: builder.code_spans,
-                            code_blocks: builder.code_blocks,
-                            kind,
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
+    let mut state = ParseState::new(&source, started_offsets);
+    for (event, range) in Parser::new_ext(&source, PARSE_OPTIONS).into_offset_iter() {
+        state.handle(event, range.start);
     }
-
-    let has_checkbox = |items: &[Item]| {
-        items
-            .iter()
-            .any(|item| matches!(item.kind, ItemKind::Checkbox(_)))
-    };
-    let has_default_list = has_checkbox(&default_items);
-    if has_default_list {
-        lists.insert(
-            0,
-            List {
-                title: "(Default)".to_string(),
-                banner: default_banner,
-                items: default_items,
-            },
-        );
-    }
-
-    // A list without a live checkbox is dropped entirely: one that never had
-    // a list, whose lists had no checkbox syntax, or whose only checkboxes are
-    // blockquoted examples (forced to display-only).
-    lists.retain(|list| has_checkbox(&list.items));
-
-    Document {
-        file_path: path,
-        title: document_title,
-        has_default_list,
-        lists,
-        raw_lines,
-    }
+    state.finish(path, raw_lines)
 }
 
 #[cfg(test)]
