@@ -83,6 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the escape sequence out doesn't confirm the terminal or multiplexer
   actually applied it, unlike a direct system-clipboard copy, so the wording
   no longer implies a guarantee it can't back up.
+- `/` search now jumps to the next matching task from where you are, wrapping
+  around past the last one, as vim's `/` does, and the status bar reports
+  that match's real position (`Match 7/12`). It used to jump to the first
+  match in the whole file, so searching for the next restart step from
+  step 40 threw you back to step 3. (#61)
 
 ### Fixed
 

@@ -347,7 +347,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `u` / `Ctrl-R` | undo / redo the last change (toggle, start, or reset) |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around) |
 | `Shift-H` / `Shift-L` | jump to the previous / next list with unfinished tasks |
-| `/` | search tasks by text — jump to the first match as you type |
+| `/` | search tasks by text — jump to the next match from the cursor as you type |
 | `n` / `N` | jump to the next / previous search match |
 | `}` / `{` | jump to the first task of the next / previous sub-section (within the current list) |
 | `T` | open the "go to task" overlay: a filterable list of every task |
@@ -644,8 +644,10 @@ normally either way; only the resulting commit's scope is enforced.
 
 ### Search
 
-`/` starts an incremental search: as you type, the cursor jumps to the first
-task whose text matches, with the query and the **number of matches** shown in
+`/` starts an incremental search: as you type, the cursor jumps to the next
+task whose text matches, counting from where you started (the task you're on
+counts, and the search wraps around to the top past the last task, as vim's `/`
+does), with the query and the **number of matches** shown in
 the status bar (and a clear "no matches" when nothing hits). Press `Enter`
 to keep the match — the status bar then reports your position (`Match 2/5`) as
 `n` / `N` cycle forward / backward through the rest, wrapping around — or `Esc`

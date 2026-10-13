@@ -280,11 +280,23 @@ impl AppState {
         self.screen = Screen::Search;
     }
 
-    /// Re-run the live query and jump the cursor to the first match, staying on
-    /// the `Search` screen (the query keeps showing in the status bar). No match
-    /// or an empty query leaves the cursor put; no auto-copy mid-typing.
+    /// The match `/` lands on, with its 1-based position: the first match at or
+    /// after the search origin, wrapping to the first match overall — vim's
+    /// forward search, so a search from mid-document doesn't throw the cursor
+    /// back to the top. `None` when nothing matches.
+    fn search_target(&self, matches: &[(usize, usize)]) -> Option<(usize, (usize, usize))> {
+        let origin = self.search.origin;
+        let index = matches.iter().position(|&m| m >= origin).unwrap_or(0);
+        matches.get(index).map(|&m| (index + 1, m))
+    }
+
+    /// Re-run the live query and jump the cursor to the next match from the
+    /// search origin (see [`Self::search_target`]), staying on the `Search`
+    /// screen (the query keeps showing in the status bar). No match or an
+    /// empty query leaves the cursor put; no auto-copy mid-typing.
     fn update_search(&mut self) {
-        if let Some(&(list_index, item_index)) = self.find_matches(&self.search.query).first() {
+        let matches = self.find_matches(&self.search.query);
+        if let Some((_, (list_index, item_index))) = self.search_target(&matches) {
             // Indices come from `find_matches`, so they are always in range.
             self.current_list_index = list_index;
             self.current_item_index = item_index;
@@ -301,15 +313,16 @@ impl AppState {
         self.search.last = (!self.search.query.is_empty()).then(|| self.search.query.clone());
         self.screen = Screen::Checklist;
         if !self.search.query.is_empty() {
-            if matches.is_empty() {
-                self.set_error(format!("No matches for \"{}\"", self.search.query));
-            } else if matches.len() == 1 {
-                self.set_status("Match 1/1".to_string());
-            } else {
-                // Nudge `n`/`N` here: they cycle matches once the search
-                // prompt is dismissed, but the always-on legend only advertises
-                // `/`, so a first-time user wouldn't know to reach for them.
-                self.set_status(format!("Match 1/{} · n/N to cycle", matches.len()));
+            match self.search_target(&matches) {
+                None => self.set_error(format!("No matches for \"{}\"", self.search.query)),
+                Some(_) if matches.len() == 1 => self.set_status("Match 1/1".to_string()),
+                Some((position, _)) => {
+                    // Nudge `n`/`N` here: they cycle matches once the search
+                    // prompt is dismissed, but the always-on legend only
+                    // advertises `/`, so a first-time user wouldn't know to
+                    // reach for them.
+                    self.set_status(format!("Match {position}/{} · n/N to cycle", matches.len()));
+                }
             }
         }
         // A successful auto-copy (if enabled) overrides with its own message.
