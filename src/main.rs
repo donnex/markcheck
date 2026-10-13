@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod clipboard;
 mod config;
+mod effect;
 mod git_sync;
 mod launch;
 mod model;
@@ -238,8 +239,8 @@ where
         }
         // Drain a finished background sync before requesting the next
         // one, so a request queued during the finished run's `pending` slot
-        // (see `GitSync::poll`) is already spawned by the time we check
-        // `take_git_sync_request` below.
+        // (see `GitSync::poll`) is already spawned by the time this
+        // iteration's effects request another.
         if let Some(sync) = git_sync.as_mut() {
             if let Some(outcome) = sync.poll() {
                 state.apply_git_sync_outcome(&outcome);
@@ -250,11 +251,6 @@ where
             // no-op unless one is actually pending and the backoff interval
             // has elapsed — see `retry_push_if_due`'s doc comment.
             sync.retry_push_if_due(Instant::now());
-        }
-        if let Some(pending) = state.take_git_sync_request()
-            && let Some(sync) = git_sync.as_mut()
-        {
-            sync.request(pending);
         }
         if let Some(sync) = git_sync.as_ref()
             && state.git_sync.busy != sync.is_busy()
@@ -297,35 +293,60 @@ where
             }
         }
 
-        if state.take_editor_request() {
-            open_in_editor(terminal, state, mouse)?;
-            dirty = true;
-        }
-
-        if state.take_suspend_request() {
-            suspend_to_shell(terminal, state, mouse)?;
-            dirty = true;
-        }
-
-        if let Some(url) = state.take_link_open_request() {
-            open_link(&url, state, &opener_failures);
-            dirty = true;
-        }
-
-        if state.should_quit {
+        let drained = effect::drain(
+            state,
+            &mut TerminalHost {
+                terminal,
+                git_sync,
+                mouse,
+                opener_failures: &opener_failures,
+            },
+        )?;
+        dirty |= drained.ran_any;
+        if drained.quit {
             break;
         }
     }
 
     // The last action may have queued a sync, which takes several git
     // subprocesses; give it a bounded window to land before exiting.
-    let Some(sync) = git_sync.as_mut() else {
-        return Ok(None);
-    };
-    if let Some(pending) = state.take_git_sync_request() {
-        sync.request(pending);
+    Ok(git_sync.as_mut().and_then(wait_for_git_sync))
+}
+
+/// Carries out `AppState`'s effects against the real terminal, processes
+/// and git-sync worker.
+struct TerminalHost<'a, B: Backend> {
+    terminal: &'a mut Terminal<B>,
+    git_sync: &'a mut Option<git_sync::GitSync>,
+    mouse: bool,
+    opener_failures: &'a std::sync::mpsc::Sender<String>,
+}
+
+impl<B: Backend> effect::Host for TerminalHost<'_, B>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    fn open_editor(
+        &mut self,
+        state: &mut AppState,
+        line: Option<model::LineNumber>,
+    ) -> anyhow::Result<()> {
+        open_in_editor(self.terminal, state, line, self.mouse)
     }
-    Ok(wait_for_git_sync(sync))
+
+    fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
+        suspend_to_shell(self.terminal, state, self.mouse)
+    }
+
+    fn open_link(&mut self, state: &mut AppState, url: &str) {
+        open_link(url, state, self.opener_failures);
+    }
+
+    fn git_sync(&mut self, sync: model::PendingSync) {
+        if let Some(worker) = self.git_sync.as_mut() {
+            worker.request(sync);
+        }
+    }
 }
 
 /// Polls `sync` until its in-flight (and any coalesced-behind-it) request
@@ -405,6 +426,7 @@ fn open_link(url: &str, state: &mut AppState, failures: &std::sync::mpsc::Sender
 fn open_in_editor<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
+    line: Option<model::LineNumber>,
     mouse: bool,
 ) -> anyhow::Result<()>
 where
@@ -424,7 +446,6 @@ where
     );
     let mut command = Command::new(&program);
     command.args(&args);
-    let line = state.current_item().map(|item| item.line_number);
     command.args(launch::editor_file_args(
         &program,
         &state.document.file_path,

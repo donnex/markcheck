@@ -19,19 +19,22 @@ fn item_with_code(spans: Vec<&str>, blocks: Vec<&str>) -> Item {
 #[test]
 fn no_code_yields_no_candidates() {
     let item = item_with_code(vec![], vec![]);
-    assert_eq!(copy_item_code(&item, false), CopyOutcome::NoCandidates);
+    assert!(candidates(&item).is_empty());
 }
 
 #[test]
-fn multiple_spans_without_block_are_ambiguous() {
+fn multiple_spans_without_block_are_all_candidates() {
     let item = item_with_code(vec!["one", "two"], vec![]);
-    assert_eq!(copy_item_code(&item, false), CopyOutcome::Ambiguous(2));
+    assert_eq!(candidates(&item), &["one".to_string(), "two".to_string()]);
 }
 
 #[test]
-fn multiple_blocks_are_ambiguous_regardless_of_spans() {
+fn multiple_blocks_are_the_candidates_regardless_of_spans() {
     let item = item_with_code(vec!["span"], vec!["block-a", "block-b"]);
-    assert_eq!(copy_item_code(&item, false), CopyOutcome::Ambiguous(2));
+    assert_eq!(
+        candidates(&item),
+        &["block-a".to_string(), "block-b".to_string()]
+    );
 }
 
 #[test]
@@ -174,17 +177,21 @@ fn newlines_and_tabs_are_not_hidden_characters() {
 }
 
 #[test]
-fn copy_item_code_refuses_a_command_with_hidden_characters() {
-    let item = item_with_code(vec![], vec!["ls\x1b[201~\nrm -rf ~"]);
-    assert_eq!(copy_item_code(&item, false), CopyOutcome::HiddenCharacters);
-    let item = item_with_code(vec!["echo ok\rrm -rf ~"], vec![]);
-    assert_eq!(copy_item_code(&item, true), CopyOutcome::HiddenCharacters);
+fn copy_refuses_escape_and_carriage_return_tricks() {
+    assert_eq!(
+        copy("ls\x1b[201~\nrm -rf ~", false),
+        CopyOutcome::HiddenCharacters
+    );
+    assert_eq!(
+        copy("echo ok\rrm -rf ~", true),
+        CopyOutcome::HiddenCharacters
+    );
 }
 
 #[test]
-fn copy_specific_refuses_a_command_with_hidden_characters() {
+fn copy_refuses_backspace_overwrites() {
     assert_eq!(
-        copy_specific("safe\x08\x08\x08\x08evil", false),
+        copy("safe\x08\x08\x08\x08evil", false),
         CopyOutcome::HiddenCharacters
     );
 }

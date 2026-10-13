@@ -1454,10 +1454,6 @@ fn code_only_in_the_title_leaves_nothing_to_copy() {
     assert_eq!(item.header.as_deref(), Some("Run build"));
     assert_eq!(item.display_text, "in the build directory");
     assert!(crate::clipboard::candidates(item).is_empty());
-    assert_eq!(
-        crate::clipboard::copy_item_code(item, false),
-        crate::clipboard::CopyOutcome::NoCandidates
-    );
 }
 
 #[test]

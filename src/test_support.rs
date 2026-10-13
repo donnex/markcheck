@@ -163,3 +163,37 @@ mod tests {
         assert!(!path.exists(), "left behind after a panic: {path:?}");
     }
 }
+
+/// An [`crate::effect::Host`] that records what it was asked to do instead
+/// of touching the terminal, a process or git.
+#[derive(Debug, Default)]
+pub(crate) struct RecordingHost {
+    pub(crate) editor_lines: Vec<Option<crate::model::LineNumber>>,
+    pub(crate) suspends: usize,
+    pub(crate) links: Vec<String>,
+    pub(crate) syncs: Vec<crate::model::PendingSync>,
+}
+
+impl crate::effect::Host for RecordingHost {
+    fn open_editor(
+        &mut self,
+        _state: &mut crate::model::AppState,
+        line: Option<crate::model::LineNumber>,
+    ) -> anyhow::Result<()> {
+        self.editor_lines.push(line);
+        Ok(())
+    }
+
+    fn suspend(&mut self, _state: &mut crate::model::AppState) -> anyhow::Result<()> {
+        self.suspends += 1;
+        Ok(())
+    }
+
+    fn open_link(&mut self, _state: &mut crate::model::AppState, url: &str) {
+        self.links.push(url.to_string());
+    }
+
+    fn git_sync(&mut self, sync: crate::model::PendingSync) {
+        self.syncs.push(sync);
+    }
+}
