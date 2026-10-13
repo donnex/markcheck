@@ -56,7 +56,8 @@ markcheck examples/basics.md
   deliberately long: scroll into it in a short window to see the sticky overview
   header pin the full path, and use `}` / `{` to jump between groups.
 - **`quick-tasks.md`** — items before any heading (the title-less default
-  section) and the "Missing document title" placeholder when there is no `# H1`.
+  section) and the filename-derived title ("Quick Tasks") shown when there is
+  no `# H1`.
 - **`front-matter.md`** — a leading YAML front-matter block (as Obsidian,
   Hugo or Jekyll write it) that markcheck skips: no list is named after the
   metadata, and toggling a task leaves the block untouched in the file.
