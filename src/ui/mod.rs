@@ -1040,6 +1040,38 @@ mod tests {
     }
 
     #[test]
+    fn a_lone_g_shows_the_pending_gg_prompt_until_the_chord_ends() {
+        let prompt = "g… press g for the first task · any other key cancels";
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![checkbox(1, "a", false), checkbox(2, "b", false)],
+        }]);
+        assert_ne!(
+            buffer_rows(&mut state, 120, 26).last().unwrap().trim(),
+            prompt
+        );
+        state.handle_key(KeyCode::Char('g'));
+        assert_eq!(
+            buffer_rows(&mut state, 120, 26).last().unwrap().trim(),
+            prompt
+        );
+        state.handle_key(KeyCode::Char('g'));
+        assert_ne!(
+            buffer_rows(&mut state, 120, 26).last().unwrap().trim(),
+            prompt,
+            "gone once gg completes"
+        );
+        state.handle_key(KeyCode::Char('g'));
+        state.handle_key(KeyCode::Char('l'));
+        assert_ne!(
+            buffer_rows(&mut state, 120, 26).last().unwrap().trim(),
+            prompt,
+            "gone once another key cancels it"
+        );
+    }
+
+    #[test]
     fn a_partial_number_at_the_prompt_shows_what_was_typed() {
         let mut item = checkbox(1, "cmds", false);
         item.code_blocks = (1..=12).map(|n| format!("cmd-{n}")).collect();

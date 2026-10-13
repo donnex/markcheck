@@ -878,6 +878,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open`. The
   same goes for `y` on a card with ten or more commands. (#100)
 
+- Pressing `g` once now shows that markcheck is waiting for the second `g`
+  of `gg` (jump to the first task): the status bar reads `g… press g for the
+  first task · any other key cancels` until the next key. Previously nothing
+  on screen changed, so an accidental `g` looked like a key that did nothing,
+  and the next key was then read differently from what the screen suggested.
+  (#104)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping

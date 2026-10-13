@@ -354,7 +354,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | ----- | -------- |
 | `h` / `l`, `←` / `→` | previous / next task; at a list's edge, cross to the previous/next list (landing on its first unfinished task) |
 | `k` / `j`, `↑` / `↓` | previous / next task (same as `h`/`l` — a checklist reads as a list) |
-| `gg` / `G` | jump to the first / last task in the document |
+| `gg` / `G` | jump to the first / last task in the document (after the first `g` the status bar shows that `gg` is pending; any other key cancels it) |
 | `Ctrl-E` / `Ctrl-Y` | scroll the card body down / up one line (when it overflows) |
 | `Ctrl-D` / `Ctrl-U` | scroll the card body down / up half a page |
 | `PageDown` / `PageUp` | scroll the card body down / up one page |
