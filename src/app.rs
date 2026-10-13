@@ -1155,7 +1155,7 @@ impl AppState {
         match parser::parse_document(self.document.file_path.clone()) {
             Ok(new_document) if !new_document.lists.is_empty() => {
                 let search_origin = self.remapped(self.search.origin, &new_document);
-                self.remap_position(&new_document);
+                let task_lost = self.remap_position(&new_document);
                 self.document = new_document;
                 let cancelled = self.keep_screen_across_reload(search_origin);
                 // An external edit is a hard boundary for undo history: it can
@@ -1175,10 +1175,17 @@ impl AppState {
                 self.pending_copy_code = false;
                 if let Some(cancelled) = cancelled {
                     self.set_error(format!("File changed on disk — {cancelled} cancelled"));
-                } else if was_deleted {
-                    self.set_status("File restored — reloaded".to_string());
                 } else {
-                    self.set_status("Reloaded: file changed on disk".to_string());
+                    let reloaded = if was_deleted {
+                        "File restored — reloaded"
+                    } else {
+                        "Reloaded: file changed on disk"
+                    };
+                    if task_lost {
+                        self.set_status(format!("{reloaded} — task not found, cursor moved"));
+                    } else {
+                        self.set_status(reloaded.to_string());
+                    }
                 }
                 self.last_update_at = Some(SystemTime::now());
                 // Taken from the adopted document, never a fresh read.
@@ -1251,35 +1258,41 @@ impl AppState {
         }
     }
 
-    /// Keeps the cursor on the same list (by title and occurrence) and item (by
-    /// line number) after a reload, falling back to the start.
-    fn remap_position(&mut self, new_document: &Document) {
-        let (list_index, item_index) = self.remapped(
+    /// Keeps the cursor on the same list and task after a reload (see
+    /// `remapped`). Returns whether the task was lost and the cursor had to
+    /// move. Never auto-copies: a reload is not the user navigating.
+    fn remap_position(&mut self, new_document: &Document) -> bool {
+        let (list_index, item_index, lost) = self.remapped_with_loss(
             (self.current_list_index, self.current_item_index),
             new_document,
         );
         self.current_list_index = list_index;
         self.current_item_index = item_index;
         self.reset_card_scroll();
-        // Auto-copy waits for a committed search, as it does while typing.
-        if self.screen != Screen::Search {
-            self.maybe_auto_copy();
-        }
+        lost
     }
 
     /// Where the `(list, item)` position in the current document lands in
-    /// `new_document`, matching the list by title and occurrence and the item
-    /// by line number.
-    fn remapped(
+    /// `new_document`.
+    fn remapped(&self, position: (usize, usize), new_document: &Document) -> (usize, usize) {
+        let (list_index, item_index, _) = self.remapped_with_loss(position, new_document);
+        (list_index, item_index)
+    }
+
+    /// Matches the list by title and occurrence, then the item by content
+    /// (header, body text and depth), preferring the candidate nearest the old
+    /// line number, since inserting a line above it shifts every line number.
+    /// With no content match it falls back to the item on the old line (a task
+    /// edited in place), then to the nearest one by line number, reporting the
+    /// task as lost; a list that is gone falls back to the first list's start.
+    fn remapped_with_loss(
         &self,
         (list_index, item_index): (usize, usize),
         new_document: &Document,
-    ) -> (usize, usize) {
+    ) -> (usize, usize, bool) {
         let old_list = self.document.lists.get(list_index);
         let old_title = old_list.map(|s| s.title.clone());
-        let old_line_number = old_list
-            .and_then(|list| list.items.get(item_index))
-            .map(|item| item.line_number);
+        let old_item = old_list.and_then(|list| list.items.get(item_index));
 
         // Two lists can share a title, so the old list's rank among same-titled
         // lists picks the new one.
@@ -1290,31 +1303,48 @@ impl AppState {
                 .count()
         });
 
-        let new_list_index = old_title
-            .as_deref()
-            .zip(old_occurrence)
-            .and_then(|(title, occurrence)| {
-                new_document
-                    .lists
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| s.title == title)
-                    .nth(occurrence)
-                    .map(|(i, _)| i)
-            })
+        let found_list_index =
+            old_title
+                .as_deref()
+                .zip(old_occurrence)
+                .and_then(|(title, occurrence)| {
+                    new_document
+                        .lists
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.title == title)
+                        .nth(occurrence)
+                        .map(|(i, _)| i)
+                });
+        let new_list_index = found_list_index
             .unwrap_or(0)
             .min(new_document.lists.len().saturating_sub(1));
 
-        let new_item_index = old_line_number
-            .and_then(|line| {
-                new_document.lists[new_list_index]
-                    .items
-                    .iter()
-                    .position(|item| item.line_number == line)
-            })
-            .unwrap_or(0);
+        let Some(old_item) = old_item else {
+            return (new_list_index, 0, false);
+        };
+        if found_list_index.is_none() {
+            return (new_list_index, 0, true);
+        }
+        let items = &new_document.lists[new_list_index].items;
+        let distance = |index: &usize| items[*index].line_number.abs_diff(old_item.line_number);
+        let same_task = |index: &usize| {
+            let item = &items[*index];
+            item.header == old_item.header
+                && item.display_text == old_item.display_text
+                && item.depth == old_item.depth
+        };
 
-        (new_list_index, new_item_index)
+        if let Some(index) = (0..items.len()).filter(same_task).min_by_key(distance) {
+            return (new_list_index, index, false);
+        }
+        if let Some(index) =
+            (0..items.len()).find(|&i| items[i].line_number == old_item.line_number)
+        {
+            return (new_list_index, index, false);
+        }
+        let nearest = (0..items.len()).min_by_key(distance).unwrap_or(0);
+        (new_list_index, nearest, true)
     }
 
     /// From a finished list, jump to the next list with incomplete work,

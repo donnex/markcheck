@@ -3480,6 +3480,113 @@ fn reload_disambiguates_duplicate_list_titles_by_occurrence() {
 }
 
 #[test]
+fn reload_keeps_the_cursor_on_its_task_when_a_line_is_inserted_above() {
+    let path = write_real_file("## L\n\n- [ ] `alpha`\n- [ ] `bravo`\n- [ ] `charlie`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 2;
+
+    touch_with_new_mtime(
+        &path,
+        "## L\n\n- [ ] `alpha`\n- [ ] `inserted`\n- [ ] `bravo`\n- [ ] `charlie`\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_item().unwrap().display_text, "charlie");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
+    );
+}
+
+#[test]
+fn reload_picks_the_nearest_of_several_identical_tasks() {
+    let path = write_real_file("## L\n\n- [ ] `same`\n- [ ] `other`\n- [ ] `same`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 2;
+
+    touch_with_new_mtime(
+        &path,
+        "## L\n\n- [ ] `same`\n- [ ] `new`\n- [ ] `other`\n- [ ] `same`\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_item_index, 3);
+    assert_eq!(state.current_item().unwrap().display_text, "same");
+}
+
+#[test]
+fn reload_stays_on_a_task_edited_in_place() {
+    let path = write_real_file("## L\n\n- [ ] `alpha`\n- [ ] `bravo`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 1;
+
+    touch_with_new_mtime(&path, "## L\n\n- [ ] `alpha`\n- [ ] `bravo two`\n");
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_item().unwrap().display_text, "bravo two");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
+    );
+}
+
+#[test]
+fn reload_moves_to_the_nearest_task_and_says_so_when_the_task_is_gone() {
+    let path =
+        write_real_file("## L\n\n- [ ] `alpha`\n- [ ] `bravo`\n- [ ] `charlie`\n- [ ] `delta`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 2;
+
+    touch_with_new_mtime(
+        &path,
+        "## L\n\n- [ ] `alpha`\n- [ ] `bravo`\n\n- [ ] `delta`\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_item().unwrap().display_text, "bravo");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk — task not found, cursor moved")
+    );
+}
+
+#[test]
+fn reload_says_so_when_the_cursor_list_is_gone() {
+    let path = write_real_file("## A\n\n- [ ] `alpha`\n\n## B\n\n- [ ] `bravo`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+
+    touch_with_new_mtime(&path, "## A\n\n- [ ] `alpha`\n- [ ] `also`\n");
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_item().unwrap().display_text, "alpha");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk — task not found, cursor moved")
+    );
+}
+
+#[test]
+fn reload_never_auto_copies() {
+    let path = write_real_file("## L\n\n- [ ] `alpha`\n- [ ] `bravo`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.auto_copy = true;
+    crate::clipboard::fake::with(|c| c.system_attempts.clear());
+
+    touch_with_new_mtime(&path, "## L\n\n- [ ] `alpha`\n- [x] `bravo`\n");
+    assert!(state.reload_if_changed());
+
+    crate::clipboard::fake::with(|c| {
+        assert!(c.system_attempts.is_empty());
+        assert!(c.osc52.is_empty());
+    });
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
+    );
+}
+
+#[test]
 fn reload_skips_when_new_content_has_no_lists() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());

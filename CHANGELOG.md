@@ -86,6 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A reload of the checklist file now keeps the cursor on the task you were
+  on when lines are added or removed above it. Previously inserting a single
+  line, by adding a step in your editor or pulling a change, sent the cursor
+  to the first item of the list without saying so. If the task itself is
+  gone, the cursor moves to the nearest one and the status bar says so.
+  A reload also no longer re-runs `--auto-copy`, which used to overwrite your
+  clipboard whenever the file changed on disk, even from an edit you didn't
+  make. (#60)
+
 - Git sync no longer gives up on a commit after 10 seconds. Repository
   commit hooks and commit signing now get up to 5 minutes, so a slow
   `pre-commit` hook, a hook framework installing its tools on first use, or a

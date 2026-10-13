@@ -439,7 +439,10 @@ and a sticky error asks you to retry.
 ### Live reload
 
 If the file changes on disk while the app is open, `markcheck` reloads it
-automatically and keeps your place on the same task where possible. A
+automatically and keeps your place on the same task, even when lines were
+added or removed above it. If that task is gone, the cursor moves to the
+nearest one and the status bar says so. A reload never triggers
+`--auto-copy`. A
 relative `Updated 10s ago` tag — prefixed with a refresh icon (`↻`, or a Nerd
 Font glyph) — appears in the title bar, grouped with the progress counter on
 the right, whenever the file changes — whether from your own toggles or an
