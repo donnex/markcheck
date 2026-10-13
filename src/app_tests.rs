@@ -2873,8 +2873,10 @@ fn toggle_succeeds_normally_when_disk_content_is_unchanged() {
 
 #[test]
 fn write_back_can_still_overwrite_a_change_that_lands_after_the_diverged_check() {
-    // The accepted gap between the divergence check and the rename, with a
-    // race inserted by hand.
+    // `commit_write`'s write lock closes the gap between the divergence check
+    // and the rename only against other markcheck instances; a writer that
+    // doesn't take the lock (an editor, a script) can still land in it. That
+    // race, inserted by hand.
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -2898,8 +2900,8 @@ fn write_back_can_still_overwrite_a_change_that_lands_after_the_diverged_check()
     assert_ne!(
         fs::read_to_string(&path).unwrap(),
         external_content,
-        "the external writer's content is silently overwritten here -- \
-         this is the accepted gap, not a regression"
+        "a writer that bypasses the lock is silently overwritten here -- \
+         this is the remaining gap, not a regression"
     );
 }
 

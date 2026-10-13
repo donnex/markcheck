@@ -111,8 +111,9 @@ struct StickyContext {
     stack: Vec<(SubHeading, usize)>,
 }
 
-/// Purely informational progress view: rows for lists, group headers, and
-/// items with done/current/pending markers.
+/// The progress overview: rows for lists, group headers, and items with
+/// done/current/pending markers. Rows are click targets: a row click jumps
+/// to it, and a click on a task's marker toggles the task and writes the file.
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let icons = state.icons;
     let palette = state.palette;
