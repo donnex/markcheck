@@ -125,6 +125,7 @@ markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
 markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
+markcheck --no-git-sync runbook.md    # ...or never, even under a git_sync_paths entry
 markcheck --new runbook.md            # create a starter checklist, then open it
 markcheck --version                   # print the version and build's git commit
 ```
@@ -169,7 +170,11 @@ plain default. A file whose path starts with one of them gets git-sync
 turned on automatically, the same as passing `--git-sync` for that one run.
 `--git-sync` and `git_sync_paths` are additive (either one turns it on),
 unlike the four booleans above, where a passed flag simply overrides the
-config value.
+config value. To turn it off for one run under a matching entry (a
+rehearsal, working offline, committing by hand), pass `--no-git-sync`: the
+file is still saved on every toggle, but nothing is committed or pushed and
+the title bar shows no `⇅ git` section. It can't be combined with
+`--git-sync`.
 
 A leading `~` in a `git_sync_paths` entry means your home directory
 (`$HOME`), as it would in a shell, so `"~/checklists"` works. An entry that

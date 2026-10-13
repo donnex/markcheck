@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--no-git-sync`, which opens a checklist without committing or pushing
+  anything, even when it sits under a directory listed in the
+  `git_sync_paths` config setting. Changes are still saved to the file.
+  Previously git sync, once configured for a directory, could not be turned
+  off for a single run (to rehearse a runbook, work offline or commit by
+  hand) short of editing the config file. (#111)
+
 - Steps in a numbered list now show their number. A card, its overview row,
   the `T` go-to-task picker, the side cards and git-sync commit messages read
   `3. Take a snapshot` instead of just the step text, using the number
