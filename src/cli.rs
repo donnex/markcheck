@@ -25,7 +25,8 @@ const VERSION: &str = concat!(
     version = VERSION,
     after_help = "Defaults for the flags above can be set in the config file \
                   $XDG_CONFIG_HOME/markcheck/config.toml \
-                  (or ~/.config/markcheck/config.toml when XDG_CONFIG_HOME is unset)."
+                  (or ~/.config/markcheck/config.toml when XDG_CONFIG_HOME is unset). \
+                  --config PATH reads another file instead; --no-config skips it."
 )]
 pub struct Cli {
     /// Path to the Markdown file (omit when using --new)
@@ -67,6 +68,12 @@ pub struct Cli {
     /// Never commit or push, even when git_sync_paths matches this file's path
     #[arg(long)]
     pub no_git_sync: bool,
+    /// Read the config from PATH instead of the default location (PATH must exist)
+    #[arg(long, value_name = "PATH", conflicts_with = "no_config")]
+    pub config: Option<PathBuf>,
+    /// Ignore the config file for this run: built-in defaults plus any flags passed
+    #[arg(long)]
+    pub no_config: bool,
 }
 
 /// The four boolean settings, resolved in one place so the wiring can be
@@ -236,6 +243,7 @@ mod tests {
             ["--primary", "--no-primary"],
             ["--auto-copy", "--no-auto-copy"],
             ["--git-sync", "--no-git-sync"],
+            ["--config=other.toml", "--no-config"],
         ] {
             let result = Cli::try_parse_from(["markcheck", "checklist.md", pair[0], pair[1]]);
             assert!(result.is_err(), "{pair:?} must be rejected together");
@@ -253,5 +261,21 @@ mod tests {
         assert_eq!(parse(&[]), (false, false));
         assert_eq!(parse(&["--git-sync"]), (true, false));
         assert_eq!(parse(&["--no-git-sync"]), (false, true));
+    }
+
+    #[test]
+    fn config_flags_parse_into_their_own_fields() {
+        let parse = |flags: &[&str]| {
+            let mut argv = vec!["markcheck", "checklist.md"];
+            argv.extend_from_slice(flags);
+            let cli = Cli::parse_from(argv);
+            (cli.config, cli.no_config)
+        };
+        assert_eq!(parse(&[]), (None, false));
+        assert_eq!(
+            parse(&["--config", "other.toml"]),
+            (Some(std::path::PathBuf::from("other.toml")), false)
+        );
+        assert_eq!(parse(&["--no-config"]), (None, true));
     }
 }

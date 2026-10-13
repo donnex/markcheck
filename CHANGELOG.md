@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--no-config`, which ignores the config file for one run, and
+  `--config PATH`, which reads a different config file instead of the
+  default one. Previously a broken config file stopped markcheck from
+  opening any checklist until the file was found and edited by hand. (#112)
+
 - `--no-git-sync`, which opens a checklist without committing or pushing
   anything, even when it sits under a directory listed in the
   `git_sync_paths` config setting. Changes are still saved to the file.
@@ -68,6 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saying a passed flag always wins. It now does.
 
 ### Changed
+
+- An unrecognized key in the config file no longer stops markcheck from
+  starting: the key is ignored and a warning naming it stays in the status
+  bar. Previously any unknown key was a hard error, so a setting added to a
+  config file shared between machines locked every machine still running an
+  older release out of all its checklists. A malformed file, or a known
+  setting with the wrong type of value, is still an error. (#112)
 
 - `Tab` (next unfinished task) and `n`/`N` (next/previous search match) now
   say so when they wrap around the document: `Tab` shows "Wrapped to the

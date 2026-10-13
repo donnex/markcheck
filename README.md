@@ -126,6 +126,8 @@ markcheck --auto-copy runbook.md      # copy a task's command as you navigate to
 markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --no-git-sync runbook.md    # ...or never, even under a git_sync_paths entry
+markcheck --config other.toml runbook.md  # read another config file instead
+markcheck --no-config runbook.md      # ignore the config file for this run
 markcheck --new runbook.md            # create a starter checklist, then open it
 markcheck --version                   # print the version and build's git commit
 ```
@@ -156,9 +158,22 @@ git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these 
 
 No config file is not an error — `markcheck` just uses the built-in
 defaults shown above. A config file that exists but fails to parse (bad
-TOML, or an unrecognized key — a likely typo) **is** an error: `markcheck`
-refuses to start and reports the problem, rather than silently ignoring a
-setting you asked for.
+TOML, or a known key with the wrong type of value) **is** an error:
+`markcheck` refuses to start and reports the problem, rather than silently
+ignoring a setting you asked for.
+
+An unrecognized key is **not** an error: `markcheck` starts, ignores that
+key, and shows a sticky warning naming it (``Config: unknown key
+`new_option` ignored — a typo, or a setting from a newer markcheck?``).
+That keeps a typo visible while letting one config file be shared between
+machines running different releases — a setting added after upgrading one
+machine doesn't stop the older ones from starting.
+
+`--config PATH` reads the config from `PATH` instead of the default
+location (the file must exist), and `--no-config` ignores the config file
+entirely for one run — built-in defaults plus whatever flags you pass —
+which gets you past a broken config without editing it. The two are
+mutually exclusive. `markcheck --help` also names the default location.
 
 Each of the four boolean settings has a flag in both directions, so a config
 value can always be overridden for a single run:

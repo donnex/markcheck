@@ -268,3 +268,71 @@ fn malformed_config_file_reports_a_clear_error_and_exits_nonzero() {
     std::fs::remove_file(&md_path).ok();
     std::fs::remove_dir_all(&xdg_config_home).ok();
 }
+
+/// Runs markcheck on a one-task checklist with `config` as its default
+/// config file plus `flags`, and returns its stderr. Without a terminal it
+/// always fails, but only after the config has been loaded.
+fn stderr_with_config(hint: &str, config: &str, flags: &[&str]) -> String {
+    let md_path = unique_path(hint);
+    std::fs::write(&md_path, "## L\n\n- [ ] a\n").unwrap();
+    let xdg_config_home = unique_dir(&format!("{hint}-xdg"));
+    std::fs::create_dir_all(xdg_config_home.join("markcheck")).unwrap();
+    std::fs::write(
+        xdg_config_home.join("markcheck").join("config.toml"),
+        config,
+    )
+    .unwrap();
+
+    let output = markcheck()
+        .args(flags)
+        .arg(&md_path)
+        .env("XDG_CONFIG_HOME", &xdg_config_home)
+        .output()
+        .unwrap();
+
+    std::fs::remove_file(&md_path).ok();
+    std::fs::remove_dir_all(&xdg_config_home).ok();
+    assert!(!output.status.success());
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn unknown_config_key_does_not_stop_startup() {
+    // A key from a newer release must not lock an older one out: startup
+    // gets past the config to the terminal check.
+    let stderr = stderr_with_config("cfg-unknown", "new_option = true\nmouse = false\n", &[]);
+    assert!(!stderr.contains("invalid config file"), "{stderr:?}");
+    assert!(stderr.contains("needs a terminal"), "{stderr:?}");
+}
+
+#[test]
+fn no_config_bypasses_a_malformed_config_file() {
+    let broken = "this is not valid toml =====";
+    let stderr = stderr_with_config("cfg-bypass", broken, &[]);
+    assert!(
+        stderr.contains("--no-config"),
+        "names the way out: {stderr:?}"
+    );
+
+    let stderr = stderr_with_config("cfg-bypass", broken, &["--no-config"]);
+    assert!(!stderr.contains("invalid config file"), "{stderr:?}");
+    assert!(stderr.contains("needs a terminal"), "{stderr:?}");
+}
+
+#[test]
+fn config_flag_reads_the_named_file_instead() {
+    let other = unique_dir("cfg-explicit").with_extension("toml");
+    std::fs::write(&other, "this is not valid toml =====").unwrap();
+    let flag = format!("--config={}", other.display());
+
+    let stderr = stderr_with_config("cfg-explicit", "", &[&flag]);
+    assert!(stderr.contains("invalid config file"), "{stderr:?}");
+    assert!(
+        stderr.contains(&*other.file_name().unwrap().to_string_lossy()),
+        "names the file: {stderr:?}"
+    );
+
+    std::fs::remove_file(&other).ok();
+    let stderr = stderr_with_config("cfg-explicit", "", &[&flag]);
+    assert!(stderr.contains("config file not found"), "{stderr:?}");
+}
