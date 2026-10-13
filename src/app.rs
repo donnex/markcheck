@@ -1348,6 +1348,23 @@ impl AppState {
         }
     }
 
+    /// After the `e` editor returns: report a launch failure or a non-zero
+    /// exit, then reload, queueing a git-sync request when the editor changed
+    /// the file (that edit never went through `write_back`). `program` is the
+    /// resolved editor.
+    pub fn finish_editor(&mut self, program: &str, status: io::Result<std::process::ExitStatus>) {
+        match status {
+            Err(err) => self.set_error(format!("Failed to launch {program}: {err}")),
+            Ok(status) if !status.success() => {
+                self.set_error(format!("{program} exited with {status}"))
+            }
+            Ok(_) => {}
+        }
+        if self.reload_if_changed() {
+            self.request_external_edit_sync(program);
+        }
+    }
+
     /// `o`: open the current card's link. With several links, arm a digit that
     /// picks link `[N]`. The spawn happens in the main loop.
     fn open_current_link(&mut self) {

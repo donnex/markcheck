@@ -1931,6 +1931,67 @@ fn finish_suspend_reloads_an_edit_made_while_suspended() {
     fs::remove_file(&path).ok();
 }
 
+#[cfg(unix)]
+fn exit_status(raw: i32) -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    std::process::ExitStatus::from_raw(raw)
+}
+
+#[test]
+fn finish_editor_launch_failure_is_a_sticky_error_naming_the_editor() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor("no-such-editor", Err(io::Error::other("not found")));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Failed to launch no-such-editor: not found")
+    );
+    assert!(state.status_is_error);
+    assert!(state.take_git_sync_request().is_none());
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_non_zero_exit_is_a_sticky_error() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor("vi", Ok(exit_status(1 << 8)));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("vi exited with exit status: 1")
+    );
+    assert!(state.status_is_error);
+    assert!(state.take_git_sync_request().is_none());
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_with_no_change_is_silent_and_queues_no_sync() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor("vi", Ok(exit_status(0)));
+    assert_eq!(state.status_message, None);
+    assert!(state.take_git_sync_request().is_none());
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_reloads_an_edit_and_queues_a_sync_naming_the_editor() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    let edited = "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n";
+    touch_with_new_mtime(&path, edited);
+    state.finish_editor("vi", Ok(exit_status(0)));
+    assert_eq!(state.current_list().items.len(), 2);
+    let pending = state.take_git_sync_request().expect("a sync is queued");
+    assert_eq!(pending.description, "Edited in vi");
+    assert_eq!(pending.content, edited);
+    fs::remove_file(&path).ok();
+}
+
 // --- Reset with confirmation ---
 
 #[test]
