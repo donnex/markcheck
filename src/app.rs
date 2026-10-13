@@ -64,9 +64,14 @@ fn smart_case_contains(haystack: &str, query: &str) -> bool {
 /// [`Item::search_text`] plus its `### H3`+ sub-section path, so typing a
 /// sub-section name filters to the tasks under it. The section text is folded
 /// in here — not in `Item::search_text` — so only the picker sees it and the
-/// main `/` search stays unchanged.
+/// main `/` search stays unchanged. An ordered item's step number is folded in
+/// the same way, so `3.` finds step 3.
 fn picker_match_text(item: &Item) -> String {
     let mut text = item.search_text();
+    if let Some(ordinal) = &item.ordinal {
+        text.push(' ');
+        text.push_str(ordinal);
+    }
     for heading in &item.section {
         text.push(' ');
         text.push_str(&heading.text);
@@ -958,11 +963,7 @@ impl AppState {
         } else {
             TaskState::Done
         };
-        let item_text = item
-            .header
-            .as_deref()
-            .unwrap_or(&item.display_text)
-            .to_string();
+        let item_text = item.label();
 
         let pre_state = self.state_snapshot();
         // Re-fetch mutably now that the snapshot is taken.
@@ -1035,15 +1036,7 @@ impl AppState {
             return false;
         }
         let pre_state = self.state_snapshot();
-        let item_text = self
-            .current_item()
-            .map(|item| {
-                item.header
-                    .as_deref()
-                    .unwrap_or(&item.display_text)
-                    .to_string()
-            })
-            .unwrap_or_default();
+        let item_text = self.current_item().map(Item::label).unwrap_or_default();
         if let Some(current) = self.current_item_mut() {
             current.kind = ItemKind::Checkbox(state);
         }

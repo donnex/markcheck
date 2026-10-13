@@ -28,7 +28,7 @@ a note card.
 ## Ordered steps
 
 The three task states work the same on an ordered (numbered) list as on a
-plain bulleted one.
+plain bulleted one, and each card and overview row shows the step's number.
 
 1. [x] Confirm the change window is open
 2. [/] Notify the on-call channel

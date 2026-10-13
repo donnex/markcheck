@@ -78,6 +78,10 @@ pub struct Item {
     /// sub-list, etc. Items stay a flat Vec in document (pre-order)
     /// order; `depth` carries the hierarchy as metadata.
     pub depth: usize,
+    /// The author's step number (`3.` or `3)`) when the item is in an
+    /// ordered list, taken verbatim from its marker so non-sequential
+    /// numbering is kept. `None` for a bullet.
+    pub ordinal: Option<String>,
     /// The active `### H3`+ sub-section path at this item, outermost first.
     /// Empty directly under the `## H2`.
     pub section: Vec<SubHeading>,
@@ -97,6 +101,17 @@ pub struct Item {
 }
 
 impl Item {
+    /// The one-line name used wherever an item is listed (overview row,
+    /// `T` picker, parent breadcrumb): the card title, or the body when there
+    /// is none, prefixed with the ordered-list step number if any.
+    pub fn label(&self) -> String {
+        let text = self.header.as_deref().unwrap_or(&self.display_text);
+        match &self.ordinal {
+            Some(ordinal) => format!("{ordinal} {text}"),
+            None => text.to_string(),
+        }
+    }
+
     /// All matchable text for search: the card title, the body
     /// (prose plus inline code, both already folded into `display_text`), and
     /// any fenced command blocks (which are *not* part of `display_text`).
@@ -974,6 +989,7 @@ mod tests {
 
     fn checkbox(line_number: LineNumber, completed: bool) -> Item {
         Item {
+            ordinal: None,
             line_number,
             depth: 0,
             section: vec![],
@@ -992,6 +1008,7 @@ mod tests {
 
     fn display_only(line_number: LineNumber) -> Item {
         Item {
+            ordinal: None,
             line_number,
             depth: 0,
             section: vec![],
@@ -1009,6 +1026,7 @@ mod tests {
         // search_text folds in the title, the body (display_text),
         // and fenced command blocks — the last aren't part of display_text.
         let item = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],
@@ -1030,6 +1048,7 @@ mod tests {
 
     fn item_at(line_number: LineNumber, depth: usize, kind: ItemKind) -> Item {
         Item {
+            ordinal: None,
             line_number,
             depth,
             section: vec![],

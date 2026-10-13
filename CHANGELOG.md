@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Steps in a numbered list now show their number. A card, its overview row,
+  the `T` go-to-task picker, the side cards and git-sync commit messages read
+  `3. Take a snapshot` instead of just the step text, using the number
+  exactly as written in the file, and typing `3.` in the picker finds step 3. Previously the numbers
+  were dropped, and the only number on screen was the card's position in the
+  list, which also counts notes and sub-steps, so "go back to step 3" in a
+  runbook could point at a different card than `3/12`. (#82)
+
 - A bare URL in a task or note, such as `https://example.com/status` or
   `www.example.com`, is now a link, the way GitHub and most Markdown viewers
   show it: it is underlined, listed below the card and opened with `o`.

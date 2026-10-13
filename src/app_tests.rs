@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn checkbox(line_number: usize, completed: bool) -> Item {
     Item {
+        ordinal: None,
         line_number,
         depth: 0,
         section: vec![],
@@ -22,6 +23,7 @@ fn checkbox(line_number: usize, completed: bool) -> Item {
 
 fn display_only(line_number: usize) -> Item {
     Item {
+        ordinal: None,
         line_number,
         depth: 0,
         section: vec![],
@@ -5370,4 +5372,21 @@ fn every_digit_prompt_key_has_a_help_row() {
 fn every_screen_help_lists_ctrl_c_and_ctrl_z() {
     let words = help_words(&[""]);
     assert!(words.contains(&"Ctrl-C") && words.contains(&"Ctrl-Z"));
+}
+
+#[test]
+fn git_sync_descriptions_name_an_ordered_step_by_its_number() {
+    let path = write_real_file("## S\n\n1. [ ] alpha\n2. [ ] beta\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Check \"1. alpha\"".to_string())
+    );
+    state.toggle_item(0, 1);
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Check \"2. beta\"".to_string())
+    );
+    fs::remove_file(&path).ok();
 }

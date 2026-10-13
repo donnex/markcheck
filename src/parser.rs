@@ -203,6 +203,7 @@ fn is_started_marker_at(raw: &str, offset: usize) -> bool {
 struct ItemBuilder {
     line: LineNumber,
     depth: usize,
+    ordinal: Option<String>,
     /// `current_list_items.len()` when this item was pushed. Any growth by its
     /// `End(Item)` is its own children, which keeps a bullet with children from
     /// becoming the banner.
@@ -369,6 +370,7 @@ impl ItemBuilder {
         Item {
             line_number: self.line,
             depth: self.depth,
+            ordinal: self.ordinal,
             section: self.section,
             display_text,
             body: self.body,
@@ -465,6 +467,17 @@ fn is_valid_domain(after_prefix: &str) -> bool {
         && segments[segments.len() - 2..]
             .iter()
             .all(|segment| !segment.contains('_'))
+}
+
+/// The ordered-list marker (`3.` or `3)`) at the start of an item's
+/// source, or `None` for a bullet. CommonMark allows 1-9 digits.
+fn ordered_marker(item_source: &str) -> Option<String> {
+    let digits = item_source
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(item_source.len());
+    let delimiter = item_source[digits..].chars().next()?;
+    ((1..=9).contains(&digits) && matches!(delimiter, '.' | ')'))
+        .then(|| item_source[..=digits].to_string())
 }
 
 /// Whether a finished top-level-eligible item could be its list's banner,
@@ -703,6 +716,7 @@ impl<'a> ParseState<'a> {
         self.item_stack.push(ItemBuilder {
             line,
             depth: self.list_depth.saturating_sub(1),
+            ordinal: ordered_marker(&self.source[offset..]),
             section: self.section_stack.clone(),
             items_before: self.current_list_items.len(),
             in_blockquote: self.blockquote_depth > 0,
@@ -1120,6 +1134,34 @@ mod tests {
             s.items[1].kind,
             ItemKind::Checkbox(TaskState::Done)
         ));
+    }
+
+    #[test]
+    fn ordered_items_keep_the_authors_step_number() {
+        let s = &parse(
+            "## S\n\n3. [ ] three\n7) [x] seven\n   - [ ] bullet child\n   1. [ ] numbered child\n\n- [ ] bullet\n> 12. [ ] quoted\n",
+        )
+        .lists[0];
+        let ordinals: Vec<Option<&str>> = s.items.iter().map(|i| i.ordinal.as_deref()).collect();
+        assert_eq!(
+            ordinals,
+            vec![Some("3."), Some("7)"), None, Some("1."), None, Some("12.")]
+        );
+    }
+
+    #[test]
+    fn examples_number_the_ordered_steps() {
+        let step = example_item("basics.md", "Notify the on-call channel");
+        assert_eq!(step.ordinal.as_deref(), Some("2."));
+        assert_eq!(step.label(), "2. Notify the on-call channel");
+    }
+
+    #[test]
+    fn ordered_marker_rejects_bullets_and_overlong_numbers() {
+        assert_eq!(ordered_marker("- [ ] a"), None);
+        assert_eq!(ordered_marker("1234567890. a"), None);
+        assert_eq!(ordered_marker("42"), None);
+        assert_eq!(ordered_marker("42) a").as_deref(), Some("42)"));
     }
 
     #[test]
