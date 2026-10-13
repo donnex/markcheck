@@ -1,6 +1,71 @@
 use super::*;
-use crate::test_support::shown;
+use crate::effect::{self, Effect};
+use crate::test_support::{RecordingHost, shown};
 use std::path::PathBuf;
+
+/// Peeks at and takes the effects a test cares about, the way the main loop
+/// would drain them.
+impl AppState {
+    fn quit_requested(&self) -> bool {
+        self.effects.contains(&Effect::Quit)
+    }
+
+    fn editor_requested(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|e| matches!(e, Effect::OpenEditor { .. }))
+    }
+
+    fn link_open_request(&self) -> Option<&str> {
+        self.effects.iter().find_map(|e| match e {
+            Effect::OpenLink(url) => Some(url.as_str()),
+            _ => None,
+        })
+    }
+
+    fn git_sync_request(&self) -> Option<&PendingSync> {
+        self.effects.iter().find_map(|e| match e {
+            Effect::GitSync(sync) => Some(sync),
+            _ => None,
+        })
+    }
+
+    fn take_editor_request(&mut self) -> bool {
+        self.take_effect(|e| matches!(e, Effect::OpenEditor { .. }))
+            .is_some()
+    }
+
+    fn take_suspend_request(&mut self) -> bool {
+        self.take_effect(|e| *e == Effect::Suspend).is_some()
+    }
+
+    fn take_link_open_request(&mut self) -> Option<String> {
+        match self.take_effect(|e| matches!(e, Effect::OpenLink(_)))? {
+            Effect::OpenLink(url) => Some(url),
+            _ => unreachable!(),
+        }
+    }
+
+    fn take_git_sync_request(&mut self) -> Option<PendingSync> {
+        match self.take_effect(|e| matches!(e, Effect::GitSync(_)))? {
+            Effect::GitSync(sync) => Some(sync),
+            _ => unreachable!(),
+        }
+    }
+
+    fn take_effect(&mut self, wanted: impl Fn(&Effect) -> bool) -> Option<Effect> {
+        let index = self.effects.iter().position(wanted)?;
+        Some(self.effects.remove(index))
+    }
+
+    /// Runs the queued effects against the fake clipboard and a recording
+    /// host, as the main loop's drain would.
+    fn settle(&mut self) -> RecordingHost {
+        let mut host = RecordingHost::default();
+        effect::drain(self, &mut host).expect("the recording host never fails");
+        host
+    }
+}
 
 fn checkbox(line_number: usize, completed: bool) -> Item {
     Item {
@@ -727,7 +792,7 @@ fn search_query_captures_command_keys_as_text() {
     state.handle_key(KeyCode::Char('/'));
     type_str(&mut state, "q?j");
     assert_eq!(state.search.query, "q?j");
-    assert!(!state.should_quit, "typing q in search does not quit");
+    assert!(!state.quit_requested(), "typing q in search does not quit");
     assert_eq!(state.overlay, Some(Overlay::Search));
 }
 
@@ -984,6 +1049,7 @@ fn a_successful_search_commit_auto_copies_the_match() {
     type_str(&mut state, "task 4");
     crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
     state.handle_key(KeyCode::Enter);
+    state.settle();
     crate::clipboard::fake::with(|c| {
         assert_eq!(c.system_attempts, vec![(expected.clone(), false)]);
     });
@@ -1013,7 +1079,7 @@ fn paste_on_the_checklist_changes_nothing_and_says_so() {
         fs::read_to_string(&state.document.file_path).unwrap(),
         before
     );
-    assert!(!state.should_quit);
+    assert!(!state.quit_requested());
     assert!(state.status_is_error);
     assert_eq!(
         state.status_message.as_deref(),
@@ -1124,6 +1190,28 @@ fn brace_keys_jump_between_sub_sections_with_feedback() {
     state.handle_key(KeyCode::Char('{'));
     assert_eq!(state.current_item_index, 1);
     assert!(state.status_is_error);
+}
+
+#[test]
+fn a_sub_section_jump_keeps_its_name_beside_the_auto_copy_confirmation() {
+    let mut item = text_item(2, "task 2");
+    item.section = vec![crate::model::SubHeading {
+        level: 3,
+        text: "Alpha".to_string(),
+    }];
+    item.code_spans = vec!["make".to_string()];
+    let mut state = AppState::new(document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![text_item(1, "task 1"), item],
+    }]));
+    state.auto_copy = true;
+    state.handle_key(KeyCode::Char('}'));
+    state.settle();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sub-section: Alpha · Sent to clipboard (OSC 52)")
+    );
 }
 
 #[test]
@@ -1338,7 +1426,7 @@ fn o_refuses_unsafe_schemes_with_a_sticky_hint() {
         let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));
         state.handle_key(KeyCode::Char('o'));
         assert!(
-            state.link_open_request.is_none(),
+            state.link_open_request().is_none(),
             "{url} should not be opened"
         );
         assert_eq!(
@@ -1353,7 +1441,7 @@ fn o_refuses_unsafe_schemes_with_a_sticky_hint() {
 fn o_with_no_link_gives_a_sticky_hint() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('o'));
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert_eq!(
         state.status_message.as_deref(),
         Some("Nothing to open: card has no link")
@@ -1370,7 +1458,7 @@ fn o_with_multiple_links_arms_a_digit_without_hiding_them() {
     let item = item_with_links(1, &["https://example.com/a", "https://example.com/b"]);
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert!(state.pending_open_link, "armed for a link number");
     // No status message hides the links — the numbered list stays visible in
     // the panel below the card.
@@ -1392,7 +1480,7 @@ fn o_then_two_digits_opens_link_twelve() {
     state.handle_key(KeyCode::Char('1'));
     assert!(state.pending_open_link, "1 could still become 10, 11 or 12");
     assert_eq!(state.pending_number, 1);
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     state.handle_key(KeyCode::Char('2'));
     assert!(!state.pending_open_link, "consumed");
     assert_eq!(state.pending_number, 0);
@@ -1449,7 +1537,7 @@ fn o_then_a_number_past_the_last_link_says_so() {
     state.handle_key(KeyCode::Char('1'));
     state.handle_key(KeyCode::Char('3'));
     assert!(!state.pending_open_link);
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert_eq!(
         state.status_message.as_deref(),
         Some("No link [13] on this card")
@@ -1464,7 +1552,7 @@ fn another_key_after_a_partial_number_cancels_and_acts() {
     state.handle_key(KeyCode::Char('?'));
     assert!(!state.pending_open_link);
     assert_eq!(state.pending_number, 0);
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert_eq!(state.overlay, Some(Overlay::Help));
 }
 
@@ -1488,10 +1576,10 @@ fn esc_cancels_the_open_prompt_without_quitting() {
     state.handle_key(KeyCode::Esc);
     assert!(!state.pending_open_link, "cancelled");
     assert!(
-        !state.should_quit,
+        !state.quit_requested(),
         "esc must not quit while arming a link open"
     );
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
 }
 
 #[test]
@@ -1561,7 +1649,7 @@ fn o_then_an_out_of_range_digit_reports_no_such_link() {
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     state.handle_key(KeyCode::Char('5'));
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert_eq!(
         state.status_message.as_deref(),
         Some("No link [5] on this card")
@@ -1574,7 +1662,7 @@ fn o_then_a_digit_for_an_unsafe_scheme_is_refused() {
     let mut state = AppState::new(single_item_document(item));
     state.handle_key(KeyCode::Char('o'));
     state.handle_key(KeyCode::Char('2'));
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert_eq!(
         state.status_message.as_deref(),
         Some("Not opened: unsupported link type (file:///etc/passwd)")
@@ -1595,7 +1683,7 @@ fn o_then_a_non_digit_cancels_the_prompt_and_acts_normally() {
     assert!(state.pending_open_link);
     state.handle_key(KeyCode::Char('j'));
     assert!(!state.pending_open_link, "cancelled");
-    assert!(state.link_open_request.is_none());
+    assert!(state.link_open_request().is_none());
     assert_eq!(state.current_item_index, 1, "j still navigated");
 }
 
@@ -1872,7 +1960,7 @@ fn list_with_zero_items_does_not_panic() {
 fn q_sets_should_quit() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('q'));
-    assert!(state.should_quit);
+    assert!(state.quit_requested());
 }
 
 // --- First-undone selection ---
@@ -2173,6 +2261,46 @@ fn e_requests_editor_and_is_consumed_once() {
 }
 
 #[test]
+fn e_asks_for_the_editor_at_the_current_task_line() {
+    let mut state = AppState::new(two_list_document());
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('e'));
+    assert_eq!(state.effects, vec![Effect::OpenEditor { line: Some(5) }]);
+}
+
+#[test]
+fn a_later_write_replaces_a_sync_not_yet_handed_over() {
+    let mut state = AppState::new(two_list_document());
+    state.toggle_current();
+    state.toggle_current();
+    let syncs: Vec<_> = state
+        .effects
+        .iter()
+        .filter(|e| matches!(e, Effect::GitSync(_)))
+        .collect();
+    assert_eq!(syncs.len(), 1, "only the latest content needs committing");
+    let host = state.settle();
+    assert_eq!(host.syncs.len(), 1);
+    assert_eq!(
+        host.syncs[0].content,
+        fs::read_to_string(&state.document.file_path).unwrap()
+    );
+}
+
+#[test]
+fn an_auto_copy_confirmation_never_hides_an_error() {
+    let mut state = AppState::new(two_list_document());
+    state.set_error("Something failed".to_string());
+    state.apply_copy_outcome(CopyKind::Auto, "make", CopyOutcome::CopiedSystem);
+    assert_eq!(state.status_message.as_deref(), Some("Something failed"));
+    assert!(state.status_is_error);
+
+    state.clear_status();
+    state.apply_copy_outcome(CopyKind::Auto, "make", CopyOutcome::Failed);
+    assert_eq!(state.status_message, None, "a failed auto-copy is silent");
+}
+
+#[test]
 fn e_requests_editor_from_completion_screen() {
     let mut state = AppState::new(two_list_document());
     state.view = View::AllComplete;
@@ -2225,7 +2353,7 @@ fn press_ctrl_c(state: &mut AppState) {
 fn assert_quit_hint(state: &AppState) {
     assert_eq!(state.status_message.as_deref(), Some("Type q to quit"));
     assert!(state.status_is_error);
-    assert!(!state.should_quit);
+    assert!(!state.quit_requested());
 }
 
 #[test]
@@ -2306,7 +2434,7 @@ fn ctrl_c_cancels_quit_reset_confirmation_without_quitting() {
     assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     press_ctrl_c(&mut state);
     assert_eq!(shown(&state), (View::AllComplete, None));
-    assert!(!state.should_quit);
+    assert!(!state.quit_requested());
 }
 
 #[test]
@@ -2597,7 +2725,7 @@ fn confirm_reset_cancel_restores_screen_and_leaves_tasks() {
     assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key(KeyCode::Esc);
     assert_eq!(shown(&state), (View::Checklist, None));
-    assert!(!state.should_quit, "Esc cancels, does not quit");
+    assert!(!state.quit_requested(), "Esc cancels, does not quit");
     assert_eq!(state.document.checkbox_stats().0, done_before);
 }
 
@@ -2646,7 +2774,7 @@ fn quit_when_all_done_opens_confirm_quit_reset() {
     let mut state = AppState::new(all_done_document());
     state.handle_key(KeyCode::Char('q'));
     assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
-    assert!(!state.should_quit, "prompt shown, not quit yet");
+    assert!(!state.quit_requested(), "prompt shown, not quit yet");
 }
 
 #[test]
@@ -2654,7 +2782,7 @@ fn confirm_quit_reset_yes_resets_and_quits() {
     let mut state = AppState::new(all_done_document());
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('y'));
-    assert!(state.should_quit, "y quits");
+    assert!(state.quit_requested(), "y quits");
     assert_eq!(state.document.checkbox_stats().0, 0, "y resets all tasks");
 }
 
@@ -2669,7 +2797,7 @@ fn confirm_quit_reset_yes_stays_running_when_the_file_changed_on_disk() {
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('y'));
 
-    assert!(!state.should_quit, "a refused reset must not quit");
+    assert!(!state.quit_requested(), "a refused reset must not quit");
     assert!(state.status_is_error);
     assert!(
         state
@@ -2694,7 +2822,7 @@ fn confirm_quit_reset_yes_stays_running_when_the_write_fails() {
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('y'));
 
-    assert!(!state.should_quit, "a failed reset must not quit");
+    assert!(!state.quit_requested(), "a failed reset must not quit");
     assert!(state.status_is_error);
     assert!(
         state
@@ -2718,7 +2846,7 @@ fn confirm_quit_reset_no_quits_without_resetting() {
     let done_before = state.document.checkbox_stats().0;
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('n'));
-    assert!(state.should_quit, "n quits");
+    assert!(state.quit_requested(), "n quits");
     assert_eq!(
         state.document.checkbox_stats().0,
         done_before,
@@ -2732,7 +2860,7 @@ fn confirm_quit_reset_esc_cancels() {
     state.handle_key(KeyCode::Char('q'));
     assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     state.handle_key(KeyCode::Esc);
-    assert!(!state.should_quit, "Esc cancels, stays running");
+    assert!(!state.quit_requested(), "Esc cancels, stays running");
     assert_eq!(shown(&state), (View::Checklist, None));
 }
 
@@ -2839,6 +2967,7 @@ fn auto_copy_fires_on_every_navigation_motion() {
         for &key in keys {
             state.handle_key(key);
         }
+        state.settle();
 
         assert_eq!(
             (state.current_list_index, state.current_item_index),
@@ -2872,6 +3001,7 @@ fn a_wrap_message_keeps_the_auto_copy_confirmation_beside_it() {
     state.auto_copy = true;
     state.focus_item(1, 1, CursorMove::Quiet);
     state.handle_key(KeyCode::Tab);
+    state.settle();
     assert_eq!(
         state.status_message.as_deref(),
         Some("Wrapped to the first unfinished task (List 1) · Sent to clipboard (OSC 52)")
@@ -2886,6 +3016,7 @@ fn a_wrap_message_gives_way_to_a_sticky_auto_copy_error() {
     state.auto_copy = true;
     state.focus_item(1, 1, CursorMove::Quiet);
     state.handle_key(KeyCode::Tab);
+    state.settle();
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
     assert_eq!(
         state.status_message.as_deref(),
@@ -3010,6 +3141,7 @@ fn y_then_two_digits_copies_command_ten() {
     state.handle_key(KeyCode::Char('1'));
     assert!(state.pending_copy_code, "1 could still become 10");
     state.handle_key(KeyCode::Char('0'));
+    state.settle();
     assert!(!state.pending_copy_code, "consumed");
     assert_eq!(state.current_list_index, 0, "no list jump");
     crate::clipboard::fake::with(|c| {
@@ -3026,6 +3158,7 @@ fn y_then_a_digit_copies_that_fenced_block_not_a_list() {
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
     state.handle_key(KeyCode::Char('2'));
+    state.settle();
     assert!(!state.pending_copy_code, "consumed");
     assert_eq!(state.current_list_index, 0, "no list jump");
     assert_eq!(
@@ -3044,6 +3177,7 @@ fn y_then_a_digit_copies_that_inline_command() {
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
     state.handle_key(KeyCode::Char('1'));
+    state.settle();
     crate::clipboard::fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("stop-svc".to_string(), false)]);
     });
@@ -3072,7 +3206,10 @@ fn esc_cancels_the_copy_prompt_without_quitting() {
     state.handle_key(KeyCode::Char('y'));
     state.handle_key(KeyCode::Esc);
     assert!(!state.pending_copy_code, "cancelled");
-    assert!(!state.should_quit, "esc must not quit while arming a copy");
+    assert!(
+        !state.quit_requested(),
+        "esc must not quit while arming a copy"
+    );
     crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
 }
 
@@ -3135,6 +3272,7 @@ fn click_on_code_region_copies_that_specific_row() {
 
     // On the region: the specific path, never the ambiguous hint.
     state.handle_left_click(15, 7);
+    state.settle();
     assert_eq!(
         state.status_message.as_deref(),
         Some("Sent to clipboard (OSC 52)")
@@ -3512,7 +3650,7 @@ fn toggle_is_refused_on_a_write_protected_checklist() {
         state.document.lists[0].items[0].kind,
         ItemKind::Checkbox(TaskState::NotStarted)
     );
-    assert!(state.git_sync.pending.is_none());
+    assert!(state.git_sync_request().is_none());
 }
 
 #[test]
@@ -4024,7 +4162,7 @@ fn reload_cancels_a_pending_quit_reset_confirmation_visibly() {
     assert!(state.reload_if_changed());
 
     assert_eq!(shown(&state), (View::Checklist, None));
-    assert!(!state.should_quit);
+    assert!(!state.quit_requested());
     assert_eq!(
         state.status_message.as_deref(),
         Some("File changed on disk — quit cancelled")
@@ -4503,7 +4641,7 @@ fn quit_reset_confirmed_with_y_writes_every_task_open_and_quits() {
     state.handle_key(KeyCode::Char('q'));
     assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     state.handle_key(KeyCode::Char('y'));
-    assert!(state.should_quit);
+    assert!(state.quit_requested());
     assert_eq!(file_text(&path), "## L\n\n- [ ] one\n- [ ] two\n");
 }
 
@@ -4513,7 +4651,7 @@ fn quit_without_reset_leaves_the_file_untouched() {
     let (mut state, path) = state_from_markdown(all_done);
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('n'));
-    assert!(state.should_quit);
+    assert!(state.quit_requested());
     assert_eq!(file_text(&path), all_done);
 }
 
@@ -5305,7 +5443,7 @@ fn an_external_reload_drops_a_queued_git_sync_request() {
 
     state.toggle_current();
     assert!(
-        state.git_sync.pending.is_some(),
+        state.git_sync_request().is_some(),
         "test setup: the toggle must have queued a sync request"
     );
 
@@ -5317,7 +5455,7 @@ fn an_external_reload_drops_a_queued_git_sync_request() {
     );
 
     assert!(
-        state.git_sync.pending.is_none(),
+        state.git_sync_request().is_none(),
         "a request describing content that is no longer on disk must not survive the reload"
     );
 
@@ -5455,6 +5593,7 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
     document.lists[0].items[0].code_blocks = vec![hidden.clone()];
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
+    state.settle();
     assert_eq!(state.status_message.as_deref(), expected);
     assert!(state.status_is_error);
 
@@ -5462,6 +5601,7 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
     state.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.clone())];
     state.handle_left_click(15, 7);
+    state.settle();
     assert_eq!(state.status_message.as_deref(), expected);
 
     let mut document = two_list_document();
@@ -5469,6 +5609,7 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
     let mut state = AppState::new(document);
     state.auto_copy = true;
     state.maybe_auto_copy();
+    state.settle();
     assert_eq!(state.status_message.as_deref(), expected);
 }
 
@@ -5499,7 +5640,7 @@ fn ctrl_s_does_not_start_the_task_or_write_the_file() {
 fn ctrl_q_and_alt_digit_do_not_quit_or_jump() {
     let mut state = AppState::new(two_list_document());
     state.handle_key_with_mods(KeyCode::Char('q'), KeyModifiers::CONTROL);
-    assert!(!state.should_quit);
+    assert!(!state.quit_requested());
     state.handle_key_with_mods(KeyCode::Char('2'), KeyModifiers::ALT);
     assert_eq!(state.current_list_index, 0);
     assert_eq!(
@@ -5530,7 +5671,7 @@ fn ctrl_e_on_a_completion_screen_does_not_open_the_editor() {
     let mut state = AppState::new(two_list_document());
     state.view = View::ListComplete;
     state.handle_key_with_mods(KeyCode::Char('e'), KeyModifiers::CONTROL);
-    assert!(!state.editor_requested);
+    assert!(!state.editor_requested());
     assert_eq!(shown(&state), (View::ListComplete, None));
     state.view = View::AllComplete;
     state.handle_key_with_mods(KeyCode::Char('d'), KeyModifiers::CONTROL);
@@ -5595,6 +5736,7 @@ fn copy_link_instead_reports_each_clipboard_outcome() {
         c.system_attempts.clear();
     });
     state.copy_link_instead(url);
+    state.settle();
     assert_eq!(
         state.status_message.as_deref(),
         Some("No browser here — link copied to clipboard")
@@ -5606,12 +5748,14 @@ fn copy_link_instead_reports_each_clipboard_outcome() {
 
     crate::clipboard::fake::with(|c| c.system_available = false);
     state.copy_link_instead(url);
+    state.settle();
     assert_eq!(
         state.status_message.as_deref(),
         Some("No browser here — link sent to clipboard (OSC 52)")
     );
 
     state.copy_link_instead("https://example.com/\u{7}");
+    state.settle();
     assert!(state.status_is_error);
     assert!(
         state
@@ -5622,6 +5766,7 @@ fn copy_link_instead_reports_each_clipboard_outcome() {
 
     let huge = format!("https://example.com/{}", "a".repeat(200_000));
     state.copy_link_instead(&huge);
+    state.settle();
     assert!(state.status_is_error);
     assert!(
         state
@@ -5700,9 +5845,7 @@ fn observable(state: &AppState) -> String {
         (
             state.view,
             state.overlay,
-            state.should_quit,
-            state.suspend_requested,
-            state.editor_requested,
+            &state.effects,
             &state.search.query,
             &state.picker.query,
             state.picker.selection,
@@ -5715,7 +5858,6 @@ fn observable(state: &AppState) -> String {
             state.pending_g,
             state.pending_open_link,
             state.pending_copy_code,
-            &state.link_open_request,
             state.document.checkbox_progress(),
         )
     )

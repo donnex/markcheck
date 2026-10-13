@@ -961,6 +961,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being synced, after which every push was refused with a false "pull first"
   or kept failing and retrying for the whole session. (#120)
 
+- With `--auto-copy`, jumping between sub-sections with `{` and `}` now shows
+  both the sub-section's name and the copy confirmation
+  (`Sub-section: Backup · Copied to clipboard`). Previously the copy
+  confirmation replaced the name. (#138)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping

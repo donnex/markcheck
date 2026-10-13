@@ -5,7 +5,8 @@ use std::time::{Duration, SystemTime};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::clipboard;
+use crate::clipboard::{self, CopyOutcome};
+use crate::effect::{CopyKind, Effect};
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
     AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
@@ -169,7 +170,7 @@ impl AppState {
             status_message: None,
             status_expiry: None,
             status_is_error: false,
-            should_quit: false,
+            effects: Vec::new(),
             file_mtime,
             file_size,
             file_content_hash,
@@ -186,8 +187,6 @@ impl AppState {
             pending_copy_code: false,
             pending_number: 0,
             icons: IconSet::nerd(),
-            editor_requested: false,
-            suspend_requested: false,
             clipboard_primary: false,
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this
@@ -196,7 +195,6 @@ impl AppState {
             file_deleted: false,
             search: SearchState::default(),
             picker: PickerState::default(),
-            link_open_request: None,
             help: HelpState::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -421,23 +419,15 @@ impl AppState {
         self.focus_and_report(target, Some(msg));
     }
 
-    /// Navigate to `target` and report `msg` (if any) as an ephemeral status,
-    /// keeping the auto-copy outcome visible too: a copy confirmation is
-    /// appended after `msg`, and a sticky copy error replaces it.
+    /// Navigate to `target` and report `msg` (if any) as an ephemeral status.
+    /// The auto-copy outcome lands after it, so stays visible too (see
+    /// `apply_copy_outcome`).
     fn focus_and_report(&mut self, (list_index, item_index): (usize, usize), msg: Option<String>) {
         self.clear_status();
         self.focus_item(list_index, item_index, CursorMove::Navigate);
-        let Some(msg) = msg else {
-            return;
-        };
-        if self.status_is_error {
-            return;
+        if let Some(msg) = msg {
+            self.set_status(msg);
         }
-        let msg = match self.status_message.take() {
-            Some(copied) => format!("{msg} · {copied}"),
-            None => msg,
-        };
-        self.set_status(msg);
     }
 
     /// Jump the cursor to the first item of the next (`forward`) / previous
@@ -785,20 +775,58 @@ impl AppState {
         if !self.auto_copy {
             return;
         }
-        use clipboard::CopyOutcome;
+        if let Some([text]) = self.current_item().map(clipboard::candidates) {
+            let text = text.clone();
+            self.request_copy(text, CopyKind::Auto);
+        }
+    }
+
+    fn request_copy(&mut self, text: String, kind: CopyKind) {
         let primary = self.clipboard_primary;
-        let outcome = self
-            .current_item()
-            .map(|item| clipboard::copy_item_code(item, primary));
-        match outcome {
-            Some(CopyOutcome::CopiedSystem) => self.set_status("Copied to clipboard".to_string()),
-            Some(CopyOutcome::CopiedOsc52) => {
-                self.set_status("Sent to clipboard (OSC 52)".to_string())
-            }
-            Some(CopyOutcome::HiddenCharacters) => {
+        self.effects.push(Effect::Copy {
+            text,
+            primary,
+            kind,
+        });
+    }
+
+    /// Reports a finished copy the way its `kind` calls for. `text` is what
+    /// was copied, named in the message only when a link had nowhere else
+    /// to go.
+    pub fn apply_copy_outcome(&mut self, kind: CopyKind, text: &str, outcome: CopyOutcome) {
+        const COPIED: &str = "Copied to clipboard";
+        const SENT: &str = "Sent to clipboard (OSC 52)";
+        match (kind, outcome) {
+            (CopyKind::Auto, CopyOutcome::CopiedSystem) => self.report_auto_copy(COPIED),
+            (CopyKind::Auto, CopyOutcome::CopiedOsc52) => self.report_auto_copy(SENT),
+            (CopyKind::Command, CopyOutcome::CopiedSystem) => self.set_status(COPIED.to_string()),
+            (CopyKind::Command, CopyOutcome::CopiedOsc52) => self.set_status(SENT.to_string()),
+            (CopyKind::Auto | CopyKind::Command, CopyOutcome::HiddenCharacters) => {
                 self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string())
             }
-            _ => {}
+            (CopyKind::Auto, _) => {}
+            (CopyKind::Command, CopyOutcome::TooLarge) => self.set_error(
+                "Not copied: this command is too large for the terminal clipboard".to_string(),
+            ),
+            (CopyKind::Command, CopyOutcome::Failed) => {
+                self.set_error("Copy failed: no clipboard available".to_string())
+            }
+            (CopyKind::LinkFallback, CopyOutcome::CopiedSystem) => {
+                self.set_status("No browser here — link copied to clipboard".to_string())
+            }
+            (CopyKind::LinkFallback, CopyOutcome::CopiedOsc52) => {
+                self.set_status("No browser here — link sent to clipboard (OSC 52)".to_string())
+            }
+            (CopyKind::LinkFallback, CopyOutcome::TooLarge) => self.set_error(
+                "No browser here, and the link is too large for the terminal clipboard".to_string(),
+            ),
+            (CopyKind::LinkFallback, CopyOutcome::HiddenCharacters) => self.set_error(
+                "No browser here, and the link contains hidden control characters — not copied"
+                    .to_string(),
+            ),
+            (CopyKind::LinkFallback, CopyOutcome::Failed) => {
+                self.set_error(format!("No browser or clipboard here — link: {text}"))
+            }
         }
     }
 
@@ -953,19 +981,9 @@ impl AppState {
     }
 
     /// Copies an exact code fragment (a specific clicked row), bypassing
-    /// the single-candidate rule; sets the same status strings as `y`.
+    /// the single-candidate rule; reported the same way as `y`.
     fn copy_specific(&mut self, text: &str) {
-        use clipboard::CopyOutcome;
-        match clipboard::copy_specific(text, self.clipboard_primary) {
-            CopyOutcome::CopiedSystem => self.set_status("Copied to clipboard".to_string()),
-            CopyOutcome::CopiedOsc52 => self.set_status("Sent to clipboard (OSC 52)".to_string()),
-            CopyOutcome::TooLarge => self.set_error(
-                "Not copied: this command is too large for the terminal clipboard".to_string(),
-            ),
-            CopyOutcome::HiddenCharacters => self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string()),
-            // copy_specific only ever copies, is too large, or fails outright.
-            _ => self.set_error("Copy failed: no clipboard available".to_string()),
-        }
+        self.request_copy(text.to_string(), CopyKind::Command);
     }
 
     pub fn toggle_current(&mut self) {
@@ -1124,8 +1142,8 @@ impl AppState {
 
     /// Writes the document back to disk; every mutating action ends here. On
     /// failure, restores `pre_state` so memory never diverges from disk, and
-    /// sets a sticky error with `fail_msg`. On success, stashes `change_desc`
-    /// as the pending git-sync request.
+    /// sets a sticky error with `fail_msg`. On success, queues a git-sync
+    /// request described by `change_desc`.
     fn commit_write(
         &mut self,
         pre_state: &StateSnapshot,
@@ -1177,7 +1195,7 @@ impl AppState {
         let content_hash = hash_bytes(content.as_bytes());
         self.file_content_hash = Some(content_hash);
         self.last_update_at = Some(SystemTime::now());
-        self.git_sync.pending = Some(PendingSync {
+        self.queue_git_sync(PendingSync {
             content,
             content_hash,
             previous_content,
@@ -1291,7 +1309,7 @@ impl AppState {
                 // A queued git-sync request describes content this reload replaced. The
                 // new content queues nothing: markcheck doesn't commit edits it didn't
                 // make.
-                self.git_sync.pending = None;
+                self.cancel_git_sync();
                 // The cursor may now be on a different card, so a half-typed chord must
                 // not act on it.
                 self.pending_g = false;
@@ -1342,7 +1360,7 @@ impl AppState {
     pub fn request_external_edit_sync(&mut self, editor: &str) {
         let content = writer::document_contents(&self.document);
         let content_hash = hash_bytes(content.as_bytes());
-        self.git_sync.pending = Some(PendingSync {
+        self.queue_git_sync(PendingSync {
             // The editor wrote this, so the content being replaced is the content
             // carried.
             previous_content: Some(content.clone()),
@@ -1350,6 +1368,31 @@ impl AppState {
             content_hash,
             description: format!("Edited in {}", program_name(editor)),
         });
+    }
+
+    /// Queues `sync`, replacing one not yet handed to the worker: only the
+    /// latest content needs committing.
+    fn queue_git_sync(&mut self, sync: PendingSync) {
+        self.cancel_git_sync();
+        self.effects.push(Effect::GitSync(sync));
+    }
+
+    fn cancel_git_sync(&mut self) {
+        self.effects
+            .retain(|effect| !matches!(effect, Effect::GitSync(_)));
+    }
+
+    /// An auto-copy confirmation goes after whatever the motion reported
+    /// (`Match 2/5 · Copied to clipboard`), and never hides an error.
+    fn report_auto_copy(&mut self, copied: &str) {
+        if self.status_is_error {
+            return;
+        }
+        let message = match self.status_message.take() {
+            Some(reported) => format!("{reported} · {copied}"),
+            None => copied.to_string(),
+        };
+        self.set_status(message);
     }
 
     /// Settles the view and overlay after a reload. The view always becomes
@@ -1492,16 +1535,6 @@ impl AppState {
         self.view = View::Checklist;
     }
 
-    /// Consumed by the main loop each tick.
-    pub fn take_editor_request(&mut self) -> bool {
-        std::mem::take(&mut self.editor_requested)
-    }
-
-    /// Consumed by the main loop each tick, like [`take_editor_request`].
-    pub fn take_suspend_request(&mut self) -> bool {
-        std::mem::take(&mut self.suspend_requested)
-    }
-
     /// Called by the main loop once `fg` has resumed it, or once the suspend
     /// failed. The file may have been edited from the shell meanwhile.
     pub fn finish_suspend(&mut self, outcome: Result<(), String>) {
@@ -1574,7 +1607,7 @@ impl AppState {
             .unwrap_or_default();
         match urls.as_slice() {
             [url] if is_safe_link(url) => {
-                self.link_open_request = Some(url.clone());
+                self.effects.push(Effect::OpenLink(url.clone()));
             }
             [url] => self.set_error(format!("Not opened: unsupported link type ({url})")),
             [] => self.set_error("Nothing to open: card has no link".to_string()),
@@ -1592,7 +1625,7 @@ impl AppState {
             .unwrap_or_default();
         match urls.get(n - 1) {
             Some(url) if is_safe_link(url) => {
-                self.link_open_request = Some(url.clone());
+                self.effects.push(Effect::OpenLink(url.clone()));
             }
             Some(url) => self.set_error(format!("Not opened: unsupported link type ({url})")),
             None => self.set_error(format!("No link [{n}] on this card")),
@@ -1609,34 +1642,7 @@ impl AppState {
     /// `o` with nowhere to send the link (`launch::no_browser_available`):
     /// copy it instead, which over SSH reaches the local terminal via OSC 52.
     pub fn copy_link_instead(&mut self, url: &str) {
-        use clipboard::CopyOutcome;
-        match clipboard::copy_specific(url, self.clipboard_primary) {
-            CopyOutcome::CopiedSystem => {
-                self.set_status("No browser here — link copied to clipboard".to_string())
-            }
-            CopyOutcome::CopiedOsc52 => {
-                self.set_status("No browser here — link sent to clipboard (OSC 52)".to_string())
-            }
-            CopyOutcome::TooLarge => self.set_error(
-                "No browser here, and the link is too large for the terminal clipboard".to_string(),
-            ),
-            CopyOutcome::HiddenCharacters => self.set_error(
-                "No browser here, and the link contains hidden control characters — not copied"
-                    .to_string(),
-            ),
-            _ => self.set_error(format!("No browser or clipboard here — link: {url}")),
-        }
-    }
-
-    /// Consumed by the main loop each tick: the URL `o` asked to open.
-    pub fn take_link_open_request(&mut self) -> Option<String> {
-        self.link_open_request.take()
-    }
-
-    /// The most recent write-back's git-sync request, drained by the main loop
-    /// whether or not git-sync is active.
-    pub fn take_git_sync_request(&mut self) -> Option<PendingSync> {
-        self.git_sync.pending.take()
+        self.request_copy(url.to_string(), CopyKind::LinkFallback);
     }
 
     /// Records a successful background commit+push, driving the
@@ -1865,27 +1871,18 @@ impl AppState {
     }
 
     fn copy_current_code(&mut self) {
-        use clipboard::CopyOutcome;
-
         let Some(current) = self.current_item() else {
             return;
         };
-        match clipboard::copy_item_code(current, self.clipboard_primary) {
-            CopyOutcome::CopiedSystem => self.set_status("Copied to clipboard".to_string()),
-            CopyOutcome::CopiedOsc52 => self.set_status("Sent to clipboard (OSC 52)".to_string()),
-            CopyOutcome::NoCandidates => {
-                self.set_error("Nothing to copy: item has no code".to_string())
+        match clipboard::candidates(current) {
+            [] => self.set_error("Nothing to copy: item has no code".to_string()),
+            [text] => {
+                let text = text.clone();
+                self.request_copy(text, CopyKind::Command);
             }
             // Several commands: arm a digit that picks command `[N]`. No sticky
             // message, so the status bar shows the prompt instead.
-            CopyOutcome::Ambiguous(_) => self.pending_copy_code = true,
-            CopyOutcome::TooLarge => self.set_error(
-                "Not copied: this command is too large for the terminal clipboard".to_string(),
-            ),
-            CopyOutcome::HiddenCharacters => self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string()),
-            CopyOutcome::Failed => {
-                self.set_error("Copy failed: no clipboard available".to_string())
-            }
+            _ => self.pending_copy_code = true,
         }
     }
 
@@ -1918,7 +1915,7 @@ impl AppState {
         // included, as in other full-screen terminal programs.
         if code == KeyCode::Char('z') && modifiers.contains(KeyModifiers::CONTROL) {
             self.clear_pending_chords();
-            self.suspend_requested = true;
+            self.effects.push(Effect::Suspend);
             return;
         }
 
@@ -2106,8 +2103,12 @@ impl AppState {
             // ConfirmQuitReset, offered on quit when all done: y resets
             // then quits, n quits without resetting, Esc/anything else cancels.
             match code {
-                KeyCode::Char('y') => self.should_quit = self.reset_all(),
-                KeyCode::Char('n') => self.should_quit = true,
+                KeyCode::Char('y') => {
+                    if self.reset_all() {
+                        self.effects.push(Effect::Quit);
+                    }
+                }
+                KeyCode::Char('n') => self.effects.push(Effect::Quit),
                 _ => self.overlay = None,
             }
         }
@@ -2237,13 +2238,14 @@ impl AppState {
             if total > 0 && done == total {
                 self.overlay = Some(Overlay::ConfirmQuitReset);
             } else {
-                self.should_quit = true;
+                self.effects.push(Effect::Quit);
             }
             return true;
         }
 
         if code == KeyCode::Char('e') {
-            self.editor_requested = true;
+            let line = self.current_item().map(|item| item.line_number);
+            self.effects.push(Effect::OpenEditor { line });
             return true;
         }
         if code == KeyCode::Char('R') {

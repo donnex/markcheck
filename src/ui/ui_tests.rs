@@ -1742,6 +1742,8 @@ fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
         .expect("the second chip rendered");
 
     state.handle_left_click(col + 2, row);
+    let mut host = crate::test_support::RecordingHost::default();
+    crate::effect::drain(&mut state, &mut host).expect("the recording host never fails");
     crate::clipboard::fake::with(|c| {
         assert_eq!(
             c.system_attempts.last().map(|(t, _)| t.as_str()),

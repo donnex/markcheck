@@ -15,10 +15,6 @@ pub enum CopyOutcome {
     /// arboard failed; an OSC 52 escape was emitted. Fire-and-forget:
     /// whether it lands depends on the terminal (and tmux config).
     CopiedOsc52,
-    /// The item has no fenced blocks and no inline code spans.
-    NoCandidates,
-    /// More than one candidate; nothing was copied.
-    Ambiguous(usize),
     /// No clipboard backend usable at all.
     Failed,
     /// Too large for OSC 52. Distinct from `Failed`: the clipboard is fine.
@@ -51,23 +47,8 @@ pub fn candidates(item: &Item) -> &[String] {
     }
 }
 
-/// Copies the item's single code candidate, or refuses: exactly one
-/// candidate is required — zero or several produce no copy and a
-/// distinct outcome so the UI can explain why (or, for several, ask which). When `primary` is set the
-/// copy also targets the X11 PRIMARY selection.
-pub fn copy_item_code(item: &Item, primary: bool) -> CopyOutcome {
-    let candidates = candidates(item);
-    match candidates.len() {
-        0 => CopyOutcome::NoCandidates,
-        1 => copy_text(&candidates[0], primary),
-        n => CopyOutcome::Ambiguous(n),
-    }
-}
-
-/// Copies an exact string — a specific clicked code row — bypassing the
-/// single-candidate rule of `copy_item_code`. Never returns `NoCandidates`
-/// or `Ambiguous`.
-pub fn copy_specific(text: &str, primary: bool) -> CopyOutcome {
+/// Copies `text`, also to the X11 PRIMARY selection when `primary` is set.
+pub fn copy(text: &str, primary: bool) -> CopyOutcome {
     copy_text(text, primary)
 }
 

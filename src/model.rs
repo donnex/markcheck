@@ -5,6 +5,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use sha2::{Digest, Sha256};
 
+use crate::effect::Effect;
+
 pub type LineNumber = usize;
 
 /// SHA-256 of `bytes`, used to detect whether a file still holds what was
@@ -848,7 +850,9 @@ pub struct AppState {
     /// problems stand out from passive confirmations. Set by `set_error`;
     /// cleared by `set_status`/`clear_status`.
     pub status_is_error: bool,
-    pub should_quit: bool,
+    /// Outward actions requested by handlers, in order, for the main loop to
+    /// carry out through [`crate::effect::drain`].
+    pub effects: Vec<Effect>,
     /// Last known modification time of `document.file_path`, used to detect
     /// external edits. Updated on load and after every write we make
     /// ourselves, so our own writes are never mistaken for external changes.
@@ -903,12 +907,6 @@ pub struct AppState {
     /// none), so a card with ten or more links or commands can pick `[10]`+.
     pub pending_number: usize,
     pub icons: IconSet,
-    /// Set by `e`; consumed by the main loop, which suspends the TUI and
-    /// launches the editor.
-    pub editor_requested: bool,
-    /// Set by `Ctrl-Z`; consumed by the main loop, which restores the
-    /// terminal and stops the process with `SIGTSTP` until the shell's `fg`.
-    pub suspend_requested: bool,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
     /// Auto-copy an item's code when navigating to its card (`--auto-copy`);
@@ -923,9 +921,6 @@ pub struct AppState {
     pub search: SearchState,
     /// `T` go-to-task overlay state — see [`PickerState`].
     pub picker: PickerState,
-    /// Set by `o` to the current card's sole link URL; consumed by the main
-    /// loop, which spawns the browser/opener. Mirrors `editor_requested`.
-    pub link_open_request: Option<String>,
     /// `?` help overlay scroll state — see [`HelpState`].
     pub help: HelpState,
     /// Undo history for state-changing actions (toggle/start/reset): a
@@ -1003,9 +998,6 @@ pub struct GitSyncState {
     /// The reason last reported in the status bar, so a retry failing the
     /// same way doesn't replace whatever message is showing every time.
     pub reported_reason: Option<String>,
-    /// The latest write-back's sync request, drained by the main loop via
-    /// `take_git_sync_request`.
-    pub pending: Option<PendingSync>,
 }
 
 /// A queued git-sync request: the exact content expected once the change
