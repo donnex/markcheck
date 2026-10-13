@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- If markcheck crashes, the error message is now shown after it exits,
+  with a pointer to where to report it, and the terminal is left usable.
+  Previously the message was printed onto the full-screen view and wiped
+  along with it, so the program just vanished with no explanation. (#49)
+
 - Git sync (`--git-sync`, or the `git_sync_paths` config setting) no longer
   stays off without saying why. A `git_sync_paths` entry starting with `~`
   now means your home directory, as it does in a shell, so
