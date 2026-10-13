@@ -263,7 +263,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 selected_index = list_items.len();
             }
 
-            let label = item.header.as_deref().unwrap_or(&item.display_text);
+            let label = item.label();
             // Tint a nested current row's marker with its sub-list color so the
             // reversed background matches its guides.
             let current_marker_fg = if item.depth > 0 {
@@ -330,7 +330,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
             spans.push(Span::styled(format!("{marker} "), marker_style));
             spans.push(Span::styled(
-                super::truncate(label, inner_width.saturating_sub(marker_cells as usize)),
+                super::truncate(&label, inner_width.saturating_sub(marker_cells as usize)),
                 text_style,
             ));
             list_items.push(ListItem::new(Line::from(spans)));

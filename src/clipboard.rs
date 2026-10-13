@@ -245,6 +245,7 @@ mod tests {
 
     fn item_with_code(spans: Vec<&str>, blocks: Vec<&str>) -> Item {
         Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],

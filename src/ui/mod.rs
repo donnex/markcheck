@@ -691,6 +691,7 @@ mod tests {
 
     fn checkbox(line: usize, text: &str, completed: bool) -> Item {
         Item {
+            ordinal: None,
             line_number: line,
             depth: 0,
             section: vec![],
@@ -709,6 +710,7 @@ mod tests {
 
     fn display_only(line: usize, text: &str) -> Item {
         Item {
+            ordinal: None,
             line_number: line,
             depth: 0,
             section: vec![],
@@ -2039,6 +2041,7 @@ mod tests {
         // The go-to-task overlay surfaces each item's `### H3`+
         // sub-section path as a dim `— …` suffix, so tasks are told apart.
         let item = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![crate::model::SubHeading {
@@ -2115,6 +2118,7 @@ mod tests {
         // Rendering the current card records a per-row code region for a
         // fenced block, so a left-click on that row can copy it.
         let item = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],
@@ -2160,6 +2164,7 @@ mod tests {
     fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
         use crate::model::BodySpan;
         let item = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],
@@ -2205,6 +2210,7 @@ mod tests {
     fn card_shows_fenced_code_block() {
         // Fenced blocks (previously copy-only) now render in the card.
         let item = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],
@@ -2327,6 +2333,7 @@ mod tests {
         // A display-only note card renders with a rounded border (╭)
         // rather than the task card's thick border (┏).
         let note = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],
@@ -2680,6 +2687,53 @@ mod tests {
         );
     }
 
+    fn ordered_steps_state() -> AppState {
+        let doc =
+            crate::parser::parse_document(std::path::PathBuf::from("examples/basics.md")).unwrap();
+        let mut state = AppState::new(doc);
+        state.icons = IconSet::unicode();
+        state.current_list_index = state
+            .document
+            .lists
+            .iter()
+            .position(|list| list.title == "Ordered steps")
+            .expect("basics.md has an Ordered steps list");
+        state.current_item_index = 1;
+        state
+    }
+
+    #[test]
+    fn ordered_steps_example_numbers_cards_and_overview_rows() {
+        let mut state = ordered_steps_state();
+        let rows = buffer_rows(&mut state, 140, 40);
+        let joined = rows.join("\n");
+        for step in ["1. Confirm the change", "3. Announce completion"] {
+            assert!(joined.contains(step), "overview numbers {step:?}: {joined}");
+        }
+        let numbered = rows
+            .iter()
+            .filter(|row| row.contains("2. Notify the on-call"))
+            .count();
+        assert!(
+            numbered >= 2,
+            "the current card and its overview row both show step 2: {joined}"
+        );
+    }
+
+    #[test]
+    fn ordered_steps_picker_shows_and_filters_by_number() {
+        let mut state = ordered_steps_state();
+        state.handle_key(KeyCode::Char('T'));
+        for ch in "3.".chars() {
+            state.handle_key(KeyCode::Char(ch));
+        }
+        let text = buffer_text(&mut state, 140, 40);
+        assert!(
+            text.contains("3. Announce completion"),
+            "picker row is numbered and found by its number: {text}"
+        );
+    }
+
     #[test]
     fn no_color_palette_renders_frames_without_any_color() {
         for example in ["examples/notes-and-code.md", "examples/nested.md"] {
@@ -2739,6 +2793,7 @@ mod tests {
         // An idle info card's rounded border takes palette.note (blue),
         // matching its note icon, rather than the default color.
         let note = Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],

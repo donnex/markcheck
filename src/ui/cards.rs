@@ -116,7 +116,7 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 }
                 ItemKind::DisplayOnly => (icons.note, Style::default().fg(palette.note)),
             };
-            let label = item.header.as_deref().unwrap_or(&item.display_text);
+            let label = item.label();
             // A dim `— {list} › {sub-section}` context suffix: the
             // list title (only when several lists exist) followed by the item's
             // `### H3`+ sub-section path, so the same visible text can be told
@@ -135,14 +135,14 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
             // suffix is what tells same-named tasks apart: both keep a share
             // and are cut with `…`.
             let (label_budget, suffix_budget) = super::split_width(
-                display_width(label),
+                display_width(&label),
                 display_width(&suffix),
                 text_width,
                 text_width / 2,
             );
             let mut spans = vec![
                 Span::styled(format!("{marker} "), marker_style),
-                Span::raw(super::truncate(label, label_budget)),
+                Span::raw(super::truncate(&label, label_budget)),
             ];
             if !suffix.is_empty() {
                 spans.push(Span::styled(
@@ -753,13 +753,7 @@ fn breadcrumb_line(
     if chain.is_empty() {
         return None;
     }
-    let labels: Vec<&str> = chain
-        .iter()
-        .map(|&i| {
-            let it = &list.items[i];
-            it.header.as_deref().unwrap_or(it.display_text.as_str())
-        })
-        .collect();
+    let labels: Vec<String> = chain.iter().map(|&i| list.items[i].label()).collect();
     let text = format!("{} ›", labels.join(" › "));
 
     let width = width.max(1) as usize;
@@ -797,7 +791,7 @@ fn breadcrumb_line(
 /// `desired_card_height`, so the card grows by exactly the rows drawn.
 fn card_title_rows(item: &Item, icon: &str, width: u16) -> Vec<String> {
     match &item.header {
-        Some(header) => wrap_text(&format!("{icon} {header}"), width),
+        Some(_) => wrap_text(&format!("{icon} {}", item.label()), width),
         None => Vec::new(),
     }
 }
@@ -931,8 +925,8 @@ fn side_card_lines(item: &Item, width: u16) -> Vec<Line<'static>> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut lines: Vec<Line<'static>> = item
         .header
-        .as_deref()
-        .map(|header| wrap_text(header, width))
+        .as_ref()
+        .map(|_| wrap_text(&item.label(), width))
         .unwrap_or_default()
         .into_iter()
         .map(|row| Line::from(Span::styled(row, bold)))
@@ -942,11 +936,11 @@ fn side_card_lines(item: &Item, width: u16) -> Vec<Line<'static>> {
         if !lines.is_empty() {
             lines.push(Line::from(""));
         }
-        lines.extend(
-            wrap_text(&item.display_text, width)
-                .into_iter()
-                .map(Line::from),
-        );
+        let body = match (&item.header, &item.ordinal) {
+            (None, Some(ordinal)) => format!("{ordinal} {}", item.display_text),
+            _ => item.display_text.clone(),
+        };
+        lines.extend(wrap_text(&body, width).into_iter().map(Line::from));
     }
     lines
 }
@@ -1199,7 +1193,21 @@ fn block_number(item: &Item, k: usize) -> Option<usize> {
 /// `[N]` marker number, if any.
 type BodyTokens = (Vec<Token>, Option<(String, Option<usize>)>);
 
+/// `item_body_tokens`, led by the bold ordered-list step number when the item
+/// has no title to carry it.
 fn body_tokens(item: &Item) -> BodyTokens {
+    let (mut tokens, trailing) = item_body_tokens(item);
+    if let (None, Some(ordinal)) = (&item.header, &item.ordinal) {
+        let strong = SpanStyle {
+            strong: true,
+            ..Default::default()
+        };
+        tokens.insert(0, (ordinal.clone(), strong, false));
+    }
+    (tokens, trailing)
+}
+
+fn item_body_tokens(item: &Item) -> BodyTokens {
     if item.body.is_empty() {
         let tokens = item
             .display_text
@@ -2002,6 +2010,7 @@ mod tests {
 
     fn body_item(body: Vec<BodySpan>, blocks: Vec<&str>, display: &str) -> Item {
         Item {
+            ordinal: None,
             line_number: 1,
             depth: 0,
             section: vec![],
@@ -2012,6 +2021,29 @@ mod tests {
             code_blocks: blocks.into_iter().map(str::to_string).collect(),
             kind: ItemKind::Checkbox(TaskState::NotStarted),
         }
+    }
+
+    fn line_text(line: &Line) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn step_number_leads_the_title_when_there_is_one_else_the_body() {
+        let mut item = body_item(vec![], vec![], "take a snapshot");
+        item.ordinal = Some("3.".to_string());
+        assert_eq!(body_tokens(&item).0[0].0, "3.");
+        let side: Vec<String> = side_card_lines(&item, 40).iter().map(line_text).collect();
+        assert_eq!(side, vec!["3. take a snapshot"]);
+        assert!(card_title_rows(&item, "i", 40).is_empty());
+
+        item.header = Some("Snapshot".to_string());
+        assert_eq!(card_title_rows(&item, "i", 40), vec!["i 3. Snapshot"]);
+        assert_eq!(body_tokens(&item).0[0].0, "take");
+        let side: Vec<String> = side_card_lines(&item, 40).iter().map(line_text).collect();
+        assert_eq!(side, vec!["3. Snapshot", "", "take a snapshot"]);
     }
 
     fn kind_item(kind: ItemKind) -> Item {

@@ -11,7 +11,8 @@ markcheck examples/basics.md
   (leading bold-only bullet), a card title (a task's leading `**bold**`, also as a title-only task, which
   the side cards show by its title), inline
   and fenced commands, a plain-bullet note card, and the same three task states
-  again on an ordered (numbered) list to show they work identically there, plus
+  again on an ordered (numbered) list, whose cards and overview rows show
+  each step's `1.` / `2.` / `3.` number, plus
   an uppercase `[X]` that counts as done.
 - **`nested.md`** — nested / sub-lists under both a task and a plain note,
   at several depths, with the color-coded depth guides in the overview and the
