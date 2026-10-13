@@ -2935,6 +2935,73 @@ mod tests {
     }
 
     #[test]
+    fn confirm_dialogs_show_every_key_prompt_on_an_80x24_terminal() {
+        let mut state = sample_state();
+        state.overlay = Some(Overlay::ConfirmReset);
+        let text = buffer_text(&mut state, 80, 24);
+        assert!(text.contains("as not started"), "{text}");
+        assert!(text.contains("Press  y  to reset"), "{text}");
+        assert!(text.contains("Press any other key to cancel"), "{text}");
+
+        state.overlay = Some(Overlay::ConfirmQuitReset);
+        let text = buffer_text(&mut state, 80, 24);
+        assert!(text.contains("ready to run again?"), "{text}");
+        assert!(text.contains("Press  y  to reset and quit"), "{text}");
+        assert!(
+            text.contains("Press  n  to quit without resetting"),
+            "{text}"
+        );
+        assert!(text.contains("Press  Esc  to keep working"), "{text}");
+    }
+
+    #[test]
+    fn confirm_reset_wraps_a_long_file_name_instead_of_clipping_it() {
+        let mut state = sample_state();
+        let name = format!("{}.md", "very-long-checklist-name-".repeat(5));
+        state.document.file_path = PathBuf::from(&name);
+        state.overlay = Some(Overlay::ConfirmReset);
+        let rows = buffer_rows(&mut state, 60, 24);
+        let joined: String = rows
+            .iter()
+            .map(|r| r.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+            .collect();
+        assert!(joined.contains(&format!("rewrites{name}")), "{rows:#?}");
+        assert!(joined.contains("Press  y  to reset"), "{rows:#?}");
+    }
+
+    #[test]
+    fn short_terminal_trims_the_dialog_text_but_keeps_the_key_prompts() {
+        let mut state = sample_state();
+        state.overlay = Some(Overlay::ConfirmQuitReset);
+        let text = buffer_text(&mut state, 80, 12);
+        assert!(text.contains("Press  y  to reset and quit"), "{text}");
+        assert!(text.contains("Press  Esc  to keep working"), "{text}");
+        assert!(!text.contains("ready to run again?"), "{text}");
+        assert!(text.contains('…'), "the cut is marked: {text}");
+    }
+
+    #[test]
+    fn all_complete_with_many_lists_keeps_its_key_hints() {
+        let lists = (0..30)
+            .map(|i| List {
+                title: format!("List {i}"),
+                banner: None,
+                items: vec![checkbox(i + 1, "task", true)],
+            })
+            .collect();
+        let mut state = state_with(lists);
+        state.view = View::AllComplete;
+        let text = buffer_text(&mut state, 80, 24);
+        assert!(text.contains("List 0"), "{text}");
+        assert!(!text.contains("List 29"), "{text}");
+        assert!(text.contains("Total: 30 / 30 tasks"), "{text}");
+        assert!(
+            text.contains("Press  R  to reset · h to review · q to quit"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn status_message_overrides_legend() {
         let mut state = sample_state();
         state.status_message = Some("Copied to clipboard".to_string());

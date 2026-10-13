@@ -113,6 +113,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `R` reset confirmation and the reset-before-quitting question (shown
+  when you quit with every task done) now always show the keys that answer
+  them. On a standard 80×24 terminal both dialogs were cut off before their
+  `Press y` lines, so they asked a question without saying how to answer it.
+  The dialogs now grow to fit their text, wrap a long file name instead of
+  cutting it off, and on a very short terminal shorten the explanation
+  (ending it with `…`) rather than drop the key prompts. The same applies to
+  the "All Tasks Complete" summary, which with many lists used to lose its
+  closing `R` / `h` / `q` hint off the bottom. (#93)
+
 - A heading inside a list item (`- ## Rollback`) or a blockquote
   (`> ## Note`) no longer starts a new list, sub-section or document title.
   Previously `- ## Rollback` in the middle of a `## Deploy` list moved all of
