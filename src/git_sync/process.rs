@@ -161,26 +161,32 @@ fn signal_group(child: &Child, signal: &str) {
     #[cfg(not(unix))]
     let _ = (child, signal);
 }
-/// Strips the variables that would make git act on a different repository
-/// than the one holding the checklist (hooks and `git rebase --exec` export
-/// `GIT_DIR` and `GIT_INDEX_FILE`, for example). `GIT_OPTIONAL_LOCKS=0` stops
-/// the background `git status` from taking `.git/index.lock` to refresh the
-/// stat cache, which would make the user's own git commands fail meanwhile.
+/// The variables that would make git act on a different repository than the
+/// one holding the checklist (hooks and `git rebase --exec` export `GIT_DIR`
+/// and `GIT_INDEX_FILE`, for example).
+pub(crate) const REDIRECTING_GIT_VARS: [&str; 8] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+];
+/// Strips [`REDIRECTING_GIT_VARS`]. `GIT_OPTIONAL_LOCKS=0` stops the
+/// background `git status` from taking `.git/index.lock` to refresh the stat
+/// cache, which would make the user's own git commands fail meanwhile.
 pub(super) fn git_command(repo_dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_dir).env("GIT_OPTIONAL_LOCKS", "0");
-    for var in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_NAMESPACE",
-        "GIT_PREFIX",
-    ] {
+    for var in REDIRECTING_GIT_VARS {
         cmd.env_remove(var);
     }
+    // Tests drive this in-process, so without it every commit markcheck
+    // makes in a fixture would follow the developer's global git config.
+    #[cfg(test)]
+    crate::test_support::isolate_git(&mut cmd);
     cmd
 }
 /// A [`git_command`] whose pathspecs match literally, so `notes[1].md` cannot
@@ -508,7 +514,7 @@ mod tests {
         run(&a, &["commit", "-q", "-m", "a init"]);
         run(&b, &["commit", "-q", "-m", "b init"]);
 
-        let mut poisoned = Command::new("git");
+        let mut poisoned = crate::test_support::git();
         poisoned
             .current_dir(&a)
             .env("GIT_DIR", b.join(".git"))

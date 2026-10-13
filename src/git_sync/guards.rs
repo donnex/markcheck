@@ -292,7 +292,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write as _;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     /// The guard must not refuse when a clean filter normalises the staged
     /// content markcheck loaded.
@@ -583,7 +583,7 @@ mod tests {
         run(&work, &["checkout", "-q", "main"]);
         fs::write(work.join("tracked.md"), "- [x] b\n").unwrap();
         run(&work, &["commit", "-q", "-am", "b"]);
-        let _ = Command::new("git")
+        let _ = crate::test_support::git()
             .current_dir(&work)
             .args(["merge", "-q", "branch-a"])
             .output();
@@ -606,7 +606,7 @@ mod tests {
         let index_info = format!(
             "100644 {base} 1\tother.md\n100644 {ours} 2\tother.md\n100644 {theirs} 3\tother.md\n"
         );
-        let mut child = Command::new("git")
+        let mut child = crate::test_support::git()
             .current_dir(&work)
             .args(["update-index", "--index-info"])
             .stdin(Stdio::piped())

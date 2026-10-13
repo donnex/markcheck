@@ -243,7 +243,7 @@ mod tests {
         let work = init_repo_without_remote();
         let file = work.join(OsStr::from_bytes(b"list-\xff.md"));
         fs::write(&file, "- [ ] one\n").unwrap();
-        let add = Command::new("git")
+        let add = crate::test_support::git()
             .current_dir(&work)
             .arg("add")
             .arg(&file)
@@ -288,7 +288,7 @@ mod tests {
             ),
             SyncOutcome::SkippedUntracked
         );
-        let status = Command::new("git")
+        let status = crate::test_support::git()
             .current_dir(&work)
             .args(["status", "--porcelain"])
             .output()
@@ -332,7 +332,7 @@ mod tests {
             SyncOutcome::Synced
         );
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
@@ -365,7 +365,7 @@ mod tests {
             SyncOutcome::Synced
         );
 
-        let status = Command::new("git")
+        let status = crate::test_support::git()
             .current_dir(&work)
             .args(["status", "--porcelain", "--", "tracked.md"])
             .output()
@@ -416,7 +416,7 @@ mod tests {
             SyncOutcome::Synced
         );
 
-        let show = Command::new("git")
+        let show = crate::test_support::git()
             .current_dir(&remote)
             .args(["show", &format!("{branch}:tracked.md")])
             .output()
@@ -477,7 +477,7 @@ mod tests {
                 if message.contains("no upstream yet")),
             "{outcome:?}"
         );
-        let branches = Command::new("git")
+        let branches = crate::test_support::git()
             .current_dir(&remote)
             .args(["branch", "--format=%(refname:short)"])
             .output()
@@ -512,7 +512,7 @@ mod tests {
             "{outcome:?}"
         );
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
@@ -552,7 +552,7 @@ mod tests {
             "{outcome:?}"
         );
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
@@ -597,7 +597,7 @@ mod tests {
         );
         assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
 
-        let show = Command::new("git")
+        let show = crate::test_support::git()
             .current_dir(&remote)
             .args(["show", "HEAD:tracked.md"])
             .output()
@@ -628,7 +628,7 @@ mod tests {
             SyncOutcome::Synced
         );
 
-        let show = Command::new("git")
+        let show = crate::test_support::git()
             .current_dir(&remote)
             .args(["show", "--stat", "HEAD"])
             .output()
@@ -639,7 +639,7 @@ mod tests {
             "the unrelated staged file must never appear in the pushed commit: {stat}"
         );
 
-        let index = Command::new("git")
+        let index = crate::test_support::git()
             .current_dir(&work)
             .args(["ls-files", "--stage", "secret.env"])
             .output()
@@ -691,7 +691,7 @@ mod tests {
             parent,
             "the commit must be fully undone, not just refused going forward"
         );
-        let head_has_other = Command::new("git")
+        let head_has_other = crate::test_support::git()
             .current_dir(&work)
             .args(["cat-file", "-e", "HEAD:other.md"])
             .status()
@@ -701,7 +701,7 @@ mod tests {
             !head_has_other,
             "the hook-staged file must never reach a reachable commit"
         );
-        let real_index = Command::new("git")
+        let real_index = crate::test_support::git()
             .current_dir(&work)
             .args(["ls-files", "other.md"])
             .output()
@@ -785,7 +785,7 @@ mod tests {
         fs::write(work.join("tracked.md"), "- [x] b\n").unwrap();
         run(&work, &["commit", "-q", "-am", "b"]);
         let head_before_merge_attempt = current_head(&work).unwrap();
-        let _ = Command::new("git")
+        let _ = crate::test_support::git()
             .current_dir(&work)
             .args(["merge", "-q", "branch-a"])
             .output();
@@ -850,7 +850,7 @@ mod tests {
             SyncOutcome::Synced
         );
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "--format=%s"])
             .output()
@@ -859,7 +859,7 @@ mod tests {
         assert!(subjects.contains("tracked.md: Check \"A\""));
         assert!(subjects.contains("tracked.md: Check \"B\""));
 
-        let show = Command::new("git")
+        let show = crate::test_support::git()
             .current_dir(&remote)
             .args(["show", "HEAD:tracked.md"])
             .output()
@@ -993,7 +993,7 @@ mod tests {
             "nothing should have been committed or pushed"
         );
 
-        let remote_log = Command::new("git")
+        let remote_log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "--format=%s", "main"])
             .output()
@@ -1159,7 +1159,7 @@ mod tests {
             SyncOutcome::Synced
         );
 
-        let show = Command::new("git")
+        let show = crate::test_support::git()
             .current_dir(&remote)
             .args(["show", "HEAD:checklists/tracked.md"])
             .output()
@@ -1198,7 +1198,7 @@ mod tests {
                 "file name: {file_name:?}"
             );
 
-            let show = Command::new("git")
+            let show = crate::test_support::git()
                 .current_dir(&remote)
                 .args(["show", &format!("HEAD:{file_name}")])
                 .output()

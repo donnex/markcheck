@@ -11,6 +11,16 @@ fn unique_path(hint: &str) -> std::path::PathBuf {
     common::unique_temp_path("cli", hint, Some("md"))
 }
 
+/// The binary under test, isolated per [`common::isolated_env`].
+fn markcheck() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_markcheck"));
+    for var in common::AMBIENT_GIT_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.envs(common::isolated_env("cli"));
+    cmd
+}
+
 fn unique_dir(hint: &str) -> std::path::PathBuf {
     common::unique_temp_path("cli", hint, None)
 }
@@ -19,11 +29,7 @@ fn unique_dir(hint: &str) -> std::path::PathBuf {
 fn nonexistent_file_reports_a_clear_error_and_exits_nonzero() {
     let path = unique_path("missing");
     // Deliberately not creating the file.
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
-        .arg(&path)
-        .env("XDG_CONFIG_HOME", std::env::temp_dir())
-        .output()
-        .unwrap();
+    let output = markcheck().arg(&path).output().unwrap();
 
     assert!(
         !output.status.success(),
@@ -47,11 +53,7 @@ fn empty_checklist_file_exits_cleanly_with_a_message() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
-        .arg(&path)
-        .env("XDG_CONFIG_HOME", std::env::temp_dir())
-        .output()
-        .unwrap();
+    let output = markcheck().arg(&path).output().unwrap();
 
     assert!(
         output.status.success(),
@@ -68,10 +70,7 @@ fn empty_checklist_file_exits_cleanly_with_a_message() {
 
 #[test]
 fn version_flag_prints_cargo_version_and_git_sha_then_exits_cleanly() {
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
-        .arg("--version")
-        .output()
-        .unwrap();
+    let output = markcheck().arg("--version").output().unwrap();
 
     assert!(output.status.success(), "--version exits zero");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -89,11 +88,10 @@ fn version_flag_prints_cargo_version_and_git_sha_then_exits_cleanly() {
 #[test]
 fn new_and_file_together_report_a_clear_conflict_and_exit_nonzero() {
     let path = unique_path("new-conflict");
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
+    let output = markcheck()
         .arg("--new")
         .arg(&path)
         .arg(&path)
-        .env("XDG_CONFIG_HOME", std::env::temp_dir())
         .output()
         .unwrap();
 
@@ -109,10 +107,7 @@ fn new_and_file_together_report_a_clear_conflict_and_exit_nonzero() {
 
 #[test]
 fn neither_new_nor_file_reports_a_clear_error_and_exits_nonzero() {
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
-        .env("XDG_CONFIG_HOME", std::env::temp_dir())
-        .output()
-        .unwrap();
+    let output = markcheck().output().unwrap();
 
     assert!(
         !output.status.success(),
@@ -123,12 +118,7 @@ fn neither_new_nor_file_reports_a_clear_error_and_exits_nonzero() {
 #[test]
 fn new_with_non_md_extension_reports_a_clear_error_and_exits_nonzero() {
     let path = unique_path("new-badext").with_extension("txt");
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
-        .arg("--new")
-        .arg(&path)
-        .env("XDG_CONFIG_HOME", std::env::temp_dir())
-        .output()
-        .unwrap();
+    let output = markcheck().arg("--new").arg(&path).output().unwrap();
 
     assert!(
         !output.status.success(),
@@ -147,12 +137,7 @@ fn new_with_existing_path_reports_a_clear_error_and_exits_nonzero() {
     let path = unique_path("new-exists");
     std::fs::write(&path, "already here").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
-        .arg("--new")
-        .arg(&path)
-        .env("XDG_CONFIG_HOME", std::env::temp_dir())
-        .output()
-        .unwrap();
+    let output = markcheck().arg("--new").arg(&path).output().unwrap();
 
     assert!(
         !output.status.success(),
@@ -188,7 +173,7 @@ fn malformed_config_file_reports_a_clear_error_and_exits_nonzero() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_markcheck"))
+    let output = markcheck()
         .arg(&md_path)
         .env("XDG_CONFIG_HOME", &xdg_config_home)
         .output()

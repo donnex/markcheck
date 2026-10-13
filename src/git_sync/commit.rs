@@ -164,7 +164,6 @@ mod tests {
     use super::super::test_support::*;
     use super::*;
     use std::fs;
-    use std::process::Command;
 
     #[test]
     fn commit_via_temp_index_refuses_when_head_moved_since_parent_was_read() {
@@ -192,7 +191,7 @@ mod tests {
             "{result:?}"
         );
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&work)
             .args(["log", "--format=%s"])
             .output()
@@ -466,7 +465,7 @@ mod tests {
             head_after, parent,
             "the unrelated commit must still exist, untouched"
         );
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&work)
             .args(["log", "--format=%s"])
             .output()
@@ -528,7 +527,7 @@ mod tests {
                 .is_err_and(|e| e.contains("git commit failed")),
             "must not adopt the commit that landed on top of ours: {result:?}"
         );
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&work)
             .args(["log", "--format=%s"])
             .output()
