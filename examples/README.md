@@ -50,7 +50,10 @@ markcheck examples/basics.md
   before the first sub-heading (directly under the H2), an `### H3` group, an
   `#### H4` nested under it, a second `### H3` that pops the H4 and starts a
   fresh group, an item-less `### H3` that shows nothing (empty sub-sections
-  drop), and a following `## H2` that resets the sub-section context. Each group
+  drop), and a following `## H2` that resets the sub-section context. Under
+  `Rollout`, a heading inside a bullet (`- #### Watch the dashboards`) is just
+  that card's title, and a quoted `> ### Caution` callout starts no group —
+  neither one is a sub-section. Each group
   shows a `── divider` in the overview and a dim `Outer › Inner` breadcrumb
   above the card. The `Extended verification › Line-by-line checks` group is
   deliberately long: scroll into it in a short window to see the sticky overview

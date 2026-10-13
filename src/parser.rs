@@ -214,8 +214,9 @@ struct ItemBuilder {
     /// regardless of any `TaskListMarker` pulldown-cmark reports for it.
     in_blockquote: bool,
     /// Snapshot of the active `### H3`+ sub-section path when this item was
-    /// opened. A heading can't appear inside a list, so this is stable
-    /// for the whole item and shared by every item in the same Markdown list.
+    /// opened. A heading inside a list item is item content, never
+    /// structural, so this is stable for the whole item and shared by every
+    /// item in the same Markdown list.
     section: Vec<SubHeading>,
     kind: Option<ItemKind>,
     text: String,
@@ -526,8 +527,14 @@ struct ParseState<'a> {
     default_items: Vec<Item>,
     default_banner: Option<String>,
 
-    /// The open heading's level and the text read so far.
+    /// The open heading's level and the text read so far. Only set for a
+    /// heading outside any list item; one inside an item is that item's
+    /// content and is read by the item itself.
     heading: Option<(HeadingLevel, String)>,
+    /// Set while the open heading sits inside a `>` blockquote outside any
+    /// item: a quoted heading never opens a list, sets the title or starts a
+    /// sub-section.
+    heading_quoted: bool,
     /// The first non-empty `# H1` becomes the document title.
     document_title: Option<String>,
 
@@ -575,6 +582,7 @@ impl<'a> ParseState<'a> {
             default_items: Vec::new(),
             default_banner: None,
             heading: None,
+            heading_quoted: false,
             document_title: None,
             section_stack: Vec::new(),
             list_depth: 0,
@@ -593,9 +601,7 @@ impl<'a> ParseState<'a> {
             self.attach_fence_to_last_item = false;
         }
         match event {
-            Event::Start(Tag::Heading { level, .. }) => {
-                self.heading = Some((level, String::new()));
-            }
+            Event::Start(Tag::Heading { level, .. }) => self.on_heading_start(level),
             Event::End(TagEnd::Heading(level)) => self.on_heading_end(level),
             Event::Start(Tag::List(_)) => self.on_list_start(),
             Event::End(TagEnd::List(_)) => self.on_list_end(),
@@ -651,11 +657,28 @@ impl<'a> ParseState<'a> {
         }
     }
 
+    /// A heading inside a list item (`- ## Rollback`) is read like a bold
+    /// run: a leading one becomes the card title, a later one bold body text.
+    fn on_heading_start(&mut self, level: HeadingLevel) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.mark_boundary();
+            item.start_strong();
+        } else {
+            self.heading = Some((level, String::new()));
+            self.heading_quoted = self.blockquote_depth > 0;
+        }
+    }
+
     fn on_heading_end(&mut self, level: HeadingLevel) {
         let Some((open_level, text)) = self.heading.take() else {
+            self.with_item(|item| {
+                item.end_strong();
+                item.mark_boundary();
+            });
             return;
         };
-        if open_level != level {
+        let quoted = std::mem::take(&mut self.heading_quoted);
+        if open_level != level || quoted {
             return;
         }
         let text = text.trim();
@@ -1940,6 +1963,101 @@ tags: [ops]
         assert_eq!(document.lists.len(), 1);
         let item = &document.lists[0].items[0];
         assert_eq!(item.kind, ItemKind::Checkbox(TaskState::Started));
+    }
+
+    // --- Headings inside list items and blockquotes are not structural ---
+
+    #[test]
+    fn h2_inside_list_item_keeps_the_real_section_and_titles_the_card() {
+        let source = "# T\n\n## Deploy\n\n- [ ] a\n- [ ] b\n- ## Rollback\n- [ ] c\n";
+        let document = parse(source);
+        assert_eq!(document.lists.len(), 1);
+        let list = &document.lists[0];
+        assert_eq!(list.title, "Deploy");
+        let texts: Vec<_> = list.items.iter().map(|i| i.display_text.as_str()).collect();
+        assert_eq!(texts, vec!["a", "b", "", "c"]);
+        assert_eq!(list.items[2].header.as_deref(), Some("Rollback"));
+        assert_eq!(list.items[2].kind, ItemKind::DisplayOnly);
+    }
+
+    #[test]
+    fn h3_inside_list_item_does_not_start_a_sub_section() {
+        let source = "## S\n\n- [ ] a\n- ### Phase 2\n- [ ] b\n";
+        let document = parse(source);
+        let items = &document.lists[0].items;
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[1].header.as_deref(), Some("Phase 2"));
+        assert!(items[2].section.is_empty(), "{:?}", items[2].section);
+    }
+
+    #[test]
+    fn h1_inside_ordered_item_is_not_the_document_title() {
+        let source = "## S\n\n1. [ ] a\n2. # Not a title\n\n# Real title\n";
+        let document = parse(source);
+        assert_eq!(document.title.as_deref(), Some("Real title"));
+        let items = &document.lists[0].items;
+        assert_eq!(items[1].header.as_deref(), Some("Not a title"));
+        assert_eq!(items[1].ordinal.as_deref(), Some("2."));
+    }
+
+    #[test]
+    fn leading_heading_only_bullet_is_the_banner_like_leading_bold() {
+        let document = parse("## S\n\n- ## Before you start\n- [ ] a\n");
+        let list = &document.lists[0];
+        assert_eq!(list.banner.as_deref(), Some("Before you start"));
+        assert_eq!(list.items.len(), 1);
+    }
+
+    #[test]
+    fn later_heading_inside_item_is_body_text_not_a_title() {
+        let source = "## S\n\n- [ ] run it\n\n  ### Details\n";
+        let document = parse(source);
+        let item = &document.lists[0].items[0];
+        assert_eq!(item.header, None);
+        assert_eq!(item.display_text, "run it Details");
+    }
+
+    #[test]
+    fn quoted_heading_between_tasks_does_not_open_a_list() {
+        let source = "## Deploy\n\n- [ ] a\n\n> ## Note\n\n- [ ] b\n";
+        let document = parse(source);
+        assert_eq!(document.lists.len(), 1);
+        assert_eq!(document.lists[0].title, "Deploy");
+        assert_eq!(document.lists[0].items.len(), 2);
+    }
+
+    #[test]
+    fn quoted_sub_heading_does_not_start_a_sub_section() {
+        let source = "## S\n\n- [ ] a\n\n> ### Caution\n\n- [ ] b\n";
+        let document = parse(source);
+        assert!(document.lists[0].items[1].section.is_empty());
+    }
+
+    #[test]
+    fn quoted_headings_never_set_the_title_or_steal_the_section() {
+        let source = "\
+> # Quoted title
+
+# Runbook
+
+## Deploy
+
+> ## Example from the vendor docs
+>
+> - [x] quoted step
+
+- [ ] real step
+";
+        let document = parse(source);
+        assert_eq!(document.title.as_deref(), Some("Runbook"));
+        assert_eq!(document.lists.len(), 1);
+        assert_eq!(document.lists[0].title, "Deploy");
+        let texts: Vec<_> = document.lists[0]
+            .items
+            .iter()
+            .map(|i| i.display_text.as_str())
+            .collect();
+        assert_eq!(texts, vec!["quoted step", "real step"]);
     }
 
     // --- Blockquoted checkboxes are non-interactive ---

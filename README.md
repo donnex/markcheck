@@ -225,6 +225,8 @@ How each piece maps to the UI:
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
 | inline HTML (`<kbd>`, `<br>`, …) and HTML blocks | **Dropped.** Inline tags are not shown on the card, though the text between them is (`<kbd>Enter</kbd>` shows as `Enter`); a block of HTML, including an `<!-- comment -->`, is not shown at all. A dropped tag still counts as a space, so `line one<br>line two` shows as `line one line two` rather than running the words together. |
 | a task or note continuing in a **second paragraph** (a blank line, then indented text) | Joined to the first paragraph with a space and shown as one flowing body, the same as a line wrapped in the source. Text after a code block or a sub-list inside the item joins the same way. |
+| `- ## Heading` (a heading *inside* a list item, any level) | **Not structural** — read like a bold run: a leading one is the **card title** (so a heading-only bullet is a titled note card, or the list's banner when it's the first item), a later one is bold body text. It never starts a list or sub-section, or sets the document title. |
+| `> ## Heading` (a heading inside a blockquote) | **Ignored** — a quoted callout's heading never starts a list or sub-section, or sets the document title. |
 | `> - [ ]` (a task inside a blockquote) | A **non-interactive** display-only card — a quoted/illustrative example (e.g. from another runbook), never a live, toggleable task. |
 
 Finer points:
@@ -316,7 +318,8 @@ Finer points:
   dropped too, and a file with no other checkboxes reports that it has no
   checklist items.
 - **`###`+ headings are sub-section labels, not titles** — only `#` and `##`
-  are structural (document title / list). `###` and deeper now label
+  are structural (document title / list), and only outside list items and
+  blockquotes. `###` and deeper now label
   sub-sections *within* a list (above), rather than being ignored, but they
   never create a new list or the document title.
 - **A link entirely inside the leading-bold title loses its URL.** `- [ ]
