@@ -22,26 +22,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Job-level, not step-level: this is a property of *this repository's
-    # tests*, not of one invocation, and every step that executes the test
-    # binaries needs it. `cargo llvm-cov` re-runs the whole suite and is easy
-    # to miss precisely because it has no "test" in its name -- it used to
-    # run the PTY tests fully parallel, i.e. in exactly the configuration the
-    # comment below documents as unreliable, so an intermittent failure would
-    # surface at a step labelled "coverage >= 97%" and read as a coverage
-    # regression that wasn't one.
-    #
-    # RUST_TEST_THREADS=1: the PTY tests each spawn a real subprocess (some
-    # with their own background commit+push thread, polling a bare remote for
-    # it to land), and full default parallelism on GitHub's shared runners
-    # starved that background thread's scheduling badly enough to blow even a
-    # 90s poll deadline. Diagnostic timing showed the git operations
-    # themselves are fast (~19ms) even in CI -- it's pure self-contention
-    # from many concurrent PTY-spawning tests, not slow git commands. Serial
-    # execution confirmed fast (~5s for the five git-sync tests alone) and
-    # reliable. Local dev is unaffected (this only applies inside CI).
-    env:
-      RUST_TEST_THREADS: 1
+    # No RUST_TEST_THREADS here: the PTY tests (tests/pty.rs) serialize
+    # themselves with a lock each one holds while its binary runs, since many
+    # concurrent PTY-spawning tests starved git-sync's background thread on
+    # shared runners. That covers every step that runs them -- `cargo test`
+    # and `cargo llvm-cov` alike -- and leaves the unit tests fully parallel.
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
