@@ -497,8 +497,10 @@ they coalesce into one commit rather than one apiece — the commit message
 then names only the last of them, though its content still reflects every
 change up to that point. Editing the file
 in `$EDITOR` (`e`) syncs too, as its own commit (`checklist.md: Edited in
-$EDITOR`) — even if you only edit and quit without toggling anything
-afterward. If something *else* changes the file in the meantime — an
+vim`, naming only the editor program, never its directory) — even if you
+only edit and quit without toggling anything afterward. An editor that
+exits with an error (vim's `:cq`) counts as an abort: the edit is reloaded
+but not synced, and the status bar keeps the error, ending in `not synced`. If something *else* changes the file in the meantime — an
 edit made outside markcheck entirely, or the file getting deleted — while
 a sync is still queued or in flight, that sync is refused rather than
 publishing content that's since gone stale: `Git sync failed: the file

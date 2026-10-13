@@ -2168,7 +2168,7 @@ fn exit_status(raw: i32) -> std::process::ExitStatus {
 fn finish_editor_launch_failure_is_a_sticky_error_naming_the_editor() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("no-such-editor", Err(io::Error::other("not found")));
+    state.finish_editor("no-such-editor", None, Err(io::Error::other("not found")));
     assert_eq!(
         state.status_message.as_deref(),
         Some("Failed to launch no-such-editor: not found")
@@ -2183,7 +2183,7 @@ fn finish_editor_launch_failure_is_a_sticky_error_naming_the_editor() {
 fn finish_editor_non_zero_exit_is_a_sticky_error() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("vi", Ok(exit_status(1 << 8)));
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)));
     assert_eq!(
         state.status_message.as_deref(),
         Some("vi exited with exit status: 1")
@@ -2198,7 +2198,7 @@ fn finish_editor_non_zero_exit_is_a_sticky_error() {
 fn finish_editor_with_no_change_is_silent_and_queues_no_sync() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("vi", Ok(exit_status(0)));
+    state.finish_editor("vi", None, Ok(exit_status(0)));
     assert_eq!(state.status_message, None);
     assert!(state.take_git_sync_request().is_none());
     fs::remove_file(&path).ok();
@@ -2211,11 +2211,75 @@ fn finish_editor_reloads_an_edit_and_queues_a_sync_naming_the_editor() {
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     let edited = "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n";
     touch_with_new_mtime(&path, edited);
-    state.finish_editor("vi", Ok(exit_status(0)));
+    state.finish_editor("vi", None, Ok(exit_status(0)));
     assert_eq!(state.current_list().items.len(), 2);
     let pending = state.take_git_sync_request().expect("a sync is queued");
     assert_eq!(pending.description, "Edited in vi");
     assert_eq!(pending.content, edited);
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_non_zero_exit_after_an_edit_reloads_but_keeps_the_error_and_skips_sync() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.git_sync.active = true;
+    touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)));
+    assert_eq!(state.current_list().items.len(), 2);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("vi exited with exit status: 1; Reloaded: file changed on disk — not synced")
+    );
+    assert!(state.status_is_error);
+    assert_eq!(state.status_expiry, None);
+    assert!(state.take_git_sync_request().is_none());
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_without_git_sync_does_not_mention_syncing() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("vi exited with exit status: 1; Reloaded: file changed on disk")
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_keeps_the_editor_warning_past_a_reload_and_still_syncs() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
+    state.finish_editor(
+        "vi",
+        Some("Bad $EDITOR/$VISUAL — using vi".to_string()),
+        Ok(exit_status(0)),
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Bad $EDITOR/$VISUAL — using vi; Reloaded: file changed on disk")
+    );
+    assert!(state.status_is_error);
+    assert!(state.take_git_sync_request().is_some());
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_warning_alone_is_a_sticky_error() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor("vi", Some("a warning".to_string()), Ok(exit_status(0)));
+    assert_eq!(state.status_message.as_deref(), Some("a warning"));
+    assert!(state.status_is_error);
     fs::remove_file(&path).ok();
 }
 
@@ -3515,6 +3579,16 @@ fn request_external_edit_sync_queues_a_git_sync_request() {
     assert_eq!(
         state.take_git_sync_request().map(|p| p.description),
         Some("Edited in vim".to_string())
+    );
+}
+
+#[test]
+fn request_external_edit_sync_names_only_the_editor_file_not_its_directory() {
+    let mut state = AppState::new(two_list_document());
+    state.request_external_edit_sync("/home/example-user/bin/my-editor");
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Edited in my-editor".to_string())
     );
 }
 
