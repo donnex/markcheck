@@ -913,15 +913,42 @@ fn render_side_card(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines = wrap_text(&item.display_text, inner.width);
+    let lines = side_card_lines(item, inner.width);
     // Vertically center like the current card, prepending blank lines
     // rather than top-anchoring under the header border.
-    let mut padded = vec![String::new(); top_pad(lines.len(), inner.height as usize)];
+    let mut padded = vec![Line::from(""); top_pad(lines.len(), inner.height as usize)];
     padded.extend(lines);
-    let paragraph = Paragraph::new(padded.join("\n"))
+    let paragraph = Paragraph::new(padded)
         .style(Style::default().add_modifier(Modifier::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(paragraph, inner);
+}
+
+/// A side card's content: the bold title (`Item.header`) when present, a
+/// blank separator, then the plain `display_text` body, each wrapped to
+/// `width`. A title-only task shows just its title.
+fn side_card_lines(item: &Item, width: u16) -> Vec<Line<'static>> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'static>> = item
+        .header
+        .as_deref()
+        .map(|header| wrap_text(header, width))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| Line::from(Span::styled(row, bold)))
+        .collect();
+    let has_body = !item.display_text.trim().is_empty();
+    if has_body || lines.is_empty() {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.extend(
+            wrap_text(&item.display_text, width)
+                .into_iter()
+                .map(Line::from),
+        );
+    }
+    lines
 }
 
 fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: &mut AppState) {

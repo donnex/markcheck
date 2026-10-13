@@ -1,7 +1,8 @@
 # Deployment Runbook
 
 A short checklist showing markcheck's core Markdown handling: the three task
-states, a card title, inline and fenced commands, and a note card.
+states, a card title (with or without a body), inline and fenced commands, and
+a note card.
 
 ## Prepare
 
@@ -20,6 +21,7 @@ states, a card title, inline and fenced commands, and a note card.
 ## Verify
 
 - [ ] Check the health endpoint `curl https://example.com/health`
+- [ ] **Run the smoke tests**
 - [ ] Tail the logs and watch for errors
 - [X] Record the start time — an uppercase `[X]` counts as done too
 
