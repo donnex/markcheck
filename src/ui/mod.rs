@@ -173,13 +173,8 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     // `{icon} git` shows for the whole session while git-sync is active; the
     // "Synced Ns ago" text follows only while recent. The literal "git" is
     // there because the icon alone didn't read as git.
-    let sync_section = (state.git_sync.active && area.width >= UPDATE_LABEL_MIN_WIDTH).then(|| {
-        match sync_label(state.git_sync.last_at, now) {
-            Some(label) => format!("{} git · {label}", state.icons.sync),
-            None => format!("{} git", state.icons.sync),
-        }
-    });
-
+    let sync_section = (state.git_sync.active && area.width >= UPDATE_LABEL_MIN_WIDTH)
+        .then(|| sync_section(state, now));
     // Color roles from the palette — accent title, dim filename,
     // done/started progress counter.
     let icons = state.icons;
@@ -202,16 +197,8 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::DIM),
         ));
     }
-    // Green (`palette.done`) rather than the update tag's `palette.started`,
-    // so a completed sync reads as a distinct, successful outcome rather
-    // than the update tag's neutral "something changed" note.
     if let Some(sync_section) = sync_section {
-        right_parts.push((
-            sync_section,
-            Style::default()
-                .fg(state.palette.done)
-                .add_modifier(Modifier::DIM),
-        ));
+        right_parts.push(sync_section);
     }
 
     let right_width = display_width(&counter_text) as u16
@@ -482,6 +469,37 @@ pub fn event_needs_redraw(event: &Event) -> bool {
 /// "Update" covers both our own writes and external reloads.
 fn update_label(last_update_at: Option<SystemTime>, now: SystemTime) -> Option<String> {
     relative_label("Updated", last_update_at, now)
+}
+
+/// The title bar's git-sync section and its style, in order of precedence:
+/// unsynced (error-colored, until a later sync lands), syncing, recently
+/// synced, or just the bare indicator.
+fn sync_section(state: &AppState, now: SystemTime) -> (String, Style) {
+    let prefix = format!("{} git", state.icons.sync);
+    let palette = &state.palette;
+    if let Some(problem) = state.git_sync.problem {
+        return (
+            format!("{prefix} · {problem}"),
+            Style::default().fg(palette.error),
+        );
+    }
+    if state.git_sync.busy {
+        return (
+            format!("{prefix} · syncing…"),
+            Style::default()
+                .fg(palette.started)
+                .add_modifier(Modifier::DIM),
+        );
+    }
+    // Green (`palette.done`) rather than the update tag's `palette.started`,
+    // so a completed sync reads as a distinct, successful outcome.
+    let healthy = Style::default()
+        .fg(palette.done)
+        .add_modifier(Modifier::DIM);
+    match sync_label(state.git_sync.last_at, now) {
+        Some(label) => (format!("{prefix} · {label}"), healthy),
+        None => (prefix, healthy),
+    }
 }
 
 /// A completed background git-sync commit+push.
@@ -1573,6 +1591,68 @@ mod tests {
             row.trim_end().ends_with("1/3"),
             "counter still flush right with both tags: {row:?}"
         );
+    }
+
+    /// The title row's text drawn in `color`, in order.
+    fn title_text_in(state: &mut AppState, color: Color) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| render(f, state)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..100)
+            .map(|x| &buffer[(x, 0)])
+            .filter(|c| c.style().fg == Some(color))
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn git_sync_failure_shows_unsynced_in_error_color_over_an_older_success() {
+        let mut state = sample_state();
+        state.git_sync.active = true;
+        state.git_sync.last_at = Some(SystemTime::now());
+        state.git_sync.problem = Some("not pushed");
+        let row = title_row(&mut state, 100, 30);
+        assert!(
+            row.contains(&format!("{} git · not pushed", IconSet::unicode().sync)),
+            "{row:?}"
+        );
+        assert!(
+            !row.contains("Synced"),
+            "an older success must not show beside a later failure: {row:?}"
+        );
+        let error = state.palette.error;
+        assert!(title_text_in(&mut state, error).contains("git · not pushed"));
+    }
+
+    #[test]
+    fn git_sync_failure_outranks_a_running_retry() {
+        let mut state = sample_state();
+        state.git_sync.active = true;
+        state.git_sync.busy = true;
+        state.git_sync.problem = Some("not synced");
+        let row = title_row(&mut state, 100, 30);
+        assert!(row.contains("git · not synced"), "{row:?}");
+        assert!(!row.contains("syncing"), "{row:?}");
+    }
+
+    #[test]
+    fn git_sync_shows_syncing_while_a_sync_runs() {
+        let mut state = sample_state();
+        state.git_sync.active = true;
+        state.git_sync.busy = true;
+        let row = title_row(&mut state, 100, 30);
+        assert!(row.contains("git · syncing…"), "{row:?}");
+        let started = state.palette.started;
+        assert!(title_text_in(&mut state, started).contains("git · syncing…"));
+    }
+
+    #[test]
+    fn git_sync_healthy_indicator_is_green() {
+        let mut state = sample_state();
+        state.git_sync.active = true;
+        state.git_sync.last_at = Some(SystemTime::now());
+        let done = state.palette.done;
+        assert!(title_text_in(&mut state, done).contains("git · Synced"));
     }
 
     #[test]

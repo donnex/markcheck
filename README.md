@@ -516,11 +516,16 @@ message — `markcheck` never attempts to resolve it for you (no auto
 `git pull --rebase`), so fix it in a terminal as usual. A commit that
 succeeds but fails to *push* (offline, expired credentials, …) is
 reported separately (`Committed, not pushed: ... (will keep retrying)`) —
-nothing is lost, and `markcheck` retries the push on its own every 30
-seconds, on the next sync of any kind, and once more right at startup, so
-you don't have to make another edit just to nudge it once the network's
-back. If one of those retries fails too, the status bar says `Push retry
-failed: ... (will keep retrying)`. Since the sync runs on a background thread, a slow or offline `git push`
+nothing is lost, and `markcheck` retries the push on its own — after 30
+seconds, then waiting twice as long after each further failure, up to 5
+minutes between tries — as well as on the next sync of any kind and once
+more right at startup, so you don't have to make another edit just to nudge
+it once the network's back. If a retry fails for a new reason, the status
+bar says `Push retry failed: ... (will keep retrying)`; one that fails the
+same way as before stays quiet, so it doesn't replace whatever message you
+are reading, and the title bar keeps showing `not pushed` (see below). When
+a push finally lands, the status bar says `Git sync caught up: committed
+and pushed`. Since the sync runs on a background thread, a slow or offline `git push`
 never freezes the app during normal use. Quitting right after a toggle or
 edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
@@ -582,9 +587,22 @@ plain identity. `⇅ git` is there from the moment the app opens, before
 you've even toggled anything. (It's the same plain `⇅` symbol either way,
 with or without `--no-nerd-font` — a couple of fancier icon attempts along
 the way didn't render reliably on every terminal, so the word "git" carries
-the meaning now rather than the glyph.) After a successful sync it's
-followed by `· Synced 8s ago`, fading back to just `⇅ git` after two
-minutes. It's fully hidden — no icon, no text, no gap — when git-sync
+the meaning now rather than the glyph.) The text after it says where the file stands:
+
+| Title bar | Meaning |
+| --- | --- |
+| `⇅ git` (green) | Git-sync is on; nothing has failed. |
+| `⇅ git · syncing…` (yellow) | A sync or push retry is running. |
+| `⇅ git · Synced 8s ago` (green) | The latest change was committed and pushed; fades back to `⇅ git` after two minutes. |
+| `⇅ git · not pushed` (red) | Committed, but the push failed; retrying on its own. |
+| `⇅ git · not synced` (red) | The last sync failed and nothing was pushed; the status bar said why. |
+| `⇅ git · not tracked` (red) | The file isn't tracked in git, so nothing is committed. |
+
+A red state stays until a later sync commits and pushes successfully,
+whatever keys you press in the meantime — the status bar's detailed message
+clears on the next key, but the title bar keeps the warning. It also
+replaces any earlier `Synced … ago`, so an old success never shows beside
+a newer failure. It's fully hidden — no icon, no text, no gap — when git-sync
 wasn't requested or the file isn't in a repo.
 
 `--git-sync` only activates when the file's directory is confirmed to be

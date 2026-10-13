@@ -913,8 +913,17 @@ pub struct GitSyncState {
     /// Whether git-sync is active this session; fixed at startup. Drives the
     /// title bar's `⇅ git` section.
     pub active: bool,
-    /// When a sync last committed and pushed successfully.
+    /// When a sync last committed and pushed successfully. Cleared when a
+    /// later attempt fails, so an old success can't vouch for newer changes.
     pub last_at: Option<SystemTime>,
+    /// A background sync or push retry is running.
+    pub busy: bool,
+    /// Why the latest attempt left the file unsynced, as the title bar's short
+    /// label; kept until a later sync lands, whatever keys are pressed.
+    pub problem: Option<&'static str>,
+    /// The reason last reported in the status bar, so a retry failing the
+    /// same way doesn't replace whatever message is showing every time.
+    pub reported_reason: Option<String>,
     /// The latest write-back's sync request, drained by the main loop via
     /// `take_git_sync_request`.
     pub pending: Option<PendingSync>,

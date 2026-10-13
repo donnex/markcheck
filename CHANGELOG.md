@@ -91,6 +91,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With `--git-sync` on, the title bar no longer says everything is fine
+  while your changes aren't being pushed. It used to keep showing a green
+  `⇅ git` — often with an earlier success's `Synced 40s ago` still beside
+  it — while every push failed, and the red status-bar message explaining
+  why vanished on the next keypress. The title bar now shows a red
+  `⇅ git · not pushed` (or `not synced`/`not tracked`) until a later sync
+  succeeds, `⇅ git · syncing…` while one runs, and the status bar says
+  `Git sync caught up: committed and pushed` when it recovers. (#64)
+
+  A push that keeps failing the same way is also retried less often — after
+  30 seconds, then twice as long each time, up to every 5 minutes — and no
+  longer replaces whatever message is in the status bar on every retry; it
+  reports again only when the reason changes.
+
 - `o` no longer says "Opening" followed by the link when nothing opens. On a headless
   machine — typically an SSH session to a server, with no `$BROWSER` and no
   graphical display — it now copies the link to your clipboard instead (over
