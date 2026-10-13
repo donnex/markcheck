@@ -344,7 +344,8 @@ impl AppState {
     }
 
     /// Cycle to the next (`forward`) or previous match of the last committed
-    /// query relative to the cursor, wrapping around; a no-op with no active
+    /// query relative to the cursor, wrapping around (and saying so, like vim's
+    /// "search hit BOTTOM"); a no-op with no active
     /// search or no matches (`n`/`N`). Matches from `find_matches` are in
     /// document order, so `(list, item)` tuples compare in that order.
     fn search_cycle(&mut self, forward: bool) {
@@ -360,27 +361,53 @@ impl AppState {
             return;
         };
         let cur = (self.current_list_index, self.current_item_index);
-        let target = if forward {
-            matches.iter().copied().find(|&m| m > cur).unwrap_or(first)
+        let next = if forward {
+            matches.iter().copied().find(|&m| m > cur)
         } else {
-            matches
-                .iter()
-                .rev()
-                .copied()
-                .find(|&m| m < cur)
-                .unwrap_or_else(|| {
-                    *matches
-                        .last()
-                        .expect("matches is non-empty — checked above")
-                })
+            matches.iter().rev().copied().find(|&m| m < cur)
         };
+        let wrapped = next.is_none();
+        let target = next.unwrap_or_else(|| {
+            if forward {
+                first
+            } else {
+                *matches
+                    .last()
+                    .expect("matches is non-empty — checked above")
+            }
+        });
         let position = matches
             .iter()
             .position(|&m| m == target)
             .map_or(0, |i| i + 1);
-        self.set_status(format!("Match {position}/{}", matches.len()));
-        // A successful auto-copy (if enabled) overrides with its own message.
-        self.focus_item(target.0, target.1, CursorMove::Navigate);
+        let mut msg = format!("Match {position}/{}", matches.len());
+        if wrapped {
+            msg.push_str(if forward {
+                " · wrapped to top"
+            } else {
+                " · wrapped to bottom"
+            });
+        }
+        self.focus_and_report(target, Some(msg));
+    }
+
+    /// Navigate to `target` and report `msg` (if any) as an ephemeral status,
+    /// keeping the auto-copy outcome visible too: a copy confirmation is
+    /// appended after `msg`, and a sticky copy error replaces it.
+    fn focus_and_report(&mut self, (list_index, item_index): (usize, usize), msg: Option<String>) {
+        self.clear_status();
+        self.focus_item(list_index, item_index, CursorMove::Navigate);
+        let Some(msg) = msg else {
+            return;
+        };
+        if self.status_is_error {
+            return;
+        }
+        let msg = match self.status_message.take() {
+            Some(copied) => format!("{msg} · {copied}"),
+            None => msg,
+        };
+        self.set_status(msg);
     }
 
     /// Jump the cursor to the first item of the next (`forward`) / previous
@@ -571,7 +598,8 @@ impl AppState {
     }
 
     /// `Tab`: jump to the next unfinished task (`NotStarted` or `Started`)
-    /// anywhere in the document, after the cursor, wrapping around; reports a
+    /// anywhere in the document, after the cursor, wrapping around — and
+    /// saying so, since a wrap jumps backwards across the document; reports a
     /// sticky message rather than moving silently when none exist.
     /// Complements `Shift-L` (next unfinished *list*).
     pub fn jump_to_next_incomplete_task(&mut self) {
@@ -597,7 +625,14 @@ impl AppState {
                 self.document.lists[s].items[i].kind,
                 ItemKind::Checkbox(TaskState::NotStarted | TaskState::Started)
             ) {
-                self.focus_item(s, i, CursorMove::Navigate);
+                let wrapped = cur + step >= n;
+                let msg = wrapped.then(|| {
+                    format!(
+                        "Wrapped to the first unfinished task ({})",
+                        self.document.lists[s].title
+                    )
+                });
+                self.focus_and_report((s, i), msg);
                 return;
             }
         }

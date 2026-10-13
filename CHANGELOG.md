@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Tab` (next unfinished task) and `n`/`N` (next/previous search match) now
+  say so when they wrap around the document: `Tab` shows "Wrapped to the
+  first unfinished task (list name)", and `n`/`N` add "wrapped to top" or
+  "wrapped to bottom" to the match position, the way vim reports "search hit
+  BOTTOM". Previously the jump back across the whole document was silent, so
+  near the end of a long runbook `Tab` could land on a step skipped long ago
+  while looking like the next one. (#87)
+
 - Git-sync messages read as one sentence instead of two. Every failure used
   to arrive doubly-labelled — `Git sync failed: git-sync: ...` — and the
   push failures said "committed locally" twice. The internal prefix is gone
