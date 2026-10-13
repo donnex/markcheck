@@ -4,6 +4,7 @@
 //! startup warning about a file a save would disturb. The spawning itself
 //! stays in `main.rs`.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
@@ -190,17 +191,29 @@ pub fn resolve_editor(
     resolve_command(chosen, "vi", "$EDITOR/$VISUAL")
 }
 
-/// `+N` for the terminal editors that understand it (matched on basename);
-/// nothing for the rest.
-pub fn editor_line_args(program: &str, line: usize) -> Vec<String> {
-    let base = std::path::Path::new(program)
+/// The editor arguments that open `path`, on `line` when the editor (matched
+/// on its basename) has a known way to take one: a `+N` before the path
+/// (vi-style), a `path:N` suffix (Helix, Sublime Text) or `--goto path:N`
+/// (VS Code, VSCodium). Anything else, or no `line`, gets the bare path.
+pub fn editor_file_args(program: &str, path: &Path, line: Option<usize>) -> Vec<OsString> {
+    let base = Path::new(program)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(program);
-    match base {
-        "vi" | "vim" | "nvim" | "view" | "nano" | "pico" | "emacs" | "emacsclient" | "joe"
-        | "gedit" => vec![format!("+{line}")],
-        _ => Vec::new(),
+    let with_line = |line: usize| {
+        let mut arg = path.as_os_str().to_os_string();
+        arg.push(format!(":{line}"));
+        arg
+    };
+    match (base, line) {
+        (
+            "vi" | "vim" | "nvim" | "view" | "nano" | "pico" | "emacs" | "emacsclient" | "joe"
+            | "gedit" | "kak" | "micro",
+            Some(line),
+        ) => vec![format!("+{line}").into(), path.into()],
+        ("hx" | "helix" | "subl", Some(line)) => vec![with_line(line)],
+        ("code" | "codium", Some(line)) => vec!["--goto".into(), with_line(line)],
+        _ => vec![path.into()],
     }
 }
 
@@ -340,7 +353,7 @@ pub fn startup_warning(
 #[cfg(test)]
 mod tests {
     use super::{
-        GitSyncRequest, OPENER_FAILURE_WINDOW, editor_line_args, expand_tilde,
+        GitSyncRequest, OPENER_FAILURE_WINDOW, editor_file_args, expand_tilde,
         git_sync_path_matches, git_sync_request, git_sync_warning, no_browser_available,
         opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
         watch_warning,
@@ -574,9 +587,15 @@ mod tests {
         );
     }
 
+    fn args(program: &str, line: Option<usize>) -> Vec<String> {
+        editor_file_args(program, Path::new("dir/run.md"), line)
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect()
+    }
+
     #[test]
-    fn line_arg_added_for_plusn_editors() {
-        // The `+N file` convention: one `+N` arg, spliced before the path.
+    fn plus_n_editors_get_the_line_before_the_path() {
         for prog in [
             "vi",
             "vim",
@@ -588,38 +607,42 @@ mod tests {
             "emacsclient",
             "joe",
             "gedit",
+            "kak",
+            "micro",
         ] {
-            assert_eq!(editor_line_args(prog, 5), vec!["+5".to_string()], "{prog}");
+            assert_eq!(args(prog, Some(5)), ["+5", "dir/run.md"], "{prog}");
+        }
+    }
+
+    #[test]
+    fn colon_suffix_editors_get_the_line_after_the_path() {
+        for prog in ["hx", "helix", "subl"] {
+            assert_eq!(args(prog, Some(42)), ["dir/run.md:42"], "{prog}");
+        }
+    }
+
+    #[test]
+    fn vscode_editors_get_a_goto_argument() {
+        for prog in ["code", "codium"] {
+            assert_eq!(args(prog, Some(7)), ["--goto", "dir/run.md:7"], "{prog}");
         }
     }
 
     #[test]
     fn line_arg_matches_on_basename() {
         // A full path or a versioned wrapper still resolves to the base name.
-        assert_eq!(
-            editor_line_args("/usr/bin/vim", 12),
-            vec!["+12".to_string()]
-        );
-        assert_eq!(
-            editor_line_args("/opt/nvim/bin/nvim", 1),
-            vec!["+1".to_string()]
-        );
+        assert_eq!(args("/usr/bin/vim", Some(12)), ["+12", "dir/run.md"]);
+        assert_eq!(args("/opt/nvim/bin/nvim", Some(1)), ["+1", "dir/run.md"]);
+        assert_eq!(args("/usr/local/bin/hx", Some(3)), ["dir/run.md:3"]);
     }
 
     #[test]
-    fn no_line_arg_for_non_plusn_editors() {
-        // GUI editors that don't use `+N` and anything unrecognised open at the
-        // top of the file (empty args, current behaviour).
-        for prog in [
-            "code",
-            "subl",
-            "hx",
-            "kak",
-            "micro",
-            "notepad",
-            "unknown-editor",
-        ] {
-            assert!(editor_line_args(prog, 5).is_empty(), "{prog}");
+    fn unknown_editors_and_no_line_get_the_bare_path() {
+        for prog in ["notepad", "unknown-editor"] {
+            assert_eq!(args(prog, Some(5)), ["dir/run.md"], "{prog}");
+        }
+        for prog in ["vim", "hx", "code", "notepad"] {
+            assert_eq!(args(prog, None), ["dir/run.md"], "{prog}");
         }
     }
 

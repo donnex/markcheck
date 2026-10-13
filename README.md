@@ -785,10 +785,12 @@ change the file underneath the undo history — your own toggles never do.
 ### Editor and reset
 
 `e` suspends the TUI, opens the file in `$VISUAL` / `$EDITOR` (falling back
-to `vi`), and reloads on exit. For editors that use the `+N file` convention
+to `vi`), and reloads on exit. The file opens on the selected task's line in
+editors that take a line number on the command line: `+N file`
 (`vi`/`vim`/`nvim`/`view`, `nano`, `pico`, `emacs`/`emacsclient`, `joe`,
-`gedit`) the file opens on the selected task's line; other editors (VS Code,
-Sublime, Helix, …) open at the top of the file. The editor has to keep running until you're done with the file, which
+`gedit`, `kak`, `micro`), `file:N` (Helix `hx`, Sublime Text `subl`) or
+`--goto file:N` (VS Code `code`, VSCodium `codium`). Any other editor opens at
+the top of the file. The editor has to keep running until you're done with the file, which
 terminal editors do but most GUI editors don't unless told to: set
 `EDITOR="code --wait"` (VS Code), `subl -w` (Sublime Text), `gedit --wait`,
 or leave off `-n` with `emacsclient`. An editor that exits within a second
