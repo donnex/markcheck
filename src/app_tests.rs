@@ -759,6 +759,43 @@ fn search_reports_match_position_and_no_match_feedback() {
 }
 
 #[test]
+fn search_from_mid_document_lands_on_the_next_match_after_the_cursor() {
+    // Like vim's `/`, the search runs forward from the cursor rather than
+    // restarting at the top of the document.
+    let mut state = AppState::new(two_list_document());
+    state.focus_item(0, 2, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "t");
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 2));
+    type_str(&mut state, "ask");
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 2));
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Match 3/5 · n/N to cycle")
+    );
+    state.handle_key(KeyCode::Char('n'));
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    assert_eq!(state.status_message.as_deref(), Some("Match 4/5"));
+}
+
+#[test]
+fn search_wraps_to_the_first_match_when_none_follow_the_cursor() {
+    let path = write_real_file("## L\n\n- [ ] `restart a`\n- [ ] `restart b`\n- [ ] `check`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.focus_item(0, 2, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "restart");
+    assert_eq!(state.current_item_index, 0);
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Match 1/2 · n/N to cycle")
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn committing_a_single_match_search_omits_the_cycle_nudge() {
     // The `n`/`N` nudge only makes sense with more than one match.
     let mut state = AppState::new(two_list_document());
