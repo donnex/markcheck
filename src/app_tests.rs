@@ -38,44 +38,57 @@ fn unique_temp_path() -> PathBuf {
     crate::test_support::unique_temp_path("app", "", Some("md"))
 }
 
-fn document_with_lists(lists: Vec<List>) -> Document {
-    let max_line = lists
-        .iter()
-        .flat_map(|s| s.items.iter())
-        .map(|i| i.line_number)
-        .max()
-        .unwrap_or(0);
-    let file_path = unique_temp_path();
-    // write_back requires the target file to already exist (it reads
-    // its permissions before writing); a real, if empty, backing file lets
-    // toggle/reset/undo tests exercise the actual write-success path instead
-    // of always silently failing against a path that was never created.
-    fs::write(&file_path, "").unwrap();
-    Document {
-        file_path,
-        title: None,
-        has_default_list: false,
-        lists,
-        raw_lines: vec![String::new(); max_line],
+/// The source lines a hand-built `lists` stands for: each item's own line
+/// carries the bullet and checkbox its `kind` claims, so a write-back
+/// rewrites a real marker on the right line. Lines no item claims are blank.
+fn raw_lines_for(lists: &[List]) -> Vec<String> {
+    let items = || lists.iter().flat_map(|list| list.items.iter());
+    let max_line = items().map(|item| item.line_number).max().unwrap_or(0);
+    let mut lines = vec!["\n".to_string(); max_line];
+    for item in items() {
+        let marker = match item.kind {
+            ItemKind::Checkbox(TaskState::NotStarted) => "[ ] ",
+            ItemKind::Checkbox(TaskState::Started) => "[/] ",
+            ItemKind::Checkbox(TaskState::Done) => "[x] ",
+            ItemKind::DisplayOnly => "",
+        };
+        let indent = "  ".repeat(item.depth);
+        lines[item.line_number - 1] = format!("{indent}- {marker}{}\n", item.display_text);
     }
+    lines
+}
+
+/// A document from hand-built `lists`, backed by a real file holding exactly
+/// the Markdown those lists describe, so a write test can read the file back.
+fn document_with_lists(lists: Vec<List>) -> Document {
+    let document = document_with_missing_file(lists);
+    fs::write(&document.file_path, writer::document_contents(&document)).unwrap();
+    document
 }
 
 /// Like `document_with_lists`, but the backing file is never created, so
 /// `write_back` always fails.
 fn document_with_missing_file(lists: Vec<List>) -> Document {
-    let max_line = lists
-        .iter()
-        .flat_map(|s| s.items.iter())
-        .map(|i| i.line_number)
-        .max()
-        .unwrap_or(0);
+    let raw_lines = raw_lines_for(&lists);
     Document {
         file_path: unique_temp_path(),
         title: None,
         has_default_list: false,
         lists,
-        raw_lines: vec![String::new(); max_line],
+        raw_lines,
     }
+}
+
+/// Writes `markdown` to a fresh temp file and loads it the way `main.rs`
+/// does, so the items and the file always agree.
+fn state_from_markdown(markdown: &str) -> (AppState, PathBuf) {
+    let path = write_real_file(markdown);
+    let state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    (state, path)
+}
+
+fn file_text(path: &std::path::Path) -> String {
+    fs::read_to_string(path).unwrap()
 }
 
 fn two_list_document() -> Document {
@@ -176,6 +189,7 @@ fn start_current_marks_started_without_advancing() {
         state.current_item().unwrap().kind,
         ItemKind::Checkbox(TaskState::Started)
     );
+    assert!(file_text(&state.document.file_path).starts_with("- [/] task 1\n- [ ] task 2\n"));
     assert_eq!(state.current_item_index, 0, "does not auto-advance");
     assert_eq!(shown(&state), (View::Checklist, None));
 }
@@ -183,12 +197,14 @@ fn start_current_marks_started_without_advancing() {
 #[test]
 fn start_current_toggles_started_off() {
     let mut state = AppState::new(two_list_document());
+    let original = file_text(&state.document.file_path);
     state.start_current();
     state.start_current();
     assert_eq!(
         state.current_item().unwrap().kind,
         ItemKind::Checkbox(TaskState::NotStarted)
     );
+    assert_eq!(file_text(&state.document.file_path), original);
 }
 
 #[test]
@@ -2700,11 +2716,16 @@ fn click_on_overview_marker_toggles_item_without_moving_cursor() {
     let before = (state.current_list_index, state.current_item_index);
     state.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(1, 0))];
 
+    let original = file_text(&state.document.file_path);
     state.handle_left_click(61, 5);
     assert!(matches!(
         state.document.lists[1].items[0].kind,
         ItemKind::Checkbox(TaskState::Done)
     ));
+    assert_eq!(
+        file_text(&state.document.file_path),
+        original.replace("- [ ] task 4", "- [x] task 4")
+    );
     assert_eq!(
         (state.current_list_index, state.current_item_index),
         before,
@@ -2719,6 +2740,7 @@ fn click_on_overview_marker_toggles_item_without_moving_cursor() {
         ItemKind::Checkbox(TaskState::NotStarted)
     ));
     assert_eq!(state.status_message.as_deref(), Some("Marked not done"));
+    assert_eq!(file_text(&state.document.file_path), original);
 }
 
 #[test]
@@ -2876,6 +2898,7 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
         items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
     }]);
     let path = document.file_path.clone();
+    let original = file_text(&path);
     let mut state = AppState::new(document);
     state.current_item_index = 1; // item 2, the one whose write will fail
 
@@ -2895,11 +2918,16 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
 
     // The file reappears. Clear the sticky error first, as a real keypress
     // does.
-    fs::write(&path, "").unwrap();
+    fs::write(&path, &original).unwrap();
     state.clear_status();
     state.current_item_index = 2; // item 3, genuinely not done
     state.toggle_current();
     assert!(!state.status_is_error, "the retry succeeds");
+    assert_eq!(
+        file_text(&path),
+        "- [x] task 1\n- [ ] task 2\n- [x] task 3\n",
+        "only item 3 is written done; the rolled-back item 2 stays open"
+    );
     assert_eq!(
         shown(&state),
         (View::Checklist, None),
@@ -3802,13 +3830,187 @@ fn reset_is_blocked_when_file_deleted() {
     );
 }
 
+// --- Keypress to file: every writing action lands on the right line ---
+
+const WRITE_PATH_MARKDOWN: &str = "\
+# Title
+
+## First
+
+Intro paragraph with a stray [ ] that is not a task.
+
+- [ ] **Alpha** first task
+  body line with [x] in it
+- [X] Bravo
+- plain note
+- [/] Charlie
+
+## Second
+
+- [ ] Delta
+";
+
+/// `WRITE_PATH_MARKDOWN` with each `(from, to)` line swapped, asserting every
+/// `from` occurs exactly once so a typo can't make the expectation vacuous.
+fn markdown_with(edits: &[(&str, &str)]) -> String {
+    let mut text = WRITE_PATH_MARKDOWN.to_string();
+    for (from, to) in edits {
+        assert_eq!(text.matches(from).count(), 1, "{from:?} must be unique");
+        text = text.replace(from, to);
+    }
+    text
+}
+
+fn focus_text(state: &mut AppState, text: &str) {
+    let (list, item) = state
+        .document
+        .lists
+        .iter()
+        .enumerate()
+        .find_map(|(l, list)| {
+            list.items
+                .iter()
+                .position(|item| item.display_text.contains(text))
+                .map(|i| (l, i))
+        })
+        .unwrap();
+    state.current_list_index = list;
+    state.current_item_index = item;
+}
+
+#[test]
+fn space_writes_the_done_marker_on_the_task_line_only() {
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    focus_text(&mut state, "first task");
+    state.handle_key(KeyCode::Char(' '));
+    assert_eq!(
+        file_text(&path),
+        markdown_with(&[("- [ ] **Alpha**", "- [x] **Alpha**")])
+    );
+
+    focus_text(&mut state, "first task");
+    state.handle_key(KeyCode::Char(' '));
+    assert_eq!(
+        file_text(&path),
+        WRITE_PATH_MARKDOWN,
+        "a second toggle reverts"
+    );
+}
+
+#[test]
+fn space_on_an_uppercase_x_task_writes_it_open() {
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    focus_text(&mut state, "Bravo");
+    state.handle_key(KeyCode::Char(' '));
+    assert_eq!(
+        file_text(&path),
+        markdown_with(&[("- [X] Bravo", "- [ ] Bravo")])
+    );
+}
+
+#[test]
+fn s_writes_the_started_marker_and_s_again_clears_it() {
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    focus_text(&mut state, "Delta");
+    state.handle_key(KeyCode::Char('s'));
+    assert_eq!(
+        file_text(&path),
+        markdown_with(&[("- [ ] Delta", "- [/] Delta")])
+    );
+    state.handle_key(KeyCode::Char('s'));
+    assert_eq!(file_text(&path), WRITE_PATH_MARKDOWN);
+}
+
+#[test]
+fn reset_confirmed_with_y_writes_every_task_open() {
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
+    state.handle_key(KeyCode::Char('y'));
+    let reset = markdown_with(&[
+        ("- [X] Bravo", "- [ ] Bravo"),
+        ("- [/] Charlie", "- [ ] Charlie"),
+    ]);
+    assert_eq!(file_text(&path), reset);
+
+    state.handle_key(KeyCode::Char('u'));
+    assert_eq!(file_text(&path), WRITE_PATH_MARKDOWN, "u restores the file");
+    state.handle_key_with_mods(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert_eq!(file_text(&path), reset, "Ctrl-R writes the reset again");
+}
+
+#[test]
+fn u_and_ctrl_r_write_the_undone_and_redone_marker() {
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    focus_text(&mut state, "Charlie");
+    state.handle_key(KeyCode::Char(' '));
+    let done = markdown_with(&[("- [/] Charlie", "- [x] Charlie")]);
+    assert_eq!(file_text(&path), done);
+
+    state.handle_key(KeyCode::Char('u'));
+    assert_eq!(file_text(&path), WRITE_PATH_MARKDOWN, "undo restores [/]");
+    state.handle_key_with_mods(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert_eq!(file_text(&path), done);
+}
+
+#[test]
+fn an_overview_marker_click_writes_that_task_only() {
+    use ratatui::layout::Rect;
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    state.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(1, 0))];
+    state.handle_left_click(61, 5);
+    assert_eq!(
+        file_text(&path),
+        markdown_with(&[("- [ ] Delta", "- [x] Delta")])
+    );
+}
+
+#[test]
+fn quit_reset_confirmed_with_y_writes_every_task_open_and_quits() {
+    let all_done = "## L\n\n- [x] one\n- [X] two\n";
+    let (mut state, path) = state_from_markdown(all_done);
+    state.handle_key(KeyCode::Char('q'));
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
+    state.handle_key(KeyCode::Char('y'));
+    assert!(state.should_quit);
+    assert_eq!(file_text(&path), "## L\n\n- [ ] one\n- [ ] two\n");
+}
+
+#[test]
+fn quit_without_reset_leaves_the_file_untouched() {
+    let all_done = "## L\n\n- [x] one\n- [X] two\n";
+    let (mut state, path) = state_from_markdown(all_done);
+    state.handle_key(KeyCode::Char('q'));
+    state.handle_key(KeyCode::Char('n'));
+    assert!(state.should_quit);
+    assert_eq!(file_text(&path), all_done);
+}
+
+#[test]
+fn the_git_sync_request_carries_the_written_file() {
+    let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+    focus_text(&mut state, "Delta");
+    state.handle_key(KeyCode::Char(' '));
+    let pending = state.take_git_sync_request().unwrap();
+    assert_eq!(pending.content, file_text(&path));
+    assert_eq!(
+        pending.previous_content.as_deref(),
+        Some(WRITE_PATH_MARKDOWN)
+    );
+}
+
 // --- Undo / redo of state-changing actions ---
 
 #[test]
 fn undo_reverts_a_toggle_and_focuses_the_task() {
     let mut state = AppState::new(two_list_document());
+    let original = file_text(&state.document.file_path);
     state.toggle_current(); // item 0 -> Done, auto-advances to item 1
     assert_eq!(state.current_item_index, 1);
+    assert_eq!(
+        file_text(&state.document.file_path),
+        original.replace("- [ ] task 1", "- [x] task 1")
+    );
 
     state.undo();
     assert_eq!(
@@ -3826,11 +4028,17 @@ fn undo_reverts_a_toggle_and_focuses_the_task() {
         Some("Undo: marked not done")
     );
     assert!(!state.status_is_error);
+    assert_eq!(
+        file_text(&state.document.file_path),
+        original,
+        "the undo is written back"
+    );
 }
 
 #[test]
 fn redo_reapplies_an_undone_toggle() {
     let mut state = AppState::new(two_list_document());
+    let original = file_text(&state.document.file_path);
     state.toggle_current();
     state.undo();
     state.redo();
@@ -3840,17 +4048,24 @@ fn redo_reapplies_an_undone_toggle() {
         "redo restores the toggle",
     );
     assert_eq!(state.status_message.as_deref(), Some("Redo: marked done"));
+    assert_eq!(
+        file_text(&state.document.file_path),
+        original.replace("- [ ] task 1", "- [x] task 1"),
+        "the redo is written back"
+    );
 }
 
 #[test]
 fn undo_reverts_a_started_toggle() {
     let mut state = AppState::new(two_list_document());
+    let original = file_text(&state.document.file_path);
     state.start_current(); // item 0 -> Started
     state.undo();
     assert_eq!(
         state.current_list().items[0].kind,
         ItemKind::Checkbox(TaskState::NotStarted),
     );
+    assert_eq!(file_text(&state.document.file_path), original);
 }
 
 #[test]
@@ -3859,7 +4074,10 @@ fn undo_reverts_a_reset_and_reports_the_count() {
     state.toggle_current(); // item 0 done (advances)
     state.current_item_index = 1;
     state.toggle_current(); // item 1 done
+    let done_two = file_text(&state.document.file_path);
+    assert!(done_two.starts_with("- [x] task 1\n- [x] task 2\n- [ ] task 3\n"));
     state.reset_all(); // both back to not-done
+    assert!(!file_text(&state.document.file_path).contains("[x]"));
     assert!(
         state
             .current_list()
@@ -3881,11 +4099,13 @@ fn undo_reverts_a_reset_and_reports_the_count() {
         state.status_message.as_deref(),
         Some("Undo: restored 2 tasks")
     );
+    assert_eq!(file_text(&state.document.file_path), done_two);
 }
 
 #[test]
 fn undo_reverts_an_overview_click_toggle() {
     let mut state = AppState::new(two_list_document());
+    let original = file_text(&state.document.file_path);
     state.toggle_item(1, 0); // toggle a task in the *other* list, cursor stays
     assert_eq!(
         state.document.lists[1].items[0].kind,
@@ -3896,6 +4116,7 @@ fn undo_reverts_an_overview_click_toggle() {
         state.document.lists[1].items[0].kind,
         ItemKind::Checkbox(TaskState::NotStarted),
     );
+    assert_eq!(file_text(&state.document.file_path), original);
 }
 
 #[test]
