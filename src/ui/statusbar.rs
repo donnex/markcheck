@@ -18,6 +18,7 @@ const ALL_COMPLETE_LEGEND: &str = "h:review  R:reset  ?:help  q:quit";
 const CONFIRM_LEGEND: &str = "y:reset  any other key:cancel";
 const CONFIRM_QUIT_LEGEND: &str = "y:reset & quit  n:quit  esc:cancel";
 const HELP_LEGEND: &str = "j/k ↑↓: scroll  ·  any other key: close help";
+const PENDING_G_PROMPT: &str = "g… press g for the first task · any other key cancels";
 const PICKER_LEGEND: &str =
     "type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close";
 
@@ -92,6 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     // While a multi-link `o` or multi-command `y` is armed, the status bar shows
     // its digit prompt; the URLs themselves live in the panel below the card.
+    // A lone `g` waiting for the second `g` of `gg` shows its own prompt.
     // Priority: search > status message > armed prompt > legend.
     let armed_prompt = if state.overlay.is_none() && state.view == View::Checklist {
         let item = state.current_item();
@@ -101,6 +103,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         } else if state.pending_copy_code {
             let n = item.map_or(0, |item| clipboard::candidates(item).len());
             Some(number_prompt("copy", n, state.pending_number))
+        } else if state.pending_g {
+            Some(PENDING_G_PROMPT.to_string())
         } else {
             None
         }
