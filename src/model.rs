@@ -850,6 +850,9 @@ pub struct AppState {
     /// True after `y` on a card with several commands, waiting for the
     /// command number to copy (`y` then a digit). Reset by any other key.
     pub pending_copy_code: bool,
+    /// The digits typed so far at an armed `o`/`y` prompt, as a number (0 for
+    /// none), so a card with ten or more links or commands can pick `[10]`+.
+    pub pending_number: usize,
     pub icons: IconSet,
     /// Set by `e`; consumed by the main loop, which suspends the TUI and
     /// launches the editor.

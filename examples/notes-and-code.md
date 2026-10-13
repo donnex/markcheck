@@ -93,6 +93,15 @@ Non-task content and the ways code is handled.
   [wiki](https://example.com/wiki) — each link text is tagged with a `[1]`/`[2]`
   marker that matches the numbered URLs listed below the card; press `o` then
   the number (`o` `2`) to open a specific one
+- [ ] See also every service dashboard: [api](https://example.com/d/api),
+  [web](https://example.com/d/web), [db](https://example.com/d/db),
+  [cache](https://example.com/d/cache), [queue](https://example.com/d/queue),
+  [search](https://example.com/d/search), [auth](https://example.com/d/auth),
+  [mail](https://example.com/d/mail), [cdn](https://example.com/d/cdn),
+  [dns](https://example.com/d/dns), [logs](https://example.com/d/logs) and
+  [metrics](https://example.com/d/metrics) — with twelve links, `o` `1` `2`
+  opens `[12]`, `o` `1` then `Enter` opens `[1]`, and `o` `3` opens `[3]` at
+  once since no longer number starts with 3
 - [ ] A task linking to [a local file](file:///etc/hosts) — only `http://`,
   `https://` and `mailto:` links open, so `o` refuses this one and says so,
   even though it still renders like any other link

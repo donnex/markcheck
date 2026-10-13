@@ -863,6 +863,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ragged, because the tabs were measured but never drawn. Copying still
   gives the original tabs. (#85)
 
+- On a card with ten or more links, `o` can now open link `[10]` and up:
+  type the digits in turn, and `Enter` takes a shorter number such as `[1]`
+  when a longer one could still follow. Previously only `1` to `9` were
+  accepted, so typing `1` then `0` opened link `[1]` and the `0` was taken
+  as a key of its own, even though the status bar offered `press 1–12 to
+  open`. The
+  same goes for `y` on a card with ten or more commands. (#100)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping

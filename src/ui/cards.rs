@@ -262,13 +262,13 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
                 "toggle (icon) or jump to (label) a task or list",
             ),
             ("y", "copy the task's code to the clipboard"),
-            ("y then 1-9", "copy command [N] when a card has several"),
+            ("y then N", "copy command [N] when a card has several"),
             (
                 "click a card",
                 "copy the clicked command, or the card's sole one",
             ),
             ("o", "open the card's link in your browser"),
-            ("o then 1-9", "open link [N] when a card has several"),
+            ("o then N", "open link [N] when a card has several"),
             ("e", "edit the file in $EDITOR"),
             ("Ctrl-Z", "suspend to the shell (fg to come back)"),
             ("Ctrl-C", "cancel like Esc; elsewhere hints how to quit"),
@@ -279,9 +279,15 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
         ],
     ),
     (
-        "Waiting for a digit after o / y",
+        "Waiting for a number after o / y",
         &[
             ("1-9", "open link [N] / copy command [N]"),
+            (
+                "10+",
+                "type each digit; acts once no more digits can follow",
+            ),
+            ("Enter", "take the number typed so far (e.g. [1] of 12)"),
+            ("Backspace", "delete the last digit typed"),
             ("Esc", "cancel; any other key cancels and acts"),
         ],
     ),
