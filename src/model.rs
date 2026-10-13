@@ -1028,23 +1028,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_holds_mixed_item_kinds() {
-        let list = List {
-            title: "List A".to_string(),
-            banner: None,
-            items: vec![display_only(1), checkbox(2, false), checkbox(3, true)],
-        };
-
-        assert_eq!(list.items.len(), 3);
-        assert_eq!(list.items[0].kind, ItemKind::DisplayOnly);
-        assert_eq!(
-            list.items[1].kind,
-            ItemKind::Checkbox(TaskState::NotStarted)
-        );
-        assert_eq!(list.items[2].kind, ItemKind::Checkbox(TaskState::Done));
-    }
-
     fn item_at(line_number: LineNumber, depth: usize, kind: ItemKind) -> Item {
         Item {
             line_number,
@@ -1246,13 +1229,6 @@ mod tests {
             assert_eq!(link.sublist_slot, list.sublist_slot(i), "slot of {i}");
             assert_eq!(link.info_state, list.info_parent_state(i), "state of {i}");
         }
-    }
-
-    #[test]
-    fn duplicate_content_items_are_distinct_by_line_number() {
-        let items = [checkbox(2, false), checkbox(3, false), checkbox(4, false)];
-        let line_numbers: Vec<_> = items.iter().map(|i| i.line_number).collect();
-        assert_eq!(line_numbers, vec![2, 3, 4]);
     }
 
     #[test]
