@@ -619,6 +619,14 @@ that repository's hooks. The scope check below bounds what a hook can get
 *committed*; it can't bound what a hook can *run*. Treat `--git-sync` in an
 untrusted repo the same way you'd treat running `git commit` in one.
 
+**Hooks must finish within 5 minutes.** Git-sync stops a `git commit` that
+runs longer than that, hooks and signing included, and reports `Git sync
+failed: git commit failed: git command timed out after 300s`. That leaves
+room for a hook framework's first-run setup or a signing key waiting for you
+to touch it; the limit isn't configurable. When a hook fails on its own, the
+status bar shows the last line it printed, which is usually the actual error
+rather than the hook's opening banner.
+
 Each commit runs from a private, temporary git index — never your real one —
 so a `git add`ed-but-not-yet-committed file of yours can never ride along
 into a markcheck commit. That index still runs the repository's normal

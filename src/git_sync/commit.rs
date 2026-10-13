@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use super::guards::{repo_sync_blocked, verify_commit_scope};
 use super::inspect::{blob_at, current_head, descends_directly_from, git_dir, index_blob};
-use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout};
+use super::process::{
+    COMMIT_TIMEOUT, PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout,
+};
 use super::shared::{RacePoint, race_point};
 
 /// Re-checks that `HEAD` is still `parent` before committing, so a tree
@@ -53,7 +55,7 @@ pub(super) fn commit_via_temp_index(
             parent,
             relpath,
             blob,
-            PLUMBING_TIMEOUT,
+            COMMIT_TIMEOUT,
         )?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
         race_point(RacePoint::BeforeIndexAlignment);
@@ -323,6 +325,46 @@ mod tests {
             new_head.as_deref(),
             "a timeout after the ref already moved must report success, not a false failure: {result:?}"
         );
+
+        let _ = fs::remove_file(&temp_index);
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_pre_commit_hook_is_reported_by_its_last_line() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = init_repo_without_remote();
+        let parent = current_head(&work).unwrap();
+        let hooks_dir = work.join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\necho '[INFO] Initializing environment' >&2\necho 'lint: tracked.md is malformed'\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let temp_index = work.join(".git").join("scratch-test-index-hook-fails");
+        populate_temp_index(&work, &temp_index, &parent).unwrap();
+        let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
+        stage_into_temp_index(&work, &temp_index, "100644", &blob, "tracked.md").unwrap();
+
+        let result = commit_temp_index(
+            &work,
+            &temp_index,
+            "refused by the hook",
+            &Some(parent.clone()),
+            "tracked.md",
+            &blob,
+            COMMIT_TIMEOUT,
+        );
+        assert_eq!(
+            result,
+            Err("git commit: lint: tracked.md is malformed".to_string())
+        );
+        assert_eq!(current_head(&work), Some(parent));
 
         let _ = fs::remove_file(&temp_index);
         fs::remove_dir_all(work.parent().unwrap()).ok();

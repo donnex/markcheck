@@ -86,6 +86,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync no longer gives up on a commit after 10 seconds. Repository
+  commit hooks and commit signing now get up to 5 minutes, so a slow
+  `pre-commit` hook, a hook framework installing its tools on first use, or a
+  signing key waiting for a touch no longer fails every sync with "git
+  command timed out after 10s" — and no longer has the hook killed part-way.
+
+  A failed commit or push now also shows the line that says *why*: a failing
+  hook's last line rather than its opening banner, and for a refused push
+  git's reason (such as `stale info`) rather than the `To <remote url>` line
+  that told you nothing. (#53)
+
 - Keys that did nothing now say so. After finishing a list, or the whole
   checklist, the status bar listed `space:toggle`, `/:search` and `y:copy`,
   none of which work on those screens, and pressing them was silently

@@ -339,8 +339,10 @@ mod tests {
         let after = git_stdout(&remote, &["rev-parse", "refs/heads/main"]);
 
         assert!(
-            !matches!(outcome, SyncOutcome::Synced),
-            "pushing over a tip that moved must not report success: {outcome:?}"
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, .. }
+                if message.contains("stale info") && !message.contains("To ")),
+            "pushing over a tip that moved must be reported with git's reason, \
+             not the destination URL: {outcome:?}"
         );
         assert_ne!(
             after, before,

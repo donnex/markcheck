@@ -11,6 +11,10 @@ use std::time::{Duration, Instant};
 pub(super) const PLUMBING_TIMEOUT: Duration = Duration::from_secs(10);
 /// Cap for the network-bound commands: `git push` and `git ls-remote`.
 pub(super) const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
+/// Cap for `git commit`, which runs the repository's hooks and signing: a
+/// hook framework's first-run setup or a signing key waiting for a touch can
+/// take minutes.
+pub(super) const COMMIT_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a timed-out command gets after `SIGTERM` before `SIGKILL`.
 const KILL_GRACE: Duration = Duration::from_secs(1);
 /// Scratch files for one run's stdio, removed on drop. Kept in the temp
@@ -206,8 +210,33 @@ pub(super) fn literal_pathspec_command(repo_dir: &Path) -> Command {
 }
 pub(super) fn command_error(step: &str, output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first_line = stderr.lines().next().unwrap_or("unknown error").trim();
-    format!("{step}: {first_line}")
+    format!("{step}: {}", failure_reason(&stderr))
+}
+/// Picks the stderr line that says why a command failed. Hook frameworks
+/// print banners first and the failure last, and a refused push opens with
+/// its `To <url>` destination, so the first line is rarely the reason.
+fn failure_reason(stderr: &str) -> &str {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("hint:") && !line.starts_with("To "))
+        .collect();
+    let remote_message = lines.iter().find(|line| {
+        line.strip_prefix("remote:")
+            .is_some_and(|rest| !rest.trim().is_empty())
+    });
+    if let Some(rejection) = lines.iter().find(|line| line.starts_with("! ")) {
+        return match remote_message {
+            Some(message) if rejection.contains("[remote rejected]") => message,
+            _ => rejection,
+        };
+    }
+    lines
+        .iter()
+        .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .or(lines.last())
+        .copied()
+        .unwrap_or("unknown error")
 }
 
 #[cfg(test)]
@@ -555,5 +584,36 @@ mod tests {
         }
 
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn failure_reason_prefers_a_hooks_last_line_over_its_opening_banner() {
+        let stderr = "[INFO] Initializing environment\nlint....Failed\n\ntracked.md:3 heading level skipped\n";
+        assert_eq!(failure_reason(stderr), "tracked.md:3 heading level skipped");
+    }
+    #[test]
+    fn failure_reason_prefers_gits_own_error_line() {
+        let stderr = "warning: something minor\nfatal: not a git repository\nhint: try this\n";
+        assert_eq!(failure_reason(stderr), "fatal: not a git repository");
+    }
+    #[test]
+    fn failure_reason_names_a_refused_push_rather_than_its_destination() {
+        let stderr = "To /srv/remote.git\n ! [rejected]        main -> main (stale info)\nerror: failed to push some refs to '/srv/remote.git'\n";
+        assert_eq!(
+            failure_reason(stderr),
+            "! [rejected]        main -> main (stale info)"
+        );
+    }
+    #[test]
+    fn failure_reason_keeps_a_remote_hooks_own_message() {
+        let stderr = "remote: \nremote: branch is protected\nTo /srv/remote.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs\n";
+        assert_eq!(failure_reason(stderr), "remote: branch is protected");
+    }
+    #[test]
+    fn failure_reason_falls_back_when_stderr_says_nothing() {
+        assert_eq!(
+            failure_reason("\n  \nhint: nothing useful\n"),
+            "unknown error"
+        );
     }
 }
