@@ -86,6 +86,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Live reload now works when the checklist can't be watched for changes.
+  markcheck checks the file every 2 seconds as well as reacting to change
+  notifications, so it picks up edits on network shares (NFS, SMB/CIFS) and
+  sshfs or other FUSE mounts, which never send notifications for edits made
+  elsewhere. Previously those edits never appeared, and you only found out
+  when a toggle was refused because the file had changed.
+
+  The same check fixes three other cases where reload stopped silently. When
+  the system had run out of file watches, reload was quietly off; now a
+  startup message says so. When the checklist's folder was removed and
+  recreated, for example by switching git branches, markcheck kept saying
+  the file was deleted and refused every toggle even after it was back. And
+  bursts of changes in a busy folder could make it miss an edit. (#50)
+
 - If markcheck crashes, the error message is now shown after it exits,
   with a pointer to where to report it, and the terminal is left usable.
   Previously the message was printed onto the full-screen view and wiped

@@ -230,6 +230,15 @@ pub fn git_sync_warning(unresolved: &[PathBuf], detect_error: Option<&str>) -> O
     (!warnings.is_empty()).then(|| warnings.join("; "))
 }
 
+/// The startup warning shown when the file watch couldn't be set up, so live
+/// reload falls back to the timed recheck alone.
+pub fn watch_warning(error: &str) -> String {
+    format!(
+        "Live reload slowed: can't watch the file ({error}) — checking every {} s instead",
+        crate::watcher::RECHECK_INTERVAL.as_secs()
+    )
+}
+
 /// Joins the startup messages into the one the status bar shows: sticky and
 /// error-colored if any of them is a warning, otherwise the ephemeral
 /// "Created new checklist" alone. Returns the text and whether it's an error.
@@ -278,6 +287,7 @@ mod tests {
     use super::{
         GitSyncRequest, editor_line_args, expand_tilde, git_sync_path_matches, git_sync_request,
         git_sync_warning, resolve_editor, resolve_opener, startup_message, startup_warning,
+        watch_warning,
     };
     use std::path::{Path, PathBuf};
 
@@ -665,6 +675,15 @@ mod tests {
                 "git_sync_paths: /a does not exist — ignored; \
                  Git sync off: the file is not in a git repository"
             )
+        );
+    }
+
+    #[test]
+    fn watch_warning_names_the_error_and_the_fallback_interval() {
+        assert_eq!(
+            watch_warning("too many open files"),
+            "Live reload slowed: can't watch the file (too many open files) — \
+             checking every 2 s instead"
         );
     }
 
