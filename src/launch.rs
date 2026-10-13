@@ -149,6 +149,20 @@ pub fn editor_line_args(program: &str, line: usize) -> Vec<String> {
     }
 }
 
+/// A `git_sync_paths` entry with a leading `~` expanded against `home`, the
+/// way a shell would have: the config file never passes through one, so
+/// `~/checklists` would otherwise name a directory literally called `~`.
+/// Left as written when `home` is unset or empty, or for `~user` forms.
+pub fn expand_tilde(path: &Path, home: Option<&str>) -> PathBuf {
+    let Some(home) = home.filter(|home| !home.is_empty()) else {
+        return path.to_path_buf();
+    };
+    match path.strip_prefix("~") {
+        Ok(rest) => Path::new(home).join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 /// Whether a configured `git_sync_paths` entry covers the canonical
 /// `file_path`. The prefix is canonicalized too, and compared by path
 /// components, so `/foo/bar` doesn't match `/foo/barn`.
@@ -156,15 +170,78 @@ pub fn git_sync_path_matches(file_path: &Path, prefix: &Path) -> bool {
     std::fs::canonicalize(prefix).is_ok_and(|canonical| file_path.starts_with(canonical))
 }
 
-/// Whether git-sync was asked for: by `--git-sync`, or by a configured
-/// `git_sync_paths` entry covering `file_path`. An OR, not the
-/// flag-over-config precedence of the boolean settings.
-pub fn git_sync_requested(cli_flag: bool, paths: Option<&[PathBuf]>, file_path: &Path) -> bool {
-    cli_flag
-        || paths
-            .unwrap_or(&[])
+/// Whether git-sync was asked for, and which `git_sync_paths` entries could
+/// not be used.
+#[derive(Debug, PartialEq)]
+pub struct GitSyncRequest {
+    /// By `--git-sync`, or by a configured entry covering the file.
+    pub requested: bool,
+    /// Entries, as written in the config, that don't resolve to an existing
+    /// path, so they can never match anything.
+    pub unresolved: Vec<PathBuf>,
+}
+
+/// Resolves `--git-sync` and `git_sync_paths` for `file_path`. An OR, not
+/// the flag-over-config precedence of the boolean settings. Every entry is
+/// checked, even once one matches, so a typo is reported either way.
+pub fn git_sync_request(
+    cli_flag: bool,
+    paths: Option<&[PathBuf]>,
+    file_path: &Path,
+    home: Option<&str>,
+) -> GitSyncRequest {
+    let mut requested = cli_flag;
+    let mut unresolved = Vec::new();
+    for entry in paths.unwrap_or(&[]) {
+        let prefix = expand_tilde(entry, home);
+        if !prefix.exists() {
+            unresolved.push(entry.clone());
+        } else if git_sync_path_matches(file_path, &prefix) {
+            requested = true;
+        }
+    }
+    GitSyncRequest {
+        requested,
+        unresolved,
+    }
+}
+
+/// The sticky startup message for a git-sync that was configured but won't
+/// run: unusable `git_sync_paths` entries, and why `GitSync::detect` refused
+/// when git-sync was asked for.
+pub fn git_sync_warning(unresolved: &[PathBuf], detect_error: Option<&str>) -> Option<String> {
+    let mut warnings = Vec::new();
+    if !unresolved.is_empty() {
+        let entries = unresolved
             .iter()
-            .any(|prefix| git_sync_path_matches(file_path, prefix))
+            .map(|entry| entry.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let verb = if unresolved.len() == 1 {
+            "does not exist"
+        } else {
+            "do not exist"
+        };
+        warnings.push(format!("git_sync_paths: {entries} {verb} — ignored"));
+    }
+    if let Some(reason) = detect_error {
+        warnings.push(format!("Git sync off: {reason}"));
+    }
+    (!warnings.is_empty()).then(|| warnings.join("; "))
+}
+
+/// Joins the startup messages into the one the status bar shows: sticky and
+/// error-colored if any of them is a warning, otherwise the ephemeral
+/// "Created new checklist" alone. Returns the text and whether it's an error.
+pub fn startup_message(created_new: bool, warnings: &[Option<String>]) -> Option<(String, bool)> {
+    let mut parts: Vec<&str> = Vec::new();
+    if created_new {
+        parts.push("Created new checklist");
+    }
+    let warnings: Vec<&str> = warnings.iter().flatten().map(String::as_str).collect();
+    let is_error = !warnings.is_empty();
+    parts.extend(warnings);
+    (!parts.is_empty()).then(|| (parts.join("; "), is_error))
 }
 
 /// The sticky warning shown at startup when a save would leave hard-linked
@@ -188,9 +265,10 @@ pub fn startup_warning(hard_links: Option<u64>, foreign_owner: Option<u32>) -> O
 #[cfg(test)]
 mod tests {
     use super::{
-        editor_line_args, git_sync_path_matches, git_sync_requested, resolve_editor,
-        resolve_opener, startup_warning,
+        GitSyncRequest, editor_line_args, expand_tilde, git_sync_path_matches, git_sync_request,
+        git_sync_warning, resolve_editor, resolve_opener, startup_message, startup_warning,
     };
+    use std::path::{Path, PathBuf};
 
     const URL: &str = "https://example.com/x";
 
@@ -465,13 +543,135 @@ mod tests {
         let root = crate::test_support::unique_temp_path("launch-gitsync-req", "", None);
         std::fs::create_dir_all(&root).unwrap();
         let file = std::fs::canonicalize(&root).unwrap().join("todo.md");
-        let covering = vec![root.join("missing"), root.clone()];
+        let covering = vec![root.clone()];
         let other = vec![root.join("missing")];
 
-        assert!(git_sync_requested(true, None, &file));
-        assert!(git_sync_requested(false, Some(&covering), &file));
-        assert!(!git_sync_requested(false, Some(&other), &file));
-        assert!(!git_sync_requested(false, None, &file));
+        assert!(git_sync_request(true, None, &file, None).requested);
+        assert!(git_sync_request(false, Some(&covering), &file, None).requested);
+        assert!(!git_sync_request(false, Some(&other), &file, None).requested);
+        assert!(!git_sync_request(false, None, &file, None).requested);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn git_sync_request_reports_entries_that_do_not_resolve() {
+        // Reported even when another entry, or the flag, turns git-sync on:
+        // a typo is worth knowing about either way.
+        let root = crate::test_support::unique_temp_path("launch-gitsync-unresolved", "", None);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = std::fs::canonicalize(&root).unwrap().join("todo.md");
+        let typo = root.join("checklsts");
+        let paths = vec![typo.clone(), root.clone()];
+
+        assert_eq!(
+            git_sync_request(false, Some(&paths), &file, None),
+            GitSyncRequest {
+                requested: true,
+                unresolved: vec![typo.clone()],
+            }
+        );
+        assert_eq!(
+            git_sync_request(true, Some(&paths[..1]), &file, None).unresolved,
+            vec![typo]
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn git_sync_request_expands_a_tilde_entry_against_home() {
+        let home = crate::test_support::unique_temp_path("launch-gitsync-home", "", None);
+        std::fs::create_dir_all(home.join("checklists")).unwrap();
+        let file = std::fs::canonicalize(home.join("checklists"))
+            .unwrap()
+            .join("todo.md");
+        let paths = vec![PathBuf::from("~/checklists")];
+
+        assert_eq!(
+            git_sync_request(false, Some(&paths), &file, home.to_str()),
+            GitSyncRequest {
+                requested: true,
+                unresolved: Vec::new(),
+            }
+        );
+        let without_home = git_sync_request(false, Some(&paths), &file, None);
+        assert!(!without_home.requested);
+        assert_eq!(without_home.unresolved, paths);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn expand_tilde_only_rewrites_a_leading_tilde_component() {
+        let home = Some("/home/example-user");
+        assert_eq!(
+            expand_tilde(Path::new("~/checklists"), home),
+            PathBuf::from("/home/example-user/checklists")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("~"), home),
+            PathBuf::from("/home/example-user")
+        );
+        for unchanged in ["/srv/checklists", "~other/checklists", "notes/~/x"] {
+            assert_eq!(
+                expand_tilde(Path::new(unchanged), home),
+                Path::new(unchanged)
+            );
+        }
+        assert_eq!(
+            expand_tilde(Path::new("~/checklists"), Some("")),
+            Path::new("~/checklists")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("~/checklists"), None),
+            Path::new("~/checklists")
+        );
+    }
+
+    #[test]
+    fn git_sync_warning_names_unresolved_entries_and_the_detect_reason() {
+        assert_eq!(git_sync_warning(&[], None), None);
+        assert_eq!(
+            git_sync_warning(&[PathBuf::from("~/checklsts")], None).as_deref(),
+            Some("git_sync_paths: ~/checklsts does not exist — ignored")
+        );
+        assert_eq!(
+            git_sync_warning(&[PathBuf::from("/a"), PathBuf::from("/b")], None).as_deref(),
+            Some("git_sync_paths: /a, /b do not exist — ignored")
+        );
+        assert_eq!(
+            git_sync_warning(&[], Some("git not found on PATH")).as_deref(),
+            Some("Git sync off: git not found on PATH")
+        );
+        assert_eq!(
+            git_sync_warning(
+                &[PathBuf::from("/a")],
+                Some("the file is not in a git repository")
+            )
+            .as_deref(),
+            Some(
+                "git_sync_paths: /a does not exist — ignored; \
+                 Git sync off: the file is not in a git repository"
+            )
+        );
+    }
+
+    #[test]
+    fn startup_message_is_sticky_only_when_something_needs_attention() {
+        assert_eq!(startup_message(false, &[None, None]), None);
+        assert_eq!(
+            startup_message(true, &[None, None]),
+            Some(("Created new checklist".to_string(), false))
+        );
+        assert_eq!(
+            startup_message(false, &[Some("one".to_string()), Some("two".to_string())]),
+            Some(("one; two".to_string(), true))
+        );
+        assert_eq!(
+            startup_message(true, &[None, Some("Git sync off: x".to_string())]),
+            Some(("Created new checklist; Git sync off: x".to_string(), true))
+        );
     }
 
     #[test]

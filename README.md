@@ -171,6 +171,12 @@ turned on automatically, the same as passing `--git-sync` for that one run.
 unlike the four booleans above, where a passed flag simply overrides the
 config value.
 
+A leading `~` in a `git_sync_paths` entry means your home directory
+(`$HOME`), as it would in a shell, so `"~/checklists"` works. An entry that
+doesn't exist can never match anything, so `markcheck` says so at startup
+(`git_sync_paths: ~/checklsts does not exist — ignored`) rather than leaving
+you to wonder why git-sync never turns on.
+
 ## Markdown
 
 `markcheck` reads an ordinary Markdown task list and treats a handful of
@@ -556,8 +562,11 @@ minutes. It's fully hidden — no icon, no text, no gap — when git-sync
 wasn't requested or the file isn't in a repo.
 
 `--git-sync` only activates when the file's directory is confirmed to be
-inside a git work tree at startup; on a file that isn't in a repo, the flag
-(or a `git_sync_paths` match) simply has no effect.
+inside a git work tree at startup. When the flag (or a `git_sync_paths`
+match) asks for git-sync but it can't start, the status bar says why at
+startup — for example `Git sync off: the file is not in a git repository`,
+`Git sync off: git not found on PATH`, or git's own error and suggested fix
+when it refuses a repository owned by another user (`safe.directory`).
 
 **The branch needs an upstream.** Git-sync pushes the exact commit it just
 made, to the branch's configured upstream — so a branch that's never had

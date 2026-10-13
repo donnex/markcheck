@@ -86,6 +86,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync (`--git-sync`, or the `git_sync_paths` config setting) no longer
+  stays off without saying why. A `git_sync_paths` entry starting with `~`
+  now means your home directory, as it does in a shell, so
+  `"~/checklists"` works; before, it never matched anything. An entry that
+  doesn't exist is reported at startup, and when git sync was asked for but
+  can't start the status bar says why: the file isn't in a git repository,
+  `git` isn't installed, or git refused the repository — in which case git's
+  own message and suggested fix (such as its `safe.directory` command for a
+  repository owned by another user) are shown. Previously the only sign was
+  a missing `⇅ git` in the title bar, which isn't shown at all on a narrow
+  terminal. (#38)
+
 - `--auto-copy` now also copies when you reach a task with `Tab`, `gg`,
   `G`, or `h`/`k` from the "All Tasks Complete" screen. Previously only
   some motions (such as `h`/`l`, the number keys and the `T` picker)
