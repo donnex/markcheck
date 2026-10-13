@@ -707,6 +707,37 @@ fn run_sync_skips_when_expected_content_already_matches_head_and_upstream() {
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
+/// Under an eol filter the committed blob is LF while the request's text is
+/// CRLF, so only a filtered comparison can see they are the same content.
+#[test]
+fn run_sync_recognises_already_committed_content_under_an_eol_filter() {
+    let (work, _remote) = init_repo_with_remote();
+    fs::write(work.join(".gitattributes"), "*.md text eol=crlf\n").unwrap();
+    let file_path = work.join("tracked.md");
+    fs::write(&file_path, "- [ ] one\r\n").unwrap();
+    run(&work, &["add", ".gitattributes", "tracked.md"]);
+    run(&work, &["commit", "-q", "-m", "attributes"]);
+    run(&work, &["push", "-q"]);
+    let head_before = current_head(&work);
+
+    let newer = "- [ ] one\r\n- [x] two\r\n";
+    fs::write(&file_path, newer).unwrap();
+
+    assert_eq!(
+        run_sync(
+            &work,
+            &file_path,
+            "- [ ] one\r\n",
+            "already committed",
+            &no_race(newer),
+            None,
+        ),
+        SyncOutcome::Skipped
+    );
+    assert_eq!(current_head(&work), head_before);
+
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
 #[test]
 fn run_sync_retries_the_push_when_expected_content_matches_head_but_is_unpushed() {
     // HEAD matching but unpushed must retry the push.

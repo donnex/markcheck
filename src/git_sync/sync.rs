@@ -13,7 +13,7 @@ use super::guards::{
     STAGED_TARGET_REFUSAL, repo_sync_blocked, staged_target_would_be_lost, unpushed_history_blocks,
 };
 use super::inspect::{
-    ahead_of_upstream, blob_at, blob_bytes_at, hash_object, index_entry, resolve_parent,
+    ahead_of_upstream, blob_at, blob_sha_for, hash_object, index_entry, resolve_parent,
 };
 use super::process::{
     PLUMBING_TIMEOUT, command_error, git_command, literal_pathspec_command, run_with_timeout,
@@ -132,9 +132,14 @@ pub(super) fn run_sync(
 
     // HEAD already holds this content (an earlier sync committed it), though
     // `status` is non-empty from a newer edit. There may still be a push to
-    // retry.
+    // retry. Compared as blob SHAs so a line-ending clean filter applies to
+    // this content exactly as it did when it was committed.
+    let head_blob = tip
+        .as_deref()
+        .and_then(|t| blob_at(&repo_root, t, &relpath));
     if let Some(tip) = tip.as_deref()
-        && blob_bytes_at(&repo_root, tip, &relpath).as_deref() == Some(expected_content.as_bytes())
+        && head_blob.is_some()
+        && blob_sha_for(&repo_root, &relpath, expected_content) == head_blob
     {
         if ahead_of_upstream(&repo_root, tip) {
             return push(repo_dir, tip);
@@ -157,9 +162,6 @@ pub(super) fn run_sync(
     }
 
     // Checked after the fast path, which never builds a commit.
-    let head_blob = tip
-        .as_deref()
-        .and_then(|t| blob_at(&repo_root, t, &relpath));
     if staged_target_would_be_lost(&repo_root, &relpath, head_blob.as_deref(), previous_content) {
         return SyncOutcome::Failed(STAGED_TARGET_REFUSAL.to_string());
     }

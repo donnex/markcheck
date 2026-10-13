@@ -347,30 +347,71 @@ fn git_invocations_ignore_an_ambient_git_environment() {
 fn failure_reason_prefers_a_hooks_last_line_over_its_opening_banner() {
     let stderr =
         "[INFO] Initializing environment\nlint....Failed\n\ntracked.md:3 heading level skipped\n";
-    assert_eq!(failure_reason(stderr), "tracked.md:3 heading level skipped");
+    assert_eq!(
+        failure_reason(stderr),
+        Some("tracked.md:3 heading level skipped")
+    );
 }
 #[test]
 fn failure_reason_prefers_gits_own_error_line() {
     let stderr = "warning: something minor\nfatal: not a git repository\nhint: try this\n";
-    assert_eq!(failure_reason(stderr), "fatal: not a git repository");
+    assert_eq!(failure_reason(stderr), Some("fatal: not a git repository"));
 }
 #[test]
 fn failure_reason_names_a_refused_push_rather_than_its_destination() {
-    let stderr = "To /srv/remote.git\n ! [rejected]        main -> main (stale info)\nerror: failed to push some refs to '/srv/remote.git'\n";
+    let stderr = "To /srv/remote.git\n ! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs to '/srv/remote.git'\n";
     assert_eq!(
         failure_reason(stderr),
-        "! [rejected]        main -> main (stale info)"
+        Some("! [rejected]        main -> main (non-fast-forward)")
     );
 }
 #[test]
 fn failure_reason_keeps_a_remote_hooks_own_message() {
     let stderr = "remote: \nremote: branch is protected\nTo /srv/remote.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs\n";
-    assert_eq!(failure_reason(stderr), "remote: branch is protected");
+    assert_eq!(failure_reason(stderr), Some("remote: branch is protected"));
 }
 #[test]
-fn failure_reason_falls_back_when_stderr_says_nothing() {
+fn failure_reason_finds_nothing_when_the_text_says_nothing() {
+    assert_eq!(failure_reason("\n  \nhint: nothing useful\n"), None);
+}
+fn failed_output(stdout: &str, stderr: &str) -> Output {
+    use std::os::unix::process::ExitStatusExt as _;
+    Output {
+        status: std::process::ExitStatus::from_raw(1 << 8),
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+#[test]
+fn command_error_explains_a_lease_rejection_in_plain_words() {
+    let stderr = "To /srv/remote.git\n ! [rejected]        main -> main (stale info)\nerror: failed to push some refs to '/srv/remote.git'\n";
     assert_eq!(
-        failure_reason("\n  \nhint: nothing useful\n"),
-        "unknown error"
+        command_error("git push", &failed_output("", stderr)),
+        "git push: the remote branch changed while pushing (stale info)"
+    );
+}
+#[test]
+fn command_error_falls_back_to_stdout_when_stderr_is_empty() {
+    let stdout = "On branch main\nnothing to commit, working tree clean\n";
+    assert_eq!(
+        command_error("git commit", &failed_output(stdout, "")),
+        "git commit: nothing to commit, working tree clean"
+    );
+}
+#[test]
+fn command_error_prefers_stderr_over_stdout() {
+    assert_eq!(
+        command_error(
+            "git commit",
+            &failed_output("On branch main\n", "fatal: bad config\n")
+        ),
+        "git commit: fatal: bad config"
+    );
+}
+#[test]
+fn command_error_says_unknown_only_when_neither_stream_explains() {
+    assert_eq!(
+        command_error("git commit", &failed_output("\n", "hint: x\n")),
+        "git commit: unknown error"
     );
 }

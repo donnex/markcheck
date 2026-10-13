@@ -208,15 +208,31 @@ pub(super) fn literal_pathspec_command(repo_dir: &Path) -> Command {
     cmd.env("GIT_LITERAL_PATHSPECS", "1");
     cmd
 }
+/// Falls back to stdout when stderr gives no reason: a refused
+/// `git commit` ("nothing to commit") explains itself only on stdout.
 pub(super) fn command_error(step: &str, output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    format!("{step}: {}", failure_reason(&stderr))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let reason = failure_reason(&stderr)
+        .or_else(|| failure_reason(&stdout))
+        .map(describe_reason)
+        .unwrap_or_else(|| "unknown error".to_string());
+    format!("{step}: {reason}")
 }
-/// Picks the stderr line that says why a command failed. Hook frameworks
-/// print banners first and the failure last, and a refused push opens with
-/// its `To <url>` destination, so the first line is rarely the reason.
-fn failure_reason(stderr: &str) -> &str {
-    let lines: Vec<&str> = stderr
+/// A `--force-with-lease` rejection is reported by git as `(stale info)`,
+/// which says nothing to someone who never ran the push themselves.
+fn describe_reason(reason: &str) -> String {
+    if reason.starts_with("! ") && reason.ends_with("(stale info)") {
+        "the remote branch changed while pushing (stale info)".to_string()
+    } else {
+        reason.to_string()
+    }
+}
+/// Picks the line that says why a command failed. Hook frameworks print
+/// banners first and the failure last, and a refused push opens with its
+/// `To <url>` destination, so the first line is rarely the reason.
+fn failure_reason(text: &str) -> Option<&str> {
+    let lines: Vec<&str> = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with("hint:") && !line.starts_with("To "))
@@ -226,17 +242,16 @@ fn failure_reason(stderr: &str) -> &str {
             .is_some_and(|rest| !rest.trim().is_empty())
     });
     if let Some(rejection) = lines.iter().find(|line| line.starts_with("! ")) {
-        return match remote_message {
+        return Some(match remote_message {
             Some(message) if rejection.contains("[remote rejected]") => message,
             _ => rejection,
-        };
+        });
     }
     lines
         .iter()
         .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))
         .or(lines.last())
         .copied()
-        .unwrap_or("unknown error")
 }
 
 #[cfg(test)]
