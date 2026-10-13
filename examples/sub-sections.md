@@ -17,8 +17,18 @@
 
 ### Rollout
 
+<!-- markdownlint-disable MD022 -->
 - [x] `restart-service`
 - [ ] `check-status example-host`
+- #### Watch the dashboards
+- [ ] confirm the error rate is flat
+<!-- markdownlint-enable MD022 -->
+
+> ### Caution
+>
+> A quoted heading is a callout, not a sub-section.
+
+- [ ] announce the rollout in the team channel
 
 ### Skipped when empty
 

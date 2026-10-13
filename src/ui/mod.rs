@@ -2717,6 +2717,14 @@ mod tests {
             !joined.contains("Skipped when empty"),
             "item-less sub-heading is dropped: {joined}"
         );
+        assert!(
+            joined.contains("Watch the dashboards") && !joined.contains("── Watch"),
+            "a heading inside a bullet titles a card, not a group: {joined}"
+        );
+        assert!(
+            !joined.contains("Caution"),
+            "a quoted heading starts no group: {joined}"
+        );
     }
 
     fn ordered_steps_state() -> AppState {

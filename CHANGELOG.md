@@ -113,6 +113,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A heading inside a list item (`- ## Rollback`) or a blockquote
+  (`> ## Note`) no longer starts a new list, sub-section or document title.
+  Previously `- ## Rollback` in the middle of a `## Deploy` list moved all of
+  Deploy's tasks into a new "Rollback" list and left a blank card where the
+  heading was, so the number keys, the overview and git-sync commit messages
+  named the wrong list; a quoted `> ## Note` between tasks did the same. A
+  heading in a list item now titles that card, like a leading bold, and a
+  quoted one is ignored. (#92)
+
 - A checklist without a `# Heading` at the top now shows a title made from
   its filename in the title bar (`release-checklist.md` reads "Release
   Checklist"). It used to show a bold red "Missing document title" for the
