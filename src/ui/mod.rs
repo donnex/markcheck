@@ -1942,6 +1942,75 @@ mod tests {
         assert!(text.contains("match"), "shows match-count feedback");
     }
 
+    fn picker_row_of(state: &AppState, rows: &[String], label: &str) -> u16 {
+        let area = state.picker.rows_area.expect("picker rows recorded");
+        (area.y..area.y + area.height)
+            .find(|&y| {
+                let row: String = rows[y as usize]
+                    .chars()
+                    .skip(area.x as usize)
+                    .take(area.width as usize)
+                    .collect();
+                row.contains(label)
+            })
+            .unwrap_or_else(|| panic!("no picker row for {label}"))
+    }
+
+    #[test]
+    fn clicking_a_picker_row_highlights_it_and_a_second_click_jumps() {
+        let mut state = sample_state();
+        state.handle_key(KeyCode::Char('T'));
+        let rows = buffer_rows(&mut state, 100, 30);
+        let y = picker_row_of(&state, &rows, "gamma");
+        let x = state.picker.rows_area.unwrap().x;
+        state.handle_left_click(x, y);
+        assert_eq!(state.screen, Screen::ListPicker, "first click only selects");
+        assert_eq!(state.picker.selection, 2);
+        state.handle_left_click(x, y);
+        assert_eq!(state.screen, Screen::Checklist);
+        assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    }
+
+    #[test]
+    fn picker_click_maps_rows_through_the_scroll_offset() {
+        let items = (1..=30)
+            .map(|n| checkbox(n, &format!("task-{n:02}"), false))
+            .collect();
+        let mut state = state_with(vec![List {
+            title: "Only".to_string(),
+            banner: None,
+            items,
+        }]);
+        state.handle_key(KeyCode::Char('T'));
+        for _ in 0..25 {
+            state.handle_scroll_down();
+        }
+        let rows = buffer_rows(&mut state, 100, 16);
+        assert!(state.picker.scroll_offset > 0, "list scrolled");
+        let y = picker_row_of(&state, &rows, "task-24");
+        let x = state.picker.rows_area.unwrap().x;
+        state.handle_left_click(x, y);
+        assert_eq!(state.picker.selection, 23);
+    }
+
+    #[test]
+    fn picker_click_off_the_rows_or_with_no_matches_is_ignored() {
+        let mut state = sample_state();
+        state.handle_key(KeyCode::Char('T'));
+        let _ = buffer_rows(&mut state, 100, 30);
+        let area = state.picker.rows_area.unwrap();
+        state.handle_left_click(area.x, area.y.saturating_sub(1));
+        state.handle_left_click(area.x, area.y + 3); // past the last entry
+        assert_eq!(state.screen, Screen::ListPicker);
+        assert_eq!(state.picker.selection, 0);
+
+        state.handle_key(KeyCode::Char('z'));
+        let _ = buffer_rows(&mut state, 100, 30);
+        assert_eq!(state.picker.rows_area, None, "no rows drawn");
+        state.handle_left_click(area.x, area.y);
+        assert_eq!(state.screen, Screen::ListPicker);
+    }
+
     #[test]
     fn list_picker_shows_the_sub_section_path() {
         // The go-to-task overlay surfaces each item's `### H3`+

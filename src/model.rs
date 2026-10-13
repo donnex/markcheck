@@ -893,6 +893,11 @@ pub struct PickerState {
     /// `render_list_picker` each frame; drives the half-page `Ctrl-D`/`Ctrl-U`
     /// selection jumps. 0 until the overlay is first rendered.
     pub viewport_height: u16,
+    /// On-screen area of the picker's entry rows and the index of the entry
+    /// drawn on its top row, written back by `render_list_picker` each frame
+    /// for click hit-testing. `None` when no entries are drawn.
+    pub rows_area: Option<Rect>,
+    pub scroll_offset: usize,
 }
 
 /// `?` help overlay scroll state.

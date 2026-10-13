@@ -1795,6 +1795,57 @@ fn wheel_up_navigates_to_previous_item_when_card_fits() {
 }
 
 #[test]
+fn wheel_crosses_list_edges_like_j_and_k() {
+    let mut state = AppState::new(two_list_document());
+    state.current_item_index = 2;
+    state.handle_scroll_down();
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    state.handle_scroll_up();
+    assert_eq!(
+        (state.current_list_index, state.current_item_index),
+        (0, 0),
+        "lands on the previous list's first unfinished task, like k"
+    );
+}
+
+#[test]
+fn wheel_scrolls_the_help_overlay() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('?'));
+    state.help.max_scroll = 2;
+    state.handle_scroll_down();
+    state.handle_scroll_down();
+    state.handle_scroll_down();
+    assert_eq!(state.help.scroll, 2, "clamps at help.max_scroll");
+    state.handle_scroll_up();
+    assert_eq!(state.help.scroll, 1);
+    assert_eq!(state.screen, Screen::Help, "the wheel doesn't close help");
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+}
+
+#[test]
+fn wheel_moves_the_picker_highlight() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('T'));
+    state.handle_scroll_down();
+    state.handle_scroll_down();
+    assert_eq!(state.picker.selection, 2);
+    state.handle_scroll_up();
+    assert_eq!(state.picker.selection, 1);
+    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+}
+
+#[test]
+fn wheel_is_ignored_on_the_confirmation_card() {
+    let mut state = AppState::new(two_list_document());
+    state.screen = Screen::ConfirmReset;
+    state.handle_scroll_down();
+    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+}
+
+#[test]
 fn list_complete_l_advances_h_reviews() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.current_item_index = 2;

@@ -349,7 +349,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Ctrl-E` / `Ctrl-Y` | scroll the card body down / up one line (when it overflows) |
 | `Ctrl-D` / `Ctrl-U` | scroll the card body down / up half a page |
 | `PageDown` / `PageUp` | scroll the card body down / up one page |
-| mouse wheel | scroll an overflowing card, otherwise navigate tasks |
+| mouse wheel | scroll an overflowing card, otherwise previous / next task like `k`/`j` (crossing list edges). In the `?` help overlay it scrolls the help, and in the `T` overlay it moves the highlight. Over the overview panel it still moves the task cursor; the panel follows it |
 | left-click a command on the card | copy that specific command; clicking elsewhere on the card acts like `y`. Needs mouse capture, so not with `--no-mouse` |
 | left-click an overview row | on a task row, click its **icon** to toggle it done/not-done (cursor stays put), or its **label** to jump to that task; click a list title to jump to that list. Needs mouse capture, so not with `--no-mouse` |
 | `Space` / `Enter` | toggle the current task done; on an info card (nothing to toggle) advance to the next card instead |
@@ -692,8 +692,9 @@ of the single-card carousel. Type to filter (same smart-case matching, with a
 live `N items` / match count — and you can filter by a sub-section name to
 find the tasks under it), move the highlight with the arrows or
 `Ctrl-N`/`Ctrl-P` (and `Ctrl-D`/`Ctrl-U` for half-page jumps; letters go to
-the filter, so `j`/`k` type rather than move), `Enter` to jump to the
-highlighted task, `Esc` to close.
+the filter, so `j`/`k` type rather than move; the mouse wheel moves it too),
+`Enter` to jump to the highlighted task, `Esc` to close. With the mouse, click
+a row to highlight it and click it again to jump there.
 
 ### Clipboard
 

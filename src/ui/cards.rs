@@ -185,6 +185,7 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
     // Expose the list viewport height for the Ctrl-D/Ctrl-U half-page jumps.
     state.picker.viewport_height = list_area.height;
+    state.picker.rows_area = None;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("Filter: ", Style::default().add_modifier(Modifier::DIM)),
@@ -215,6 +216,8 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let mut list_state =
         ListState::default().with_selected(Some(state.picker.selection.min(count - 1)));
     frame.render_stateful_widget(list, list_area, &mut list_state);
+    state.picker.rows_area = Some(list_area);
+    state.picker.scroll_offset = list_state.offset();
 }
 
 /// The `?` keybinding cheatsheet overlay. Scrolls when it doesn't fit a
@@ -246,6 +249,7 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
             "mouse wheel",
             "scroll an overflowing card, else prev/next task",
         ),
+        key("wheel in ? / T", "scroll this help / move the T highlight"),
         key("space / enter", "toggle the task done"),
         key("s", "mark the task started / in progress"),
         key("u / Ctrl-R", "undo / redo the last change"),
@@ -254,6 +258,10 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
         key("/", "search tasks by text"),
         key("n / N", "next / previous search match"),
         key("T", "go to task (filterable list)"),
+        key(
+            "click a T picker row",
+            "highlight it; click it again (or Enter) to jump",
+        ),
         key(
             "click overview row",
             "toggle (icon) or jump to (label) a task or list",

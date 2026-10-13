@@ -418,6 +418,7 @@ impl AppState {
         self.screen_before_confirm = self.screen;
         self.picker.query.clear();
         self.picker.selection = 0;
+        self.picker.rows_area = None;
         self.screen = Screen::ListPicker;
     }
 
@@ -464,6 +465,28 @@ impl AppState {
         }
         let current = self.picker.selection.min(count - 1) as isize;
         self.picker.selection = (current + delta).clamp(0, count as isize - 1) as usize;
+    }
+
+    /// Left-click in the picker: a click on an entry row highlights it, and a
+    /// click on the already-highlighted row jumps there like `Enter`. Clicks
+    /// off the entry rows are ignored.
+    fn picker_click(&mut self, col: u16, row: u16) {
+        let Some(area) = self.picker.rows_area else {
+            return;
+        };
+        if !area.contains((col, row).into()) {
+            return;
+        }
+        let index = self.picker.scroll_offset + usize::from(row - area.y);
+        let count = self.picker_matches().len();
+        if index >= count {
+            return;
+        }
+        if index == self.picker.selection.min(count - 1) {
+            self.picker_commit();
+        } else {
+            self.picker.selection = index;
+        }
     }
 
     /// Jump to the highlighted task (`Enter`), or just close the overlay when
@@ -736,27 +759,29 @@ impl AppState {
         self.card_viewport_height.saturating_sub(1).max(1)
     }
 
-    /// Mouse wheel: an overflowing card body takes absolute wheel
-    /// priority; otherwise the wheel navigates between items.
+    /// Mouse wheel, routed per screen: on the checklist an overflowing card
+    /// body takes absolute priority, otherwise the wheel steps between tasks
+    /// like `k`/`j` (crossing list edges); it scrolls the `?` help overlay
+    /// and moves the `T` picker highlight.
     pub fn handle_scroll_up(&mut self) {
         self.clear_pending_chords();
-        if self.screen == Screen::Checklist {
-            if self.card_max_scroll > 0 {
-                self.scroll_card_up();
-            } else {
-                self.navigate_prev();
-            }
+        match self.screen {
+            Screen::Checklist if self.card_max_scroll > 0 => self.scroll_card_up(),
+            Screen::Checklist => self.navigate_backward(),
+            Screen::Help => self.scroll_help_up_by(1),
+            Screen::ListPicker => self.picker_move(-1),
+            _ => {}
         }
     }
 
     pub fn handle_scroll_down(&mut self) {
         self.clear_pending_chords();
-        if self.screen == Screen::Checklist {
-            if self.card_max_scroll > 0 {
-                self.scroll_card_down();
-            } else {
-                self.navigate_next();
-            }
+        match self.screen {
+            Screen::Checklist if self.card_max_scroll > 0 => self.scroll_card_down(),
+            Screen::Checklist => self.navigate_forward(),
+            Screen::Help => self.scroll_help_down_by(1),
+            Screen::ListPicker => self.picker_move(1),
+            _ => {}
         }
     }
 
@@ -790,10 +815,16 @@ impl AppState {
 
     /// Left-click at `(col, row)`: a click inside the current card
     /// copies its command, exactly like `y` — copying its sole code candidate
-    /// or showing the same hint when there are none or several. Clicks outside
-    /// the card, or off the checklist, are ignored.
+    /// or showing the same hint when there are none or several. In the `T`
+    /// picker a click selects a row (see `picker_click`). Clicks outside the
+    /// card, or off the checklist, are ignored.
     pub fn handle_left_click(&mut self, col: u16, row: u16) {
         self.clear_pending_chords();
+
+        if self.screen == Screen::ListPicker {
+            self.picker_click(col, row);
+            return;
+        }
 
         // A click on an overview row jumps the cursor there. Handled on the
         // content screens (checklist + completion), where the overview is a plain
