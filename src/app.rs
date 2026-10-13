@@ -8,9 +8,9 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use crate::clipboard;
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
-    AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, OverviewTarget,
-    Palette, PendingSync, PickerState, Screen, SearchState, StateSnapshot, TaskState,
-    UNDO_HISTORY_CAP, hash_bytes,
+    AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
+    OverviewTarget, Palette, PendingSync, PickerState, SearchState, StateSnapshot, TaskState,
+    UNDO_HISTORY_CAP, View, hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -138,7 +138,8 @@ impl AppState {
             document,
             current_list_index,
             current_item_index,
-            screen: Screen::Checklist,
+            view: View::Checklist,
+            overlay: None,
             status_message: None,
             status_expiry: None,
             status_is_error: false,
@@ -160,7 +161,6 @@ impl AppState {
             icons: IconSet::nerd(),
             editor_requested: false,
             suspend_requested: false,
-            screen_before_confirm: Screen::Checklist,
             clipboard_primary: false,
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this
@@ -253,7 +253,7 @@ impl AppState {
     }
 
     /// Move the cursor to an *exact* item and show it on the `Checklist`
-    /// screen, resetting card scroll — the one primitive every cursor motion
+    /// view, resetting card scroll — the one primitive every cursor motion
     /// goes through, so none can forget a step. `CursorMove::Navigate` also
     /// honours `--auto-copy`. Out-of-range indices are clamped/ignored so a
     /// stale match can't panic.
@@ -266,7 +266,7 @@ impl AppState {
         }
         self.current_list_index = list_index;
         self.current_item_index = item_index.min(list.items.len() - 1);
-        self.screen = Screen::Checklist;
+        self.view = View::Checklist;
         self.reset_card_scroll();
         if how == CursorMove::Navigate {
             self.maybe_auto_copy();
@@ -274,11 +274,11 @@ impl AppState {
     }
 
     /// Enter incremental search (`/`): remember the cursor for a possible
-    /// `Esc` restore, clear the query, and switch to the `Search` screen.
+    /// `Esc` restore, clear the query, and open the `Search` overlay.
     fn start_search(&mut self) {
         self.search.origin = (self.current_list_index, self.current_item_index);
         self.search.query.clear();
-        self.screen = Screen::Search;
+        self.overlay = Some(Overlay::Search);
     }
 
     /// The match `/` lands on, with its 1-based position: the first match at or
@@ -292,8 +292,8 @@ impl AppState {
     }
 
     /// Re-run the live query and jump the cursor to the next match from the
-    /// search origin (see [`Self::search_target`]), staying on the `Search`
-    /// screen (the query keeps showing in the status bar). No match or an
+    /// search origin (see [`Self::search_target`]), keeping the `Search`
+    /// overlay open (the query keeps showing in the status bar). No match or an
     /// empty query leaves the cursor put; no auto-copy mid-typing.
     fn update_search(&mut self) {
         let matches = self.find_matches(&self.search.query);
@@ -305,14 +305,14 @@ impl AppState {
         }
     }
 
-    /// Commit the search (`Enter`): store the query for `n`/`N`, return to the
-    /// `Checklist` screen on the current match, and allow auto-copy now.
+    /// Commit the search (`Enter`): store the query for `n`/`N`, close the
+    /// overlay on the current match, and allow auto-copy now.
     /// Reports the match position, or a sticky "no matches" when the committed
     /// query matched nothing, so a committed search is never silent.
     fn commit_search(&mut self) {
         let matches = self.find_matches(&self.search.query);
         self.search.last = (!self.search.query.is_empty()).then(|| self.search.query.clone());
-        self.screen = Screen::Checklist;
+        self.overlay = None;
         if !self.search.query.is_empty() {
             match self.search_target(&matches) {
                 None => self.set_error(format!("No matches for \"{}\"", self.search.query)),
@@ -330,9 +330,10 @@ impl AppState {
         self.maybe_auto_copy();
     }
 
-    /// Cancel the search (`Esc`): restore the pre-search cursor and return to
-    /// the `Checklist` screen.
+    /// Cancel the search (`Esc`): close the prompt and restore the pre-search
+    /// cursor.
     fn cancel_search(&mut self) {
+        self.overlay = None;
         let (list_index, item_index) = self.search.origin;
         self.focus_item(list_index, item_index, CursorMove::Quiet);
     }
@@ -412,14 +413,13 @@ impl AppState {
         }
     }
 
-    /// Open the "go to task" overlay (`T`): remember the current screen to
-    /// return to on `Esc`, clear the filter, and reset the selection.
+    /// Open the "go to task" overlay (`T`): clear the filter and reset the
+    /// selection.
     fn open_list_picker(&mut self) {
-        self.screen_before_confirm = self.screen;
         self.picker.query.clear();
         self.picker.selection = 0;
         self.picker.rows_area = None;
-        self.screen = Screen::ListPicker;
+        self.overlay = Some(Overlay::ListPicker);
     }
 
     /// The picker's current entries: every task when the filter is empty (the
@@ -492,11 +492,9 @@ impl AppState {
     /// Jump to the highlighted task (`Enter`), or just close the overlay when
     /// the filter matched nothing.
     fn picker_commit(&mut self) {
-        match self.picker_matches().get(self.picker.selection) {
-            Some(&(list_index, item_index)) => {
-                self.focus_item(list_index, item_index, CursorMove::Navigate)
-            }
-            None => self.screen = self.screen_before_confirm,
+        self.overlay = None;
+        if let Some(&(list_index, item_index)) = self.picker_matches().get(self.picker.selection) {
+            self.focus_item(list_index, item_index, CursorMove::Navigate);
         }
     }
 
@@ -765,22 +763,22 @@ impl AppState {
     /// and moves the `T` picker highlight.
     pub fn handle_scroll_up(&mut self) {
         self.clear_pending_chords();
-        match self.screen {
-            Screen::Checklist if self.card_max_scroll > 0 => self.scroll_card_up(),
-            Screen::Checklist => self.navigate_backward(),
-            Screen::Help => self.scroll_help_up_by(1),
-            Screen::ListPicker => self.picker_move(-1),
+        match (self.overlay, self.view) {
+            (None, View::Checklist) if self.card_max_scroll > 0 => self.scroll_card_up(),
+            (None, View::Checklist) => self.navigate_backward(),
+            (Some(Overlay::Help), _) => self.scroll_help_up_by(1),
+            (Some(Overlay::ListPicker), _) => self.picker_move(-1),
             _ => {}
         }
     }
 
     pub fn handle_scroll_down(&mut self) {
         self.clear_pending_chords();
-        match self.screen {
-            Screen::Checklist if self.card_max_scroll > 0 => self.scroll_card_down(),
-            Screen::Checklist => self.navigate_forward(),
-            Screen::Help => self.scroll_help_down_by(1),
-            Screen::ListPicker => self.picker_move(1),
+        match (self.overlay, self.view) {
+            (None, View::Checklist) if self.card_max_scroll > 0 => self.scroll_card_down(),
+            (None, View::Checklist) => self.navigate_forward(),
+            (Some(Overlay::Help), _) => self.scroll_help_down_by(1),
+            (Some(Overlay::ListPicker), _) => self.picker_move(1),
             _ => {}
         }
     }
@@ -800,12 +798,12 @@ impl AppState {
                 c => Some(c),
             })
             .collect();
-        match self.screen {
-            Screen::Search => {
+        match self.overlay {
+            Some(Overlay::Search) => {
                 self.search.query.push_str(&line);
                 self.update_search();
             }
-            Screen::ListPicker => {
+            Some(Overlay::ListPicker) => {
                 self.picker.query.push_str(&line);
                 self.picker.selection = 0;
             }
@@ -821,26 +819,25 @@ impl AppState {
     pub fn handle_left_click(&mut self, col: u16, row: u16) {
         self.clear_pending_chords();
 
-        if self.screen == Screen::ListPicker {
+        if self.overlay == Some(Overlay::ListPicker) {
             self.picker_click(col, row);
             return;
         }
 
-        // A click on an overview row jumps the cursor there. Handled on the
-        // content screens (checklist + completion), where the overview is a plain
+        // A click on an overview row jumps the cursor there. Handled with no
+        // overlay open (checklist + completion views), where the overview is a plain
         // navigation aid — not while a modal (Help/Search/picker/confirm) is up,
         // even though the overview is still drawn beside those overlays.
-        let overview_target = matches!(
-            self.screen,
-            Screen::Checklist | Screen::ListComplete | Screen::AllComplete
-        )
-        .then(|| {
-            self.overview_rows
-                .iter()
-                .find(|(rect, _)| rect.contains((col, row).into()))
-                .map(|(_, target)| *target)
-        })
-        .flatten();
+        let overview_target = self
+            .overlay
+            .is_none()
+            .then(|| {
+                self.overview_rows
+                    .iter()
+                    .find(|(rect, _)| rect.contains((col, row).into()))
+                    .map(|(_, target)| *target)
+            })
+            .flatten();
         if let Some(target) = overview_target {
             match target {
                 OverviewTarget::List(list_index) => self.jump_to_list(list_index),
@@ -857,7 +854,7 @@ impl AppState {
 
         // The card click-to-copy actions below only apply on the checklist
         // screen.
-        if self.screen != Screen::Checklist {
+        if self.overlay.is_some() || self.view != View::Checklist {
             return;
         }
         // A click on a specific code row copies that exact fragment,
@@ -931,7 +928,7 @@ impl AppState {
         if new_state == TaskState::Done {
             self.maybe_transition_screen();
         } else {
-            self.screen = Screen::Checklist;
+            self.view = View::Checklist;
         }
     }
 
@@ -989,13 +986,13 @@ impl AppState {
 
         // Leave the cursor put. Only demote a completion screen that this
         // toggle just invalidated (a task un-done); never promote to one.
-        let still_complete = match self.screen {
-            Screen::AllComplete => self.document.lists.iter().all(list_all_done),
-            Screen::ListComplete => list_all_done(self.current_list()),
-            _ => true,
+        let still_complete = match self.view {
+            View::AllComplete => self.document.lists.iter().all(list_all_done),
+            View::ListComplete => list_all_done(self.current_list()),
+            View::Checklist => true,
         };
         if !still_complete {
-            self.screen = Screen::Checklist;
+            self.view = View::Checklist;
         }
 
         self.set_status(
@@ -1028,7 +1025,7 @@ impl AppState {
         if !self.set_current_state(new_state) {
             return;
         }
-        self.screen = Screen::Checklist;
+        self.view = View::Checklist;
     }
 
     /// Sets the current checkbox's state and writes it back. Returns whether
@@ -1138,10 +1135,10 @@ impl AppState {
     fn maybe_transition_screen(&mut self) {
         if list_all_done(self.current_list()) {
             let all_done = self.document.lists.iter().all(list_all_done);
-            self.screen = if all_done {
-                Screen::AllComplete
+            self.view = if all_done {
+                View::AllComplete
             } else {
-                Screen::ListComplete
+                View::ListComplete
             };
         } else {
             self.navigate_next();
@@ -1202,7 +1199,7 @@ impl AppState {
                 let search_origin = self.remapped(self.search.origin, &new_document);
                 let task_lost = self.remap_position(&new_document);
                 self.document = new_document;
-                let cancelled = self.keep_screen_across_reload(search_origin);
+                let cancelled = self.keep_overlay_across_reload(search_origin);
                 // An external edit is a hard boundary for undo history: it can
                 // change task state and line numbers underneath us, so the
                 // snapshots no longer apply cleanly.
@@ -1270,36 +1267,37 @@ impl AppState {
         });
     }
 
-    /// Decides which screen survives a reload. Text-input and read-only
-    /// overlays stay open, so keys typed into them never fall through to the
-    /// checklist as commands; a confirmation is dropped, since it was asked
-    /// about the old content, and its name is returned for the status message.
-    /// Must run after the new document is adopted.
-    fn keep_screen_across_reload(&mut self, search_origin: (usize, usize)) -> Option<&'static str> {
-        match self.screen {
-            Screen::Search => {
+    /// Settles the view and overlay after a reload. The view always becomes
+    /// the checklist, since a completion summary may no longer hold. Text-input
+    /// and read-only overlays stay open, so keys typed into them never fall
+    /// through to the checklist as commands; a confirmation is cancelled, since
+    /// it was asked about the old content, and its name is returned for the
+    /// status message. Must run after the new document is adopted.
+    fn keep_overlay_across_reload(
+        &mut self,
+        search_origin: (usize, usize),
+    ) -> Option<&'static str> {
+        self.view = View::Checklist;
+        match self.overlay {
+            Some(Overlay::Search) => {
                 self.search.origin = search_origin;
                 self.update_search();
                 None
             }
-            Screen::ListPicker | Screen::Help => {
-                self.screen_before_confirm = Screen::Checklist;
+            Some(Overlay::ListPicker) => {
                 let count = self.picker_matches().len();
                 self.picker.selection = self.picker.selection.min(count.saturating_sub(1));
                 None
             }
-            Screen::ConfirmReset => {
-                self.screen = Screen::Checklist;
+            Some(Overlay::ConfirmReset) => {
+                self.overlay = None;
                 Some("reset")
             }
-            Screen::ConfirmQuitReset => {
-                self.screen = Screen::Checklist;
+            Some(Overlay::ConfirmQuitReset) => {
+                self.overlay = None;
                 Some("quit")
             }
-            Screen::Checklist | Screen::ListComplete | Screen::AllComplete => {
-                self.screen = Screen::Checklist;
-                None
-            }
+            Some(Overlay::Help) | None => None,
         }
     }
 
@@ -1401,12 +1399,12 @@ impl AppState {
             .or_else(|| self.prev_incomplete_list_before(self.current_list_index));
         match target {
             Some(index) => self.jump_to_list(index),
-            None => self.screen = Screen::AllComplete,
+            None => self.view = View::AllComplete,
         }
     }
 
     fn review_completed_list(&mut self) {
-        self.screen = Screen::Checklist;
+        self.view = View::Checklist;
     }
 
     /// Consumed by the main loop each tick.
@@ -1570,8 +1568,7 @@ impl AppState {
             self.set_error("Nothing to reset: no tasks are done".to_string());
             return;
         }
-        self.screen_before_confirm = self.screen;
-        self.screen = Screen::ConfirmReset;
+        self.overlay = Some(Overlay::ConfirmReset);
     }
 
     /// Resets every task to not done and saves. Returns whether the reset
@@ -1596,7 +1593,7 @@ impl AppState {
             return false;
         }
         self.push_undo_point(pre_state);
-        self.screen = Screen::Checklist;
+        self.view = View::Checklist;
         self.set_status("All tasks reset to not done".to_string());
         true
     }
@@ -1713,7 +1710,7 @@ impl AppState {
         ) {
             return false;
         }
-        self.screen = Screen::Checklist;
+        self.view = View::Checklist;
 
         match changed {
             [] => self.set_status(format!("{verb}: no change")),
@@ -1795,7 +1792,7 @@ impl AppState {
     }
 
     /// Top-level key dispatch: modal overlays first, then card scroll, then
-    /// global keys, then the current screen's bindings. The order matters.
+    /// global keys, then the view's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         self.clear_status();
 
@@ -1833,33 +1830,27 @@ impl AppState {
 
         // Confirmation modals are handled before the global q/Esc quit
         // check, so Esc cancels rather than quits.
-        if matches!(self.screen, Screen::ConfirmReset | Screen::ConfirmQuitReset) {
-            self.handle_confirm_key(code);
-            return;
-        }
-        if self.screen == Screen::Help {
-            self.handle_help_key(code, modifiers);
-            return;
-        }
-        // Incremental search input: typed keys edit the query (so `q`,
-        // `?`, `j`, … are literal text, not commands), with a live cursor jump.
-        // Handled before the global command keys, which is why it returns early.
-        if self.screen == Screen::Search {
-            self.handle_search_key(code, modifiers);
-            return;
-        }
-        // "Go to task" overlay: typing filters the list; because letters
-        // are filter input, the selection moves on arrows / Ctrl-N/Ctrl-P (not
-        // j/k, which must remain typeable). Enter jumps, Esc closes.
-        if self.screen == Screen::ListPicker {
-            self.handle_picker_key(code, modifiers);
+        // An open overlay takes every key, before the global keys, so `Esc`
+        // closes or cancels it rather than quitting, and typed text is never
+        // run as commands.
+        if let Some(overlay) = self.overlay {
+            match overlay {
+                Overlay::ConfirmReset | Overlay::ConfirmQuitReset => {
+                    self.handle_confirm_key(overlay, code)
+                }
+                Overlay::Help => self.handle_help_key(code, modifiers),
+                Overlay::Search => self.handle_search_key(code, modifiers),
+                // Letters are filter input, so the selection moves on arrows /
+                // Ctrl-N/Ctrl-P, not j/k.
+                Overlay::ListPicker => self.handle_picker_key(code, modifiers),
+            }
             return;
         }
 
         // Card-body viewport scroll. Only the Checklist screen has a
         // scrollable body; intercepted before the plain `e`/`y`/… bindings so
         // Ctrl-E/Ctrl-Y don't trigger "edit"/"yank".
-        if self.screen == Screen::Checklist && self.handle_checklist_scroll_key(code, modifiers) {
+        if self.view == View::Checklist && self.handle_checklist_scroll_key(code, modifiers) {
             return;
         }
 
@@ -1867,16 +1858,10 @@ impl AppState {
             return;
         }
 
-        match self.screen {
-            Screen::Checklist => self.handle_checklist_key(code, pending_g),
-            Screen::ListComplete => self.handle_list_complete_key(code),
-            Screen::AllComplete => self.handle_all_complete_key(code),
-            // Handled at the top of this function before the global keys.
-            Screen::ConfirmReset
-            | Screen::ConfirmQuitReset
-            | Screen::Help
-            | Screen::Search
-            | Screen::ListPicker => {}
+        match self.view {
+            View::Checklist => self.handle_checklist_key(code, pending_g),
+            View::ListComplete => self.handle_list_complete_key(code),
+            View::AllComplete => self.handle_all_complete_key(code),
         }
     }
 
@@ -1895,12 +1880,12 @@ impl AppState {
         let KeyCode::Char(c) = code else {
             return false;
         };
-        let bound: &[char] = match self.screen {
-            Screen::Checklist => &['e', 'y', 'd', 'u', 'r'],
-            Screen::ListComplete | Screen::AllComplete => &['r'],
-            Screen::Help => &['e', 'y', 'd', 'u'],
-            Screen::ListPicker => &['p', 'n', 'd', 'u'],
-            Screen::Search | Screen::ConfirmReset | Screen::ConfirmQuitReset => &[],
+        let bound: &[char] = match (self.overlay, self.view) {
+            (None, View::Checklist) => &['e', 'y', 'd', 'u', 'r'],
+            (None, View::ListComplete | View::AllComplete) => &['r'],
+            (Some(Overlay::Help), _) => &['e', 'y', 'd', 'u'],
+            (Some(Overlay::ListPicker), _) => &['p', 'n', 'd', 'u'],
+            (Some(Overlay::Search | Overlay::ConfirmReset | Overlay::ConfirmQuitReset), _) => &[],
         };
         bound.contains(&c)
     }
@@ -1910,14 +1895,10 @@ impl AppState {
     /// rather than quitting.
     fn handle_ctrl_c(&mut self) {
         self.clear_pending_chords();
-        match self.screen {
-            Screen::Search => self.cancel_search(),
-            Screen::ListPicker | Screen::Help | Screen::ConfirmReset | Screen::ConfirmQuitReset => {
-                self.screen = self.screen_before_confirm;
-            }
-            Screen::Checklist | Screen::ListComplete | Screen::AllComplete => {
-                self.set_error("Type q to quit".to_string());
-            }
+        match self.overlay {
+            Some(Overlay::Search) => self.cancel_search(),
+            Some(_) => self.overlay = None,
+            None => self.set_error("Type q to quit".to_string()),
         }
     }
 
@@ -1953,24 +1934,26 @@ impl AppState {
         }
     }
 
-    fn handle_confirm_key(&mut self, code: KeyCode) {
-        if self.screen == Screen::ConfirmReset {
+    /// A failed reset leaves either dialog open, so its error is read first.
+    fn handle_confirm_key(&mut self, overlay: Overlay, code: KeyCode) {
+        if overlay == Overlay::ConfirmReset {
             // Only `y` confirms — `Enter` is too easy to hit by reflex for a
             // whole-file rewrite. Any other key cancels.
             match code {
                 KeyCode::Char('y') => {
-                    self.reset_all();
+                    if self.reset_all() {
+                        self.overlay = None;
+                    }
                 }
-                _ => self.screen = self.screen_before_confirm,
+                _ => self.overlay = None,
             }
         } else {
             // ConfirmQuitReset, offered on quit when all done: y resets
             // then quits, n quits without resetting, Esc/anything else cancels.
-            // A failed reset stays open so its error is read before exiting.
             match code {
                 KeyCode::Char('y') => self.should_quit = self.reset_all(),
                 KeyCode::Char('n') => self.should_quit = true,
-                _ => self.screen = self.screen_before_confirm,
+                _ => self.overlay = None,
             }
         }
     }
@@ -1989,7 +1972,7 @@ impl AppState {
             KeyCode::Char('u') if ctrl => self.scroll_help_up_by(self.help_half_page()),
             KeyCode::PageDown => self.scroll_help_down_by(self.help_page()),
             KeyCode::PageUp => self.scroll_help_up_by(self.help_page()),
-            _ => self.screen = self.screen_before_confirm,
+            _ => self.overlay = None,
         }
     }
 
@@ -2015,7 +1998,7 @@ impl AppState {
     fn handle_picker_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         let ctrl = modifiers.contains(KeyModifiers::CONTROL);
         match code {
-            KeyCode::Esc => self.screen = self.screen_before_confirm,
+            KeyCode::Esc => self.overlay = None,
             KeyCode::Enter => self.picker_commit(),
             KeyCode::Up => self.picker_move(-1),
             KeyCode::Down => self.picker_move(1),
@@ -2081,9 +2064,8 @@ impl AppState {
         // Open the help overlay from any non-modal screen, scrolled to
         // the top.
         if code == KeyCode::Char('?') {
-            self.screen_before_confirm = self.screen;
             self.help.scroll = 0;
-            self.screen = Screen::Help;
+            self.overlay = Some(Overlay::Help);
             return true;
         }
 
@@ -2098,8 +2080,7 @@ impl AppState {
             // instead of quitting outright.
             let (done, total) = self.document.checkbox_stats();
             if total > 0 && done == total {
-                self.screen_before_confirm = self.screen;
-                self.screen = Screen::ConfirmQuitReset;
+                self.overlay = Some(Overlay::ConfirmQuitReset);
             } else {
                 self.should_quit = true;
             }

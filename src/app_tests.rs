@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::shown;
 use std::path::PathBuf;
 
 fn checkbox(line_number: usize, completed: bool) -> Item {
@@ -176,7 +177,7 @@ fn start_current_marks_started_without_advancing() {
         ItemKind::Checkbox(TaskState::Started)
     );
     assert_eq!(state.current_item_index, 0, "does not auto-advance");
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -220,7 +221,7 @@ fn started_task_does_not_complete_the_list() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.current_item_index = 2;
     state.start_current();
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(state.document.checkbox_stats(), (2, 5), "started ≠ done");
 }
 
@@ -244,12 +245,12 @@ fn startup_selects_started_task_as_first_undone() {
 fn help_key_opens_and_a_non_scroll_key_closes() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('?'));
-    assert_eq!(state.screen, Screen::Help);
+    assert_eq!(state.overlay, Some(Overlay::Help));
     // A non-scroll key closes (scroll keys now scroll instead).
     state.handle_key(KeyCode::Char('x'));
     assert_eq!(
-        state.screen,
-        Screen::Checklist,
+        shown(&state),
+        (View::Checklist, None),
         "a non-scroll key closes help"
     );
 }
@@ -263,7 +264,11 @@ fn help_scroll_keys_scroll_instead_of_closing() {
     state.help.max_scroll = 5; // as if the renderer measured an overflow
     state.help.viewport_height = 6;
     state.handle_key(KeyCode::Char('j'));
-    assert_eq!(state.screen, Screen::Help, "j scrolls, does not close");
+    assert_eq!(
+        state.overlay,
+        Some(Overlay::Help),
+        "j scrolls, does not close"
+    );
     assert_eq!(state.help.scroll, 1);
     state.handle_key(KeyCode::Down);
     assert_eq!(state.help.scroll, 2);
@@ -274,17 +279,17 @@ fn help_scroll_keys_scroll_instead_of_closing() {
     state.handle_key(KeyCode::PageDown);
     assert_eq!(state.help.scroll, 5, "clamps at help.max_scroll");
     state.handle_key(KeyCode::Char('q')); // a non-scroll key still closes
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
 fn help_returns_to_the_screen_it_was_opened_from() {
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.handle_key(KeyCode::Char('?'));
-    assert_eq!(state.screen, Screen::Help);
+    assert_eq!(state.overlay, Some(Overlay::Help));
     state.handle_key(KeyCode::Esc);
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
 }
 
 // --- Advancing between lists ---
@@ -349,7 +354,7 @@ fn completing_last_item_with_earlier_incomplete_stays_in_list() {
     state.current_item_index = 2; // items 0 and 1 remain not done
     state.toggle_current();
     assert_eq!(state.current_list_index, 0, "does not cross lists");
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -519,7 +524,7 @@ fn motions_are_noops_when_no_list_has_items() {
     state.go_to_first_item();
 
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -585,7 +590,7 @@ fn focus_item_lands_on_exact_item_and_clamps() {
     let mut state = AppState::new(two_list_document());
     state.focus_item(1, 0, CursorMove::Quiet);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     // An out-of-range item clamps to the list's last item...
     state.focus_item(0, 99, CursorMove::Quiet);
     let last = state.document.lists[0].items.len() - 1;
@@ -609,13 +614,13 @@ fn slash_enters_search_and_typing_jumps_to_first_match() {
     // two_list_document items are "task 1".."task 5" across lists.
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('/'));
-    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.overlay, Some(Overlay::Search));
     type_str(&mut state, "task 3");
     assert_eq!(state.search.query, "task 3");
     // "task 3" is the third item of the first list.
     assert_eq!((state.current_list_index, state.current_item_index), (0, 2));
     // Still on the Search screen until committed.
-    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.overlay, Some(Overlay::Search));
 }
 
 #[test]
@@ -639,7 +644,7 @@ fn search_query_captures_command_keys_as_text() {
     type_str(&mut state, "q?j");
     assert_eq!(state.search.query, "q?j");
     assert!(!state.should_quit, "typing q in search does not quit");
-    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.overlay, Some(Overlay::Search));
 }
 
 #[test]
@@ -659,7 +664,7 @@ fn search_enter_commits_and_n_cycles_matches() {
     state.handle_key(KeyCode::Char('/'));
     type_str(&mut state, "task"); // matches all five, cursor at (0,0)
     state.handle_key(KeyCode::Enter);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(state.search.last.as_deref(), Some("task"));
     // n advances through matches in document order, then wraps.
     for expected in [(0, 1), (0, 2), (1, 0), (1, 1), (0, 0)] {
@@ -683,7 +688,7 @@ fn search_esc_restores_the_pre_search_cursor() {
     type_str(&mut state, "task 1"); // jumps to (0, 0)
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
     state.handle_key(KeyCode::Esc);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
 }
 
@@ -706,9 +711,9 @@ fn n_without_an_active_search_stays_put_and_says_so() {
 fn unbound_key_on_list_complete_hints_at_the_screen_keys() {
     for key in [KeyCode::Char(' '), KeyCode::Char('/'), KeyCode::Char('y')] {
         let mut state = AppState::new(two_list_document());
-        state.screen = Screen::ListComplete;
+        state.view = View::ListComplete;
         state.handle_key(key);
-        assert_eq!(state.screen, Screen::ListComplete);
+        assert_eq!(shown(&state), (View::ListComplete, None));
         assert_eq!(
             state.status_message.as_deref(),
             Some("List complete — press l for the next list or h to review")
@@ -721,9 +726,9 @@ fn unbound_key_on_list_complete_hints_at_the_screen_keys() {
 fn unbound_key_on_all_complete_hints_at_the_screen_keys() {
     for key in [KeyCode::Char(' '), KeyCode::Char('l'), KeyCode::Enter] {
         let mut state = AppState::new(two_list_document());
-        state.screen = Screen::AllComplete;
+        state.view = View::AllComplete;
         state.handle_key(key);
-        assert_eq!(state.screen, Screen::AllComplete);
+        assert_eq!(shown(&state), (View::AllComplete, None));
         assert_eq!(
             state.status_message.as_deref(),
             Some("All tasks complete — press h to review, R to reset or q to quit")
@@ -822,7 +827,7 @@ fn paste_on_the_checklist_changes_nothing_and_says_so() {
     };
     let states_before = states(&state);
     state.handle_paste("systemctl restart example-service\nRy q");
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!((state.current_list_index, state.current_item_index), (0, 1));
     assert_eq!(states(&state), states_before);
     assert_eq!(
@@ -842,7 +847,7 @@ fn paste_on_the_help_overlay_is_ignored_and_keeps_it_open() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('?'));
     state.handle_paste("x");
-    assert_eq!(state.screen, Screen::Help);
+    assert_eq!(state.overlay, Some(Overlay::Help));
     assert!(state.status_is_error);
 }
 
@@ -852,7 +857,7 @@ fn paste_into_search_fills_the_query_as_one_line() {
     state.handle_key(KeyCode::Char('/'));
     state.handle_paste("task\t4\u{7}\r\n");
     assert_eq!(state.search.query, "task 4");
-    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.overlay, Some(Overlay::Search));
     assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
     assert!(!state.status_is_error);
 }
@@ -867,7 +872,7 @@ fn paste_into_the_picker_filters_and_resets_the_selection() {
     assert_eq!(state.picker.query, "task 4");
     assert_eq!(state.picker_matches(), vec![(1, 0)]);
     assert_eq!(state.picker.selection, 0);
-    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.overlay, Some(Overlay::ListPicker));
 }
 
 // --- Go-to-task overlay (ListPicker) ---
@@ -876,7 +881,7 @@ fn paste_into_the_picker_filters_and_resets_the_selection() {
 fn t_opens_picker_listing_all_tasks_then_filters() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('T'));
-    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.overlay, Some(Overlay::ListPicker));
     assert_eq!(
         state.picker_matches().len(),
         5,
@@ -990,7 +995,7 @@ fn picker_enter_jumps_to_the_selected_task() {
     type_str(&mut state, "task 5");
     assert_eq!(state.picker_matches(), vec![(1, 1)]);
     state.handle_key(KeyCode::Enter);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
 }
 
@@ -1049,7 +1054,7 @@ fn picker_esc_closes_without_moving_the_cursor() {
     state.current_item_index = 1;
     state.handle_key(KeyCode::Char('T'));
     state.handle_key(KeyCode::Esc);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
 }
 
@@ -1374,11 +1379,11 @@ fn jump_to_list_out_of_range_message_is_singular_for_one_list() {
 fn jump_to_list_resets_item_index_and_screen() {
     let mut state = AppState::new(two_list_document());
     state.navigate_next();
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.jump_to_list(1);
     assert_eq!(state.current_list_index, 1);
     assert_eq!(state.current_item_index, 0);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1406,7 +1411,7 @@ fn toggle_current_advances_when_more_items_remain() {
     let mut state = AppState::new(two_list_document());
     state.toggle_current();
     assert_eq!(state.current_item_index, 1);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1425,7 +1430,7 @@ fn completing_last_item_in_list_shows_list_complete() {
     ]);
     let mut state = AppState::new(document);
     state.toggle_current();
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     // current_item_index must not advance past the list boundary.
     assert_eq!(state.current_item_index, 0);
 }
@@ -1439,7 +1444,7 @@ fn completing_all_lists_shows_all_complete() {
     }]);
     let mut state = AppState::new(document);
     state.toggle_current();
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 }
 
 #[test]
@@ -1451,9 +1456,9 @@ fn uncompleting_item_returns_to_checklist_screen() {
     }]);
     let mut state = AppState::new(document);
     state.toggle_current();
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
     state.toggle_current();
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(
         state.current_item().unwrap().kind,
         ItemKind::Checkbox(TaskState::NotStarted)
@@ -1470,7 +1475,7 @@ fn list_with_only_display_only_items_never_completes() {
     let mut state = AppState::new(document);
     state.navigate_next();
     state.toggle_current();
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1478,10 +1483,10 @@ fn list_complete_j_advances_to_next_list() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.current_item_index = 2;
     state.toggle_current();
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     state.handle_key(KeyCode::Char('j'));
     assert_eq!(state.current_list_index, 1);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1489,11 +1494,11 @@ fn list_complete_k_returns_to_checklist_on_same_list() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.current_item_index = 2;
     state.toggle_current();
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     state.handle_key(KeyCode::Char('k'));
     assert_eq!(state.current_list_index, 0);
     assert_eq!(state.current_item_index, 2);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1516,11 +1521,11 @@ fn all_complete_k_returns_to_last_list_last_item() {
     state.toggle_current();
     state.navigate_prev();
     state.toggle_current();
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
     state.handle_key(KeyCode::Char('k'));
     assert_eq!(state.current_list_index, 1);
     assert_eq!(state.current_item_index, 1);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1528,10 +1533,10 @@ fn number_key_jumps_to_list_from_any_screen() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.current_item_index = 2;
     state.toggle_current();
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     state.handle_key(KeyCode::Char('2'));
     assert_eq!(state.current_list_index, 1);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1561,7 +1566,7 @@ fn list_with_zero_items_does_not_panic() {
     state.toggle_current();
     state.handle_key(KeyCode::Char('y'));
     state.handle_key(KeyCode::Char(' '));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 
     // Jumping to the list that does have items still works.
     state.jump_to_list(1);
@@ -1665,12 +1670,12 @@ fn complete_list_advance_skips_to_next_incomplete() {
     let mut state = AppState::new(document);
     // Complete list A's only item -> ListComplete.
     state.toggle_current();
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     // Advancing should skip fully-done B and land on C's undone item.
     state.handle_key(KeyCode::Char('l'));
     assert_eq!(state.current_list_index, 2);
     assert_eq!(state.current_item_index, 0);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -1689,7 +1694,7 @@ fn complete_last_incomplete_list_advance_goes_all_complete() {
     ]);
     let mut state = AppState::new(document); // starts on B's undone item
     state.toggle_current(); // completes everything -> AllComplete
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 }
 
 // --- Card-focused navigation and card scrolling ---
@@ -1819,7 +1824,11 @@ fn wheel_scrolls_the_help_overlay() {
     assert_eq!(state.help.scroll, 2, "clamps at help.max_scroll");
     state.handle_scroll_up();
     assert_eq!(state.help.scroll, 1);
-    assert_eq!(state.screen, Screen::Help, "the wheel doesn't close help");
+    assert_eq!(
+        state.overlay,
+        Some(Overlay::Help),
+        "the wheel doesn't close help"
+    );
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
 }
 
@@ -1832,16 +1841,16 @@ fn wheel_moves_the_picker_highlight() {
     assert_eq!(state.picker.selection, 2);
     state.handle_scroll_up();
     assert_eq!(state.picker.selection, 1);
-    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.overlay, Some(Overlay::ListPicker));
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
 }
 
 #[test]
 fn wheel_is_ignored_on_the_confirmation_card() {
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::ConfirmReset;
+    state.overlay = Some(Overlay::ConfirmReset);
     state.handle_scroll_down();
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
 }
 
@@ -1850,15 +1859,15 @@ fn list_complete_l_advances_h_reviews() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.current_item_index = 2;
     state.toggle_current();
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     state.handle_key(KeyCode::Char('h'));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     state.toggle_current(); // untoggle
     state.toggle_current(); // re-toggle -> ListComplete again
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     state.handle_key(KeyCode::Char('l'));
     assert_eq!(state.current_list_index, 1);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 // --- Editor request ---
@@ -1874,7 +1883,7 @@ fn e_requests_editor_and_is_consumed_once() {
 #[test]
 fn e_requests_editor_from_completion_screen() {
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
     state.handle_key(KeyCode::Char('e'));
     assert!(state.take_editor_request());
 }
@@ -1904,7 +1913,7 @@ fn ctrl_z_suspends_from_search_input_without_typing_a_z() {
     state.handle_key_with_mods(KeyCode::Char('z'), KeyModifiers::CONTROL);
     assert!(state.take_suspend_request());
     assert_eq!(state.search.query, "task");
-    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.overlay, Some(Overlay::Search));
 }
 
 #[test]
@@ -1932,25 +1941,25 @@ fn ctrl_c_on_checklist_shows_quit_hint() {
     let mut state = AppState::new(two_list_document());
     press_ctrl_c(&mut state);
     assert_quit_hint(&state);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
 fn ctrl_c_on_list_complete_shows_quit_hint() {
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     press_ctrl_c(&mut state);
     assert_quit_hint(&state);
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
 }
 
 #[test]
 fn ctrl_c_on_all_complete_shows_quit_hint_without_reset_prompt() {
     let mut state = AppState::new(all_done_document());
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
     press_ctrl_c(&mut state);
     assert_quit_hint(&state);
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 }
 
 #[test]
@@ -1960,7 +1969,7 @@ fn ctrl_c_cancels_search_input_like_esc() {
     state.handle_key(KeyCode::Char('/'));
     type_str(&mut state, "task");
     press_ctrl_c(&mut state);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(state.search.query, "task", "no 'c' typed into the query");
     assert_eq!((state.current_list_index, state.current_item_index), origin);
 }
@@ -1969,28 +1978,28 @@ fn ctrl_c_cancels_search_input_like_esc() {
 fn ctrl_c_closes_the_task_picker() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('T'));
-    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.overlay, Some(Overlay::ListPicker));
     press_ctrl_c(&mut state);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
 fn ctrl_c_closes_help() {
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.handle_key(KeyCode::Char('?'));
-    assert_eq!(state.screen, Screen::Help);
+    assert_eq!(state.overlay, Some(Overlay::Help));
     press_ctrl_c(&mut state);
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
 }
 
 #[test]
 fn ctrl_c_cancels_reset_confirmation() {
     let mut state = AppState::new(all_done_document());
-    state.screen_before_confirm = Screen::AllComplete;
-    state.screen = Screen::ConfirmReset;
+    state.view = View::AllComplete;
+    state.overlay = Some(Overlay::ConfirmReset);
     press_ctrl_c(&mut state);
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
     assert_eq!(
         state.document.checkbox_stats().0,
         state.document.checkbox_stats().1
@@ -2000,11 +2009,11 @@ fn ctrl_c_cancels_reset_confirmation() {
 #[test]
 fn ctrl_c_cancels_quit_reset_confirmation_without_quitting() {
     let mut state = AppState::new(all_done_document());
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
     state.handle_key(KeyCode::Char('q'));
-    assert_eq!(state.screen, Screen::ConfirmQuitReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     press_ctrl_c(&mut state);
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
     assert!(!state.should_quit);
 }
 
@@ -2119,7 +2128,7 @@ fn finish_editor_reloads_an_edit_and_queues_a_sync_naming_the_editor() {
 fn r_with_no_done_tasks_skips_prompt() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(
         state.status_message.as_deref(),
         Some("Nothing to reset: no tasks are done")
@@ -2130,7 +2139,7 @@ fn r_with_no_done_tasks_skips_prompt() {
 fn r_with_done_tasks_opens_confirm_prompt() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
 }
 
 #[test]
@@ -2139,7 +2148,7 @@ fn r_with_only_started_tasks_opens_confirm_prompt() {
     let mut state = AppState::new(two_list_document());
     state.start_current();
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
 }
 
 #[test]
@@ -2147,7 +2156,7 @@ fn confirm_reset_yes_clears_all_and_persists() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     state.handle_key(KeyCode::Char('R'));
     state.handle_key(KeyCode::Char('y'));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(state.document.checkbox_stats().0, 0, "all tasks not done");
     // No spurious reload from our own write.
     state.reload_if_changed();
@@ -2162,9 +2171,9 @@ fn confirm_reset_cancel_restores_screen_and_leaves_tasks() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     let done_before = state.document.checkbox_stats().0;
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key(KeyCode::Esc);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert!(!state.should_quit, "Esc cancels, does not quit");
     assert_eq!(state.document.checkbox_stats().0, done_before);
 }
@@ -2177,11 +2186,11 @@ fn confirm_reset_from_all_complete_cancels_back_to_all_complete() {
         items: vec![checkbox(1, true)],
     }]);
     let mut state = AppState::new(document);
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key(KeyCode::Char('n'));
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 }
 
 #[test]
@@ -2190,9 +2199,9 @@ fn confirm_reset_enter_does_not_confirm() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
     let done_before = state.document.checkbox_stats().0;
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key(KeyCode::Enter);
-    assert_eq!(state.screen, Screen::Checklist, "Enter cancels");
+    assert_eq!(shown(&state), (View::Checklist, None), "Enter cancels");
     assert_eq!(
         state.document.checkbox_stats().0,
         done_before,
@@ -2213,7 +2222,7 @@ fn quit_when_all_done_opens_confirm_quit_reset() {
     // q on an all-done file offers to reset instead of quitting.
     let mut state = AppState::new(all_done_document());
     state.handle_key(KeyCode::Char('q'));
-    assert_eq!(state.screen, Screen::ConfirmQuitReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     assert!(!state.should_quit, "prompt shown, not quit yet");
 }
 
@@ -2272,7 +2281,11 @@ fn confirm_quit_reset_yes_stays_running_when_the_write_fails() {
         "got {:?}",
         state.status_message
     );
-    assert_eq!(state.screen, Screen::ConfirmQuitReset, "y retries, n quits");
+    assert_eq!(
+        state.overlay,
+        Some(Overlay::ConfirmQuitReset),
+        "y retries, n quits"
+    );
     assert_eq!(state.document.checkbox_stats().0, 2, "nothing was reset");
 }
 
@@ -2294,10 +2307,10 @@ fn confirm_quit_reset_no_quits_without_resetting() {
 fn confirm_quit_reset_esc_cancels() {
     let mut state = AppState::new(all_done_document());
     state.handle_key(KeyCode::Char('q'));
-    assert_eq!(state.screen, Screen::ConfirmQuitReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     state.handle_key(KeyCode::Esc);
     assert!(!state.should_quit, "Esc cancels, stays running");
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -2323,109 +2336,61 @@ fn auto_copy_fires_on_every_navigation_motion() {
     // h/l: each card carries one command, and the fake clipboard records
     // which one was copied.
     type Position = (usize, usize);
-    let cases: &[(&str, Screen, Position, &[KeyCode], Position)] = &[
-        (
-            "l",
-            Screen::Checklist,
-            (0, 1),
-            &[KeyCode::Char('l')],
-            (0, 2),
-        ),
-        (
-            "h",
-            Screen::Checklist,
-            (0, 2),
-            &[KeyCode::Char('h')],
-            (0, 1),
-        ),
-        (
-            "j",
-            Screen::Checklist,
-            (0, 1),
-            &[KeyCode::Char('j')],
-            (0, 2),
-        ),
-        (
-            "k",
-            Screen::Checklist,
-            (0, 2),
-            &[KeyCode::Char('k')],
-            (0, 1),
-        ),
+    let cases: &[(&str, View, Position, &[KeyCode], Position)] = &[
+        ("l", View::Checklist, (0, 1), &[KeyCode::Char('l')], (0, 2)),
+        ("h", View::Checklist, (0, 2), &[KeyCode::Char('h')], (0, 1)),
+        ("j", View::Checklist, (0, 1), &[KeyCode::Char('j')], (0, 2)),
+        ("k", View::Checklist, (0, 2), &[KeyCode::Char('k')], (0, 1)),
         (
             "l across lists",
-            Screen::Checklist,
+            View::Checklist,
             (0, 2),
             &[KeyCode::Char('l')],
             (1, 0),
         ),
-        ("Tab", Screen::Checklist, (0, 1), &[KeyCode::Tab], (0, 2)),
+        ("Tab", View::Checklist, (0, 1), &[KeyCode::Tab], (0, 2)),
         (
             "Tab wraps",
-            Screen::Checklist,
+            View::Checklist,
             (1, 1),
             &[KeyCode::Tab],
             (0, 1),
         ),
         (
             "gg",
-            Screen::Checklist,
+            View::Checklist,
             (1, 1),
             &[KeyCode::Char('g'), KeyCode::Char('g')],
             (0, 0),
         ),
-        (
-            "G",
-            Screen::Checklist,
-            (0, 1),
-            &[KeyCode::Char('G')],
-            (1, 1),
-        ),
+        ("G", View::Checklist, (0, 1), &[KeyCode::Char('G')], (1, 1)),
         (
             "digit",
-            Screen::Checklist,
+            View::Checklist,
             (0, 1),
             &[KeyCode::Char('2')],
             (1, 0),
         ),
-        (
-            "L",
-            Screen::Checklist,
-            (0, 1),
-            &[KeyCode::Char('L')],
-            (1, 0),
-        ),
-        (
-            "H",
-            Screen::Checklist,
-            (1, 1),
-            &[KeyCode::Char('H')],
-            (0, 1),
-        ),
-        (
-            "n",
-            Screen::Checklist,
-            (0, 1),
-            &[KeyCode::Char('n')],
-            (1, 0),
-        ),
+        ("L", View::Checklist, (0, 1), &[KeyCode::Char('L')], (1, 0)),
+        ("H", View::Checklist, (1, 1), &[KeyCode::Char('H')], (0, 1)),
+        ("n", View::Checklist, (0, 1), &[KeyCode::Char('n')], (1, 0)),
         (
             "T + Enter",
-            Screen::Checklist,
+            View::Checklist,
             (1, 1),
             &[KeyCode::Char('T'), KeyCode::Enter],
             (0, 0),
         ),
         (
             "all-complete h",
-            Screen::AllComplete,
+            View::AllComplete,
             (0, 0),
             &[KeyCode::Char('h')],
             (1, 1),
         ),
         (
             "all-complete k",
-            Screen::AllComplete,
+            View::AllComplete,
             (0, 0),
             &[KeyCode::Char('k')],
             (1, 1),
@@ -2445,7 +2410,7 @@ fn auto_copy_fires_on_every_navigation_motion() {
         state.search.last = Some("task 4".to_string());
         state.current_list_index = from_list;
         state.current_item_index = from_item;
-        state.screen = screen;
+        state.view = screen;
         crate::clipboard::fake::with(|c| c.system_attempts.clear());
 
         for &key in keys {
@@ -2483,7 +2448,7 @@ fn quiet_cursor_moves_do_not_auto_copy() {
     state.handle_key(KeyCode::Char('5'));
     state.handle_key(KeyCode::Esc);
     assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
 }
 
@@ -2657,7 +2622,7 @@ fn click_outside_card_or_off_checklist_is_ignored() {
         "click outside the card is a no-op"
     );
 
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
     state.handle_left_click(15, 8); // inside the rect, but wrong screen
     assert_eq!(
         state.status_message, None,
@@ -2676,7 +2641,7 @@ fn click_on_overview_item_row_focuses_that_task() {
     state.handle_left_click(70, 5);
     assert_eq!(state.current_list_index, 1);
     assert_eq!(state.current_item_index, 1);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -2690,7 +2655,7 @@ fn click_on_overview_list_row_jumps_to_that_list() {
     state.handle_left_click(65, 3);
     assert_eq!(state.current_list_index, 1);
     assert_eq!(state.current_item_index, 0);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -2699,12 +2664,12 @@ fn click_on_overview_works_from_completion_screen() {
     // The overview is a plain nav aid on the completion screens too, so
     // a click there jumps to the task and drops back to the checklist.
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
     state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 0))];
 
     state.handle_left_click(70, 5);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -2714,7 +2679,7 @@ fn click_on_overview_ignored_while_a_modal_is_open() {
     // overlays, but a click there must not jump the cursor mid-modal.
     let mut state = AppState::new(two_list_document());
     let before = (state.current_list_index, state.current_item_index);
-    state.screen = Screen::Help;
+    state.overlay = Some(Overlay::Help);
     state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 1))];
 
     state.handle_left_click(70, 5);
@@ -2723,7 +2688,7 @@ fn click_on_overview_ignored_while_a_modal_is_open() {
         before,
         "modal click leaves the cursor put"
     );
-    assert_eq!(state.screen, Screen::Help, "still on the modal");
+    assert_eq!(state.overlay, Some(Overlay::Help), "still on the modal");
 }
 
 #[test]
@@ -2781,17 +2746,17 @@ fn marker_toggle_demotes_a_stale_completion_screen_but_never_promotes() {
     }]);
     let mut state = AppState::new(document);
     // All tasks done: a keyboard toggle would have shown AllComplete.
-    state.screen = Screen::AllComplete;
+    state.view = View::AllComplete;
 
     // Un-done the first task via a marker click → demote to the checklist.
     state.toggle_item(0, 0);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 
     // Re-complete it from the checklist: no promotion to AllComplete.
     state.toggle_item(0, 0);
     assert_eq!(
-        state.screen,
-        Screen::Checklist,
+        shown(&state),
+        (View::Checklist, None),
         "a marker toggle never promotes to a completion screen"
     );
 }
@@ -2923,8 +2888,8 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
         "rolled back — must not silently become a phantom done item"
     );
     assert_eq!(
-        state.screen,
-        Screen::Checklist,
+        shown(&state),
+        (View::Checklist, None),
         "no premature completion screen"
     );
 
@@ -2936,8 +2901,8 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
     state.toggle_current();
     assert!(!state.status_is_error, "the retry succeeds");
     assert_eq!(
-        state.screen,
-        Screen::Checklist,
+        shown(&state),
+        (View::Checklist, None),
         "item 2 is still genuinely not-done, so the list must not appear complete"
     );
 }
@@ -3412,7 +3377,7 @@ fn reload_keeps_search_open_and_typed_keys_stay_query_text() {
     touch_with_new_mtime(&path, changed);
     assert!(state.reload_if_changed());
 
-    assert_eq!(state.screen, Screen::Search);
+    assert_eq!(state.overlay, Some(Overlay::Search));
     assert_eq!(state.current_item().unwrap().display_text, "alpha");
     type_str(&mut state, "hs");
     assert_eq!(state.search.query, "alphs");
@@ -3422,7 +3387,7 @@ fn reload_keeps_search_open_and_typed_keys_stay_query_text() {
     // The pre-search list is gone, so Esc lands on the remapped fallback
     // rather than an index past the end of the new document.
     state.handle_key(KeyCode::Esc);
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(state.current_item().unwrap().display_text, "alpha");
 
     fs::remove_file(&path).ok();
@@ -3440,12 +3405,12 @@ fn reload_keeps_the_picker_open_and_clamps_its_selection() {
     touch_with_new_mtime(&path, "## L\n\n- [ ] `alpha`\n");
     assert!(state.reload_if_changed());
 
-    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.overlay, Some(Overlay::ListPicker));
     assert_eq!(state.picker.selection, 0);
     type_str(&mut state, "es");
     assert_eq!(state.picker.query, "es");
     assert!(!state.take_editor_request());
-    assert_eq!(state.screen, Screen::ListPicker);
+    assert_eq!(state.overlay, Some(Overlay::ListPicker));
 
     fs::remove_file(&path).ok();
 }
@@ -3459,9 +3424,9 @@ fn reload_keeps_help_open_and_closing_it_returns_to_the_checklist() {
     touch_with_new_mtime(&path, "## L\n\n- [ ] `alpha`\n");
     assert!(state.reload_if_changed());
 
-    assert_eq!(state.screen, Screen::Help);
+    assert_eq!(state.overlay, Some(Overlay::Help));
     state.handle_key(KeyCode::Char('x'));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 
     fs::remove_file(&path).ok();
 }
@@ -3471,13 +3436,13 @@ fn reload_cancels_a_pending_reset_confirmation_visibly() {
     let path = write_real_file("## L\n\n- [x] `alpha`\n- [ ] `bravo`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
 
     let changed = "## L\n\n- [x] `alpha`\n- [x] `bravo`\n- [ ] `charlie`\n";
     touch_with_new_mtime(&path, changed);
     assert!(state.reload_if_changed());
 
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(
         state.status_message.as_deref(),
         Some("File changed on disk — reset cancelled")
@@ -3494,12 +3459,12 @@ fn reload_cancels_a_pending_quit_reset_confirmation_visibly() {
     let path = write_real_file("## L\n\n- [x] `alpha`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     state.handle_key(KeyCode::Char('q'));
-    assert_eq!(state.screen, Screen::ConfirmQuitReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
 
     touch_with_new_mtime(&path, "## L\n\n- [x] `alpha`\n- [ ] `bravo`\n");
     assert!(state.reload_if_changed());
 
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert!(!state.should_quit);
     assert_eq!(
         state.status_message.as_deref(),
@@ -3829,7 +3794,7 @@ fn reset_is_blocked_when_file_deleted() {
     fs::remove_file(&path).unwrap();
     state.file_deleted = true;
     // Reach reset_all via the ConfirmReset screen's 'y' path.
-    state.screen = crate::model::Screen::ConfirmReset;
+    state.overlay = Some(Overlay::ConfirmReset);
     state.handle_key(KeyCode::Char('y'));
     assert_eq!(
         state.status_message.as_deref(),
@@ -3855,7 +3820,7 @@ fn undo_reverts_a_toggle_and_focuses_the_task() {
         state.current_item_index, 0,
         "cursor focuses the changed task"
     );
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_eq!(
         state.status_message.as_deref(),
         Some("Undo: marked not done")
@@ -4204,8 +4169,8 @@ fn help_ctrl_scroll_keys_and_page_up_scroll() {
     state.handle_key_with_mods(KeyCode::Char('y'), KeyModifiers::CONTROL);
     assert_eq!(state.help.scroll, 0, "Ctrl-Y scrolls up one line");
     assert_eq!(
-        state.screen,
-        Screen::Help,
+        state.overlay,
+        Some(Overlay::Help),
         "none of these close the overlay"
     );
 }
@@ -4237,7 +4202,7 @@ fn picker_enter_with_no_matches_closes_without_jumping() {
     state.handle_key(KeyCode::Char('T'));
     type_str(&mut state, "nonexistent task text");
     state.handle_key(KeyCode::Enter);
-    assert_eq!(state.screen, Screen::Checklist, "closes on Enter");
+    assert_eq!(shown(&state), (View::Checklist, None), "closes on Enter");
     assert_eq!(
         (state.current_list_index, state.current_item_index),
         (before_list, before_item),
@@ -4325,15 +4290,15 @@ fn toggle_item_click_on_list_complete_screen_stays_when_list_still_done() {
     ]);
     let mut state = AppState::new(document);
     state.current_list_index = 0;
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.toggle_item(1, 0); // toggles the *other* list's task
     assert_eq!(
         state.document.lists[1].items[0].kind,
         ItemKind::Checkbox(TaskState::Done)
     );
     assert_eq!(
-        state.screen,
-        Screen::ListComplete,
+        shown(&state),
+        (View::ListComplete, None),
         "the current list is still fully done, so ListComplete must not be demoted"
     );
 }
@@ -4347,7 +4312,7 @@ fn start_current_is_a_no_op_when_no_current_item() {
     }]);
     let mut state = AppState::new(document);
     state.start_current(); // current_item() is None: must not panic
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
 }
 
 #[test]
@@ -4448,11 +4413,11 @@ fn advancing_past_the_last_list_wraps_back_to_an_earlier_incomplete_list() {
     state.current_list_index = 1;
     state.current_item_index = 0;
     state.toggle_current(); // completes list 2 -> ListComplete
-    assert_eq!(state.screen, Screen::ListComplete);
+    assert_eq!(shown(&state), (View::ListComplete, None));
     state.handle_key(KeyCode::Char('l'));
     assert_eq!(
-        state.screen,
-        Screen::Checklist,
+        shown(&state),
+        (View::Checklist, None),
         "must not claim completion while a list is untouched"
     );
     assert_eq!(state.current_list_index, 0, "wrapped back to List 1");
@@ -4478,12 +4443,12 @@ fn advancing_shows_all_complete_only_when_every_list_is_done() {
     state.current_list_index = 1;
     state.current_item_index = 0;
     state.toggle_current(); // completes the only remaining work
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 
     // And reaching it via the ListComplete `l` path agrees.
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.handle_key(KeyCode::Char('l'));
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 }
 
 #[test]
@@ -4811,12 +4776,12 @@ fn ctrl_y_does_not_confirm_the_reset() {
     let path = write_real_file(CHORD_TEST_FILE);
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     state.handle_key(KeyCode::Char('R'));
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key_with_mods(KeyCode::Char('y'), KeyModifiers::CONTROL);
-    assert_eq!(state.screen, Screen::ConfirmReset);
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     assert_eq!(fs::read_to_string(&path).unwrap(), CHORD_TEST_FILE);
     state.handle_key(KeyCode::Char('y'));
-    assert_eq!(state.screen, Screen::Checklist);
+    assert_eq!(shown(&state), (View::Checklist, None));
     assert_ne!(fs::read_to_string(&path).unwrap(), CHORD_TEST_FILE);
     fs::remove_file(&path).ok();
 }
@@ -4824,13 +4789,13 @@ fn ctrl_y_does_not_confirm_the_reset() {
 #[test]
 fn ctrl_e_on_a_completion_screen_does_not_open_the_editor() {
     let mut state = AppState::new(two_list_document());
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.handle_key_with_mods(KeyCode::Char('e'), KeyModifiers::CONTROL);
     assert!(!state.editor_requested);
-    assert_eq!(state.screen, Screen::ListComplete);
-    state.screen = Screen::AllComplete;
+    assert_eq!(shown(&state), (View::ListComplete, None));
+    state.view = View::AllComplete;
     state.handle_key_with_mods(KeyCode::Char('d'), KeyModifiers::CONTROL);
-    assert_eq!(state.screen, Screen::AllComplete);
+    assert_eq!(shown(&state), (View::AllComplete, None));
 }
 
 #[test]
@@ -4858,7 +4823,7 @@ fn bound_ctrl_chords_still_reach_their_screen() {
     let mut state = AppState::new(two_list_document());
     state.toggle_current();
     state.handle_key(KeyCode::Char('u'));
-    state.screen = Screen::ListComplete;
+    state.view = View::ListComplete;
     state.handle_key_with_mods(KeyCode::Char('r'), KeyModifiers::CONTROL);
     assert_eq!(
         state.document.lists[0].items[0].kind,

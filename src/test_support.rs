@@ -92,6 +92,14 @@ pub fn git() -> Command {
     cmd
 }
 
+/// The view and overlay together, for asserting that a test landed on a view
+/// with no overlay open.
+pub fn shown(
+    state: &crate::model::AppState,
+) -> (crate::model::View, Option<crate::model::Overlay>) {
+    (state.view, state.overlay)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

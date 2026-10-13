@@ -678,8 +678,10 @@ mod tests {
     // statusbar, and the title bar together.
 
     use crate::model::{
-        Document, IconSet, Item, ItemKind, List, OverviewTarget, Screen, SubHeading, TaskState,
+        Document, IconSet, Item, ItemKind, List, Overlay, OverviewTarget, SubHeading, TaskState,
+        View,
     };
+    use crate::test_support::shown;
     use crossterm::event::KeyCode;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -811,7 +813,7 @@ mod tests {
                 items: vec![checkbox(2, "b", true)],
             },
         ]);
-        state.screen = crate::model::Screen::AllComplete;
+        state.view = View::AllComplete;
 
         let rows = buffer_rows(&mut state, 100, 24);
         // The completion card's own rows carry the `done / total` counter,
@@ -1816,7 +1818,7 @@ mod tests {
     fn help_overlay_lists_keybindings() {
         // The ? overlay shows the cheatsheet.
         let mut state = sample_state();
-        state.screen = Screen::Help;
+        state.overlay = Some(Overlay::Help);
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("Keybindings"), "help title");
         assert!(text.contains("toggle the task done"), "a key is listed");
@@ -1876,7 +1878,7 @@ mod tests {
     #[test]
     fn completion_screens_show_their_own_legend() {
         let mut list_complete = sample_state();
-        list_complete.screen = Screen::ListComplete;
+        list_complete.view = View::ListComplete;
         let text = buffer_text(&mut list_complete, 100, 30);
         assert!(text.contains("l/enter:next list  h:review  ?:help  q:quit"));
         assert!(
@@ -1885,7 +1887,7 @@ mod tests {
         );
 
         let mut all_complete = sample_state();
-        all_complete.screen = Screen::AllComplete;
+        all_complete.view = View::AllComplete;
         let text = buffer_text(&mut all_complete, 100, 30);
         assert!(text.contains("h:review  R:reset  ?:help  q:quit"));
         assert!(
@@ -1964,10 +1966,14 @@ mod tests {
         let y = picker_row_of(&state, &rows, "gamma");
         let x = state.picker.rows_area.unwrap().x;
         state.handle_left_click(x, y);
-        assert_eq!(state.screen, Screen::ListPicker, "first click only selects");
+        assert_eq!(
+            state.overlay,
+            Some(Overlay::ListPicker),
+            "first click only selects"
+        );
         assert_eq!(state.picker.selection, 2);
         state.handle_left_click(x, y);
-        assert_eq!(state.screen, Screen::Checklist);
+        assert_eq!(shown(&state), (View::Checklist, None));
         assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
     }
 
@@ -2001,14 +2007,14 @@ mod tests {
         let area = state.picker.rows_area.unwrap();
         state.handle_left_click(area.x, area.y.saturating_sub(1));
         state.handle_left_click(area.x, area.y + 3); // past the last entry
-        assert_eq!(state.screen, Screen::ListPicker);
+        assert_eq!(state.overlay, Some(Overlay::ListPicker));
         assert_eq!(state.picker.selection, 0);
 
         state.handle_key(KeyCode::Char('z'));
         let _ = buffer_rows(&mut state, 100, 30);
         assert_eq!(state.picker.rows_area, None, "no rows drawn");
         state.handle_left_click(area.x, area.y);
-        assert_eq!(state.screen, Screen::ListPicker);
+        assert_eq!(state.overlay, Some(Overlay::ListPicker));
     }
 
     #[test]
@@ -2772,7 +2778,7 @@ mod tests {
             banner: None,
             items: vec![checkbox(1, "alpha", true)],
         }]);
-        state.screen = Screen::ListComplete;
+        state.view = View::ListComplete;
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("List Complete"));
         assert!(text.contains("1 / 1 tasks completed"));
@@ -2785,7 +2791,7 @@ mod tests {
     #[test]
     fn renders_confirm_reset_screen() {
         let mut state = sample_state();
-        state.screen = Screen::ConfirmReset;
+        state.overlay = Some(Overlay::ConfirmReset);
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("Confirm Reset"));
         assert!(text.contains("This marks 1 done task (of 3) as not started"));
@@ -2797,7 +2803,7 @@ mod tests {
         let mut state = sample_state();
         state.document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Started);
         state.document.lists[1].items[0].kind = ItemKind::Checkbox(TaskState::Started);
-        state.screen = Screen::ConfirmReset;
+        state.overlay = Some(Overlay::ConfirmReset);
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("This marks 2 started tasks (of 3) as not started"));
 
@@ -2809,7 +2815,7 @@ mod tests {
     #[test]
     fn renders_confirm_quit_reset_screen() {
         let mut state = sample_state();
-        state.screen = Screen::ConfirmQuitReset;
+        state.overlay = Some(Overlay::ConfirmQuitReset);
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("All Tasks Complete"));
         assert!(text.contains("reset and quit"));
@@ -2871,7 +2877,7 @@ mod tests {
         );
         assert_eq!(statusbar::height(&state, 10, 8), 2, "capped by height");
         assert_eq!(statusbar::height(&state, 10, 3), 1, "never below one row");
-        state.screen = Screen::Search;
+        state.overlay = Some(Overlay::Search);
         assert_eq!(statusbar::height(&state, 10, 30), 1, "search stays one row");
     }
 
@@ -2923,11 +2929,11 @@ mod tests {
     fn completion_screens_render_on_a_short_terminal_without_panic() {
         // Must not panic once the area is shorter than `MIN_CARD_HEIGHT`.
         let mut list_complete = sample_state();
-        list_complete.screen = Screen::ListComplete;
+        list_complete.view = View::ListComplete;
         let _ = buffer_text(&mut list_complete, 40, 6);
 
         let mut all_complete = sample_state();
-        all_complete.screen = Screen::AllComplete;
+        all_complete.view = View::AllComplete;
         let _ = buffer_text(&mut all_complete, 40, 6);
     }
 
@@ -2956,7 +2962,7 @@ mod tests {
             banner: None,
             items: vec![checkbox(1, "alpha", true)],
         }]);
-        state.screen = Screen::AllComplete;
+        state.view = View::AllComplete;
         let text = buffer_text(&mut state, 100, 30);
         assert!(text.contains("All Tasks Complete"));
         assert!(text.contains("Total: 1 / 1 tasks"));
@@ -3374,7 +3380,7 @@ mod tests {
             level: 3,
             text: "Node B".to_string(),
         }];
-        state.screen = Screen::ListPicker;
+        state.overlay = Some(Overlay::ListPicker);
         let rows = buffer_rows(&mut state, 80, 24);
         let row = rows
             .iter()
