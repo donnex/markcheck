@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keys that did nothing now say so. After finishing a list, or the whole
+  checklist, the status bar listed `space:toggle`, `/:search` and `y:copy`,
+  none of which work on those screens, and pressing them was silently
+  ignored; the completion screens now show their own key legend, and any
+  other key shows a hint naming the keys that do work there. Pressing `n` or
+  `N` before any search now says `No previous search — press / to search`
+  instead of doing nothing. (#52)
+
 - Live reload now works when the checklist can't be watched for changes.
   markcheck checks the file every 2 seconds as well as reacting to change
   notifications, so it picks up edits on network shares (NFS, SMB/CIFS) and

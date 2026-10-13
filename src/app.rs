@@ -329,6 +329,7 @@ impl AppState {
     /// document order, so `(list, item)` tuples compare in that order.
     fn search_cycle(&mut self, forward: bool) {
         let Some(query) = self.search.last.clone() else {
+            self.set_error("No previous search — press / to search".to_string());
             return;
         };
         let matches = self.find_matches(&query);
@@ -2061,7 +2062,8 @@ impl AppState {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
                 self.review_completed_list()
             }
-            _ => {}
+            _ => self
+                .set_error("List complete — press l for the next list or h to review".to_string()),
         }
     }
 
@@ -2070,7 +2072,9 @@ impl AppState {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
                 self.go_to_last_item()
             }
-            _ => {}
+            _ => self.set_error(
+                "All tasks complete — press h to review, R to reset or q to quit".to_string(),
+            ),
         }
     }
 }
