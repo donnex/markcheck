@@ -40,13 +40,38 @@ struct TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        if self.mouse {
-            let _ = execute!(io::stdout(), DisableMouseCapture);
-        }
-        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+        restore_terminal(self.mouse);
     }
 }
+
+fn restore_terminal(mouse: bool) {
+    let _ = disable_raw_mode();
+    if mouse {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
+    let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+}
+
+/// Restores the terminal before the default hook prints, so a main-thread
+/// panic's message lands on the normal screen instead of being printed in
+/// raw mode onto the alternate screen and wiped when `TerminalGuard` drops.
+/// Other threads are left alone: git-sync's workers catch their own panics
+/// (`run_reporting_panics`) while the TUI keeps running.
+fn install_panic_hook() {
+    let main_thread = std::thread::current().id();
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().id() == main_thread {
+            restore_terminal(true);
+            previous(info);
+            eprintln!("markcheck crashed. Please report this at {ISSUES_URL}");
+        } else {
+            previous(info);
+        }
+    }));
+}
+
+const ISSUES_URL: &str = "https://github.com/donnex/markcheck/issues";
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -162,6 +187,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mouse = settings.mouse;
+    install_panic_hook();
     enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
         .context("cannot set up the terminal (markcheck is interactive)")?;
@@ -240,6 +266,12 @@ where
             terminal.draw(|frame| ui::render(frame, state))?;
             label_due = ui::next_label_change(state, SystemTime::now());
             dirty = false;
+            // Debug builds only: lets `tests/pty.rs` force a main-thread
+            // panic to check the panic hook restores the terminal.
+            #[cfg(debug_assertions)]
+            if std::env::var_os("MARKCHECK_TEST_PANIC").is_some() {
+                panic!("forced test panic");
+            }
         }
 
         if event::poll(Duration::from_millis(100))? {

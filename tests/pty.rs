@@ -465,6 +465,37 @@ fn a_binary_that_never_quits_fails_the_test_instead_of_hanging_it() {
     Session::spawn(cmd).finish_within(Duration::from_millis(500));
 }
 
+/// A main-thread panic must leave the terminal usable and its message
+/// readable: printed after the alternate screen is left, not onto it.
+#[test]
+fn a_main_thread_panic_prints_its_message_on_the_restored_screen() {
+    let path = unique_path("panic-hook");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg(&path);
+    cmd.env("MARKCHECK_TEST_PANIC", "1");
+    let (ok, output) = Session::spawn(cmd).finish();
+
+    assert!(!ok, "a panic must exit unsuccessfully");
+    let left = output
+        .find("\x1b[?1049l")
+        .unwrap_or_else(|| panic!("the alternate screen was never left; output:\n{output}"));
+    let message = output
+        .find("forced test panic")
+        .unwrap_or_else(|| panic!("the panic message never reached the terminal:\n{output}"));
+    assert!(
+        message > left,
+        "the panic message was printed onto the alternate screen:\n{output}"
+    );
+    assert!(
+        output[left..].contains("Please report this at"),
+        "the report pointer is missing:\n{output}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
 #[test]
 fn toggle_then_quit_persists_and_exits_clean() {
     let path = unique_path("toggle");

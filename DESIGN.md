@@ -929,14 +929,12 @@ Like the editor request, `app.rs` only sets a request — the main loop consumes
 struct TerminalGuard { mouse: bool }
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        if self.mouse {
-            let _ = execute!(stdout(), DisableMouseCapture);
-        }
-        let _ = execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+        restore_terminal(self.mouse); // raw mode off, mouse released, paste off, alt screen left
     }
 }
 ```
+
+The guard alone is too late for a panic's *message*, though: the default panic hook prints before unwinding reaches the guard, so the text would land in raw mode on the alternate screen and vanish with it. `install_panic_hook`, called just before `enable_raw_mode`, wraps the previous hook: on the main thread it runs `restore_terminal` first (mouse release unconditionally, since a redundant disable is harmless), then the previous hook, then a one-line "please report this at" pointer to the issue tracker, so the message and location appear on the normal screen with the terminal usable. The guard's later drop repeats the restore harmlessly. Panics on other threads only run the previous hook: git-sync's workers convert theirs into a `Failed` outcome (`run_reporting_panics`) while the TUI keeps running, so restoring the terminal there would wreck a live session. Debug builds read `MARKCHECK_TEST_PANIC` to force a panic right after a frame is drawn; `a_main_thread_panic_prints_its_message_on_the_restored_screen` in `tests/pty.rs` uses it, and release builds compile the trigger out.
 
 CLI via `clap` derive (`Cli` in `cli.rs`): positional `file: Option<PathBuf>` (`required_unless_present = "new"`), plus `--new PATH` (`conflicts_with = "file"`), `--no-nerd-font`/`--nerd-font` (plain-Unicode vs Nerd Font icons), `--no-mouse`/`--mouse` (skip mouse capture, so terminal text selection works without Shift), `--primary`/`--no-primary` (also copy to the X11 PRIMARY selection), `--auto-copy`/`--no-auto-copy` (silently copy an item's code when navigating to it) — each pair `conflicts_with` the other — and `--git-sync` (commit+push this file's changes after every write, when it's in a git repo). The four boolean flags each have a config-file default (below); a passed flag always wins. The `--primary`/`--auto-copy` flags set the matching `AppState` fields after construction; `--git-sync` instead feeds `GitSync::detect` (see Git Sync, above) since it isn't an `AppState` field at all.
 
