@@ -223,12 +223,6 @@ pub(super) fn index_entry(
         .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
     Ok(Some((mode.to_string(), path.to_string())))
 }
-pub(super) fn blob_bytes_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<Vec<u8>> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["show", &format!("{commit}:{relpath}")]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    output.status.success().then_some(output.stdout)
-}
 pub(super) fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-parse", &format!("{commit}:{relpath}")]);

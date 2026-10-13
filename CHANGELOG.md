@@ -132,6 +132,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync no longer reports `Git sync failed: git commit: unknown error` in
+  repositories that normalise line endings (`core.autocrlf`, or a
+  `.gitattributes` rule such as `*.md text eol=crlf`). When a queued change
+  was already committed by an earlier sync, markcheck failed to recognise it
+  under such a setting, tried to commit it again, and showed git's refusal as
+  an unexplained error; a pending push of that earlier commit was also put
+  off until the next retry.
+
+  Git sync errors now also carry git's reason when git printed it on standard
+  output rather than standard error, and a push refused because the remote
+  branch moved mid-push now says `the remote branch changed while pushing`.
+  (#127)
+
 - A `/` search that matches nothing now leaves you on the card where the
   search started, and with `--auto-copy` it no longer copies anything.
   Previously the cursor stayed on whichever card an earlier part of the query
