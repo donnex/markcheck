@@ -662,6 +662,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit merely fails transiently (a wedged filesystem, a slow disk) —
   that case is no longer treated the same as a genuinely empty repository.
 
+- A checklist you have write-protected (`chmod a-w`) is no longer changed
+  when you toggle a task. The save replaced the file with a new copy, which
+  only needs permission on the directory, so a read-only file was rewritten
+  without warning (and, with git sync on, committed and pushed). markcheck
+  now warns when it opens such a file and refuses each change with "File is
+  read-only — change not saved", the way vim and other editors respect the
+  read-only bit. (#47)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping

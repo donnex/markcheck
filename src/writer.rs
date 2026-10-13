@@ -260,12 +260,19 @@ pub fn document_contents(document: &Document) -> String {
     join_lines(&document.raw_lines)
 }
 
+/// True when the file's own permission bits deny all writing (`chmod a-w`),
+/// which `write_back` honors by refusing to save. False when it can't be read.
+pub fn is_read_only(target: &Path) -> bool {
+    fs::metadata(target).is_ok_and(|metadata| metadata.permissions().readonly())
+}
+
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
 /// over the target, so a crash can't leave the checklist truncated; the
 /// parent directory is fsynced too on unix. Permission bits (but never
 /// setuid, setgid or sticky) and, where the user may set it, the group are
 /// kept; hard links and another user's ownership
-/// are not. Returns the content written.
+/// are not. A read-only file is refused untouched. Returns the content
+/// written.
 pub fn write_back(document: &Document) -> io::Result<String> {
     let mut lines = document.raw_lines.clone();
     for list in &document.lists {
@@ -286,6 +293,14 @@ pub fn write_back(document: &Document) -> io::Result<String> {
     // including NotFound — aborts before writing, so a deleted file is never
     // silently recreated. A 0600 file can also never be widened.
     let source = fs::metadata(&document.file_path)?;
+    // The rename only needs a writable directory, so without this a file the
+    // user write-protected would be replaced anyway.
+    if source.permissions().readonly() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file is read-only",
+        ));
+    }
 
     let file_name = document
         .file_path
@@ -840,6 +855,30 @@ mod tests {
 
         fs::remove_file(&a).ok();
         fs::remove_file(&b).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_protected_checklist_is_refused_and_left_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = write_temp_file(EXAMPLE);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        assert!(is_read_only(&path));
+        let mut document = parse_document(path.clone()).unwrap();
+        document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+
+        let err = write_back(&document).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&path).unwrap(), EXAMPLE);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o444
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_read_only(&path));
+        assert!(!is_read_only(&path.with_extension("missing")));
+        fs::remove_file(&path).ok();
     }
 
     #[test]

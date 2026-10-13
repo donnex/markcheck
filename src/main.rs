@@ -93,6 +93,9 @@ fn main() -> anyhow::Result<()> {
     // for why this warns rather than refuses.
     // Likewise a file owned by someone else: the save's new file is the
     // runner's, which can lock its owner out (see `writer::foreign_owner`).
+    // A write-protected file is refused on save (`writer::write_back`), so say
+    // so before the first keypress rather than at it.
+    let read_only = writer::is_read_only(&document.file_path);
     let hard_links = writer::hard_link_count(&document.file_path);
     let foreign_owner = writer::foreign_owner(&document.file_path);
 
@@ -125,7 +128,7 @@ fn main() -> anyhow::Result<()> {
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
     let warnings = [
-        launch::startup_warning(hard_links, foreign_owner),
+        launch::startup_warning(read_only, hard_links, foreign_owner),
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
     ];
     match launch::startup_message(created_new, &warnings) {

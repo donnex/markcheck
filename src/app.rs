@@ -17,6 +17,7 @@ use crate::writer;
 /// How long an ephemeral status message stays before it auto-clears.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 
+const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
 const HIDDEN_CHARACTERS_MESSAGE: &str = "Not copied: command contains hidden control characters";
 
 /// Whether a cursor move lands on a card the user navigated to, so
@@ -1056,7 +1057,11 @@ impl AppState {
         let previous_content = fs::read_to_string(&self.document.file_path).ok();
         let Ok(content) = writer::write_back(&self.document) else {
             self.apply_snapshot(pre_state);
-            self.set_error(fail_msg.to_string());
+            if writer::is_read_only(&self.document.file_path) {
+                self.set_error(READ_ONLY_MESSAGE.to_string());
+            } else {
+                self.set_error(fail_msg.to_string());
+            }
             return false;
         };
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
