@@ -223,6 +223,9 @@ struct ItemBuilder {
     header: String,
     capturing_header: bool,
     header_done: bool,
+    /// Inline code inside the bold title: drawn as plain title text, so not
+    /// a copy candidate, but it still keeps a bold-only first bullet a card.
+    header_has_code: bool,
     code_spans: Vec<String>,
     code_blocks: Vec<String>,
     body: Vec<BodySpan>,
@@ -345,14 +348,13 @@ impl ItemBuilder {
         if let Some((_, link_text)) = &mut self.link {
             link_text.push_str(text);
             self.text.push_str(text);
+        } else if self.capturing_header {
+            self.header.push_str(text);
+            self.header_has_code = true;
         } else {
             self.code_spans.push(text.to_string());
-            if self.capturing_header {
-                self.header.push_str(text);
-            } else {
-                self.text.push_str(text);
-                self.body.push(BodySpan::Code(text.to_string()));
-            }
+            self.text.push_str(text);
+            self.body.push(BodySpan::Code(text.to_string()));
         }
     }
 
@@ -483,11 +485,16 @@ fn ordered_marker(item_source: &str) -> Option<String> {
 
 /// Whether a finished top-level-eligible item could be its list's banner,
 /// apart from the "first top-level item" rule. A bullet with children is
-/// never the banner, which emits no `Item` and would orphan them; a command
-/// in the bold or under the bullet keeps it a card, since the one-line text
-/// banner would discard it; a blockquoted bullet is an example, not the list's.
-fn is_banner_candidate(item: &Item, has_children: bool, in_blockquote: bool) -> bool {
-    item.kind == ItemKind::DisplayOnly
+/// never the banner, which emits no `Item` and would orphan them; code in the
+/// bold or a command under the bullet keeps it a card, as written; a blockquoted bullet is an example, not the list's.
+fn is_banner_candidate(
+    item: &Item,
+    header_has_code: bool,
+    has_children: bool,
+    in_blockquote: bool,
+) -> bool {
+    !header_has_code
+        && item.kind == ItemKind::DisplayOnly
         && item.header.is_some()
         && item.display_text.is_empty()
         && item.code_spans.is_empty()
@@ -784,10 +791,11 @@ impl<'a> ParseState<'a> {
         };
         let has_children = self.current_list_items.len() > builder.items_before;
         let in_blockquote = builder.in_blockquote;
+        let header_has_code = builder.header_has_code;
         let mut item = builder.into_item();
         let is_banner = !self.seen_first_top_item
             && !self.list_saw_top_item
-            && is_banner_candidate(&item, has_children, in_blockquote);
+            && is_banner_candidate(&item, header_has_code, has_children, in_blockquote);
         if item.depth == 0 {
             self.list_saw_top_item = true;
         }

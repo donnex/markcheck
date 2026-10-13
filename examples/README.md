@@ -25,7 +25,8 @@ markcheck examples/basics.md
   rows above the card, and to end in `…` in the overview), a bold-only first
   bullet carrying a command that stays a copyable note card instead of a
   banner, a long card title
-  that wraps inside the card, a note that has a command but no checkbox
+  that wraps inside the card, a card title containing inline code (plain title
+  text, never a `y` candidate), a note that has a command but no checkbox
   (copyable, not a task), an indented (4-space) code block inside a task that
   renders and copies like a fenced one, a blockquoted `> - [ ]` and `> - [/]` example that
   both render as a non-interactive note rather than a live task, inline vs

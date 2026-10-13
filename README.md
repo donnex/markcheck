@@ -241,8 +241,8 @@ How each piece maps to the UI:
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. An uppercase `[X]` counts as done too; it keeps its casing until toggled, and is written back as `[x]`. |
 | `1. [ ]` / `1) [/]` / `1. [x]` | An **ordered (numbered) list** has the same three task states, cards and notes as a bulleted one, and each item keeps its **step number** exactly as written (`3.`, `7)`, gaps and all): in front of the card title, or of the card body when there's no title, on the overview row, in the `T` picker (where typing `3.` finds step 3), and in the side cards. The card's ` n/m ` position still counts every card in the list, notes and sub-items included, so it can differ from the step number. |
-| `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. A long title wraps inside the card, which grows to fit. The dimmed previous/next side cards in the wide layout show the title too, above the body. |
-| `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries a command — `` `code` `` inside the bold, or a fenced or indented code block under the bullet — is never the banner: it stays a display-only card so the command is shown and copyable with `y`. Only a list that has a checkbox counts: a plain bullet list with no checkbox, which is dropped, neither supplies the banner nor takes the first-item slot from the task list after it. |
+| `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. Inline `` `code` `` inside the title is shown as plain title text, not as a command chip, so `y` never copies it — put a command you want to copy in the body. A long title wraps inside the card, which grows to fit. The dimmed previous/next side cards in the wide layout show the title too, above the body. |
+| `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries code — `` `code` `` inside the bold, or a fenced or indented code block under the bullet — is never the banner: it stays a display-only card, so a code block under it is shown and copyable with `y`. Only a list that has a checkbox counts: a plain bullet list with no checkbox, which is dropped, neither supplies the banner nor takes the first-item slot from the task list after it. |
 | `- **Bold**` (bold only), later in a list | A display-only card titled with the bold text. |
 | `- plain text` | A display-only **note card** (rounded border). In the overview it shows a distinct note marker rather than a task circle, so information reads apart from steps. |
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |
@@ -272,7 +272,7 @@ Finer points:
   a dim `↩`. A row without it ends a real line, so a long command can't be
   mistaken for two. Copying (`y` or a click) still gives the original text.
 - **Copying (`y`)** copies a task's command — a single inline `` `code` `` span
-  or a single fenced (or indented) block. When there are several, each is numbered on the
+  in the body (code inside the bold card title doesn't count) or a single fenced (or indented) block. When there are several, each is numbered on the
   card and `y` then a digit copies that one. Fenced blocks take priority: if a
   task has any, only they are numbered, and its inline spans can be copied by
   clicking them. A command containing control
@@ -748,8 +748,10 @@ a row to highlight it and click it again to jump there.
 ### Clipboard
 
 `y` copies a task's command. If the task has a single inline `` `code` ``
-span or a single fenced code block, that content is copied; if there is none,
-nothing is copied and the status bar says so. If there are several, `y` asks
+span in its body or a single fenced code block, that content is copied; if there is none,
+nothing is copied and the status bar says so. Inline code inside the bold
+card title is not a command: it shows as plain title text, so `y` and
+`--auto-copy` ignore it. If there are several, `y` asks
 which (see below). Copy uses
 the system clipboard when available and otherwise emits an OSC 52 escape,
 which travels over SSH to your local terminal emulator (kitty, alacritty,

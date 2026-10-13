@@ -1432,7 +1432,32 @@ fn bold_only_first_bullet_with_inline_command_is_a_card() {
     assert_eq!(list.items.len(), 2);
     let note = &list.items[0];
     assert_eq!(note.header.as_deref(), Some("Run fix-perms first"));
-    assert_eq!(note.code_spans, vec!["fix-perms".to_string()]);
+    assert!(note.code_spans.is_empty());
+}
+
+#[test]
+fn code_in_the_title_is_not_a_copy_candidate_beside_a_body_command() {
+    let document = parse("## S\n\n- [ ] **Restart `svc`** with `restart-svc now`\n");
+    let item = &document.lists[0].items[0];
+    assert_eq!(item.header.as_deref(), Some("Restart svc"));
+    assert_eq!(item.code_spans, vec!["restart-svc now".to_string()]);
+    assert_eq!(
+        crate::clipboard::candidates(item),
+        &["restart-svc now".to_string()]
+    );
+}
+
+#[test]
+fn code_only_in_the_title_leaves_nothing_to_copy() {
+    let document = parse("## S\n\n- [ ] **Run `build`** in the build directory\n");
+    let item = &document.lists[0].items[0];
+    assert_eq!(item.header.as_deref(), Some("Run build"));
+    assert_eq!(item.display_text, "in the build directory");
+    assert!(crate::clipboard::candidates(item).is_empty());
+    assert_eq!(
+        crate::clipboard::copy_item_code(item, false),
+        crate::clipboard::CopyOutcome::NoCandidates
+    );
 }
 
 #[test]
