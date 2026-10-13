@@ -4,6 +4,7 @@ pub(crate) use cards::HELP_SECTIONS;
 mod overview;
 mod statusbar;
 
+use std::borrow::Cow;
 use std::time::{Duration, SystemTime};
 
 use crossterm::event::{Event, KeyEventKind, MouseEventKind};
@@ -399,6 +400,32 @@ fn char_width(ch: char) -> usize {
     display_width(ch.encode_utf8(&mut buf))
 }
 
+/// The column interval a tab in a command advances to on a card.
+const TAB_WIDTH: usize = 4;
+
+/// `text` with every tab expanded to spaces up to the next `TAB_WIDTH` stop,
+/// counted from the start of `text`. The terminal never draws a tab (ratatui
+/// drops control characters), so commands are expanded for display only;
+/// the copied text keeps the real tabs.
+fn expand_tabs(text: &str) -> Cow<'_, str> {
+    if !text.contains('\t') {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + TAB_WIDTH);
+    let mut col = 0;
+    for ch in text.chars() {
+        if ch == '\t' {
+            let n = TAB_WIDTH - col % TAB_WIDTH;
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push(ch);
+            col += char_width(ch);
+        }
+    }
+    Cow::Owned(out)
+}
+
 /// The byte index splitting off the longest prefix of `text` that fits in
 /// `width` cells — but always at least one character, so a glyph wider than
 /// the whole budget still makes progress instead of looping forever.
@@ -614,6 +641,19 @@ mod tests {
     #[test]
     fn tab_budgets_count_wide_glyphs_as_two_cells() {
         assert_eq!(fit_tab_titles(&["漢字"], 100).unwrap(), vec![4]);
+    }
+
+    #[test]
+    fn expand_tabs_advances_to_the_next_stop() {
+        assert!(matches!(expand_tabs("no tabs"), Cow::Borrowed("no tabs")));
+        assert_eq!(expand_tabs("\tx"), "    x");
+        assert_eq!(expand_tabs("ab\tc"), "ab  c");
+        assert_eq!(expand_tabs("abcd\te"), "abcd    e");
+        assert_eq!(
+            expand_tabs("漢\tx"),
+            "漢  x",
+            "a wide glyph counts two cells"
+        );
     }
 
     #[test]

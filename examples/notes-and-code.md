@@ -4,6 +4,8 @@
 
 <!-- markdownlint-disable MD034 -- one task deliberately uses a bare URL, to show it is a link too -->
 
+<!-- markdownlint-disable MD010 -- one fenced block is deliberately tab-indented, to show tabs render as indentation -->
+
 Non-task content and the ways code is handled.
 
 ## Reference
@@ -44,6 +46,16 @@ Non-task content and the ways code is handled.
   ```sh
   clear-cache --path /var/lib/example-app/cache/sessions --older-than 7d
   restart-service example-app --graceful --wait-for-health-checks
+  ```
+
+- [ ] A task with a tab-indented heredoc — the tabs show as indentation on
+  the card, and `y` still copies the real tabs that `<<-` strips:
+
+  ```sh
+  cat <<-EOF > example.conf
+  	listen 8080
+  		workers 4
+  	EOF
   ```
 
 - [ ] A task with two commands `first` and `second` — each gets a `[1]`/`[2]`
