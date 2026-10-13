@@ -205,7 +205,7 @@ How each piece maps to the UI:
 
 | Markdown | How it's shown |
 | ---------- | ---------------- |
-| `# Heading` | **Document title**, in the title bar beside the filename. The first `# H1` wins; with no H1, a bold-red **"Missing document title"** stands in. |
+| `# Heading` | **Document title**, in the title bar beside the filename. The first `# H1` wins; with no H1, a title made from the filename stands in (`release-checklist.md` shows **Release Checklist**). |
 | `## Heading` | A **list**: its title (the **list header**) appears above the cards and in the overview, and is jumpable with `1`–`9` (and in a dedicated list-tab row on narrow terminals). |
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. An uppercase `[X]` counts as done too; it keeps its casing until toggled, and is written back as `[x]`. |

@@ -221,21 +221,18 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(Line::from(right_spans)), right_area);
 
     // Document title: the file's first `# H1`, primary; the filename is
-    // kept as a dim secondary. With no H1, a bold-red placeholder stands in.
-    let title_span = match &state.document.title {
-        Some(title) => Span::styled(
-            format!(" {} {title}", icons.file),
-            Style::default()
-                .fg(state.palette.current)
-                .add_modifier(Modifier::BOLD),
-        ),
-        None => Span::styled(
-            format!(" {} Missing document title", icons.file),
-            Style::default()
-                .fg(state.palette.error)
-                .add_modifier(Modifier::BOLD),
-        ),
+    // kept as a dim secondary. With no H1, a title derived from the file
+    // stem stands in, styled the same, since a missing H1 is not an error.
+    let title = match &state.document.title {
+        Some(title) => Cow::Borrowed(title.as_str()),
+        None => Cow::Owned(crate::scaffold::derive_title(&state.document.file_path)),
     };
+    let title_span = Span::styled(
+        format!(" {} {title}", icons.file),
+        Style::default()
+            .fg(state.palette.current)
+            .add_modifier(Modifier::BOLD),
+    );
     // The filename keeps up to `FILENAME_MIN_WIDTH` columns however long the
     // title is, since it is the only thing naming the open file; the title
     // takes the rest and ends in `…` when cut. One column stays free so the
@@ -885,7 +882,7 @@ mod tests {
         let document = Document {
             file_path: PathBuf::from("render-test.md"),
             // A short H1 title keeps width-sensitive tab tests stable (the
-            // long "Missing document title" placeholder would eat columns).
+            // stem-derived fallback title would eat more columns).
             title: Some("Doc".to_string()),
             has_default_list: false,
             lists,
@@ -1320,26 +1317,21 @@ mod tests {
     }
 
     #[test]
-    fn title_bar_shows_missing_title_placeholder_in_red_bold() {
-        // With no H1, a bold-red placeholder stands in.
+    fn title_bar_without_h1_shows_title_derived_from_filename_not_an_error() {
         let mut state = sample_state();
         state.document.title = None;
+        state.document.file_path = PathBuf::from("release-checklist.md");
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|f| render(f, &mut state)).unwrap();
         let buffer = terminal.backend().buffer().clone();
-        // Collect the red+bold cells on the title row (row 0).
-        let red_bold: String = (0..100)
-            .map(|x| &buffer[(x, 0)])
-            .filter(|c| {
-                c.style().fg == Some(state.palette.error)
-                    && c.style().add_modifier.contains(Modifier::BOLD)
-            })
-            .map(|c| c.symbol())
-            .collect();
-        assert!(
-            red_bold.contains("Missing document title"),
-            "placeholder is red + bold: {red_bold:?}"
-        );
+        let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(row.contains("Release Checklist"), "derived title: {row:?}");
+        assert!(row.contains("release-checklist.md"), "filename: {row:?}");
+        assert!(!row.contains("Missing document title"), "{row:?}");
+        let error_cells = (0..100)
+            .filter(|&x| buffer[(x, 0)].style().fg == Some(state.palette.error))
+            .count();
+        assert_eq!(error_cells, 0, "no error-colored text in the title bar");
     }
 
     /// Row index of the first bold row, in the given `color`, containing

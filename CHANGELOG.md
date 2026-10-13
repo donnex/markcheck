@@ -105,6 +105,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A checklist without a `# Heading` at the top now shows a title made from
+  its filename in the title bar (`release-checklist.md` reads "Release
+  Checklist"). It used to show a bold red "Missing document title" for the
+  whole session, in the colour reserved for errors, although a file with no
+  top-level heading is perfectly valid. (#86)
+
 - Checking a task with `Space` or `Enter` now moves on to the next task that
   is still open, skipping tasks already done and wrapping back to an open one
   earlier in the list. It used to move to the adjacent item even when that
