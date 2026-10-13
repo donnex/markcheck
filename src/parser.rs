@@ -701,7 +701,15 @@ impl<'a> ParseState<'a> {
 }
 
 pub fn parse_document(path: PathBuf) -> anyhow::Result<Document> {
-    let raw = fs::read_to_string(&path)?;
+    let raw = fs::read_to_string(&path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::InvalidData {
+            anyhow::Error::new(err).context(
+                "the file is not valid UTF-8 (markcheck reads UTF-8 files; convert it with e.g. iconv)",
+            )
+        } else {
+            anyhow::Error::new(err)
+        }
+    })?;
     let document = parse_source(&raw, path);
     Ok(document)
 }
@@ -1042,7 +1050,9 @@ mod tests {
         std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
         let result = parse_document(path.clone());
         let _ = std::fs::remove_file(&path);
-        assert!(result.is_err(), "non-UTF-8 input fails to load, not panics");
+        let message = format!("{:#}", result.expect_err("non-UTF-8 input fails to load"));
+        assert!(message.contains("not valid UTF-8"), "{message}");
+        assert!(message.contains("iconv"), "names the fix: {message}");
     }
 
     #[test]

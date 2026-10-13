@@ -13,7 +13,7 @@ mod ui;
 mod watcher;
 mod writer;
 
-use std::io;
+use std::io::{self, IsTerminal};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
@@ -78,13 +78,27 @@ fn main() -> anyhow::Result<()> {
             .with_context(|| format!("cannot resolve path: {}", file.display()))?;
         (resolved, false)
     };
-    let document = parser::parse_document(file_path)?;
+    let shown_path = file_path.display().to_string();
+    let document =
+        parser::parse_document(file_path).with_context(|| format!("cannot read {shown_path}"))?;
 
     // The parser drops lists without checklist items, so no lists at all
     // means the file has nothing to work through.
     if document.lists.is_empty() {
-        eprintln!("No checklist items found in file.");
+        eprintln!(
+            "No checklist items found in {shown_path}.\n\
+             markcheck works through task items like `- [ ] step`; lists without checkboxes are skipped."
+        );
         return Ok(());
+    }
+
+    // Checked before anything with side effects (e.g. git-sync's catch-up
+    // push): without it, raw mode fails with a bare "No such device or
+    // address" that names neither the file nor the cause.
+    if !io::stdout().is_terminal() {
+        anyhow::bail!(
+            "cannot open {shown_path}: markcheck is interactive and needs a terminal (stdout is not a TTY)"
+        );
     }
 
     // Warn *before* the first write, while quitting still costs nothing: a
@@ -148,8 +162,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mouse = settings.mouse;
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
+        .context("cannot set up the terminal (markcheck is interactive)")?;
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
@@ -365,8 +380,9 @@ where
     let status = command.arg(&state.document.file_path).status();
 
     // Restore the terminal regardless of how the editor fared.
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
+        .context("cannot set up the terminal (markcheck is interactive)")?;
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
@@ -399,8 +415,9 @@ where
 
     let outcome = stop_self();
 
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
+        .context("cannot set up the terminal (markcheck is interactive)")?;
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }

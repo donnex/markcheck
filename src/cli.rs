@@ -22,7 +22,10 @@ const VERSION: &str = concat!(
 #[command(
     name = "markcheck",
     about = "Pilot-checklist TUI for Markdown runbooks",
-    version = VERSION
+    version = VERSION,
+    after_help = "Defaults for the flags above can be set in the config file \
+                  $XDG_CONFIG_HOME/markcheck/config.toml \
+                  (or ~/.config/markcheck/config.toml when XDG_CONFIG_HOME is unset)."
 )]
 pub struct Cli {
     /// Path to the Markdown file (omit when using --new)
