@@ -229,9 +229,28 @@ struct ItemBuilder {
     /// `Some((url, text))` while inside a link: the destination plus the link
     /// text accumulated so far; flushed to a `BodySpan::Link` on link end.
     link: Option<(String, String)>,
+    /// Set at a block boundary or dropped HTML tag inside the item, so the
+    /// next run is separated from the text before it instead of fused onto it.
+    pending_separator: bool,
 }
 
 impl ItemBuilder {
+    fn mark_boundary(&mut self) {
+        self.pending_separator = true;
+    }
+
+    /// Emits the space owed by [`Self::mark_boundary`], outside any link so
+    /// it never becomes part of the link text.
+    fn flush_separator(&mut self) {
+        if std::mem::take(&mut self.pending_separator)
+            && !self.text.is_empty()
+            && !self.text.ends_with(char::is_whitespace)
+        {
+            self.text.push(' ');
+            self.body.push(BodySpan::Text(" ".to_string()));
+        }
+    }
+
     /// A leading bold-only run is the card title; a bold run anywhere else
     /// is inline strong styling in the body.
     fn start_strong(&mut self) {
@@ -252,6 +271,7 @@ impl ItemBuilder {
     }
 
     fn start_link(&mut self, url: &str) {
+        self.flush_separator();
         if !self.capturing_header {
             self.link = Some((url.to_string(), String::new()));
         }
@@ -266,6 +286,7 @@ impl ItemBuilder {
     /// Link text still flows into `text` (and thus `display_text`) so search
     /// matches it.
     fn push_text(&mut self, text: &str) {
+        self.flush_separator();
         if self.capturing_header {
             self.header.push_str(text);
         } else if let Some((_, link_text)) = &mut self.link {
@@ -301,6 +322,7 @@ impl ItemBuilder {
     }
 
     fn push_code(&mut self, text: &str) {
+        self.flush_separator();
         if let Some((_, link_text)) = &mut self.link {
             link_text.push_str(text);
             self.text.push_str(text);
@@ -489,6 +511,10 @@ impl<'a> ParseState<'a> {
             Event::Text(text) => self.on_text(&text),
             Event::SoftBreak | Event::HardBreak => self.on_break(),
             Event::Code(text) => self.on_code(&text),
+            Event::Start(Tag::Paragraph)
+            | Event::End(TagEnd::Paragraph)
+            | Event::Html(_)
+            | Event::InlineHtml(_) => self.with_item(ItemBuilder::mark_boundary),
             _ => {}
         }
     }
@@ -554,6 +580,7 @@ impl<'a> ParseState<'a> {
     fn on_list_end(&mut self) {
         self.list_depth = self.list_depth.saturating_sub(1);
         if self.list_depth > 0 {
+            self.with_item(ItemBuilder::mark_boundary);
             return;
         }
         let mut items = std::mem::take(&mut self.current_list_items);
@@ -624,6 +651,7 @@ impl<'a> ParseState<'a> {
         let content = strip_trailing_newline(content);
         if let Some(item) = self.item_stack.last_mut() {
             item.code_blocks.push(content);
+            item.mark_boundary();
         } else if fenced && self.attach_fence_to_last_item {
             self.attach_trailing_fence(content);
         }
@@ -1236,6 +1264,59 @@ mod tests {
         let document = parse("## S\n\n- [ ] alpha beta\n  gamma delta\n");
         let item = &document.lists[0].items[0];
         assert_eq!(item.display_text, "alpha beta gamma delta");
+    }
+
+    #[test]
+    fn second_paragraph_is_separated_from_the_first() {
+        let document = parse("## S\n\n- [ ] Restart the service\n\n  Then check `status`\n");
+        let item = &document.lists[0].items[0];
+        assert_eq!(item.display_text, "Restart the service Then check status");
+        assert_eq!(
+            item.body,
+            vec![
+                BodySpan::Text("Restart the service".to_string()),
+                BodySpan::Text(" ".to_string()),
+                BodySpan::Text("Then check ".to_string()),
+                BodySpan::Code("status".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn paragraph_after_a_bold_header_gets_no_leading_space() {
+        let document = parse("## S\n\n- [ ] **Title**\n\n  body text\n");
+        let item = &document.lists[0].items[0];
+        assert_eq!(item.header.as_deref(), Some("Title"));
+        assert_eq!(item.body, vec![BodySpan::Text("body text".to_string())]);
+    }
+
+    #[test]
+    fn inline_html_tag_is_treated_as_a_space() {
+        let document = parse("## S\n\n- [ ] line one<br>line two\n");
+        assert_eq!(document.lists[0].items[0].display_text, "line one line two");
+    }
+
+    #[test]
+    fn separator_before_a_link_stays_out_of_the_link_text() {
+        let document = parse("## S\n\n- [ ] see<br>[docs](https://example.com)\n");
+        let item = &document.lists[0].items[0];
+        assert_eq!(item.display_text, "see docs");
+        assert_eq!(
+            item.body.last(),
+            Some(&BodySpan::Link {
+                text: "docs".to_string(),
+                url: "https://example.com".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn text_after_a_tight_nested_fence_or_list_is_separated() {
+        let fence = parse("## S\n\n- [ ] before\n  ```\n  cmd\n  ```\n  after\n");
+        assert_eq!(fence.lists[0].items[0].display_text, "before after");
+        let nested = parse("## S\n\n- [ ] parent\n\n  - [ ] child\n\n  tail\n");
+        let parent = &nested.lists[0].items[0];
+        assert_eq!(parent.display_text, "parent tail");
     }
 
     #[test]

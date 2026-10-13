@@ -2015,6 +2015,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn body_lines_keep_a_paragraph_separator_between_words() {
+        let item = body_item(
+            vec![
+                BodySpan::Text("Restart the service".to_string()),
+                BodySpan::Text(" ".to_string()),
+                BodySpan::Text("Then check".to_string()),
+            ],
+            vec![],
+            "Restart the service Then check",
+        );
+        let text: String = body_lines(&item, 40, code_bg(Color::Magenta))
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect();
+        assert!(text.contains("service Then"), "got {text:?}");
+        assert!(!text.contains("serviceThen"), "got {text:?}");
+    }
+
     /// Every (text, modifiers) pair across all lines, for inline-style
     /// assertions (emphasis/strong/strikethrough/link).
     fn span_mods(lines: &[Line]) -> Vec<(String, Modifier)> {

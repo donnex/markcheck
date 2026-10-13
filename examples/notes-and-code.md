@@ -62,6 +62,10 @@ Non-task content and the ways code is handled.
   continued row ending in a dim `↩`, and a click on any of them copies it whole
 - [ ] A task with *emphasis*, mid-line **bold**, and ~~struck-through~~ text to
   show inline styling in the card body
+- [ ] A task whose text runs on into a second paragraph
+
+  Then carries on here — the two paragraphs read as one flowing body, with a
+  space between them rather than the last and first words run together
 - [ ] A task in wide (two-column) characters wraps by width instead of running
   off the card: 本番環境に適用する前に、ステージング環境で変更内容をすべて確認し、ログにエラーが出ていないことを確かめてください。
 - [ ] Open the [project runbook](https://example.com/runbook) with `o` — the
