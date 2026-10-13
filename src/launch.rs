@@ -5,6 +5,8 @@
 //! stays in `main.rs`.
 
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
+use std::time::Duration;
 
 /// The platform default opener when `$BROWSER` is unset or unusable: `open` on
 /// macOS, `xdg-open` elsewhere.
@@ -119,6 +121,59 @@ pub fn resolve_opener(
         candidates.push((fallback.to_string(), vec![url.to_string()]));
     }
     (candidates, warning)
+}
+
+/// Whether `o` has nowhere to send a link: no usable `$BROWSER` entry and,
+/// outside macOS, no graphical session (`$DISPLAY` and `$WAYLAND_DISPLAY`
+/// both unset or empty) — typically an SSH login on a server. The platform
+/// opener can't show anything there, so the link is copied instead.
+pub fn no_browser_available(
+    browser: Option<&str>,
+    display: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
+    let is_set = |value: Option<&str>| value.is_some_and(|v| !v.trim().is_empty());
+    let browser_set = browser
+        .unwrap_or_default()
+        .split(':')
+        .any(|entry| !entry.trim().is_empty());
+    !cfg!(target_os = "macos") && !browser_set && !is_set(display) && !is_set(wayland_display)
+}
+
+/// A command's basename, for status messages: `/usr/bin/xdg-open` → `xdg-open`.
+pub fn program_name(program: &str) -> &str {
+    Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(program)
+}
+
+/// How long after starting an opener a failed exit is still reported. An
+/// opener that hands off to a browser exits at once; one that *is* the
+/// browser can run for hours, and its eventual exit says nothing about the
+/// link.
+pub const OPENER_FAILURE_WINDOW: Duration = Duration::from_secs(10);
+
+/// The sticky message for an opener that failed to open the link, or `None`
+/// when it succeeded or ran past `OPENER_FAILURE_WINDOW`.
+pub fn opener_failure_message(
+    program: &str,
+    outcome: &std::io::Result<ExitStatus>,
+    elapsed: Duration,
+) -> Option<String> {
+    if elapsed > OPENER_FAILURE_WINDOW {
+        return None;
+    }
+    let name = program_name(program);
+    let what = match outcome {
+        Ok(status) if status.success() => return None,
+        Ok(status) => match status.code() {
+            Some(code) => format!("{name} exited with code {code}"),
+            None => format!("{name} was stopped ({status})"),
+        },
+        Err(err) => format!("couldn't wait for {name}: {err}"),
+    };
+    Some(format!("Couldn't open link ({what})"))
 }
 
 /// `$VISUAL`, then `$EDITOR`, then `vi`, shell-word-split so
@@ -285,8 +340,9 @@ pub fn startup_warning(
 #[cfg(test)]
 mod tests {
     use super::{
-        GitSyncRequest, editor_line_args, expand_tilde, git_sync_path_matches, git_sync_request,
-        git_sync_warning, resolve_editor, resolve_opener, startup_message, startup_warning,
+        GitSyncRequest, OPENER_FAILURE_WINDOW, editor_line_args, expand_tilde,
+        git_sync_path_matches, git_sync_request, git_sync_warning, no_browser_available,
+        opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
         watch_warning,
     };
     use std::path::{Path, PathBuf};
@@ -297,6 +353,51 @@ mod tests {
         candidates.len() == 1
             && (candidates[0].0 == "xdg-open" || candidates[0].0 == "open")
             && candidates[0].1 == vec![URL.to_string()]
+    }
+
+    #[test]
+    fn no_browser_only_without_browser_and_without_a_graphical_session() {
+        let headless = !cfg!(target_os = "macos");
+        assert_eq!(no_browser_available(None, None, None), headless);
+        assert_eq!(
+            no_browser_available(Some(" : "), Some(""), Some(" ")),
+            headless
+        );
+        assert!(!no_browser_available(Some("w3m"), None, None));
+        assert!(!no_browser_available(None, Some(":0"), None));
+        assert!(!no_browser_available(None, None, Some("wayland-0")));
+    }
+
+    #[test]
+    fn opener_failure_reports_a_quick_non_zero_exit_only() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+        use std::time::Duration;
+
+        let quick = Duration::from_millis(50);
+        let ok = Ok(ExitStatus::from_raw(0));
+        assert_eq!(opener_failure_message("xdg-open", &ok, quick), None);
+
+        let failed = Ok(ExitStatus::from_raw(3 << 8));
+        assert_eq!(
+            opener_failure_message("/usr/bin/xdg-open", &failed, quick).as_deref(),
+            Some("Couldn't open link (xdg-open exited with code 3)")
+        );
+        let late = OPENER_FAILURE_WINDOW + Duration::from_secs(1);
+        assert_eq!(opener_failure_message("xdg-open", &failed, late), None);
+
+        let killed = Ok(ExitStatus::from_raw(9));
+        let message = opener_failure_message("w3m", &killed, quick).unwrap();
+        assert!(
+            message.starts_with("Couldn't open link (w3m was stopped ("),
+            "{message}"
+        );
+
+        let err = Err(std::io::Error::other("boom"));
+        assert_eq!(
+            opener_failure_message("w3m", &err, quick).as_deref(),
+            Some("Couldn't open link (couldn't wait for w3m: boom)")
+        );
     }
 
     #[test]

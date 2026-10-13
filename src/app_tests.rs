@@ -1086,11 +1086,9 @@ fn o_requests_opening_a_single_link_and_reports_it() {
         state.take_link_open_request().as_deref(),
         Some("https://example.com/a")
     );
-    assert!(
-        state
-            .status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("Opening"))
+    assert_eq!(
+        state.status_message, None,
+        "the main loop reports the outcome once the opener has run"
     );
 }
 
@@ -1212,11 +1210,9 @@ fn o_then_a_digit_opens_that_link_not_a_list() {
         state.take_link_open_request().as_deref(),
         Some("https://example.com/b")
     );
-    assert!(
-        state
-            .status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("Opening"))
+    assert_eq!(
+        state.status_message, None,
+        "the main loop reports the outcome once the opener has run"
     );
 }
 
@@ -4721,5 +4717,65 @@ fn bound_ctrl_chords_still_reach_their_screen() {
         state.document.lists[0].items[0].kind,
         ItemKind::Checkbox(TaskState::Done),
         "Ctrl-R redoes from a completion screen"
+    );
+}
+
+#[test]
+fn report_link_sent_names_the_opener_as_an_attempt() {
+    let mut state = AppState::new(single_item_document(item_with_links(
+        1,
+        &["https://example.com/a"],
+    )));
+    state.report_link_sent("/usr/bin/xdg-open", "https://example.com/a");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sent to xdg-open: https://example.com/a")
+    );
+    assert!(!state.status_is_error);
+}
+
+#[test]
+fn copy_link_instead_reports_each_clipboard_outcome() {
+    let url = "https://example.com/a";
+    let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));
+
+    crate::clipboard::fake::with(|c| {
+        c.system_available = true;
+        c.system_attempts.clear();
+    });
+    state.copy_link_instead(url);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No browser here — link copied to clipboard")
+    );
+    assert!(!state.status_is_error);
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![(url.to_string(), false)]);
+    });
+
+    crate::clipboard::fake::with(|c| c.system_available = false);
+    state.copy_link_instead(url);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No browser here — link sent to clipboard (OSC 52)")
+    );
+
+    state.copy_link_instead("https://example.com/\u{7}");
+    assert!(state.status_is_error);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("hidden control characters"))
+    );
+
+    let huge = format!("https://example.com/{}", "a".repeat(200_000));
+    state.copy_link_instead(&huge);
+    assert!(state.status_is_error);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("too large"))
     );
 }

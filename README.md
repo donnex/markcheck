@@ -255,7 +255,17 @@ Finer points:
   `open`). `$BROWSER` follows the usual convention: a colon-separated list of
   commands tried in order until one starts (`BROWSER=firefox:w3m`), where `%s`
   marks the URL's place (`BROWSER="firefox --new-tab %s"`, `%%` for a literal
-  `%`) and the URL is appended when there is no `%s`. With exactly one link, `o` opens it. With **several**, the URLs stay
+  `%`) and the URL is appended when there is no `%s`. The status bar shows
+  `Sent to <program>: <url>` once the opener starts, and if it exits with an
+  error within a few seconds (no browser it can use, say) a sticky
+  `Couldn't open link (<program> exited with code N)` replaces it. With
+  exactly one link, `o` opens it.
+- **No browser here (headless / SSH):** on Linux, when `$BROWSER` is unset
+  and there is no graphical session (neither `$DISPLAY` nor
+  `$WAYLAND_DISPLAY` is set), `o` doesn't try to launch anything. It copies
+  the link to the clipboard instead — over SSH that reaches your local
+  terminal through OSC 52 — and says `No browser here — link copied to
+  clipboard`. Set `$BROWSER` to force an opener anyway. With **several**, the URLs stay
   listed below the card and the status bar shows `press 1–N to open · esc
   cancels` — press the number (matching the card's `[1]`/`[2]` markers) to open
   that one, or Esc to cancel. With no link, the status bar says so.

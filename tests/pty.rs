@@ -1870,6 +1870,59 @@ fn open_link_tries_each_browser_in_a_colon_list_with_url_placeholder() {
 }
 
 #[test]
+fn open_link_reports_an_opener_that_exits_with_an_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let browser = unique_path("failingbrowser");
+    std::fs::write(&browser, "#!/bin/sh\nexit 3\n").unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let md = unique_path("linkfailmd");
+    write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");
+
+    let ok = drive_args(
+        &md,
+        &[],
+        &[("BROWSER", browser.to_str().unwrap())],
+        &[
+            Step::Key("o"),
+            Step::WaitForScreen("exited with code 3"),
+            Step::Key("q"),
+        ],
+    );
+    assert!(
+        ok,
+        "the failed opener is reported, then the binary exits cleanly"
+    );
+
+    std::fs::remove_file(&md).ok();
+    std::fs::remove_file(&browser).ok();
+}
+
+#[test]
+fn open_link_without_a_browser_or_display_copies_the_link_instead() {
+    let md = unique_path("linkheadlessmd");
+    write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");
+
+    let ok = drive_args(
+        &md,
+        &[],
+        &[("BROWSER", ""), ("DISPLAY", ""), ("WAYLAND_DISPLAY", "")],
+        &[
+            Step::Key("o"),
+            Step::WaitForScreen("No browser here"),
+            Step::Key("q"),
+        ],
+    );
+    assert!(
+        ok,
+        "the link is copied with a message, then the binary exits"
+    );
+
+    std::fs::remove_file(&md).ok();
+}
+
+#[test]
 fn new_flag_creates_starter_checklist_and_opens_it() {
     let path = unique_path("new-flag").with_extension("md");
     assert!(!path.exists(), "test path must not already exist yet");

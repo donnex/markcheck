@@ -223,8 +223,13 @@ where
     // only happens when something on screen may have changed.
     let mut dirty = true;
     let mut label_due: Option<SystemTime> = None;
+    let (opener_failures, opener_failure_rx) = std::sync::mpsc::channel();
     loop {
         dirty |= reload.check(state, Instant::now());
+        while let Ok(message) = opener_failure_rx.try_recv() {
+            state.set_error(message);
+            dirty = true;
+        }
         // Drain a finished background sync before requesting the next
         // one, so a request queued during the finished run's `pending` slot
         // (see `GitSync::poll`) is already spawned by the time we check
@@ -296,7 +301,7 @@ where
         }
 
         if let Some(url) = state.take_link_open_request() {
-            open_link(&url, state);
+            open_link(&url, state, &opener_failures);
             dirty = true;
         }
 
@@ -334,16 +339,24 @@ fn wait_for_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
 }
 
 /// Opens `url` without suspending the TUI, trying each resolved opener in
-/// turn until one spawns. No shell, discarded output, and the child is
-/// reaped on a detached thread.
-fn open_link(url: &str, state: &mut AppState) {
+/// turn until one spawns. No shell and discarded output; the child is reaped
+/// on a detached thread, which sends a quick failed exit to `failures`. With
+/// no browser to send to at all (a headless session), copies the link instead.
+fn open_link(url: &str, state: &mut AppState, failures: &std::sync::mpsc::Sender<String>) {
     use std::process::{Command, Stdio};
 
-    let (candidates, warning) =
-        launch::resolve_opener(std::env::var("BROWSER").ok().as_deref(), url);
-    if let Some(warning) = warning {
-        state.set_error(warning);
+    let browser = std::env::var("BROWSER").ok();
+    let display = std::env::var("DISPLAY").ok();
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+    if launch::no_browser_available(
+        browser.as_deref(),
+        display.as_deref(),
+        wayland_display.as_deref(),
+    ) {
+        state.copy_link_instead(url);
+        return;
     }
+    let (candidates, warning) = launch::resolve_opener(browser.as_deref(), url);
     let mut last_error = None;
     for (program, args) in &candidates {
         match Command::new(program)
@@ -354,8 +367,20 @@ fn open_link(url: &str, state: &mut AppState) {
             .spawn()
         {
             Ok(mut child) => {
+                state.report_link_sent(program, url);
+                if let Some(warning) = warning {
+                    state.set_error(warning);
+                }
+                let program = program.clone();
+                let failures = failures.clone();
+                let started = Instant::now();
                 std::thread::spawn(move || {
-                    let _ = child.wait();
+                    let outcome = child.wait();
+                    if let Some(message) =
+                        launch::opener_failure_message(&program, &outcome, started.elapsed())
+                    {
+                        let _ = failures.send(message);
+                    }
                 });
                 return;
             }
