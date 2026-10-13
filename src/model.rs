@@ -268,16 +268,95 @@ impl List {
                 }
             }
         }
-        if total == 0 {
-            None
-        } else if done == total {
-            Some(TaskState::Done)
-        } else if any_active {
-            Some(TaskState::Started)
-        } else {
-            None
-        }
+        aggregate_state(total, done, any_active)
     }
+
+    /// `parent_chain`'s last entry, `sublist_slot` and `info_parent_state` for
+    /// every item, in one linear pass instead of a scan per item, so the
+    /// overview stays linear on long or deeply nested lists.
+    pub fn item_links(&self) -> Vec<ItemLinks> {
+        let n = self.items.len();
+        let mut last_at_depth: Vec<Option<usize>> = Vec::new();
+        let mut open: Vec<usize> = Vec::new();
+        let mut subtree_end = vec![n; n];
+        let mut links = Vec::with_capacity(n);
+        let mut parents_so_far = 0;
+        // Prefix counts over checkbox items: (total, done, active).
+        let mut prefix = Vec::with_capacity(n + 1);
+        prefix.push((0usize, 0usize, 0usize));
+        for (i, item) in self.items.iter().enumerate() {
+            while let Some(&j) = open.last()
+                && self.items[j].depth >= item.depth
+            {
+                subtree_end[j] = i;
+                open.pop();
+            }
+            open.push(i);
+
+            let parent = item
+                .depth
+                .checked_sub(1)
+                .and_then(|d| last_at_depth.get(d).copied().flatten());
+            if last_at_depth.len() <= item.depth {
+                last_at_depth.resize(item.depth + 1, None);
+            }
+            last_at_depth[item.depth] = Some(i);
+
+            links.push(ItemLinks {
+                parent,
+                sublist_slot: parents_so_far,
+                info_state: None,
+            });
+            if self.has_children(i) {
+                parents_so_far += 1;
+            }
+
+            let (total, done, active) = *prefix.last().unwrap_or(&(0, 0, 0));
+            prefix.push(match item.kind {
+                ItemKind::Checkbox(TaskState::Done) => (total + 1, done + 1, active + 1),
+                ItemKind::Checkbox(TaskState::Started) => (total + 1, done, active + 1),
+                ItemKind::Checkbox(TaskState::NotStarted) => (total + 1, done, active),
+                ItemKind::DisplayOnly => (total, done, active),
+            });
+        }
+        for (i, item) in self.items.iter().enumerate() {
+            if matches!(item.kind, ItemKind::DisplayOnly) {
+                let (end_total, end_done, end_active) = prefix[subtree_end[i]];
+                let (start_total, start_done, start_active) = prefix[i + 1];
+                links[i].info_state = aggregate_state(
+                    end_total - start_total,
+                    end_done - start_done,
+                    end_active > start_active,
+                );
+            }
+        }
+        links
+    }
+}
+
+/// `info_parent_state`'s rule over a sub-list's checkbox counts.
+fn aggregate_state(total: usize, done: usize, any_active: bool) -> Option<TaskState> {
+    if total == 0 {
+        None
+    } else if done == total {
+        Some(TaskState::Done)
+    } else if any_active {
+        Some(TaskState::Started)
+    } else {
+        None
+    }
+}
+
+/// Per-item tree data from `List::item_links`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemLinks {
+    /// The last entry of `parent_chain`: the nearest preceding item one level
+    /// shallower.
+    pub parent: Option<usize>,
+    /// The list-local `sublist_slot` this item would have as a parent.
+    pub sublist_slot: usize,
+    /// `info_parent_state`.
+    pub info_state: Option<TaskState>,
 }
 
 #[derive(Debug, Clone)]
@@ -321,12 +400,6 @@ impl Document {
             .iter()
             .map(List::parent_count)
             .sum()
-    }
-
-    /// The document-wide color slot for a sub-list, so neighbouring sub-lists
-    /// never share a guide color until the cycle wraps.
-    pub fn sublist_slot(&self, list_index: usize, parent_index: usize) -> usize {
-        self.sublist_base(list_index) + self.lists[list_index].sublist_slot(parent_index)
     }
 }
 
@@ -1105,6 +1178,53 @@ mod tests {
             ],
         };
         assert_eq!(list.info_parent_state(0), Some(TaskState::Started));
+    }
+
+    #[test]
+    fn item_links_match_the_per_item_scans() {
+        use ItemKind::{Checkbox, DisplayOnly};
+        use TaskState::{Done, NotStarted, Started};
+        // Well-formed nesting plus malformed jumps (0 → 2, a shallower item
+        // between a parent and its child) and info parents in every state.
+        let shapes = [
+            (0, DisplayOnly),
+            (1, Checkbox(Done)),
+            (2, DisplayOnly),
+            (3, Checkbox(Started)),
+            (1, Checkbox(NotStarted)),
+            (0, Checkbox(NotStarted)),
+            (2, DisplayOnly),
+            (3, Checkbox(Done)),
+            (1, DisplayOnly),
+            (0, DisplayOnly),
+            (1, Checkbox(NotStarted)),
+            (0, DisplayOnly),
+            (1, DisplayOnly),
+            (0, DisplayOnly),
+        ];
+        let list = List {
+            title: "L".to_string(),
+            banner: None,
+            items: shapes
+                .iter()
+                .enumerate()
+                .map(|(i, &(depth, kind))| item_at(i + 1, depth, kind))
+                .collect(),
+        };
+        let links = list.item_links();
+        assert_eq!(links.len(), list.items.len());
+        for (i, link) in links.iter().enumerate() {
+            let mut chain = Vec::new();
+            let mut up = link.parent;
+            while let Some(j) = up {
+                chain.push(j);
+                up = links[j].parent;
+            }
+            chain.reverse();
+            assert_eq!(chain, list.parent_chain(i), "chain of {i}");
+            assert_eq!(link.sublist_slot, list.sublist_slot(i), "slot of {i}");
+            assert_eq!(link.info_state, list.info_parent_state(i), "state of {i}");
+        }
     }
 
     #[test]

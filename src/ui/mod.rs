@@ -4,6 +4,7 @@ mod statusbar;
 
 use std::time::{Duration, SystemTime};
 
+use crossterm::event::{Event, KeyEventKind, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -439,6 +440,42 @@ fn relative_label(verb: &str, at: Option<SystemTime>, now: SystemTime) -> Option
         Some(format!("{verb} {secs}s ago"))
     } else {
         Some(format!("{verb} {}m ago", secs / 60))
+    }
+}
+
+/// When `relative_label` for `at` next reads differently: the next
+/// `UPDATE_LABEL_STEP_SECS` boundary, or its disappearance at
+/// `UPDATE_LABEL_LIFETIME`. `None` once it's gone for good.
+fn next_relative_label_change(at: Option<SystemTime>, now: SystemTime) -> Option<SystemTime> {
+    let at = at?;
+    let Ok(elapsed) = now.duration_since(at) else {
+        return Some(at);
+    };
+    if elapsed >= UPDATE_LABEL_LIFETIME {
+        return None;
+    }
+    let step = UPDATE_LABEL_STEP_SECS;
+    let next = Duration::from_secs((elapsed.as_secs() / step + 1) * step);
+    Some(at + next.min(UPDATE_LABEL_LIFETIME))
+}
+
+/// When the title bar's time-based labels next change on their own, so the
+/// event loop can skip redrawing an unchanged screen until then. `None` when
+/// nothing on screen is counting.
+pub fn next_label_change(state: &AppState, now: SystemTime) -> Option<SystemTime> {
+    let update = next_relative_label_change(state.last_update_at, now);
+    let sync = next_relative_label_change(state.git_sync.last_at, now);
+    update.into_iter().chain(sync).min()
+}
+
+/// Whether a terminal event can change what's on screen. Pointer motion
+/// (reported while mouse capture is on) and key releases do nothing, so the
+/// event loop skips the redraw for them.
+pub fn event_needs_redraw(event: &Event) -> bool {
+    match event {
+        Event::Key(key) => key.kind == KeyEventKind::Press,
+        Event::Mouse(mouse) => mouse.kind != MouseEventKind::Moved,
+        _ => true,
     }
 }
 
@@ -2199,6 +2236,117 @@ mod tests {
             state.palette.current,
             "test is only meaningful if the sub-list color differs from current"
         );
+    }
+
+    /// One full frame of a single list whose item `i` sits at `depth(i)`.
+    fn time_one_frame(count: usize, depth: impl Fn(usize) -> usize) -> Duration {
+        let items = (0..count)
+            .map(|i| {
+                let mut item = checkbox(i + 1, "task", i % 3 == 0);
+                item.depth = depth(i);
+                item
+            })
+            .collect();
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items,
+        }]);
+        state.current_item_index = count - 1;
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let start = std::time::Instant::now();
+        terminal.draw(|f| render(f, &mut state)).unwrap();
+        start.elapsed()
+    }
+
+    #[test]
+    fn rendering_stays_fast_on_large_and_deeply_nested_lists() {
+        // Before the overview's tree data was built in one pass, 2,000 items
+        // nested one level deeper each took over a second per frame in a
+        // release build. The bound is loose for unoptimized and instrumented
+        // builds; a regression to the per-item scans blows well past it.
+        let budget = Duration::from_millis(500);
+        let three_levels = time_one_frame(2000, |i| i % 3);
+        assert!(three_levels < budget, "three levels: {three_levels:?}");
+        let staircase = time_one_frame(2000, |i| i);
+        assert!(staircase < budget, "2,000 levels: {staircase:?}");
+    }
+
+    #[test]
+    fn next_label_change_follows_the_label_steps() {
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![checkbox(1, "a", false)],
+        }]);
+        let now = SystemTime::now();
+        assert_eq!(next_label_change(&state, now), None, "nothing counting");
+
+        let at = now - Duration::from_secs(7);
+        state.last_update_at = Some(at);
+        assert_eq!(
+            next_label_change(&state, now),
+            Some(at + Duration::from_secs(10)),
+            "next 5 s step"
+        );
+
+        state.git_sync.last_at = Some(now - Duration::from_secs(4));
+        assert_eq!(
+            next_label_change(&state, now),
+            Some(now + Duration::from_secs(1)),
+            "the sooner of the two labels"
+        );
+
+        state.git_sync.last_at = None;
+        let old = now - Duration::from_secs(118);
+        state.last_update_at = Some(old);
+        assert_eq!(
+            next_label_change(&state, now),
+            Some(old + UPDATE_LABEL_LIFETIME),
+            "the label's disappearance"
+        );
+
+        state.last_update_at = Some(now - UPDATE_LABEL_LIFETIME);
+        assert_eq!(next_label_change(&state, now), None, "already gone");
+
+        let future = now + Duration::from_secs(3);
+        state.last_update_at = Some(future);
+        assert_eq!(
+            next_label_change(&state, now),
+            Some(future),
+            "a clock step back waits for the stamp"
+        );
+    }
+
+    #[test]
+    fn only_events_that_can_change_the_screen_need_a_redraw() {
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+        };
+        let key = |kind| {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::NONE,
+                kind,
+                state: KeyEventState::NONE,
+            })
+        };
+        let mouse = |kind| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        assert!(event_needs_redraw(&key(KeyEventKind::Press)));
+        assert!(!event_needs_redraw(&key(KeyEventKind::Release)));
+        assert!(event_needs_redraw(&mouse(MouseEventKind::Down(
+            MouseButton::Left
+        ))));
+        assert!(event_needs_redraw(&mouse(MouseEventKind::ScrollDown)));
+        assert!(!event_needs_redraw(&mouse(MouseEventKind::Moved)));
+        assert!(event_needs_redraw(&Event::Resize(80, 24)));
     }
 
     #[test]

@@ -658,10 +658,13 @@ impl AppState {
 
     /// Clears an ephemeral status message once its deadline has passed;
     /// called each event-loop tick. Sticky messages (no expiry) are untouched.
-    pub fn expire_status(&mut self, now: SystemTime) {
-        if self.status_expiry.is_some_and(|exp| now >= exp) {
+    /// Returns whether a message was cleared, i.e. the screen needs a redraw.
+    pub fn expire_status(&mut self, now: SystemTime) -> bool {
+        let expired = self.status_expiry.is_some_and(|exp| now >= exp);
+        if expired {
             self.clear_status();
         }
+        expired
     }
 
     /// With `--auto-copy`, copy the current card's code when it has exactly

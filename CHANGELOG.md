@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a missing `⇅ git` in the title bar, which isn't shown at all on a narrow
   terminal. (#38)
 
+- Large and deeply nested checklists no longer make markcheck slow or
+  unresponsive. Drawing the overview panel took time that grew steeply with
+  how deeply items were nested — a file with a couple of thousand nested
+  levels took over a second per frame and stopped responding to keys — and
+  the whole screen was redrawn ten times a second even when nothing had
+  changed, and again for every mouse movement over the window. The overview
+  now takes time in proportion to the number of items, and the screen is
+  only redrawn after a key, click, resize, file change or sync result, or
+  when a message or "Updated … ago" label is due to change. (#39)
+
 - `--auto-copy` now also copies when you reach a task with `Tab`, `gg`,
   `G`, or `h`/`k` from the "All Tasks Complete" screen. Previously only
   some motions (such as `h`/`l`, the number keys and the `T` picker)
