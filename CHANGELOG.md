@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A list's warning banner (a bold-only first bullet) now comes only from a
+  list that has tasks. Previously a plain bullet list with no checkboxes
+  placed above the task list under the same heading, which markcheck drops
+  from the display, could still set the banner from its own bold line, or
+  stop the task list's bold first line from becoming the banner, turning it
+  into an empty note card instead. (#103)
+
 - When the editor opened with `e` exits with an error (as `:cq` in vim does
   to abort), markcheck still reloads your edits but no longer commits and
   pushes them with `--git-sync`, and the error stays in the status bar

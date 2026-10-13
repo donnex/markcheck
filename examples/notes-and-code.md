@@ -14,10 +14,6 @@ Non-task content and the ways code is handled.
 - A note with a command but no checkbox — you can copy it with `y`, but it is
   not a task and cannot be checked off: `restart-service example-service`
 
-> - [ ] A quoted example from another runbook, shown for reference only — a
->   blockquoted checkbox never becomes a live task
-> - [/] Neither does a quoted "started" marker — still just reference text
-
 - [ ] A task with a single inline command `apply-config --now`
 - [ ] **Restart the primary application service and confirm that every health check passes** —
   a card title too long for one row wraps inside the card instead of being cut
@@ -109,6 +105,10 @@ Non-task content and the ways code is handled.
   too, as on GitHub, so `o` opens it; the trailing full stop is left out
 - [ ] Mail the [on-call owner](mailto:oncall@example.com) with `o` — `mailto:`
   is a safe scheme, so this one opens in your mail client
+
+> - [ ] A quoted example from another runbook, shown for reference only — a
+>   blockquoted checkbox never becomes a live task
+> - [/] Neither does a quoted "started" marker — still just reference text
 
 ## Precondition with a command
 
