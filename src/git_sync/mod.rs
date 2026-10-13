@@ -26,6 +26,28 @@ use crate::model::{PendingSync, hash_bytes};
 /// Backoff between automatic push retries after `CommittedNotPushed`.
 const PUSH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
+/// The sticky status-bar message for an outcome polled while the TUI runs;
+/// `None` for the ones not worth interrupting the user for: a landed sync
+/// (the title bar's "Synced … ago" tag shows it), an ordinary no-op, and a
+/// retry giving up on a commit something else has already superseded.
+pub fn status_message(outcome: &SyncOutcome) -> Option<String> {
+    match outcome {
+        SyncOutcome::Synced | SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => None,
+        SyncOutcome::SkippedUntracked => {
+            Some("Git sync skipped: file is not tracked in git (run `git add` on it)".to_string())
+        }
+        SyncOutcome::CommittedNotPushed { message, .. } => Some(format!(
+            "Committed, not pushed: {message} (will keep retrying)"
+        )),
+        SyncOutcome::Failed(message) => Some(format!("Git sync failed: {message}")),
+        // The commit is still safely local and still armed, so say so rather
+        // than implying the change was lost.
+        SyncOutcome::RetryFailed(message) => {
+            Some(format!("Push retry failed: {message} (will keep retrying)"))
+        }
+    }
+}
+
 /// The line to print on stderr after quitting, for a final sync that didn't
 /// land cleanly: `last` is the last outcome seen while waiting, and
 /// `still_running` says the wait gave up before the worker finished. The TUI
@@ -667,6 +689,37 @@ mod tests {
         );
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn status_message_stays_quiet_for_a_landed_or_no_op_sync() {
+        assert_eq!(status_message(&SyncOutcome::Synced), None);
+        assert_eq!(status_message(&SyncOutcome::Skipped), None);
+        assert_eq!(status_message(&SyncOutcome::RetryAbandoned), None);
+    }
+
+    #[test]
+    fn status_message_names_each_problem() {
+        assert_eq!(
+            status_message(&SyncOutcome::SkippedUntracked).as_deref(),
+            Some("Git sync skipped: file is not tracked in git (run `git add` on it)")
+        );
+        assert_eq!(
+            status_message(&SyncOutcome::CommittedNotPushed {
+                message: "remote moved".into(),
+                commit: "abc".into(),
+            })
+            .as_deref(),
+            Some("Committed, not pushed: remote moved (will keep retrying)")
+        );
+        assert_eq!(
+            status_message(&SyncOutcome::Failed("hook said no".into())).as_deref(),
+            Some("Git sync failed: hook said no")
+        );
+        assert_eq!(
+            status_message(&SyncOutcome::RetryFailed("offline".into())).as_deref(),
+            Some("Push retry failed: offline (will keep retrying)")
+        );
     }
 
     #[test]
