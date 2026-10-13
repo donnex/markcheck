@@ -17,8 +17,8 @@ cargo test <test_name>                                             # single test
 cargo test -- --nocapture                                          # with debug output
 cargo fmt                                                          # format
 cargo clippy                                                       # lint
-cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'  # coverage summary
-cargo llvm-cov --html --ignore-filename-regex 'main\.rs'          # coverage HTML report
+cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs'  # coverage summary
+cargo llvm-cov --html --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs'          # coverage HTML report
 ```
 
 PTY integration tests (`tests/pty.rs`) require the binary to be built first — run `cargo build` before `cargo test`.
@@ -151,11 +151,12 @@ If a project has no CI workflow configured yet, suggest setting one up — don't
 - For a program a user runs directly, use color and clear presentation — structured formatting, tables, progress/status indicators, etc. — for its terminal output when it makes sense: status messages that should stand out (success/warning/error), progress, or tabular data. Skip it for something too small to warrant it, e.g. a program whose entire output is a single line.
 - Default to no comments in code — clear naming and control flow should carry the intent by themselves. Doc comments (`///`, `//!`), where the project requires them (e.g. via `#![warn(missing_docs)]`), are a separate, always-required matter, not part of this rule. Add a regular `//` comment only when the code is genuinely hard to follow without one: a non-obvious constraint, a workaround for a specific bug or quirk, or logic that isn't self-evident from reading it — in that case, add the comment rather than leaving a future reader to puzzle it out.
 - Use `cargo fmt` for formatting and `cargo clippy` for linting. Both must pass with no errors before committing.
-- Aim for high test coverage on every new feature or fix. This project's agreed threshold is **97%** region/line coverage (excluding `main.rs`, per the exclusion below) — keep coverage at or above it as code is added, rather than letting it slip. It's fine for genuinely untestable paths (e.g. something that can't run headless) to stay uncovered — note why with a comment at the untested site (e.g. "requires a live X11/Wayland session, not reachable headlessly") rather than forcing a brittle test or filing an issue for something with no real resolution.
+- Aim for high test coverage on every new feature or fix. This project's agreed threshold is **97%** region/line coverage of **production code** (excluding `main.rs` and all test code, per the exclusions below) — keep coverage at or above it as code is added, rather than letting it slip. It's fine for genuinely untestable paths (e.g. something that can't run headless) to stay uncovered — note why with a comment at the untested site (e.g. "requires a live X11/Wayland session, not reachable headlessly") rather than forcing a brittle test or filing an issue for something with no real resolution.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the `llvm-tools-preview` rustup component):
-  - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
-  - `cargo llvm-cov --html --ignore-filename-regex 'main\.rs'` — line-by-line HTML report
+  - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs'` — summary
+  - `cargo llvm-cov --html --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs'` — line-by-line HTML report
   - Exclude `main.rs` (or an equivalent thin entry-point file) from coverage accounting if it's mostly wiring that's better exercised by integration tests than unit tests.
+  - Keep test code out of the measurement: test code is executed by definition, so counting it inflates the figure. Each module's tests live in a sibling `<module>_tests.rs` file (`#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;`, not an inline `mod tests { ... }` block), and shared fixtures in `test_support.rs`, whose own tests may stay inline since the file is excluded whole; the ignore regex above excludes both.
 - UI/rendering tests should assert on rendered output content, not styling or presentation details, so tests survive cosmetic tweaks. Exception: when color or style *is* the feature under test — a state encoded in color rather than text (e.g. done/started/error rendering in a specific hue) — asserting on that styling is asserting on the actual behavior, not incidental presentation, so it's fine.
 - After making changes, run `cargo fmt` and `cargo clippy` and fix all findings before committing.
 - Run the full test suite (`cargo test`) before committing.
