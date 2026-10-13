@@ -1511,6 +1511,70 @@ fn git_sync_reports_when_the_file_is_untracked() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// `--git-sync` on a file outside any repository used to leave git-sync off
+/// with no cue but a missing title-bar section, which isn't drawn at all on
+/// a narrow terminal.
+#[test]
+fn git_sync_flag_outside_a_repo_says_why_it_is_off() {
+    let root = unique_path("gitsync-no-repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+
+    let ok = drive_args(
+        &path,
+        &["--git-sync"],
+        &[],
+        &[
+            Step::WaitForScreen("Git sync off: the file is not in a git repository"),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// A `~/...` entry is expanded against `$HOME`, as a shell would, and one
+/// that names nothing is reported instead of silently never matching.
+#[test]
+fn git_sync_paths_expands_tilde_and_reports_a_missing_entry() {
+    let home = unique_path("gitsync-tilde-home");
+    let work = home.join("checklists");
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    // Never `git add`ed, so a toggle's "skipped" message proves git-sync is on
+    // without needing a remote.
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+
+    let xdg_config_home = home.join("xdg-config");
+    std::fs::create_dir_all(xdg_config_home.join("markcheck")).unwrap();
+    std::fs::write(
+        xdg_config_home.join("markcheck").join("config.toml"),
+        "git_sync_paths = [\"~/checklsts\", \"~/checklists\"]\n",
+    )
+    .unwrap();
+
+    let ok = drive_args(
+        &path,
+        &[],
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("XDG_CONFIG_HOME", xdg_config_home.to_str().unwrap()),
+        ],
+        &[
+            Step::WaitForScreen("git_sync_paths: ~/checklsts does not exist"),
+            Step::Key(" "),
+            Step::WaitForScreen("Git sync skipped: file is not tracked in git"),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
 #[test]
 fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     // External review (twice): whether `main.rs` actually handles

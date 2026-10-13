@@ -97,12 +97,6 @@ fn main() -> anyhow::Result<()> {
     let foreign_owner = writer::foreign_owner(&document.file_path);
 
     let mut state = AppState::new(document);
-    if let Some(warning) = launch::startup_warning(hard_links, foreign_owner) {
-        state.set_error(warning);
-    }
-    if created_new {
-        state.set_status("Created new checklist".to_string());
-    }
     let settings = Settings::resolve(&cli, &config);
     if !settings.nerd_font {
         state.icons = IconSet::unicode();
@@ -117,15 +111,28 @@ fn main() -> anyhow::Result<()> {
     let watcher = FileWatcher::new(&state.document.file_path).ok();
 
     // Git-sync activates only if requested and `GitSync::detect` finds a work
-    // tree.
-    let git_sync_requested = launch::git_sync_requested(
+    // tree. Either half failing is reported rather than silently leaving it
+    // off: the user asked for it.
+    let request = launch::git_sync_request(
         cli.git_sync,
         config.git_sync_paths.as_deref(),
         &state.document.file_path,
+        std::env::var("HOME").ok().as_deref(),
     );
-    let mut git_sync = git_sync_requested
-        .then(|| git_sync::GitSync::detect(&state.document.file_path))
-        .flatten();
+    let detected = request
+        .requested
+        .then(|| git_sync::GitSync::detect(&state.document.file_path));
+    let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
+    let mut git_sync = detected.and_then(Result::ok);
+    let warnings = [
+        launch::startup_warning(hard_links, foreign_owner),
+        launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
+    ];
+    match launch::startup_message(created_new, &warnings) {
+        Some((message, true)) => state.set_error(message),
+        Some((message, false)) => state.set_status(message),
+        None => {}
+    }
     // Drives the persistent `⇅ git` section in the title bar
     // (`render_title_bar` in `ui/mod.rs`) — set once here and never touched
     // again; `GitSyncState::last_at`/`pending` handle the per-sync timing,

@@ -107,18 +107,57 @@ fn run_reporting_panics(op: impl FnOnce() -> SyncOutcome) -> SyncOutcome {
     ))
 }
 
+/// Why `git` itself couldn't be run at startup.
+fn detect_spawn_error(err: &std::io::Error) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        "git not found on PATH".to_string()
+    } else {
+        format!("could not run git: {err}")
+    }
+}
+
+/// Why `git rev-parse` refused, from its stderr. Kept whole rather than cut
+/// to the first line: for a repository owned by another user, git follows its
+/// `fatal:` line with the exact `safe.directory` command that fixes it.
+fn detect_git_error(stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    if stderr.contains("not a git repository") {
+        return "the file is not in a git repository".to_string();
+    }
+    let text = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.is_empty() {
+        "git could not inspect the file's directory".to_string()
+    } else {
+        text
+    }
+}
+
 impl GitSync {
-    /// `None` outside a git work tree; git-sync is optional, so this fails open.
-    pub fn detect(file_path: &Path) -> Option<GitSync> {
-        let repo_dir = file_path.parent()?.to_path_buf();
+    /// `Err` with the reason, for the startup message, when the file isn't
+    /// in a git work tree or `git` can't be run; git-sync is optional, so the
+    /// caller carries on without it.
+    pub fn detect(file_path: &Path) -> Result<GitSync, String> {
+        let repo_dir = file_path
+            .parent()
+            .ok_or_else(|| "the file has no parent directory".to_string())?
+            .to_path_buf();
         let mut cmd = git_command(&repo_dir);
         cmd.args(["rev-parse", "--is-inside-work-tree"]);
-        let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+        let output =
+            run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| detect_spawn_error(&err))?;
         if !output.status.success() {
-            return None;
+            return Err(detect_git_error(&output.stderr));
+        }
+        if String::from_utf8_lossy(&output.stdout).trim() != "true" {
+            return Err("the file is not in a git work tree".to_string());
         }
         let (sender, receiver) = mpsc::channel();
-        Some(GitSync {
+        Ok(GitSync {
             repo_dir,
             file_path: file_path.to_path_buf(),
             sender,
@@ -262,7 +301,7 @@ mod tests {
     #[test]
     fn detect_finds_a_repo() {
         let work = init_repo_without_remote();
-        assert!(GitSync::detect(&work.join("tracked.md")).is_some());
+        assert!(GitSync::detect(&work.join("tracked.md")).is_ok());
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
@@ -289,11 +328,69 @@ mod tests {
     }
 
     #[test]
-    fn detect_none_outside_a_repo() {
+    fn detect_says_why_outside_a_repo() {
         let dir = unique_dir("not-a-repo");
         fs::create_dir_all(&dir).unwrap();
-        assert!(GitSync::detect(&dir.join("file.md")).is_none());
+        assert_eq!(
+            GitSync::detect(&dir.join("file.md")).err().as_deref(),
+            Some("the file is not in a git repository")
+        );
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detect_says_why_inside_the_git_directory() {
+        // `rev-parse --is-inside-work-tree` succeeds there but prints `false`.
+        let work = init_repo_without_remote();
+        assert_eq!(
+            GitSync::detect(&work.join(".git").join("file.md"))
+                .err()
+                .as_deref(),
+            Some("the file is not in a git work tree")
+        );
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn detect_says_why_for_a_path_without_a_parent() {
+        assert_eq!(
+            GitSync::detect(Path::new("/")).err().as_deref(),
+            Some("the file has no parent directory")
+        );
+    }
+
+    #[test]
+    fn detect_spawn_error_names_a_missing_git() {
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(detect_spawn_error(&missing), "git not found on PATH");
+        let timed_out = std::io::Error::new(std::io::ErrorKind::TimedOut, "git command timed out");
+        assert_eq!(
+            detect_spawn_error(&timed_out),
+            "could not run git: git command timed out"
+        );
+    }
+
+    #[test]
+    fn detect_git_error_keeps_gits_own_fix_hint() {
+        let dubious = b"fatal: detected dubious ownership in repository at '/srv/runbooks'\n\
+            To add an exception for this directory, call:\n\n\
+            \tgit config --global --add safe.directory /srv/runbooks\n";
+        assert_eq!(
+            detect_git_error(dubious),
+            "fatal: detected dubious ownership in repository at '/srv/runbooks' \
+             To add an exception for this directory, call: \
+             git config --global --add safe.directory /srv/runbooks"
+        );
+        assert_eq!(
+            detect_git_error(
+                b"fatal: not a git repository (or any of the parent directories): .git\n"
+            ),
+            "the file is not in a git repository"
+        );
+        assert_eq!(
+            detect_git_error(b"\n"),
+            "git could not inspect the file's directory"
+        );
     }
 
     #[test]
