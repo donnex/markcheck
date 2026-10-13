@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In the wide layout, the dimmed side cards for the previous and next task
+  now show the task's bold title above its text. They used to show only the
+  text after the title, so a neighbour wasn't recognisable by the name the
+  overview uses for it, and a task that is only a bold title showed as an
+  empty box. (#75)
 - The `?` keybinding help now lists the keys of every mode, not just the
   checklist screen: it has sections for `/` search, the `T` go-to-task list,
   the help itself, the reset and quit-reset dialogs, the `o`/`y` digit prompt

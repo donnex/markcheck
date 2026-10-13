@@ -8,7 +8,8 @@ markcheck examples/basics.md
 ```
 
 - **`basics.md`** — the three task states (`[ ]` / `[/]` / `[x]`), a list banner
-  (leading bold-only bullet), a card title (a task's leading `**bold**`), inline
+  (leading bold-only bullet), a card title (a task's leading `**bold**`, also as a title-only task, which
+  the side cards show by its title), inline
   and fenced commands, a plain-bullet note card, and the same three task states
   again on an ordered (numbered) list to show they work identically there, plus
   an uppercase `[X]` that counts as done.

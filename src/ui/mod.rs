@@ -2973,6 +2973,29 @@ mod tests {
     }
 
     #[test]
+    fn side_cards_show_the_task_title() {
+        let titled = Item {
+            header: Some("Titlezz".to_string()),
+            ..checkbox(1, "pbzq", false)
+        };
+        let title_only = Item {
+            header: Some("Rebootzz".to_string()),
+            ..checkbox(3, "", false)
+        };
+        let mut state = state_with(vec![List {
+            title: "S".to_string(),
+            banner: None,
+            items: vec![titled, checkbox(2, "curtask", false), title_only],
+        }]);
+        state.current_item_index = 1;
+        let text = buffer_text(&mut state, 120, 30);
+        // Once in the overview, once on the side card.
+        assert_eq!(text.matches("Titlezz").count(), 2, "prev title:\n{text}");
+        assert_eq!(text.matches("Rebootzz").count(), 2, "next title:\n{text}");
+        assert!(text.contains("pbzq"), "prev body kept");
+    }
+
+    #[test]
     fn renders_all_complete_screen() {
         let mut state = state_with(vec![List {
             title: "Only".to_string(),
