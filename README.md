@@ -371,7 +371,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
 | `R` | reset all tasks to not-done (asks first) |
 | `1`–`9` | jump to list N |
-| `?` | show the keybinding help overlay (scrollable — `j`/`k`/arrows/`Ctrl-D`/`U` — when it doesn't fit; any other key closes) |
+| `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the `o`/`y` digit prompt, the list-complete screen). Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
 | `q` / `Esc` | quit |
 
 Both digit shortcuts above (`1`–`9` list jump, `o` then `1`–`9` link open) only

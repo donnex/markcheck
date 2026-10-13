@@ -1,4 +1,6 @@
 mod cards;
+#[cfg(test)]
+pub(crate) use cards::HELP_SECTIONS;
 mod overview;
 mod statusbar;
 
@@ -1856,6 +1858,21 @@ mod tests {
         assert!(
             text.contains("click overview row"),
             "click-to-jump on an overview row listed"
+        );
+    }
+
+    #[test]
+    fn help_overlay_has_a_section_per_mode_and_names_every_scroll_key() {
+        let mut state = sample_state();
+        state.overlay = Some(Overlay::Help);
+        let rows = buffer_rows(&mut state, 120, 90);
+        let text = rows.concat();
+        for (title, _) in HELP_SECTIONS.iter().filter(|(t, _)| !t.is_empty()) {
+            assert!(text.contains(title), "section {title:?} shown");
+        }
+        assert!(
+            text.contains("j k ↑ ↓ · Ctrl-E/Y/D/U · PageUp/Dn scroll"),
+            "footer names every help scroll key"
         );
     }
 

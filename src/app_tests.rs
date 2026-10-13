@@ -4891,3 +4891,249 @@ fn copy_link_instead_reports_each_clipboard_outcome() {
             .is_some_and(|m| m.contains("too large"))
     );
 }
+
+// --- The `?` overlay documents every handled key ---
+
+/// The names a `?` overlay key column may use for `code` with `modifiers`.
+fn help_key_names(code: KeyCode, modifiers: KeyModifiers) -> Vec<String> {
+    if modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char(c) = code
+    {
+        return vec![format!("Ctrl-{}", c.to_ascii_uppercase())];
+    }
+    let name = |s: &str| vec![s.to_string()];
+    match code {
+        KeyCode::Char(' ') => name("space"),
+        KeyCode::Char('1'..='9') => name("1-9"),
+        KeyCode::Char('g') => vec!["g".to_string(), "gg".to_string()],
+        KeyCode::Char(c) if c.is_ascii_uppercase() => vec![c.to_string(), format!("Shift-{c}")],
+        KeyCode::Char(c) => vec![c.to_string()],
+        KeyCode::Up => name("↑"),
+        KeyCode::Down => name("↓"),
+        KeyCode::Left => name("←"),
+        KeyCode::Right => name("→"),
+        KeyCode::PageUp => name("PageUp"),
+        KeyCode::PageDown => name("PageDn"),
+        other => vec![format!("{other:?}")],
+    }
+}
+
+/// Every key the probe tries: named keys, printable ASCII (unless `typing`,
+/// where letters are text input), and Ctrl-a..z. Ctrl-C and Ctrl-Z act on
+/// every screen and are checked against the main rows separately.
+fn probe_keys(typing: bool) -> Vec<(KeyCode, KeyModifiers)> {
+    let none = KeyModifiers::NONE;
+    let mut keys: Vec<(KeyCode, KeyModifiers)> = [
+        KeyCode::Esc,
+        KeyCode::Enter,
+        KeyCode::Backspace,
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::Delete,
+        KeyCode::Insert,
+    ]
+    .into_iter()
+    .chain((1..=11).map(KeyCode::F))
+    .map(|code| (code, none))
+    .collect();
+    if !typing {
+        keys.extend((' '..='~').map(|c| (KeyCode::Char(c), none)));
+    }
+    keys.extend(
+        ('a'..='z')
+            .filter(|c| !matches!(c, 'c' | 'z'))
+            .map(|c| (KeyCode::Char(c), KeyModifiers::CONTROL)),
+    );
+    keys
+}
+
+fn observable(state: &AppState) -> String {
+    format!(
+        "{:?} {:?}",
+        (
+            state.view,
+            state.overlay,
+            state.should_quit,
+            state.suspend_requested,
+            state.editor_requested,
+            &state.search.query,
+            &state.picker.query,
+            state.picker.selection,
+            state.help.scroll,
+            &state.status_message,
+        ),
+        (
+            state.current_list_index,
+            state.current_item_index,
+            state.pending_g,
+            state.pending_open_link,
+            state.pending_copy_code,
+            &state.link_open_request,
+            state.document.checkbox_progress(),
+        )
+    )
+}
+
+/// The key-column words of the `?` overlay sections titled `titles`.
+fn help_words(titles: &[&str]) -> Vec<&'static str> {
+    crate::ui::HELP_SECTIONS
+        .iter()
+        .filter(|(title, _)| titles.contains(title))
+        .flat_map(|(_, rows)| rows.iter())
+        .flat_map(|(key, _)| key.split_whitespace())
+        .collect()
+}
+
+/// Presses each probe key on a fresh `setup()` state, and requires every key
+/// whose outcome differs from `baseline`'s to be named in `titles`' rows.
+fn assert_handled_keys_have_help_rows(
+    mode: &str,
+    titles: &[&str],
+    typing: bool,
+    setup: impl Fn() -> AppState,
+    baseline: impl Fn(KeyCode, KeyModifiers) -> String,
+) {
+    let words = help_words(titles);
+    let mut missing = Vec::new();
+    for (code, modifiers) in probe_keys(typing) {
+        let mut state = setup();
+        if !state.is_bound_chord(code, modifiers) {
+            continue;
+        }
+        state.handle_key_with_mods(code, modifiers);
+        if observable(&state) == baseline(code, modifiers) {
+            continue;
+        }
+        let names = help_key_names(code, modifiers);
+        if !names.iter().any(|n| words.contains(&n.as_str())) {
+            missing.push(names[0].clone());
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "{mode}: handled keys with no `?` overlay row: {missing:?}"
+    );
+}
+
+/// Baseline for an overlay or screen: what an unbound key (F12) does there.
+fn unbound_key_outcome(setup: &impl Fn() -> AppState) -> String {
+    let mut state = setup();
+    state.handle_key(KeyCode::F(12));
+    observable(&state)
+}
+
+fn assert_mode_documented(mode: &str, titles: &[&str], typing: bool, setup: impl Fn() -> AppState) {
+    let baseline = unbound_key_outcome(&setup);
+    assert_handled_keys_have_help_rows(mode, titles, typing, setup, |_, _| baseline.clone());
+}
+
+#[test]
+fn every_checklist_key_has_a_help_row() {
+    assert_mode_documented("checklist", &[""], false, || {
+        let mut state = AppState::new(two_list_document());
+        state.current_item_index = 1;
+        state
+    });
+}
+
+#[test]
+fn every_completion_screen_key_has_a_help_row() {
+    let titles = ["", "On a list-complete screen"];
+    assert_mode_documented("list complete", &titles, false, || {
+        let mut state = AppState::new(two_list_document_first_list_almost_done());
+        state.view = View::ListComplete;
+        state
+    });
+    assert_mode_documented("all complete", &titles, false, || {
+        let mut state = AppState::new(all_done_document());
+        state.view = View::AllComplete;
+        state
+    });
+}
+
+#[test]
+fn every_overlay_key_has_a_help_row() {
+    assert_mode_documented("help", &["In this help"], false, || {
+        let mut state = AppState::new(two_list_document());
+        state.handle_key(KeyCode::Char('?'));
+        state
+    });
+    assert_mode_documented("search", &["In / search"], true, || {
+        let mut state = AppState::new(two_list_document());
+        state.handle_key(KeyCode::Char('/'));
+        type_str(&mut state, "task");
+        state
+    });
+    assert_mode_documented("picker", &["In the T go-to-task list"], true, || {
+        let mut state = AppState::new(two_list_document());
+        state.handle_key(KeyCode::Char('T'));
+        type_str(&mut state, "task");
+        state.picker.selection = 2;
+        state.picker.viewport_height = 4;
+        state
+    });
+    let dialogs = ["Reset dialogs (R, or q when all done)"];
+    assert_mode_documented("reset dialog", &dialogs, false, || {
+        let mut state = AppState::new(two_list_document_first_list_almost_done());
+        state.overlay = Some(Overlay::ConfirmReset);
+        state
+    });
+    assert_mode_documented("quit-reset dialog", &dialogs, false, || {
+        let mut state = AppState::new(all_done_document());
+        state.overlay = Some(Overlay::ConfirmQuitReset);
+        state
+    });
+}
+
+#[test]
+fn every_digit_prompt_key_has_a_help_row() {
+    // A prompt's keys are the ones that act differently from the same key
+    // pressed with no prompt pending.
+    let fresh = || {
+        let mut state = AppState::new(two_list_document());
+        state.current_item_index = 1;
+        state
+    };
+    let no_prompt = |code, modifiers| {
+        let mut state = fresh();
+        state.handle_key_with_mods(code, modifiers);
+        observable(&state)
+    };
+    let titles = ["Waiting for a digit after o / y"];
+    assert_handled_keys_have_help_rows(
+        "o prompt",
+        &titles,
+        false,
+        || {
+            let mut state = fresh();
+            state.pending_open_link = true;
+            state
+        },
+        no_prompt,
+    );
+    assert_handled_keys_have_help_rows(
+        "y prompt",
+        &titles,
+        false,
+        || {
+            let mut state = fresh();
+            state.pending_copy_code = true;
+            state
+        },
+        no_prompt,
+    );
+}
+
+#[test]
+fn every_screen_help_lists_ctrl_c_and_ctrl_z() {
+    let words = help_words(&[""]);
+    assert!(words.contains(&"Ctrl-C") && words.contains(&"Ctrl-Z"));
+}
