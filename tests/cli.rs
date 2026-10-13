@@ -1,7 +1,7 @@
-//! Startup-path integration tests: a nonexistent file path and a
-//! valid file with zero checklist items both exit *before* any terminal
-//! setup happens (`main.rs`), so — unlike `tests/pty.rs` — these need only a
-//! plain subprocess, no pseudo-terminal.
+//! Startup-path integration tests: an unresolvable or unreadable path, a
+//! valid file with zero checklist items, and a run without a terminal all
+//! exit *before* any terminal setup happens (`main.rs`), so — unlike
+//! `tests/pty.rs` — these need only a plain subprocess, no pseudo-terminal.
 
 use std::process::Command;
 
@@ -61,11 +61,87 @@ fn empty_checklist_file_exits_cleanly_with_a_message() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No checklist items found in file."),
+        stderr.contains("No checklist items found in"),
         "clear message shown: {stderr:?}"
+    );
+    assert!(
+        stderr.contains(&*path.file_name().unwrap().to_string_lossy()),
+        "names the file: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("- [ ] step"),
+        "says what syntax is expected: {stderr:?}"
     );
 
     std::fs::remove_file(&path).ok();
+}
+
+/// Runs markcheck on `path` (with stdout piped, so not a terminal) and
+/// returns its stderr, asserting a non-zero exit that names the file.
+fn startup_failure_stderr(path: &std::path::Path) -> String {
+    let output = markcheck().arg(path).output().unwrap();
+    assert!(!output.status.success(), "should exit non-zero");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        stderr.contains(&*path.file_name().unwrap().to_string_lossy()),
+        "names the file: {stderr:?}"
+    );
+    stderr
+}
+
+#[test]
+fn non_utf8_file_reports_the_file_and_the_encoding_fix() {
+    let path = unique_path("utf16");
+    std::fs::write(&path, b"\xff\xfe- \x00[\x00 \x00]\x00").unwrap();
+
+    let stderr = startup_failure_stderr(&path);
+    assert!(stderr.contains("cannot read"), "{stderr:?}");
+    assert!(stderr.contains("not valid UTF-8"), "{stderr:?}");
+    assert!(stderr.contains("iconv"), "names the fix: {stderr:?}");
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn directory_path_reports_the_path_and_the_cause() {
+    let dir = unique_dir("is-a-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let stderr = startup_failure_stderr(&dir);
+    assert!(stderr.contains("cannot read"), "{stderr:?}");
+    assert!(
+        stderr.to_lowercase().contains("directory"),
+        "readable cause: {stderr:?}"
+    );
+
+    std::fs::remove_dir(&dir).ok();
+}
+
+#[test]
+fn non_tty_stdout_reports_that_a_terminal_is_needed() {
+    let path = unique_path("no-tty");
+    std::fs::write(&path, "# Runbook\n\n- [ ] step\n").unwrap();
+
+    let stderr = startup_failure_stderr(&path);
+    assert!(stderr.contains("needs a terminal"), "{stderr:?}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# Runbook\n\n- [ ] step\n",
+        "file left untouched"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn help_names_the_config_file() {
+    let output = markcheck().arg("--help").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("markcheck/config.toml"),
+        "config path shown: {stdout:?}"
+    );
 }
 
 #[test]

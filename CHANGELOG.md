@@ -670,6 +670,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-only — change not saved", the way vim and other editors respect the
   read-only bit. (#47)
 
+- Startup errors now name the file and say what to do. A file that isn't
+  UTF-8 (for example a UTF-16 file saved by a Windows editor) reports
+  `cannot read <file>` and suggests converting it with `iconv`; a directory
+  or unreadable file names the path; running markcheck without a terminal
+  (from cron, a pipe or CI) says it is interactive and needs one, instead of
+  `No such device or address (os error 6)`; and a file with no tasks names
+  the file and shows the `- [ ] step` syntax markcheck looks for. Previously
+  these printed bare system errors that didn't say which file failed, which
+  made a shell loop over several files hard to debug. `--help` now also
+  names the config file's location. (#48)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping
