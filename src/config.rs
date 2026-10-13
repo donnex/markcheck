@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 
+use crate::model::ColorChoice;
+
 /// Defaults for the CLI flags, from a TOML file. Keys use the positive
 /// sense (`nerd_font`). Unknown keys are ignored here and reported by
 /// `load_config`, so a typo surfaces without a newer release's settings
@@ -15,6 +17,8 @@ pub struct Config {
     pub mouse: Option<bool>,
     pub primary: Option<bool>,
     pub auto_copy: Option<bool>,
+    /// Palette override, like `--color`: `auto`, `truecolor`, `256` or `16`.
+    pub color: Option<ColorChoice>,
     /// Path prefixes under which git-sync activates, like `--git-sync`.
     pub git_sync_paths: Option<Vec<PathBuf>>,
 }
@@ -26,6 +30,7 @@ const KNOWN_KEYS: &[&str] = &[
     "mouse",
     "primary",
     "auto_copy",
+    "color",
     "git_sync_paths",
 ];
 

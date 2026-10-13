@@ -148,8 +148,9 @@ fn main() -> anyhow::Result<()> {
     }
     state.clipboard_primary = settings.primary;
     state.auto_copy = settings.auto_copy;
-    // Pick the richest color representation the terminal supports.
-    state.palette = model::Palette::detect();
+    // Pick the richest color representation the terminal supports, unless
+    // `--color`/`color` forces one.
+    state.palette = model::Palette::detect(settings.color);
     // A failed watch (e.g. inotify limits reached) only costs reload latency:
     // the trigger's timed recheck still runs, and the user is told.
     let (mut reload, watch_error) = ReloadTrigger::new(&state.document.file_path, Instant::now());

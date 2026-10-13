@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--color auto|truecolor|256|16`, and a matching `color` setting in the
+  config file, to force a color palette when markcheck picks the wrong one.
+  `auto`, the default, keeps detecting the terminal. (#134)
+
 - `--no-config`, which ignores the config file for one run, and
   `--config PATH`, which reads a different config file instead of the
   default one. Previously a broken config file stopped markcheck from
@@ -131,6 +135,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step 40 threw you back to step 3. (#61)
 
 ### Fixed
+
+- kitty, Alacritty, foot, WezTerm, Contour and Ghostty now get their full
+  24-bit colors over SSH, under `sudo` and in multiplexers. markcheck relied
+  on the `COLORTERM` variable, which those usually drop, and fell back to the
+  plain 16-color palette, so the app looked washed out compared with the
+  same terminal locally. These terminals are now recognised from `TERM`, as
+  is any `TERM` ending in `-direct`. (#134)
 
 - Git sync no longer reports `Git sync failed: git commit: unknown error` in
   repositories that normalise line endings (`core.autocrlf`, or a
