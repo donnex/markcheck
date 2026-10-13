@@ -310,6 +310,7 @@ fn link_panel_fits(area: Rect, card: Rect) -> bool {
     card.bottom().saturating_add(1) < area.bottom()
 }
 
+/// The current item's link URLs, one per row, in the panel below `card`.
 fn render_link_panel_below(frame: &mut Frame, area: Rect, card: Rect, state: &AppState) {
     let urls: Vec<String> = state
         .current_item()
@@ -619,10 +620,9 @@ fn render_section_breadcrumb(frame: &mut Frame, area: Rect, crumb: &str, max_wid
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// State icon + bold title (when the item has one) for the top border.
 /// The top-border line: just the task-state icon (`☑`/`◐`/`☐`/note) in its
-/// state color. The card title (`Item.header`) is no longer shown here — it
-/// moves inside the card body (`card_title_lines`).
+/// state color. The card title (`Item.header`) is drawn inside the card body
+/// instead (`card_title_lines`).
 fn header_line(
     item: &Item,
     info_state: Option<TaskState>,
@@ -712,6 +712,7 @@ fn card_title_rows(item: &Item, icon: &str, width: u16) -> Vec<String> {
     }
 }
 
+/// `card_title_rows` as styled lines: bold title text, note-colored icon.
 fn card_title_lines(
     item: &Item,
     width: u16,
@@ -1012,7 +1013,8 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
 }
 
 /// How a body word-token is styled. `code` is the chip click-to-copy keys
-/// off.
+/// off; `url` marks a dim `[N]` marker keying a link or command to its digit
+/// prompt.
 #[derive(Clone, Copy, Default)]
 struct SpanStyle {
     code: bool,
@@ -1100,10 +1102,10 @@ fn body_tokens(item: &Item) -> BodyTokens {
         _ => None,
     };
 
-    // The URL is no longer shown inline on the card (it wrapped ugly on
-    // narrow cards); it's surfaced in the status bar instead. When a card has
-    // several links, each link text is tagged with a dim `[N]` marker so it
-    // maps to the numbered status-bar list.
+    // The URL is not shown inline on the card (it wrapped ugly on narrow
+    // cards); it's listed in the link panel below the card instead. When a
+    // card has several links, each link text is tagged with a dim `[N]`
+    // marker so it maps to the panel's numbered list.
     let link_count = item.link_urls().len();
     let mut link_idx = 0usize;
     let mut code_idx = 0usize;
@@ -1150,9 +1152,9 @@ fn body_tokens(item: &Item) -> BodyTokens {
                 code_idx += 1;
                 prev_ws = true;
             }
-            // A link renders as just its underlined text; the URL lives
-            // in the status bar, not inline. With several links on one card, a
-            // dim `[N]` marker after the text keys it to the status-bar list.
+            // A link renders as just its underlined text; the URL lives in
+            // the link panel below the card, not inline. With several links on
+            // one card, a dim `[N]` marker after the text keys it to that list.
             BodySpan::Link { text, url: _ } => {
                 push_words(
                     &mut tokens,
@@ -1387,7 +1389,7 @@ fn soft_wrapped(block: &str, width: usize) -> impl Iterator<Item = (String, bool
     })
 }
 
-/// Greedy word wrap over styled tokens `(text, is_code)`, measured in display
+/// Greedy word wrap over styled tokens `(text, SpanStyle, glue)`, measured in display
 /// cells and hard-splitting overlong tokens. Same wrapping contract as
 /// `wrap_text` but emits styled `Line`s with code fragments in the `code` style.
 /// Each line comes with, per span, the index of the code token it came from
@@ -2064,7 +2066,7 @@ mod tests {
     #[test]
     fn body_lines_render_link_as_underlined_text_without_inline_url() {
         // A single link shows only its underlined text; the URL is not
-        // rendered inline (it's surfaced in the status bar), and a lone link
+        // rendered inline (it's in the link panel below the card), and a lone link
         // gets no `[N]` marker.
         let item = body_item(
             vec![
@@ -2095,7 +2097,7 @@ mod tests {
     #[test]
     fn body_lines_tag_multiple_links_with_dim_numbered_markers() {
         // With 2+ links, each link text is followed by a dim `[N]`
-        // marker (document order) so it maps to the numbered status-bar list.
+        // marker (document order) so it maps to the link panel's numbered list.
         let item = body_item(
             vec![
                 BodySpan::Text("see ".to_string()),

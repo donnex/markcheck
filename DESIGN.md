@@ -37,7 +37,7 @@ markcheck/
     └── ui/
         ├── mod.rs       # render() entry point, layout composition, title bar
         ├── cards.rs     # Card stack + completion / confirm (reset & quit-reset) screens
-        ├── overview.rs  # Right-side overview list (informational)
+        ├── overview.rs  # Right-side overview list (click to jump or toggle)
         └── statusbar.rs # Bottom keybind legend / status message
 ```
 
@@ -199,7 +199,7 @@ pub struct GitSyncState {
 pub struct PendingSync {
     pub content: String,                  // exact file content expected once the change lands
     pub content_hash: [u8; 32],           // SHA-256 of `content`; feeds the staleness check
-    pub previous_content: Option<String>, // content this write replaced; None if unreadable at load. Staged-target guard only
+    pub previous_content: Option<String>, // content this write replaced; None if unreadable just before the write. Staged-target guard only
     pub description: String,              // e.g. `Check "Restart service"`, becomes the commit message
 }
 

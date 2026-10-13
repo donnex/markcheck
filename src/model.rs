@@ -56,7 +56,8 @@ pub enum BodySpan {
     Code(String),
     /// Prose carrying inline styling — emphasis / strong / strikethrough.
     Styled { text: String, style: TextStyle },
-    /// A Markdown link, rendered as `text (url)` and openable with `o`.
+    /// A Markdown link, rendered as its underlined text (the URL is listed in
+    /// the panel below the card) and openable with `o`.
     Link { text: String, url: String },
 }
 
@@ -82,7 +83,8 @@ pub struct Item {
     pub section: Vec<SubHeading>,
     /// Body text only; a leading `**bold**` span is stripped into `header`.
     pub display_text: String,
-    /// Ordered body runs (prose vs inline code) for styled card rendering.
+    /// Ordered body runs (plain prose, styled prose, inline code, links) for
+    /// styled card rendering.
     pub body: Vec<BodySpan>,
     /// Leading `**bold**` at the absolute start of the item — the card title.
     pub header: Option<String>,
@@ -757,7 +759,8 @@ pub struct AppState {
     /// Set by `Ctrl-Z`; consumed by the main loop, which restores the
     /// terminal and stops the process with `SIGTSTP` until the shell's `fg`.
     pub suspend_requested: bool,
-    /// Screen to return to if the reset confirmation is cancelled.
+    /// Screen to return to when an overlay closes: a cancelled reset or quit
+    /// confirmation, the `?` help, or the `T` go-to-task picker.
     pub screen_before_confirm: Screen,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
@@ -853,7 +856,8 @@ pub struct GitSyncState {
 pub struct PendingSync {
     pub content: String,
     pub content_hash: [u8; 32],
-    /// The file's content before this change was written; `None` when unread.
+    /// The file's content before this change was written; `None` when the file
+    /// couldn't be read just before the write.
     /// Used only by git-sync's staged-target guard, which compares it with the
     /// staged blob through `hash-object --path` so clean filters apply. A full
     /// copy rather than a blob SHA, which would need a git subprocess while the

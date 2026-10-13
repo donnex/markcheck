@@ -183,8 +183,8 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     // done/started progress counter.
     let icons = state.icons;
     let (done, total) = state.document.checkbox_stats();
-    // The counter fades dim-gray → yellow → green with completion,
-    // resolved per color depth (same ramp the overview counter uses).
+    // The counter fades yellow → green with completion, resolved per
+    // color depth.
     let counter_style = state.palette.progress_color(done, total);
     let counter_text = format!(" {} {done}/{total}", icons.done);
 
@@ -282,6 +282,7 @@ fn current_tab_pill_style(state: &AppState) -> Style {
     Style::default().fg(Color::Black).bg(state.palette.current)
 }
 
+/// The `[N] title` tab row, the current list highlighted as a pill.
 fn render_list_tabs(frame: &mut Frame, area: Rect, state: &AppState) {
     let titles: Vec<&str> = state
         .document

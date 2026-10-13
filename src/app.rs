@@ -1321,7 +1321,7 @@ impl AppState {
         }
     }
 
-    fn return_to_last_item_of_list(&mut self) {
+    fn review_completed_list(&mut self) {
         self.screen = Screen::Checklist;
     }
 
@@ -2051,7 +2051,7 @@ impl AppState {
             | KeyCode::Down
             | KeyCode::Enter => self.advance_to_next_incomplete_list(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
-                self.return_to_last_item_of_list()
+                self.review_completed_list()
             }
             _ => {}
         }
