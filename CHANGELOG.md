@@ -91,6 +91,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With `--git-sync` on, a branch that tracks another local branch rather
+  than a remote one (set up with `git checkout -b <name> --track main`, for
+  example) is no longer "pushed" into that local branch. Ticking a box used
+  to move the local `main` forward and report the change as synced, although
+  nothing had left the machine. The change is now committed and reported as
+  `Committed, not pushed: this branch tracks the local branch main, not a
+  remote; push it yourself`. (#71)
+
 - With `--git-sync` on, the title bar no longer says everything is fine
   while your changes aren't being pushed. It used to keep showing a green
   `⇅ git` — often with an earlier success's `Synced 40s ago` still beside

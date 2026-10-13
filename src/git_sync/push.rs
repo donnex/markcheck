@@ -38,6 +38,20 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
         return no_upstream;
     };
+    // A remote of `.` is this repository: the "push" would move another
+    // local branch and publish nothing.
+    if remote == "." {
+        let local = branch_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&branch_ref);
+        return SyncOutcome::CommittedNotPushed {
+            message: format!(
+                "this branch tracks the local branch {local}, not a remote; \
+                 push it yourself"
+            ),
+            commit: expected_commit.to_string(),
+        };
+    }
     // The upstream is where changes are fetched from, not necessarily where
     // `git push` sends them (#98).
     if !push_goes_to_upstream(repo_dir, &remote) {
@@ -251,6 +265,36 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&remote_log.stdout)
         );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn a_branch_tracking_a_local_branch_is_committed_but_never_pushed() {
+        let (work, _remote) = init_repo_with_remote();
+        run(
+            &work,
+            &["checkout", "-q", "-b", "feature", "--track", "main"],
+        );
+        // Makes a plain `git push` agree to publish to the upstream.
+        run(&work, &["config", "push.default", "upstream"]);
+        let main_before = git_stdout(&work, &["rev-parse", "refs/heads/main"]);
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let commit = current_head(&work).unwrap();
+
+        let outcome = push(&work, &commit);
+
+        assert!(
+            matches!(&outcome, SyncOutcome::CommittedNotPushed { message, commit: c }
+                if message.contains("tracks the local branch main") && c == &commit),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            git_stdout(&work, &["rev-parse", "refs/heads/main"]),
+            main_before,
+            "the tracked local branch must not move"
+        );
+        assert!(still_on_branch(&work, &commit));
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
