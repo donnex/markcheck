@@ -403,11 +403,19 @@ impl Document {
     }
 }
 
+/// The base view under any overlay. Changed by navigation, toggles and
+/// reloads; an open [`Overlay`] is left alone by all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
+pub enum View {
     Checklist,
     ListComplete,
     AllComplete,
+}
+
+/// A modal layer over the [`View`]. Closing one is `overlay = None`, which
+/// returns to the view it was opened from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overlay {
     /// Modal confirmation before resetting every task to not-done.
     ConfirmReset,
     /// Offered on quit when all tasks are done: reset before quitting?
@@ -762,7 +770,9 @@ pub struct AppState {
     pub document: Document,
     pub current_list_index: usize,
     pub current_item_index: usize,
-    pub screen: Screen,
+    pub view: View,
+    /// The modal layer drawn over `view`, if any; it gets every key first.
+    pub overlay: Option<Overlay>,
     pub status_message: Option<String>,
     /// When the current `status_message` should auto-clear. `None` means
     /// it persists until the next input — used for error messages so a failure
@@ -832,9 +842,6 @@ pub struct AppState {
     /// Set by `Ctrl-Z`; consumed by the main loop, which restores the
     /// terminal and stops the process with `SIGTSTP` until the shell's `fg`.
     pub suspend_requested: bool,
-    /// Screen to return to when an overlay closes: a cancelled reset or quit
-    /// confirmation, the `?` help, or the `T` go-to-task picker.
-    pub screen_before_confirm: Screen,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
     /// Auto-copy an item's code when navigating to its card (`--auto-copy`);

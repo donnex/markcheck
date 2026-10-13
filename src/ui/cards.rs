@@ -10,7 +10,8 @@ use ratatui::widgets::{
 
 use super::{char_width, display_width, split_at_width};
 use crate::model::{
-    AppState, BodySpan, IconSet, Item, ItemKind, List, Palette, Screen, SubHeading, TaskState,
+    AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, SubHeading, TaskState,
+    View,
 };
 
 /// Prose that wraps to at most this many lines is centered; longer prose is
@@ -75,16 +76,18 @@ const STACK_OVERLAP: u16 = 4;
 const STACK_TUCK: u16 = 1;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    match state.screen {
-        // Search keeps the checklist visible; the query shows in the status
-        // bar and the cursor jumps live to the match.
-        Screen::Checklist | Screen::Search => render_checklist(frame, area, state),
-        Screen::ListComplete => render_list_complete(frame, area, state),
-        Screen::AllComplete => render_all_complete(frame, area, state),
-        Screen::ConfirmReset => render_confirm_reset(frame, area, state),
-        Screen::ConfirmQuitReset => render_confirm_quit_reset(frame, area, state),
-        Screen::Help => render_help(frame, area, state),
-        Screen::ListPicker => render_list_picker(frame, area, state),
+    match state.overlay {
+        Some(Overlay::ConfirmReset) => render_confirm_reset(frame, area, state),
+        Some(Overlay::ConfirmQuitReset) => render_confirm_quit_reset(frame, area, state),
+        Some(Overlay::Help) => render_help(frame, area, state),
+        Some(Overlay::ListPicker) => render_list_picker(frame, area, state),
+        // Search keeps the view visible; the query shows in the status bar
+        // and the cursor jumps live to the match.
+        Some(Overlay::Search) | None => match state.view {
+            View::Checklist => render_checklist(frame, area, state),
+            View::ListComplete => render_list_complete(frame, area, state),
+            View::AllComplete => render_all_complete(frame, area, state),
+        },
     }
 }
 

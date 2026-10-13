@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use super::cards::wrap_text;
 use crate::clipboard;
-use crate::model::{AppState, Screen};
+use crate::model::{AppState, Overlay, View};
 
 /// Most rows a long status message may grow the status bar to.
 const MAX_STATUS_ROWS: u16 = 6;
@@ -24,7 +24,7 @@ const PICKER_LEGEND: &str =
 /// The status message wrapped to `width`, or `None` when the bar shows the
 /// search prompt, an armed prompt or a legend instead, which stay on one row.
 fn wrapped_message(state: &AppState, width: u16) -> Option<Vec<String>> {
-    if state.screen == Screen::Search {
+    if state.overlay == Some(Overlay::Search) {
         return None;
     }
     Some(wrap_text(state.status_message.as_deref()?, width))
@@ -43,9 +43,9 @@ pub fn height(state: &AppState, width: u16, height: u16) -> u16 {
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Incremental search: show the live query vim-style, taking over the
-    // status bar while the Search screen is active. Always give feedback — the
+    // status bar while the Search overlay is open. Always give feedback — the
     // current query, the match count, and a distinct "no matches" state.
-    if state.screen == Screen::Search {
+    if state.overlay == Some(Overlay::Search) {
         let query = &state.search.query;
         let line = if query.is_empty() {
             Line::raw("/".to_string())
@@ -81,19 +81,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let legend = match state.screen {
-        Screen::ConfirmReset => CONFIRM_LEGEND,
-        Screen::ConfirmQuitReset => CONFIRM_QUIT_LEGEND,
-        Screen::Help => HELP_LEGEND,
-        Screen::ListPicker => PICKER_LEGEND,
-        Screen::ListComplete => LIST_COMPLETE_LEGEND,
-        Screen::AllComplete => ALL_COMPLETE_LEGEND,
-        Screen::Checklist | Screen::Search => KEYBIND_LEGEND,
+    let legend = match (state.overlay, state.view) {
+        (Some(Overlay::ConfirmReset), _) => CONFIRM_LEGEND,
+        (Some(Overlay::ConfirmQuitReset), _) => CONFIRM_QUIT_LEGEND,
+        (Some(Overlay::Help), _) => HELP_LEGEND,
+        (Some(Overlay::ListPicker), _) => PICKER_LEGEND,
+        (Some(Overlay::Search) | None, View::ListComplete) => LIST_COMPLETE_LEGEND,
+        (Some(Overlay::Search) | None, View::AllComplete) => ALL_COMPLETE_LEGEND,
+        (Some(Overlay::Search) | None, View::Checklist) => KEYBIND_LEGEND,
     };
     // While a multi-link `o` or multi-command `y` is armed, the status bar shows
     // its digit prompt; the URLs themselves live in the panel below the card.
     // Priority: search > status message > armed prompt > legend.
-    let armed_prompt = if state.screen == Screen::Checklist {
+    let armed_prompt = if state.overlay.is_none() && state.view == View::Checklist {
         let item = state.current_item();
         if state.pending_open_link {
             let n = item.map_or(0, |item| item.link_urls().len());
