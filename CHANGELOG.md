@@ -113,6 +113,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When the editor opened with `e` exits with an error (as `:cq` in vim does
+  to abort), markcheck still reloads your edits but no longer commits and
+  pushes them with `--git-sync`, and the error stays in the status bar
+  alongside the reload notice, ending in `not synced`. Previously a
+  "Reloaded: file changed on disk" message replaced the error a moment later,
+  and the aborted edit was published anyway. A warning about an unparsable
+  `$EDITOR`/`$VISUAL` is kept the same way. Git-sync commit messages for such
+  edits also name only the editor (`Edited in my-editor`), where they used to
+  include the full path from `$EDITOR`, publishing a local directory and
+  account name to the shared remote. (#94)
+
 - The `R` reset confirmation and the reset-before-quitting question (shown
   when you quit with every task done) now always show the keys that answer
   them. On a standard 80×24 terminal both dialogs were cut off before their

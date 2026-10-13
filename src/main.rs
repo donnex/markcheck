@@ -416,9 +416,6 @@ where
         std::env::var("VISUAL").ok().as_deref(),
         std::env::var("EDITOR").ok().as_deref(),
     );
-    if let Some(warning) = warning {
-        state.set_error(warning);
-    }
     let mut command = Command::new(&program);
     command.args(&args);
     // Jump to the selected task's source line for editors that support it;
@@ -440,7 +437,7 @@ where
     let size = terminal.size()?;
     terminal.resize(Rect::new(0, 0, size.width, size.height))?;
 
-    state.finish_editor(&program, status);
+    state.finish_editor(&program, warning, status);
     Ok(())
 }
 

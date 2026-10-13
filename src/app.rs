@@ -46,6 +46,15 @@ fn current_content_hash(path: &Path) -> Option<[u8; 32]> {
     fs::read(path).ok().map(|bytes| hash_bytes(&bytes))
 }
 
+/// A program's file name without its directory, falling back to the string
+/// as given.
+fn program_name(program: &str) -> &str {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
+}
+
 /// Smart-case containment (vim `smartcase`): case-insensitive unless the
 /// query contains an uppercase letter, in which case the match is exact. An
 /// empty query never matches.
@@ -1301,7 +1310,9 @@ impl AppState {
     }
 
     /// Queues a git-sync request for an edit made outside `write_back` (the
-    /// `e` editor). `editor` is the resolved program name.
+    /// `e` editor). `editor` is the resolved program; only its file name goes
+    /// into the commit message, so a path from the user's environment is never
+    /// published.
     pub fn request_external_edit_sync(&mut self, editor: &str) {
         let content = writer::document_contents(&self.document);
         let content_hash = hash_bytes(content.as_bytes());
@@ -1311,7 +1322,7 @@ impl AppState {
             previous_content: Some(content.clone()),
             content,
             content_hash,
-            description: format!("Edited in {editor}"),
+            description: format!("Edited in {}", program_name(editor)),
         });
     }
 
@@ -1478,21 +1489,42 @@ impl AppState {
         }
     }
 
-    /// After the `e` editor returns: report a launch failure or a non-zero
-    /// exit, then reload, queueing a git-sync request when the editor changed
-    /// the file (that edit never went through `write_back`). `program` is the
+    /// After the `e` editor returns: reload, queueing a git-sync request when
+    /// a successful editor changed the file (that edit never went through
+    /// `write_back`), then report `warning` (from resolving the editor) and a
+    /// launch failure or non-zero exit. Those go after the reload so its own
+    /// message can't replace them. A non-zero exit is the editor's abort
+    /// signal, so its edit is reloaded but never synced. `program` is the
     /// resolved editor.
-    pub fn finish_editor(&mut self, program: &str, status: io::Result<std::process::ExitStatus>) {
-        match status {
-            Err(err) => self.set_error(format!("Failed to launch {program}: {err}")),
-            Ok(status) if !status.success() => {
-                self.set_error(format!("{program} exited with {status}"))
-            }
-            Ok(_) => {}
-        }
-        if self.reload_if_changed() {
+    pub fn finish_editor(
+        &mut self,
+        program: &str,
+        warning: Option<String>,
+        status: io::Result<std::process::ExitStatus>,
+    ) {
+        let failure = match status {
+            Err(err) => Some(format!("Failed to launch {program}: {err}")),
+            Ok(status) if !status.success() => Some(format!("{program} exited with {status}")),
+            Ok(_) => None,
+        };
+        let failed = failure.is_some();
+        self.clear_status();
+        let reloaded = self.reload_if_changed();
+        if reloaded && !failed {
             self.request_external_edit_sync(program);
         }
+        let mut problems: Vec<String> = warning.into_iter().chain(failure).collect();
+        if problems.is_empty() {
+            return;
+        }
+        if let Some(reload_message) = self.status_message.take() {
+            problems.push(if reloaded && failed && self.git_sync.active {
+                format!("{reload_message} — not synced")
+            } else {
+                reload_message
+            });
+        }
+        self.set_error(problems.join("; "));
     }
 
     /// `o`: open the current card's link. With several links, arm a digit that
