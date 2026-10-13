@@ -971,21 +971,72 @@ fn quit_when_all_done_prompts_reset_then_resets() {
     std::fs::remove_file(&path).ok();
 }
 
-#[test]
-fn auto_copy_navigation_exits_clean() {
-    let path = unique_path("autocopy");
-    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] plain item\n");
+/// The OSC 52 clipboard write for `alpha`, which is what an auto-copy of the
+/// `alpha` card emits in the PTY, where no system clipboard is reachable.
+const ALPHA_OSC52: &str = "\x1b]52;c;YWxwaGE=\x07";
 
-    // With --auto-copy, navigating emits clipboard writes (OSC 52 to the
-    // PTY when arboard is unavailable) and must not crash, including on the
-    // item with no code candidate. l navigates, q quits.
-    let ok = drive_args(
-        &path,
-        &["--auto-copy"],
-        &[],
-        &[Step::Key("l"), Step::Key("h"), Step::Key("q")],
-    );
+const AUTO_COPY_CHECKLIST: &str = "## Work\n\n- [ ] `alpha`\n- [ ] plain item\n";
+
+/// Navigates off the `alpha` card onto one with no code and back, then
+/// quits, returning the exit status and everything drawn to the terminal.
+fn drive_auto_copy_navigation(
+    path: &PathBuf,
+    args: &[&str],
+    env: &[(&str, &str)],
+    copies: bool,
+) -> (bool, String) {
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.arg(path);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let steps: &[Step] = if copies {
+        &[
+            Step::Key("l"),
+            Step::Key("h"),
+            Step::WaitForScreen("Sent to clipboard"),
+            Step::Key("q"),
+        ]
+    } else {
+        &[Step::Key("l"), Step::Key("h"), Step::Key("q")]
+    };
+    run_with_pty_capturing(cmd, path, steps)
+}
+
+#[test]
+fn auto_copy_flag_copies_the_card_navigated_onto() {
+    let path = unique_path("autocopy");
+    write_file(&path, AUTO_COPY_CHECKLIST);
+
+    // Landing on the no-code card must not crash; landing back on `alpha`
+    // must copy it.
+    let (ok, output) = drive_auto_copy_navigation(&path, &["--auto-copy"], &[], true);
     assert!(ok, "binary should exit successfully with --auto-copy");
+    assert!(
+        output.contains(ALPHA_OSC52),
+        "--auto-copy did not copy `alpha`; output tail:\n{}",
+        tail(&output)
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn navigation_copies_nothing_without_auto_copy() {
+    let path = unique_path("no-autocopy");
+    write_file(&path, AUTO_COPY_CHECKLIST);
+
+    let (ok, output) = drive_auto_copy_navigation(&path, &[], &[], false);
+    assert!(ok, "binary should exit successfully");
+    assert!(
+        !output.contains("\x1b]52;"),
+        "navigation copied without auto-copy enabled:\n{}",
+        tail(&output)
+    );
 
     std::fs::remove_file(&path).ok();
 }
@@ -995,7 +1046,7 @@ fn config_file_sets_auto_copy_default_without_the_flag() {
     // A config file's `auto_copy = true` must reach the same runtime
     // behavior as passing --auto-copy, with no flag on the command line.
     let path = unique_path("autocopy-cfg");
-    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] plain item\n");
+    write_file(&path, AUTO_COPY_CHECKLIST);
 
     let xdg_config_home = unique_path("autocopy-cfg-xdg");
     std::fs::create_dir_all(xdg_config_home.join("markcheck")).unwrap();
@@ -1005,15 +1056,20 @@ fn config_file_sets_auto_copy_default_without_the_flag() {
     )
     .unwrap();
 
-    let ok = drive_args(
+    let (ok, output) = drive_auto_copy_navigation(
         &path,
         &[],
         &[("XDG_CONFIG_HOME", xdg_config_home.to_str().unwrap())],
-        &[Step::Key("l"), Step::Key("h"), Step::Key("q")],
+        true,
     );
     assert!(
         ok,
         "binary should exit successfully with auto_copy set via config"
+    );
+    assert!(
+        output.contains(ALPHA_OSC52),
+        "the config's auto_copy did not copy `alpha`; output tail:\n{}",
+        tail(&output)
     );
 
     std::fs::remove_file(&path).ok();
