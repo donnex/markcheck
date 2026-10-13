@@ -439,6 +439,43 @@ mod tests {
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 
+    /// `ls-remote` matches ref tails, so a branch named
+    /// `a/refs/heads/main` must not be read as the tip of `main` (#120).
+    #[test]
+    fn a_branch_whose_name_ends_in_the_upstream_ref_does_not_block_the_push() {
+        let (work, remote) = init_repo_with_remote();
+        run(&work, &["checkout", "-q", "-b", "side"]);
+        let decoy = commit_unrelated(&work, "decoy.md");
+        run(
+            &work,
+            &[
+                "push",
+                "-q",
+                &remote.to_string_lossy(),
+                &format!("{decoy}:refs/heads/a/refs/heads/main"),
+            ],
+        );
+        run(&work, &["checkout", "-q", "main"]);
+        fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+        run(&work, &["commit", "-q", "-am", "markcheck commit"]);
+        let commit = current_head(&work).unwrap();
+
+        let outcome = push(&work, &commit);
+
+        assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+        assert_eq!(
+            git_stdout(&remote, &["rev-parse", "refs/heads/main"]),
+            commit
+        );
+        assert_eq!(
+            git_stdout(&remote, &["rev-parse", "refs/heads/a/refs/heads/main"]),
+            decoy,
+            "the look-alike branch must be untouched"
+        );
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
     #[test]
     fn push_never_sends_more_than_the_explicitly_targeted_commit() {
         // Push an older commit explicitly with a newer one already on top.

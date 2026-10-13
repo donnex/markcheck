@@ -43,15 +43,19 @@ pub(super) fn remote_branch_state(
     cmd.args(["ls-remote", "--heads", location, branch_ref]);
     match run_with_timeout(cmd, PUSH_TIMEOUT) {
         Ok(output) if output.status.success() => {
-            // No output means the branch is not there.
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            match stdout.split_whitespace().next() {
-                Some(sha) => RemoteBranch::Present(sha.to_string()),
-                None => RemoteBranch::Absent,
-            }
+            exact_ref_sha(&String::from_utf8_lossy(&output.stdout), branch_ref)
+                .map_or(RemoteBranch::Absent, RemoteBranch::Present)
         }
         _ => RemoteBranch::Unknown,
     }
+}
+/// `ls-remote` matches a pattern against ref tails, so asking for
+/// `refs/heads/main` also lists `refs/heads/x/refs/heads/main`.
+fn exact_ref_sha(listing: &str, branch_ref: &str) -> Option<String> {
+    listing.lines().find_map(|line| {
+        let (sha, name) = line.split_once('\t')?;
+        (name == branch_ref).then(|| sha.to_string())
+    })
 }
 
 /// `false` when unanswerable (e.g. `ancestor` was never fetched), so a
@@ -506,6 +510,46 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         assert!(resolve_parent(&dir).is_err());
         fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn remote_branch_state_ignores_refs_that_only_end_in_the_branch_ref() {
+        let (work, remote) = init_repo_with_remote();
+        let main_sha = current_head(&work).unwrap();
+        run(&work, &["checkout", "-q", "-b", "side"]);
+        let decoy = commit_unrelated(&work, "decoy.md");
+        run(
+            &work,
+            &[
+                "push",
+                "-q",
+                &remote.to_string_lossy(),
+                &format!("{decoy}:refs/heads/a/refs/heads/main"),
+            ],
+        );
+
+        assert!(matches!(
+            remote_branch_state(&work, "origin", "refs/heads/main"),
+            RemoteBranch::Present(sha) if sha == main_sha
+        ));
+
+        run(&work, &["push", "-q", "origin", "side"]);
+        run(&remote, &["symbolic-ref", "HEAD", "refs/heads/side"]);
+        run(&work, &["push", "-q", "origin", "--delete", "main"]);
+        assert!(matches!(
+            remote_branch_state(&work, "origin", "refs/heads/main"),
+            RemoteBranch::Absent
+        ));
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+    #[test]
+    fn remote_branch_state_is_unknown_when_the_remote_is_unreachable() {
+        let work = init_repo_without_remote();
+        assert!(matches!(
+            remote_branch_state(&work, "no-such-remote", "refs/heads/main"),
+            RemoteBranch::Unknown
+        ));
+        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
     #[test]
     fn parse_first_parent_tells_a_root_commit_from_unreadable_output() {

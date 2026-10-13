@@ -925,6 +925,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the next key was then read differently from what the screen suggested.
   (#104)
 
+- Git sync now reads the tip of the right branch on the remote. A remote
+  branch whose name merely ends in the same path, such as
+  `someone/refs/heads/main` next to `main`, could be taken for the branch
+  being synced, after which every push was refused with a false "pull first"
+  or kept failing and retrying for the whole session. (#120)
+
 ### Security
 
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping
