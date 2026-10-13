@@ -91,6 +91,18 @@ Non-task content and the ways code is handled.
 
 - [ ] Run the step that needs the exported environment
 
+## Fence after a list
+
+A fenced block placed directly after a list, at the left margin, belongs to
+the list's last card.
+
+- [ ] Confirm the release notes are published
+- [ ] Run the smoke test — its command is the fenced block below the list
+
+```sh
+smoke-test --all
+```
+
 ## Notes only (this section is dropped)
 
 - This section has no checkboxes, so markcheck drops it entirely.

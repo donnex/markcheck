@@ -703,6 +703,27 @@ mod tests {
         );
     }
 
+    fn example_item(file: &str, needle: &str) -> Item {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join(file);
+        let document = parse_document(path).expect("example parses");
+        document
+            .lists
+            .into_iter()
+            .flat_map(|list| list.items)
+            .find(|item| item.display_text.contains(needle))
+            .unwrap_or_else(|| panic!("{file} must contain an item matching {needle:?}"))
+    }
+
+    #[test]
+    fn examples_cover_fence_after_list_and_uppercase_done() {
+        let smoke = example_item("notes-and-code.md", "Run the smoke test");
+        assert_eq!(smoke.code_blocks, vec!["smoke-test --all".to_string()]);
+        let upper = example_item("basics.md", "Record the start time");
+        assert_eq!(upper.kind, ItemKind::Checkbox(TaskState::Done));
+    }
+
     const EXAMPLE: &str = "\
 ## Prepare workspace
 

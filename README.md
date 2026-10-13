@@ -104,8 +104,10 @@ available, and otherwise falls back to an OSC 52 terminal escape (see
 [Clipboard](#clipboard)) — no manual setup either way; the Wayland clipboard
 backend builds in automatically.
 
-**Platform support:** Linux and macOS only — this is what's tested and what
-CI/releases build for. Windows is not supported: the `o` link-opener falls
+**Platform support:** Linux is what CI builds and tests, and the only
+platform release binaries are published for. macOS is expected to work
+(build from source) but is not tested anywhere, so a macOS-only regression
+could go unnoticed. Windows is not supported: the `o` link-opener falls
 back to `xdg-open`, and the editor fallback (when neither `$VISUAL` nor
 `$EDITOR` is set) is `vi`, neither of which exists on a stock Windows
 install. `cargo install --path .` will build on Windows, but will fail at
@@ -200,7 +202,8 @@ How each piece maps to the UI:
 | `# Heading` | **Document title**, in the title bar beside the filename. The first `# H1` wins; with no H1, a bold-red **"Missing document title"** stands in. |
 | `## Heading` | A **list**: its title (the **list header**) appears above the cards and in the overview, and is jumpable with `1`–`9` (and in a dedicated list-tab row on narrow terminals). |
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
-| `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. |
+| `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. An uppercase `[X]` counts as done too; it keeps its casing until toggled, and is written back as `[x]`. |
+| `1. [ ]` / `1) [/]` / `1. [x]` | An **ordered (numbered) list** behaves exactly like a bulleted one: the same three task states, cards and notes. |
 | `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. A long title wraps inside the card, which grows to fit. |
 | `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries a command — `` `code` `` inside the bold, or a fenced or indented code block under the bullet — is never the banner: it stays a display-only card so the command is shown and copyable with `y`. |
 | `- **Bold**` (bold only), later in a list | A display-only card titled with the bold text. |
@@ -209,9 +212,11 @@ How each piece maps to the UI:
 | `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. With several, each chip gets a dim `[1]`/`[2]` marker for `y` then a digit. |
 | a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. With several, each box shows `[1]`/`[2]` in its top border for `y` then a digit. |
 | an indented (4-space) code block inside a task or note | Treated exactly like a fenced block: shown in a box and copyable with `y`. An indented block outside any list item is ignored. |
+| a fenced block **directly after a list** (at column 0) | **Attached to that list's last card**, as if it were indented under it: shown in a box and copyable with `y`. Anything in between — a paragraph, a heading, another block — breaks the attachment, and a fence after a list that was dropped (no checkboxes) attaches nowhere; such a fence is not shown. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
+| inline HTML (`<kbd>`, `<br>`, …) and HTML blocks | **Dropped.** Inline tags are not shown on the card, though the text between them is (`<kbd>Enter</kbd>` shows as `Enter`); a block of HTML, including an `<!-- comment -->`, is not shown at all. |
 | `> - [ ]` (a task inside a blockquote) | A **non-interactive** display-only card — a quoted/illustrative example (e.g. from another runbook), never a live, toggleable task. |
 
 Finer points:
@@ -308,8 +313,10 @@ Finer points:
 - **An indented code block outside a list item is ignored.** Inside a task or
   note it is that item's command (above), but one standing on its own between
   lists belongs to no card and is not shown. A fenced block right after a list
-  still attaches to its last item.
-- **Files are read as UTF-8.**
+  still attaches to its last item (above).
+- **Files are read as UTF-8.** A leading byte-order mark (BOM), as some
+  Windows editors write, is tolerated — the first heading still counts — and
+  is left in place when the file is saved.
 
 ## Keybindings
 

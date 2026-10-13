@@ -10,7 +10,8 @@ markcheck examples/basics.md
 - **`basics.md`** — the three task states (`[ ]` / `[/]` / `[x]`), a list banner
   (leading bold-only bullet), a card title (a task's leading `**bold**`), inline
   and fenced commands, a plain-bullet note card, and the same three task states
-  again on an ordered (numbered) list to show they work identically there.
+  again on an ordered (numbered) list to show they work identically there, plus
+  an uppercase `[X]` that counts as done.
 - **`nested.md`** — nested / sub-lists under both a task and a plain note,
   at several depths, with the color-coded depth guides in the overview and the
   matching color-coded parent-chain breadcrumb shown on sub-item cards.
@@ -38,7 +39,8 @@ markcheck examples/basics.md
   no longer wraps and a two-link task with `[1]`/`[2]` markers keyed to the
   numbered list below the card — an `https://` and a `mailto:` one that `o`
   opens, plus a `file://` one that `o` refuses as an unsupported scheme,
-  and a no-checkbox section that gets dropped.
+  a fenced block placed directly after a list that attaches to the list's last
+  card, and a no-checkbox section that gets dropped.
 - **`sub-sections.md`** — `### H3`+ sub-sections *within* a list: items
   before the first sub-heading (directly under the H2), an `### H3` group, an
   `#### H4` nested under it, a second `### H3` that pops the H4 and starts a

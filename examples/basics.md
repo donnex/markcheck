@@ -21,6 +21,7 @@ states, a card title, inline and fenced commands, and a note card.
 
 - [ ] Check the health endpoint `curl https://example.com/health`
 - [ ] Tail the logs and watch for errors
+- [X] Record the start time — an uppercase `[X]` counts as done too
 
 ## Ordered steps
 

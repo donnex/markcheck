@@ -42,7 +42,7 @@ Key non-obvious design points:
 
 ## README Markdown reference
 
-- `README.md` must contain a section documenting **all special Markdown handling** — every piece of syntax the app treats specially, how it renders, and the support level (e.g. `# H1` document title, `## H2` list/section, a leading bold-only first item = list banner, a task's leading bold = card title, `[ ]`/`[/]`/`[x]` task states, inline/fenced code and the trailing-command layout, plain-bullet note cards, and what is *not* supported such as flattened nested lists). It's the user-facing counterpart to `DESIGN.md`.
+- `README.md` must contain a section documenting **all special Markdown handling** — every piece of syntax the app treats specially, how it renders, and the support level (e.g. `# H1` document title, `## H2` list/section, a leading bold-only first item = list banner, a task's leading bold = card title, `[ ]`/`[/]`/`[x]` task states, inline/fenced code and the trailing-command layout, plain-bullet note cards, and what is *not* supported or degrades, such as an indented code block outside any list item being dropped). It's the user-facing counterpart to `DESIGN.md`.
 - Whenever you change how Markdown is **parsed** or how items/cards are **rendered** (new or changed special syntax, a new card element, changed display of an existing one), update this README section in the **same** piece of work — the same rule as keeping `DESIGN.md` in sync. Don't let it drift from the actual behavior.
 
 ## Example files
