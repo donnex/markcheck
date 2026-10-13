@@ -633,6 +633,11 @@ under the default `push.default = simple`), or a `remote.pushDefault` /
 locally and reports ``Committed, not pushed: `git push` would not push this
 branch to refs/heads/main on origin; push it yourself``, rather than
 publishing to the upstream.
+A branch that tracks another *local* branch (made with
+`git checkout -b <name> --track main`, say) has no remote to push to at all;
+git-sync commits locally and reports `Committed, not pushed: this branch
+tracks the local branch main, not a remote; push it yourself`, and never
+moves the local branch it tracks.
 When the remote has a separate `pushurl`, the branch is checked on, and
 pushed to, that URL.
 
