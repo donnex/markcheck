@@ -5,22 +5,65 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph};
 
 use crate::model::{
-    AppState, Document, IconSet, ItemKind, OverviewTarget, Palette, SubHeading, TaskState,
+    AppState, IconSet, ItemKind, ItemLinks, OverviewTarget, Palette, SubHeading, TaskState,
 };
 
-/// The ancestor's document-wide sub-list color, shared by the depth guides
-/// and the selected-marker tint.
-fn ancestor_color(
-    document: &Document,
-    list_index: usize,
-    chain: &[usize],
-    level: usize,
-    palette: &Palette,
-) -> Color {
-    let slot = chain.get(level).map_or(level, |&ancestor| {
-        document.sublist_slot(list_index, ancestor)
-    });
-    palette.depth_color(slot)
+/// Each item's depth-guide colors and selected-marker tint, keyed by its
+/// ancestors' document-wide sub-list slots. Built in one pass from the parent
+/// links; only the first `max_guides` levels are kept, since deeper guides
+/// fall past the panel's right edge anyway.
+struct AncestorSlots {
+    /// The slots of each item's outermost `max_guides` ancestors.
+    prefix: Vec<Vec<usize>>,
+    /// The length of each item's full `parent_chain`.
+    chain_len: Vec<usize>,
+}
+
+impl AncestorSlots {
+    fn new(links: &[ItemLinks], sublist_base: usize, max_guides: usize) -> Self {
+        let mut prefix: Vec<Vec<usize>> = Vec::with_capacity(links.len());
+        let mut chain_len = Vec::with_capacity(links.len());
+        for link in links {
+            match link.parent {
+                Some(p) => {
+                    let mut slots = prefix[p].clone();
+                    if chain_len[p] < max_guides {
+                        slots.push(sublist_base + links[p].sublist_slot);
+                    }
+                    prefix.push(slots);
+                    chain_len.push(chain_len[p] + 1);
+                }
+                None => {
+                    prefix.push(Vec::new());
+                    chain_len.push(0);
+                }
+            }
+        }
+        Self { prefix, chain_len }
+    }
+
+    /// The guide color at `level` of item `i`; a level with no ancestor (a
+    /// malformed tree) falls back to the level itself.
+    fn color(&self, i: usize, level: usize, palette: &Palette) -> Color {
+        palette.depth_color(self.prefix[i].get(level).copied().unwrap_or(level))
+    }
+
+    /// The color of the innermost guide of item `i` at `depth`, for the
+    /// selected marker.
+    fn marker_color(
+        &self,
+        links: &[ItemLinks],
+        sublist_base: usize,
+        i: usize,
+        depth: usize,
+        palette: &Palette,
+    ) -> Color {
+        let slot = match links[i].parent {
+            Some(p) if self.chain_len[i] == depth => sublist_base + links[p].sublist_slot,
+            _ => depth - 1,
+        };
+        palette.depth_color(slot)
+    }
 }
 
 /// Leading indent for an item row. When a list-title row is shown, items
@@ -136,8 +179,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Inner content width of the panel (inside borders + 1 col padding each
     // side), for filling sub-section divider rules.
     let inner_width = area.width.saturating_sub(4) as usize;
+    // Guides are two cells each, so any past this many are off the panel.
+    let max_guides = inner_width / 2 + 1;
+    let mut sublist_base = 0;
 
     for (list_index, list) in state.document.lists.iter().enumerate() {
+        let links = list.item_links();
+        let ancestors = AncestorSlots::new(&links, sublist_base, max_guides);
         // The active sub-heading path (heading + its divider row index) as we
         // walk this list's rows; resets per list, since sub-sections never
         // cross an H2 boundary. Mirrors each item's `section`.
@@ -216,26 +264,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             }
 
             let label = item.header.as_deref().unwrap_or(&item.display_text);
-            // Depth guides and the selected-marker tint both key off the item's
-            // ancestor chain (outermost-first), so compute it once up front.
-            let chain = list.parent_chain(item_index);
             // Tint a nested current row's marker with its sub-list color so the
             // reversed background matches its guides.
             let current_marker_fg = if item.depth > 0 {
-                ancestor_color(
-                    &state.document,
-                    list_index,
-                    &chain,
-                    item.depth - 1,
-                    &palette,
-                )
+                ancestors.marker_color(&links, sublist_base, item_index, item.depth, &palette)
             } else {
                 palette.current
             };
             // Precedence: done > started > info > current > pending, so an
             // item's kind/state stays visible even on the current row (which
             // the list's own highlight already marks).
-            let info_state = list.info_parent_state(item_index);
+            let info_state = links[item_index].info_state;
             let (marker, marker_style, text_style) = match (item.kind, is_current) {
                 (ItemKind::Checkbox(TaskState::Done), _) => (
                     icons.done,
@@ -284,8 +323,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             if has_list_header {
                 spans.push(Span::raw("  "));
             }
-            for level in 0..item.depth {
-                let color = ancestor_color(&state.document, list_index, &chain, level, &palette);
+            for level in 0..item.depth.min(max_guides) {
+                let color = ancestors.color(item_index, level, &palette);
                 spans.push(Span::styled("│ ", Style::default().fg(color)));
             }
             let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
@@ -312,6 +351,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 stack: active_stack.clone(),
             });
         }
+        sublist_base += list.parent_count();
     }
 
     let total_rows = list_items.len();

@@ -181,9 +181,14 @@ fn run<B: Backend>(
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
+    // Rebuilding the frame costs layout work over the whole document, so it
+    // only happens when something on screen may have changed.
+    let mut dirty = true;
+    let mut label_due: Option<SystemTime> = None;
     loop {
         if watcher.is_some_and(FileWatcher::poll_changed) {
             state.reload_if_changed();
+            dirty = true;
         }
         // Drain a finished background sync before requesting the next
         // one, so a request queued during the finished run's `pending` slot
@@ -197,6 +202,7 @@ where
                 if let Some(message) = git_sync::status_message(&outcome) {
                     state.set_error(message);
                 }
+                dirty = true;
             }
             // Not gated on the outcome above: a retry can come due on a
             // frame where nothing just finished polling, and this is a
@@ -209,11 +215,19 @@ where
         {
             sync.request(pending);
         }
-        state.expire_status(SystemTime::now());
-        terminal.draw(|frame| ui::render(frame, state))?;
+        let now = SystemTime::now();
+        dirty |= state.expire_status(now);
+        dirty |= label_due.is_some_and(|due| now >= due);
+        if dirty {
+            terminal.draw(|frame| ui::render(frame, state))?;
+            label_due = ui::next_label_change(state, SystemTime::now());
+            dirty = false;
+        }
 
         if event::poll(Duration::from_millis(100))? {
-            match event::read()? {
+            let event = event::read()?;
+            dirty |= ui::event_needs_redraw(&event);
+            match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     state.handle_key_with_mods(key.code, key.modifiers);
                 }
@@ -232,14 +246,17 @@ where
 
         if state.take_editor_request() {
             open_in_editor(terminal, state, mouse)?;
+            dirty = true;
         }
 
         if state.take_suspend_request() {
             suspend_to_shell(terminal, state, mouse)?;
+            dirty = true;
         }
 
         if let Some(url) = state.take_link_open_request() {
             open_link(&url, state);
+            dirty = true;
         }
 
         if state.should_quit {
