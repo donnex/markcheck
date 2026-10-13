@@ -91,6 +91,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `?` keybinding help now lists the keys of every mode, not just the
+  checklist screen: it has sections for `/` search, the `T` go-to-task list,
+  the help itself, the reset and quit-reset dialogs, the `o`/`y` digit prompt
+  and the list-complete screen. Previously keys such as `Esc` cancelling a
+  search, `Ctrl-N`/`Ctrl-P` in the go-to-task list, or `n` quitting without a
+  reset were missing from the one screen meant to list every key, and the
+  help's own footer named only some of the keys that scroll it. (#74)
+
 - A task whose text continues in a second paragraph no longer has the two
   paragraphs run together: `Restart the service`, a blank line, then
   `Then check status` used to show as "Restart the serviceThen check status"

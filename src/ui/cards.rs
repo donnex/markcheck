@@ -223,8 +223,119 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     state.picker.scroll_offset = list_state.offset();
 }
 
-/// The `?` keybinding cheatsheet overlay. Scrolls when it doesn't fit a
-/// short terminal; any non-scroll key dismisses it.
+/// One titled group of `?` overlay rows: `(key column, description)`.
+pub(crate) type HelpSection = (&'static str, &'static [(&'static str, &'static str)]);
+
+/// Every row of the `?` overlay, grouped by the screen or mode it applies in.
+/// The first group (untitled) is the checklist and global keys. The key
+/// column's whitespace-separated words are the key names a test matches every
+/// handled key against, so name keys consistently (`Enter`, `Esc`, `Ctrl-D`).
+pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
+    (
+        "",
+        &[
+            ("h j k l  ← → ↑ ↓", "prev / next task (crosses lists)"),
+            ("gg / G", "first / last task in the document"),
+            ("} / {", "next / previous sub-section"),
+            ("Ctrl-E / Ctrl-Y", "scroll card body one line"),
+            ("Ctrl-D / Ctrl-U", "scroll card body half a page"),
+            ("PageDn / PageUp", "scroll card body one page"),
+            (
+                "mouse wheel",
+                "scroll an overflowing card, else prev/next task",
+            ),
+            ("wheel in ? / T", "scroll this help / move the T highlight"),
+            ("space / Enter", "toggle the task done"),
+            ("s", "mark the task started / in progress"),
+            ("u / Ctrl-R", "undo / redo the last change"),
+            ("Tab", "jump to the next unfinished task"),
+            ("Shift-H / Shift-L", "previous / next unfinished list"),
+            ("/", "search tasks by text"),
+            ("n / N", "next / previous search match"),
+            ("T", "go to task (filterable list)"),
+            (
+                "click T picker row",
+                "highlight it; click it again (or Enter) to jump",
+            ),
+            (
+                "click overview row",
+                "toggle (icon) or jump to (label) a task or list",
+            ),
+            ("y", "copy the task's code to the clipboard"),
+            ("y then 1-9", "copy command [N] when a card has several"),
+            (
+                "click a card",
+                "copy the clicked command, or the card's sole one",
+            ),
+            ("o", "open the card's link in your browser"),
+            ("o then 1-9", "open link [N] when a card has several"),
+            ("e", "edit the file in $EDITOR"),
+            ("Ctrl-Z", "suspend to the shell (fg to come back)"),
+            ("Ctrl-C", "cancel like Esc; elsewhere hints how to quit"),
+            ("R", "reset all tasks (asks first)"),
+            ("1-9", "jump to list N"),
+            ("?", "toggle this help"),
+            ("q / Esc", "quit"),
+        ],
+    ),
+    (
+        "Waiting for a digit after o / y",
+        &[
+            ("1-9", "open link [N] / copy command [N]"),
+            ("Esc", "cancel; any other key cancels and acts"),
+        ],
+    ),
+    (
+        "On a list-complete screen",
+        &[
+            ("l j → ↓ / Enter", "go on to the next unfinished list"),
+            ("h k ← ↑", "go back and review (all done: last task)"),
+        ],
+    ),
+    (
+        "In / search",
+        &[
+            ("type", "edit the query; jumps to the next match"),
+            ("Backspace", "delete the last character"),
+            ("Enter", "keep the match (then n / N cycle)"),
+            ("Esc", "cancel, back to where you were"),
+        ],
+    ),
+    (
+        "In the T go-to-task list",
+        &[
+            ("type", "filter (letters, j and k included)"),
+            ("Backspace", "delete the last filter character"),
+            ("↑ / ↓", "move the highlight"),
+            ("Ctrl-P / Ctrl-N", "move the highlight up / down"),
+            ("Ctrl-U / Ctrl-D", "move the highlight half a page"),
+            ("Enter", "jump to the highlighted task"),
+            ("Esc", "close"),
+        ],
+    ),
+    (
+        "In this help",
+        &[
+            ("j k  ↑ ↓", "scroll one line"),
+            ("Ctrl-E / Ctrl-Y", "scroll one line"),
+            ("Ctrl-D / Ctrl-U", "scroll half a page"),
+            ("PageDn / PageUp", "scroll one page"),
+            ("any other key", "close"),
+        ],
+    ),
+    (
+        "Reset dialogs (R, or q when all done)",
+        &[
+            ("y", "reset all tasks (and quit, after q)"),
+            ("n", "after q: quit without resetting"),
+            ("Esc", "cancel (so does any other key)"),
+        ],
+    ),
+];
+
+/// The `?` keybinding cheatsheet overlay, built from [`HELP_SECTIONS`].
+/// Scrolls when it doesn't fit a short terminal; any non-scroll key
+/// dismisses it.
 fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let palette = state.palette;
     let key = |k: &str, desc: &str| {
@@ -240,57 +351,25 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
             Span::raw(desc.to_string()),
         ])
     };
-    let lines = vec![
-        Line::from(""),
-        key("h j k l  ← → ↑ ↓", "prev / next task (crosses lists)"),
-        key("gg / G", "first / last task in the document"),
-        key("} / {", "next / previous sub-section"),
-        key("Ctrl-E / Ctrl-Y", "scroll card body one line"),
-        key("Ctrl-D / Ctrl-U", "scroll card body half a page"),
-        key("PageDn / PageUp", "scroll card body one page"),
-        key(
-            "mouse wheel",
-            "scroll an overflowing card, else prev/next task",
-        ),
-        key("wheel in ? / T", "scroll this help / move the T highlight"),
-        key("space / enter", "toggle the task done"),
-        key("s", "mark the task started / in progress"),
-        key("u / Ctrl-R", "undo / redo the last change"),
-        key("Tab", "jump to the next unfinished task"),
-        key("Shift-H / Shift-L", "previous / next unfinished list"),
-        key("/", "search tasks by text"),
-        key("n / N", "next / previous search match"),
-        key("T", "go to task (filterable list)"),
-        key(
-            "click a T picker row",
-            "highlight it; click it again (or Enter) to jump",
-        ),
-        key(
-            "click overview row",
-            "toggle (icon) or jump to (label) a task or list",
-        ),
-        key("y", "copy the task's code to the clipboard"),
-        key("y then 1-9", "copy command [N] when a card has several"),
-        key(
-            "click a card",
-            "copy the clicked command, or the card's sole one",
-        ),
-        key("o", "open the card's link in your browser"),
-        key("o then 1-9", "open link [N] when a card has several"),
-        key("e", "edit the file in $EDITOR"),
-        key("Ctrl-Z", "suspend to the shell (fg to come back)"),
-        key("Ctrl-C", "cancel like Esc; elsewhere hints how to quit"),
-        key("R", "reset all tasks (asks first)"),
-        key("1–9", "jump to list N"),
-        key("?", "toggle this help"),
-        key("q / Esc", "quit"),
-        Line::from(""),
+    let mut lines = vec![Line::from("")];
+    for (title, rows) in HELP_SECTIONS {
+        if !title.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!(" {title}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+        }
+        lines.extend(rows.iter().map(|(k, desc)| key(k, desc)));
+    }
+    lines.push(Line::from(""));
+    lines.push(
         Line::from(Span::styled(
-            "j / k · ↑ / ↓ scroll   ·   any other key closes",
+            "j k ↑ ↓ · Ctrl-E/Y/D/U · PageUp/Dn scroll   ·   any other key closes",
             Style::default().add_modifier(Modifier::DIM),
         ))
         .centered(),
-    ];
+    );
 
     // Size the overlay to its content (plus borders), centered; on a short
     // terminal it fills the height and the body scrolls.
