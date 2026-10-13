@@ -163,6 +163,10 @@ fn create_new_checklist_cleans_up_and_errors_when_the_temp_write_fails() {
     let dir = unique_temp_dir();
     let path = dir.join("todo.md");
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+    if fs::write(dir.join("probe"), "").is_ok() {
+        eprintln!("skipped: a read-only directory is still writable here (running as root)");
+        return;
+    }
 
     let result = create_new_checklist(&path);
 

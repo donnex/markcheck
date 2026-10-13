@@ -291,11 +291,23 @@ fn a_live_owner_is_never_displaced_however_long_it_holds_the_lock() {
     fs::remove_file(&path).ok();
 }
 
+/// Whether a `ps` can be run at all; slim container images ship none.
+fn ps_is_installed() -> bool {
+    Command::new("ps")
+        .args(["-p", &std::process::id().to_string()])
+        .output()
+        .is_ok()
+}
+
 #[test]
 fn a_lock_whose_owner_has_died_is_recovered() {
     // The other half: a crash while holding the lock must not wedge every
     // future write. Recovery is immediate once the owner is *shown* to be
     // gone, rather than waiting out a timeout.
+    if proc_reports_gone("1").is_none() && !ps_is_installed() {
+        eprintln!("skipped: no /proc and no ps to prove the owner gone");
+        return;
+    }
     let path = write_temp_file(EXAMPLE);
     plant_lock(&path, a_dead_pid());
 
@@ -343,6 +355,10 @@ fn a_ps_that_cannot_be_run_does_not_prove_the_owner_gone() {
 
 #[test]
 fn the_real_ps_tells_a_live_owner_from_a_dead_one() {
+    if !ps_is_installed() {
+        eprintln!("skipped: ps is not installed");
+        return;
+    }
     let alive = std::process::id().to_string();
     assert!(!ps_reports_gone(Command::new("ps"), &alive));
     assert!(ps_reports_gone(
