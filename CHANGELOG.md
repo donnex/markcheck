@@ -136,6 +136,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `y` and `--auto-copy` now ignore inline code inside a task's bold title,
+  which the card shows as plain title text rather than as a command. A title
+  like **Restart `nginx`** used to count as a hidden command: a card with
+  one visible command refused to copy it as ambiguous, and a card with no
+  visible command copied the word from its title. (#137)
+
 - kitty, Alacritty, foot, WezTerm, Contour and Ghostty now get their full
   24-bit colors over SSH, under `sudo` and in multiplexers. markcheck relied
   on the `COLORTERM` variable, which those usually drop, and fell back to the

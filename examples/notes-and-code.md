@@ -17,6 +17,9 @@ Non-task content and the ways code is handled.
 - [ ] A task with a single inline command `apply-config --now`
 - [ ] **Restart the primary application service and confirm that every health check passes** —
   a card title too long for one row wraps inside the card instead of being cut
+- [ ] **Restart `example-service`** with `restart-service example-service` —
+  code in the bold title is plain title text, so `y` copies only the body's
+  command
 - [ ] A task with a fenced block:
 
   ```sh

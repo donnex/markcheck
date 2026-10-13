@@ -897,24 +897,6 @@ fn several_inline_commands_get_numbered_markers_for_y() {
 }
 
 #[test]
-fn title_code_offsets_the_body_command_numbers() {
-    // Code in the bold title is candidate [1] but has no chip, so the
-    // body's first chip is [2], matching what `y` then `2` copies.
-    let mut item = body_item(
-        vec![
-            BodySpan::Text("with".to_string()),
-            BodySpan::Code("restart-svc".to_string()),
-            BodySpan::Text("now".to_string()),
-        ],
-        vec![],
-        "with restart-svc now",
-    );
-    item.code_spans = vec!["svc".to_string(), "restart-svc".to_string()];
-    let whole = line_texts(&body_lines(&item, 60, code_bg(Color::Magenta))).join("\n");
-    assert!(whole.contains(" restart-svc [2]"), "{whole:?}");
-}
-
-#[test]
 fn several_fenced_blocks_carry_their_number_in_the_top_border() {
     let mut item = body_item(vec![], vec!["on-primary", "on-replica"], "");
     item.code_spans = vec!["ignored".to_string(), "too".to_string()];

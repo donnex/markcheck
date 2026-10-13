@@ -1167,18 +1167,9 @@ fn marker_token(n: usize, glue: bool) -> Token {
 
 /// The number `y` then a digit uses for the body's `k`th (0-based) inline
 /// command, when inline commands are what `y` chooses between and there are
-/// several. Code inside the bold title is a candidate too but has no chip,
-/// and comes first, so body chips are offset past it.
+/// several.
 fn inline_command_number(item: &Item, k: usize) -> Option<usize> {
-    if !item.code_blocks.is_empty() || item.code_spans.len() < 2 {
-        return None;
-    }
-    let in_body = item
-        .body
-        .iter()
-        .filter(|span| matches!(span, BodySpan::Code(_)))
-        .count();
-    Some(item.code_spans.len().saturating_sub(in_body) + k + 1)
+    (item.code_blocks.is_empty() && item.code_spans.len() >= 2).then_some(k + 1)
 }
 
 /// The number `y` then a digit uses for the `k`th (0-based) fenced block,
