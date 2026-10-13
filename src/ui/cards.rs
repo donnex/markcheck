@@ -458,13 +458,6 @@ fn safe_card_height(desired: u16, area_height: u16) -> u16 {
     desired.max(MIN_CARD_HEIGHT).min(area_height)
 }
 
-/// Fixed height for the completion/confirmation modal cards — their content
-/// is fixed, so they keep the original ~40%-of-height sizing.
-fn fixed_card_height(area: Rect) -> u16 {
-    let desired = (area.height as u32 * 2 / 5) as u16;
-    safe_card_height(desired, area.height)
-}
-
 /// The width the current card will actually render at, so height can be
 /// measured against the same wrapping: the centered `CENTER_CARD_PCT` share
 /// in the stack layout, or the full width in the narrow single-card layout.
@@ -1683,16 +1676,95 @@ pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
     lines
 }
 
-fn completion_card(
+/// Word-wraps each line wider than `width` cells, keeping every word's span
+/// style; lines that fit are kept exactly as built.
+fn wrap_modal_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    let mut out = Vec::new();
+    for line in lines {
+        if line.width() <= width {
+            out.push(line);
+            continue;
+        }
+        let line_style = line.style;
+        let mut rows: Vec<Vec<Span<'static>>> = vec![Vec::new()];
+        let mut used = 0usize;
+        for span in &line.spans {
+            for word in span.content.split_whitespace() {
+                let mut rest = word;
+                while !rest.is_empty() {
+                    let sep = usize::from(used > 0);
+                    let w = display_width(rest);
+                    if used + sep + w <= width {
+                        let row = rows.last_mut().expect("rows is never empty");
+                        if sep == 1 {
+                            row.push(Span::raw(" "));
+                        }
+                        row.push(Span::styled(rest.to_string(), span.style));
+                        used += sep + w;
+                        break;
+                    }
+                    if used == 0 {
+                        let cut = split_at_width(rest, width);
+                        let row = rows.last_mut().expect("rows is never empty");
+                        row.push(Span::styled(rest[..cut].to_string(), span.style));
+                        rest = &rest[cut..];
+                    }
+                    rows.push(Vec::new());
+                    used = 0;
+                }
+            }
+        }
+        out.extend(
+            rows.into_iter()
+                .filter(|row| !row.is_empty())
+                .map(|row| Line::from(row).style(line_style)),
+        );
+    }
+    out
+}
+
+/// The rows a modal card shows when only `room` rows fit inside its
+/// borders: the `keys` (the lines saying what to press) always stay, and the
+/// descriptive `body` is cut from the bottom, ending on a `…` so the cut is
+/// visible.
+fn fit_modal_rows(
+    mut body: Vec<Line<'static>>,
+    keys: Vec<Line<'static>>,
+    room: usize,
+) -> Vec<Line<'static>> {
+    if body.len() + keys.len() > room {
+        let keep = room.saturating_sub(keys.len());
+        body.truncate(keep);
+        if let Some(last) = body.last_mut() {
+            *last = Line::from(Span::styled(
+                "…",
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+    }
+    body.extend(keys);
+    body
+}
+
+/// A centered completion/confirmation card sized to its content: `body` then
+/// `keys`, wrapped to the card's inner width, plus borders, capped at the
+/// area. When it can't all fit, the body is trimmed so the key prompts are
+/// never the part that disappears.
+fn modal_card(
     frame: &mut Frame,
     area: Rect,
     title: &'static str,
     border_color: Color,
-    lines: Vec<Line>,
+    body: Vec<Line<'static>>,
+    keys: Vec<Line<'static>>,
 ) {
-    // Size the card to its content (+ borders) so no line is clipped on
-    // shorter terminals; centered by `card_row`.
-    let height = safe_card_height(lines.len() as u16 + 2, area.height);
+    let inner_width = area.width.saturating_sub(2);
+    let body = wrap_modal_lines(body, inner_width);
+    let keys = wrap_modal_lines(keys, inner_width);
+    let room = usize::from(area.height.saturating_sub(2));
+    let lines = fit_modal_rows(body, keys, room);
+    let height = safe_card_height(clamp_to_u16(lines.len() + 2), area.height);
     let row = card_row(area, height);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1722,11 +1794,20 @@ fn render_list_complete(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(""),
         Line::from(list.title.clone()),
         Line::from(format!("{done} / {total} tasks completed")),
+    ];
+    let keys = vec![
         Line::from(""),
         Line::from("Press  l / Enter  to go to next list"),
         Line::from("Press  h  to review tasks"),
     ];
-    completion_card(frame, area, "List Complete", state.palette.done, lines);
+    modal_card(
+        frame,
+        area,
+        "List Complete",
+        state.palette.done,
+        lines,
+        keys,
+    );
 }
 
 fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -1758,14 +1839,20 @@ fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
         ]));
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(format!(
-        "Total: {total_done} / {total_all} tasks"
-    )));
-    lines.push(Line::from(""));
-    lines.push(Line::from("Press  R  to reset · h to review · q to quit"));
-
-    completion_card(frame, area, "All Tasks Complete", state.palette.done, lines);
+    let keys = vec![
+        Line::from(""),
+        Line::from(format!("Total: {total_done} / {total_all} tasks")),
+        Line::from(""),
+        Line::from("Press  R  to reset · h to review · q to quit"),
+    ];
+    modal_card(
+        frame,
+        area,
+        "All Tasks Complete",
+        state.palette.done,
+        lines,
+        keys,
+    );
 }
 
 /// A dim rule line used as a divider on the completion screens.
@@ -1798,12 +1885,6 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "the file".to_string());
 
-    let row = card_row(area, fixed_card_height(area));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(state.palette.started))
-        .title(" Confirm Reset ");
-
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
@@ -1816,25 +1897,24 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
             reset_scope(done, started)
         )),
         Line::from(format!("and rewrites {file_name}.")),
+    ];
+    let keys = vec![
         Line::from(""),
         Line::from("Press  y  to reset"),
         Line::from("Press any other key to cancel"),
     ];
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .alignment(Alignment::Center);
-    frame.render_widget(paragraph, row);
+    modal_card(
+        frame,
+        area,
+        "Confirm Reset",
+        state.palette.started,
+        lines,
+        keys,
+    );
 }
 
 fn render_confirm_quit_reset(frame: &mut Frame, area: Rect, state: &AppState) {
     let (_, total) = state.document.checkbox_stats();
-
-    let row = card_row(area, fixed_card_height(area));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(state.palette.done))
-        .title(" All Tasks Complete ");
 
     let lines = vec![
         Line::from(""),
@@ -1847,16 +1927,21 @@ fn render_confirm_quit_reset(frame: &mut Frame, area: Rect, state: &AppState) {
             "Reset all {total} tasks to not done before quitting,"
         )),
         Line::from("so the checklist is ready to run again?"),
+    ];
+    let keys = vec![
         Line::from(""),
         Line::from("Press  y  to reset and quit"),
         Line::from("Press  n  to quit without resetting"),
         Line::from("Press  Esc  to keep working"),
     ];
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .alignment(Alignment::Center);
-    frame.render_widget(paragraph, row);
+    modal_card(
+        frame,
+        area,
+        "All Tasks Complete",
+        state.palette.done,
+        lines,
+        keys,
+    );
 }
 
 #[cfg(test)]
