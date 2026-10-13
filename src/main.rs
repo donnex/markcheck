@@ -76,14 +76,17 @@ const ISSUES_URL: &str = "https://github.com/donnex/markcheck/issues";
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // A passed flag wins, then the config, then the default. A malformed
-    // config is an error rather than a silent fallback.
-    let config = match config::config_path(
+    // config is an error rather than a silent fallback; an unknown key is
+    // only a warning, since it may come from a newer release.
+    let config::Loaded {
+        config,
+        unknown_keys,
+    } = config::load_for_run(
+        cli.config.as_deref(),
+        cli.no_config,
         std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
-    ) {
-        Some(path) => config::load_config(&path)?,
-        None => config::Config::default(),
-    };
+    )?;
 
     // Canonicalize up front: write-back would replace a symlink with a regular
     // file, and the watcher would watch the wrong directory. `--new` already
@@ -167,6 +170,7 @@ fn main() -> anyhow::Result<()> {
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
     let warnings = [
+        config::unknown_keys_warning(&unknown_keys),
         launch::startup_warning(read_only, hard_links, foreign_owner),
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
