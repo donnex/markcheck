@@ -376,6 +376,72 @@ fn completing_last_item_with_earlier_incomplete_stays_in_list() {
 }
 
 #[test]
+fn completing_a_task_skips_done_tasks_after_it() {
+    let path = write_real_file("## L\n\n- [ ] a\n- [ ] b\n- [x] c\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 1;
+    state.toggle_current();
+    assert_eq!(
+        state.current_item_index, 0,
+        "wraps to the open task, not onto done c"
+    );
+    assert_eq!(state.status_message.as_deref(), Some("Marked done"));
+    state.toggle_current();
+    let saved = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        saved, "## L\n\n- [x] a\n- [x] b\n- [x] c\n",
+        "second Space checks a"
+    );
+    assert_eq!(shown(&state), (View::AllComplete, None));
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn completing_a_task_lands_on_the_next_open_task_past_done_ones() {
+    let path = write_real_file("## L\n\n- [ ] a\n- [x] b\n- [ ] c\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    assert_eq!(state.current_item_index, 2, "skips done b");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn completing_the_last_task_returns_to_a_skipped_open_one() {
+    let path = write_real_file("## L\n\n- [ ] a\n- [ ] b\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 1;
+    state.toggle_current();
+    assert_eq!(
+        state.current_item_index, 0,
+        "does not stay on the just-done b"
+    );
+    state.toggle_current();
+    let saved = fs::read_to_string(&path).unwrap();
+    assert_eq!(saved, "## L\n\n- [x] a\n- [x] b\n", "second Space checks a");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn completing_a_task_still_stops_on_a_following_note() {
+    let path = write_real_file("## L\n\n- [ ] a\n- a note\n- [ ] b\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    assert_eq!(state.current_item_index, 1, "the note is still shown");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn unchecking_a_task_with_space_says_so() {
+    let path = write_real_file("## L\n\n- [x] a\n- [ ] b\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 0;
+    state.toggle_current();
+    assert_eq!(state.status_message.as_deref(), Some("Marked not done"));
+    assert!(!state.status_is_error);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn tab_jumps_to_next_incomplete_task_within_and_across_lists() {
     // Tab = next unfinished task anywhere. All-undone doc: from (0,0)
     // Tab steps to the next undone task in the same list.
@@ -3397,7 +3463,7 @@ fn own_write_does_not_trigger_spurious_reload() {
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
 
     state.toggle_current();
-    assert_eq!(state.status_message, None);
+    state.status_message = None;
 
     state.reload_if_changed();
     assert_eq!(
