@@ -314,7 +314,7 @@ pub fn write_back(document: &Document) -> io::Result<String> {
     ));
 
     // `write_temp` cleans up after its own failures.
-    let temp_path = write_temp(&temp_path_base, &contents, Some(&source))?;
+    let temp_path = write_temp(&temp_path_base, &contents, &source)?;
     if let Err(err) = fs::rename(&temp_path, &document.file_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(err);
@@ -342,11 +342,7 @@ pub(crate) fn sync_parent_dir(path: &Path) {
 /// is taken it retries once at a fresh name, never deleting the existing
 /// file, which may belong to a live writer. Returns the path written.
 #[cfg(unix)]
-fn write_temp(
-    base_temp_path: &Path,
-    contents: &str,
-    source: Option<&fs::Metadata>,
-) -> io::Result<PathBuf> {
+fn write_temp(base_temp_path: &Path, contents: &str, source: &fs::Metadata) -> io::Result<PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, fchown};
 
@@ -371,19 +367,17 @@ fn write_temp(
 
     let write_result = (|| {
         file.write_all(contents.as_bytes())?;
-        if let Some(source) = source {
-            // Best effort: keeping the UID needs root, but any group the
-            // user belongs to may be set, which keeps a shared group
-            // checklist writable by the group rather than handing it to the
-            // saver's primary group.
-            if fchown(&file, Some(source.uid()), Some(source.gid())).is_err() {
-                let _ = fchown(&file, None, Some(source.gid()));
-            }
-            // Only the ordinary bits: the new file belongs to the saver, so
-            // copying setuid/setgid/sticky would bypass the kernel clearing
-            // them when someone other than the owner writes the file.
-            file.set_permissions(fs::Permissions::from_mode(source.mode() & 0o777))?;
+        // Best effort: keeping the UID needs root, but any group the
+        // user belongs to may be set, which keeps a shared group
+        // checklist writable by the group rather than handing it to the
+        // saver's primary group.
+        if fchown(&file, Some(source.uid()), Some(source.gid())).is_err() {
+            let _ = fchown(&file, None, Some(source.gid()));
         }
+        // Only the ordinary bits: the new file belongs to the saver, so
+        // copying setuid/setgid/sticky would bypass the kernel clearing
+        // them when someone other than the owner writes the file.
+        file.set_permissions(fs::Permissions::from_mode(source.mode() & 0o777))?;
         file.sync_all()
     })();
     match write_result {
@@ -396,11 +390,7 @@ fn write_temp(
 }
 
 #[cfg(not(unix))]
-fn write_temp(
-    temp_path: &Path,
-    contents: &str,
-    source: Option<&fs::Metadata>,
-) -> io::Result<PathBuf> {
+fn write_temp(temp_path: &Path, contents: &str, source: &fs::Metadata) -> io::Result<PathBuf> {
     use std::io::Write;
 
     let mut file = fs::OpenOptions::new()
@@ -409,9 +399,7 @@ fn write_temp(
         .truncate(true)
         .open(temp_path)?;
     file.write_all(contents.as_bytes())?;
-    if let Some(source) = source {
-        file.set_permissions(source.permissions())?;
-    }
+    file.set_permissions(source.permissions())?;
     file.sync_all()?;
     Ok(temp_path.to_path_buf())
 }

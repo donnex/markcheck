@@ -655,7 +655,7 @@ fn body_lines_fall_back_to_display_text_when_body_empty() {
 #[test]
 fn current_card_width_is_center_pct_in_stack_and_full_when_narrow() {
     // In the stack tier the center card takes CENTER_CARD_PCT of
-    // the width; below NARROW_THRESHOLD it's the full width; floored at 20.
+    // the width; below NARROW_THRESHOLD it's the full width.
     assert_eq!(current_card_width(Rect::new(0, 0, 100, 40)), 72); // 100 * 72%
     assert_eq!(current_card_width(Rect::new(0, 0, 120, 40)), 86); // 120 * 72%
     assert_eq!(

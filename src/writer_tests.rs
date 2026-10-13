@@ -986,7 +986,8 @@ fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
     let base = crate::test_support::unique_temp_path("writer", "collision", None);
     fs::write(&base, "a live process's own temp file, not markcheck's\n").unwrap();
 
-    let written_path = write_temp(&base, "checklist content\n", None).unwrap();
+    let source = fs::metadata(&base).unwrap();
+    let written_path = write_temp(&base, "checklist content\n", &source).unwrap();
 
     assert_ne!(
         written_path, base,
