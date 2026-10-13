@@ -2526,12 +2526,110 @@ fn auto_copy_fires_on_every_navigation_motion() {
                 "{name}: copies the landing card's command"
             );
         });
-        assert_eq!(
-            state.status_message.as_deref(),
-            Some("Sent to clipboard (OSC 52)"),
-            "{name}: confirms the copy"
+        let status = state.status_message.as_deref().unwrap_or_default();
+        assert!(
+            status.ends_with("Sent to clipboard (OSC 52)"),
+            "{name}: confirms the copy, got {status:?}"
         );
     }
+}
+
+#[test]
+fn a_wrap_message_keeps_the_auto_copy_confirmation_beside_it() {
+    let mut document = two_list_document();
+    for list in &mut document.lists {
+        for item in &mut list.items {
+            item.code_spans = vec![format!("cmd-{}", item.line_number)];
+        }
+    }
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Wrapped to the first unfinished task (List 1) · Sent to clipboard (OSC 52)")
+    );
+}
+
+#[test]
+fn a_wrap_message_gives_way_to_a_sticky_auto_copy_error() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["rm\u{202e}x".to_string()];
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(HIDDEN_CHARACTERS_MESSAGE)
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
+fn tab_says_when_it_wraps_to_the_top_and_stays_quiet_otherwise() {
+    let mut state = AppState::new(two_list_document());
+    state.focus_item(0, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 2));
+    assert_eq!(state.status_message, None, "a forward step needs no notice");
+
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Wrapped to the first unfinished task (List 1)")
+    );
+    assert!(!state.status_is_error, "a wrap is a notice, not an error");
+    assert!(
+        state.status_expiry.is_some(),
+        "the wrap notice is ephemeral"
+    );
+}
+
+#[test]
+fn tab_on_the_only_unfinished_task_reports_the_wrap_back_to_it() {
+    let mut document = two_list_document();
+    for list in &mut document.lists {
+        for item in &mut list.items {
+            item.kind = ItemKind::Checkbox(TaskState::Done);
+        }
+    }
+    document.lists[1].items[0].kind = ItemKind::Checkbox(TaskState::Started);
+    let mut state = AppState::new(document);
+    state.focus_item(1, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Wrapped to the first unfinished task (List 2)")
+    );
+}
+
+#[test]
+fn n_and_n_say_when_the_search_wraps_around() {
+    let mut state = AppState::new(two_list_document());
+    state.search.last = Some("task".to_string());
+    state.focus_item(1, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('n'));
+    assert_eq!(state.status_message.as_deref(), Some("Match 5/5"));
+    state.handle_key(KeyCode::Char('n'));
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Match 1/5 · wrapped to top")
+    );
+    state.handle_key(KeyCode::Char('N'));
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Match 5/5 · wrapped to bottom")
+    );
+    state.handle_key(KeyCode::Char('N'));
+    assert_eq!(state.status_message.as_deref(), Some("Match 4/5"));
 }
 
 #[test]

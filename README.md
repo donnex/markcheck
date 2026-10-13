@@ -357,10 +357,10 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Space` / `Enter` | toggle the current task done; after checking a task, move to the next card that isn't a done task (skipping done tasks, wrapping to the list's first open task), so pressing it again never unchecks a finished step; on an info card (nothing to toggle) advance to the next card instead |
 | `s` | mark the current task started / in progress (`[/]`) |
 | `u` / `Ctrl-R` | undo / redo the last change (toggle, start, or reset) |
-| `Tab` | jump to the next unfinished task (anywhere in the document; wraps around) |
+| `Tab` | jump to the next unfinished task (anywhere in the document; wraps around, and the status bar says when it does) |
 | `Shift-H` / `Shift-L` | jump to the previous / next list with unfinished tasks |
 | `/` | search tasks by text — jump to the next match from the cursor as you type |
-| `n` / `N` | jump to the next / previous search match |
+| `n` / `N` | jump to the next / previous search match (wraps around, and says so) |
 | `}` / `{` | jump to the first task of the next / previous sub-section (within the current list) |
 | `T` | open the "go to task" overlay: a filterable list of every task |
 | `y` | copy the task's command to the clipboard |
@@ -398,7 +398,7 @@ When you finish a list a summary card appears — `l` / `Enter` moves to
 the next list that still has incomplete tasks (skipping any already
 done), `h` reviews the one you just finished. If you go back to review, you
 can still move on: `Tab` jumps to the next unfinished task anywhere (wrapping
-around), `Shift-L` jumps to the next unfinished list (`Shift-H` the
+around to the top, with a `Wrapped to the first unfinished task` notice), `Shift-L` jumps to the next unfinished list (`Shift-H` the
 previous), and `l` at the end of a list steps into the next list.
 Finishing every list shows an all-done summary. Jumping to a list (or
 starting up) lands on its first not-done task.
@@ -685,7 +685,7 @@ counts, and the search wraps around to the top past the last task, as vim's `/`
 does), with the query and the **number of matches** shown in
 the status bar (and a clear "no matches" when nothing hits). Press `Enter`
 to keep the match — the status bar then reports your position (`Match 2/5`) as
-`n` / `N` cycle forward / backward through the rest, wrapping around — or `Esc`
+`n` / `N` cycle forward / backward through the rest, wrapping around (`Match 1/5 · wrapped to top`, as vim reports `search hit BOTTOM`) — or `Esc`
 to cancel and return to where you were. Matching is
 **smart-case** (case-insensitive unless your query has an uppercase letter) and
 covers a task's title, its body text, *and* its commands — so you can find a
