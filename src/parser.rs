@@ -557,8 +557,14 @@ struct ParseState<'a> {
     blockquote_depth: usize,
 
     /// A leading bold-only top-level bullet becomes the list's banner instead
-    /// of a card. Reset at each H2.
+    /// of a card. Reset at each H2; only a kept Markdown list sets it.
     seen_first_top_item: bool,
+    /// Whether the open top-level Markdown list has had a top-level item. It
+    /// and `pending_banner` are committed at the list's end only if the list
+    /// is kept, so a dropped checkbox-less list neither supplies the banner
+    /// nor takes the banner slot.
+    list_saw_top_item: bool,
+    pending_banner: Option<String>,
 
     /// A fenced code block at column 0 immediately after a kept list is
     /// attached to that list's last item. Any other block between the list
@@ -590,6 +596,8 @@ impl<'a> ParseState<'a> {
             list_had_checkbox_syntax: false,
             blockquote_depth: 0,
             seen_first_top_item: false,
+            list_saw_top_item: false,
+            pending_banner: None,
             attach_fence_to_last_item: false,
             code_block: None,
             item_stack: Vec::new(),
@@ -713,6 +721,8 @@ impl<'a> ParseState<'a> {
     fn on_list_start(&mut self) {
         if self.list_depth == 0 {
             self.list_had_checkbox_syntax = false;
+            self.list_saw_top_item = false;
+            self.pending_banner = None;
         }
         self.list_depth += 1;
     }
@@ -724,8 +734,17 @@ impl<'a> ParseState<'a> {
             return;
         }
         let mut items = std::mem::take(&mut self.current_list_items);
+        let pending_banner = self.pending_banner.take();
         self.attach_fence_to_last_item = self.list_had_checkbox_syntax;
         if self.list_had_checkbox_syntax {
+            self.seen_first_top_item |= std::mem::take(&mut self.list_saw_top_item);
+            if let Some(banner) = pending_banner {
+                let banner = Some(banner);
+                match self.lists.last_mut() {
+                    Some(list) => list.banner = banner,
+                    None => self.default_banner = banner,
+                }
+            }
             // Items arrive post-order; sort by line to restore document order.
             items.sort_by_key(|item| item.line_number);
             self.target_items().append(&mut items);
@@ -766,19 +785,16 @@ impl<'a> ParseState<'a> {
         let has_children = self.current_list_items.len() > builder.items_before;
         let in_blockquote = builder.in_blockquote;
         let mut item = builder.into_item();
-        let is_banner =
-            !self.seen_first_top_item && is_banner_candidate(&item, has_children, in_blockquote);
+        let is_banner = !self.seen_first_top_item
+            && !self.list_saw_top_item
+            && is_banner_candidate(&item, has_children, in_blockquote);
         if item.depth == 0 {
-            self.seen_first_top_item = true;
+            self.list_saw_top_item = true;
         }
-        if !is_banner {
+        if is_banner {
+            self.pending_banner = item.header.take();
+        } else {
             self.current_list_items.push(item);
-            return;
-        }
-        let banner = item.header.take();
-        match self.lists.last_mut() {
-            Some(list) => list.banner = banner,
-            None => self.default_banner = banner,
         }
     }
 
@@ -976,6 +992,55 @@ mod tests {
         assert_eq!(smoke.code_blocks, vec!["smoke-test --all".to_string()]);
         let upper = example_item("basics.md", "Record the start time");
         assert_eq!(upper.kind, ItemKind::Checkbox(TaskState::Done));
+    }
+
+    #[test]
+    fn example_reference_list_keeps_its_banner_and_copyable_note() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/notes-and-code.md");
+        let document = parse_document(path).expect("example parses");
+        let reference = document
+            .lists
+            .iter()
+            .find(|list| list.title == "Reference")
+            .expect("Reference list");
+        assert!(
+            reference
+                .banner
+                .as_deref()
+                .is_some_and(|banner| banner.starts_with("Read before proceeding"))
+        );
+        let note = example_item("notes-and-code.md", "A note with a command but no checkbox");
+        assert_eq!(note.kind, ItemKind::DisplayOnly);
+        assert!(
+            note.code_spans
+                .contains(&"restart-service example-service".to_string())
+        );
+    }
+
+    #[test]
+    fn dropped_notes_list_does_not_supply_the_banner() {
+        let document = parse("## A\n\n- **Notes only**\n- some note\n\n* [ ] task\n");
+        let list = &document.lists[0];
+        assert!(list.banner.is_none());
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].display_text, "task");
+    }
+
+    #[test]
+    fn dropped_notes_list_does_not_take_the_banner_slot() {
+        let document = parse("## A\n\n- plain note\n\n* **Real warning**\n* [ ] task\n");
+        let list = &document.lists[0];
+        assert_eq!(list.banner.as_deref(), Some("Real warning"));
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].display_text, "task");
+    }
+
+    #[test]
+    fn kept_list_before_a_bold_only_bullet_still_takes_the_banner_slot() {
+        let document = parse("## A\n\n- [ ] first\n\n* **Not a banner**\n* [ ] second\n");
+        let list = &document.lists[0];
+        assert!(list.banner.is_none());
+        assert_eq!(list.items[1].header.as_deref(), Some("Not a banner"));
     }
 
     const EXAMPLE: &str = "\
