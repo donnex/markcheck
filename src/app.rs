@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::clipboard;
+use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
     AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, OverviewTarget,
     Palette, PendingSync, PickerState, Screen, SearchState, StateSnapshot, TaskState,
@@ -1496,6 +1497,40 @@ impl AppState {
     /// `last_update_at`.
     pub fn record_git_sync(&mut self) {
         self.git_sync.last_at = Some(SystemTime::now());
+    }
+
+    /// Folds a finished background sync into the title bar's sync indicator
+    /// and reports it in the status bar. A failure keeps the indicator in its
+    /// unsynced state until a later sync lands. A push failing again for the
+    /// same reason only updates the indicator: retries repeat every few
+    /// seconds to minutes, and each report would replace whatever message the
+    /// user is reading.
+    pub fn apply_git_sync_outcome(&mut self, outcome: &SyncOutcome) {
+        let (label, push_reason) = match outcome {
+            SyncOutcome::Synced => {
+                self.record_git_sync();
+                self.git_sync.reported_reason = None;
+                if self.git_sync.problem.take().is_some() {
+                    self.set_status("Git sync caught up: committed and pushed".to_string());
+                }
+                return;
+            }
+            SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => return,
+            SyncOutcome::SkippedUntracked => ("not tracked", None),
+            SyncOutcome::CommittedNotPushed { message, .. } | SyncOutcome::RetryFailed(message) => {
+                ("not pushed", Some(message))
+            }
+            SyncOutcome::Failed(_) => ("not synced", None),
+        };
+        self.git_sync.problem = Some(label);
+        self.git_sync.last_at = None;
+        if push_reason.is_some() && push_reason == self.git_sync.reported_reason.as_ref() {
+            return;
+        }
+        self.git_sync.reported_reason = push_reason.cloned();
+        if let Some(message) = git_sync::status_message(outcome) {
+            self.set_error(message);
+        }
     }
 
     fn request_reset(&mut self) {

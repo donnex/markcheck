@@ -236,12 +236,7 @@ where
         // `take_git_sync_request` below.
         if let Some(sync) = git_sync.as_mut() {
             if let Some(outcome) = sync.poll() {
-                if outcome == git_sync::SyncOutcome::Synced {
-                    state.record_git_sync();
-                }
-                if let Some(message) = git_sync::status_message(&outcome) {
-                    state.set_error(message);
-                }
+                state.apply_git_sync_outcome(&outcome);
                 dirty = true;
             }
             // Not gated on the outcome above: a retry can come due on a
@@ -254,6 +249,12 @@ where
             && let Some(sync) = git_sync.as_mut()
         {
             sync.request(pending);
+        }
+        if let Some(sync) = git_sync.as_ref()
+            && state.git_sync.busy != sync.is_busy()
+        {
+            state.git_sync.busy = sync.is_busy();
+            dirty = true;
         }
         let now = SystemTime::now();
         dirty |= state.expire_status(now);

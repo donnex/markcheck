@@ -4039,6 +4039,102 @@ fn record_git_sync_sets_the_synced_timestamp() {
 }
 
 #[test]
+fn a_failed_push_keeps_the_unsynced_state_across_keys_until_a_sync_lands() {
+    let mut state = AppState::new(two_list_document());
+    state.git_sync.active = true;
+    state.record_git_sync();
+
+    state.apply_git_sync_outcome(&SyncOutcome::CommittedNotPushed {
+        message: "offline".to_string(),
+        commit: "abc".to_string(),
+    });
+    assert_eq!(state.git_sync.problem, Some("not pushed"));
+    assert!(
+        state.git_sync.last_at.is_none(),
+        "an older success no longer vouches for the file"
+    );
+    assert!(state.status_is_error);
+    assert!(state.status_message.as_deref().unwrap().contains("offline"));
+
+    state.handle_key(KeyCode::Char('j'));
+    state.handle_key(KeyCode::Char('k'));
+    assert_eq!(
+        state.git_sync.problem,
+        Some("not pushed"),
+        "keys clear the status bar, not the indicator"
+    );
+
+    state.apply_git_sync_outcome(&SyncOutcome::Skipped);
+    state.apply_git_sync_outcome(&SyncOutcome::RetryAbandoned);
+    assert_eq!(state.git_sync.problem, Some("not pushed"));
+
+    state.apply_git_sync_outcome(&SyncOutcome::Synced);
+    assert_eq!(state.git_sync.problem, None);
+    assert!(state.git_sync.last_at.is_some());
+    assert!(!state.status_is_error);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Git sync caught up: committed and pushed")
+    );
+}
+
+#[test]
+fn a_retry_failing_for_the_same_reason_leaves_the_status_bar_alone() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_git_sync_outcome(&SyncOutcome::CommittedNotPushed {
+        message: "offline".to_string(),
+        commit: "abc".to_string(),
+    });
+    state.set_status("Match 2/5".to_string());
+
+    state.apply_git_sync_outcome(&SyncOutcome::RetryFailed("offline".to_string()));
+    state.apply_git_sync_outcome(&SyncOutcome::CommittedNotPushed {
+        message: "offline".to_string(),
+        commit: "abc".to_string(),
+    });
+    assert_eq!(state.status_message.as_deref(), Some("Match 2/5"));
+
+    state.apply_git_sync_outcome(&SyncOutcome::RetryFailed("auth expired".to_string()));
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .unwrap()
+            .contains("auth expired"),
+        "a new reason is reported"
+    );
+}
+
+#[test]
+fn a_synced_outcome_without_a_problem_shows_no_status() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_git_sync_outcome(&SyncOutcome::Synced);
+    assert!(state.git_sync.last_at.is_some());
+    assert!(state.status_message.is_none());
+}
+
+#[test]
+fn content_sync_failures_and_untracked_files_are_always_reported() {
+    let mut state = AppState::new(two_list_document());
+    for _ in 0..2 {
+        state.status_message = None;
+        state.apply_git_sync_outcome(&SyncOutcome::Failed("merge in progress".to_string()));
+        assert_eq!(state.git_sync.problem, Some("not synced"));
+        assert!(state.status_message.is_some(), "reported every time");
+    }
+    state.status_message = None;
+    state.apply_git_sync_outcome(&SyncOutcome::SkippedUntracked);
+    assert_eq!(state.git_sync.problem, Some("not tracked"));
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .unwrap()
+            .contains("not tracked")
+    );
+}
+
+#[test]
 fn help_ctrl_scroll_keys_and_page_up_scroll() {
     // Mirrors help_scroll_keys_scroll_instead_of_closing, but for the
     // Ctrl-E/Ctrl-Y/Ctrl-U/PageUp arms that test doesn't reach.

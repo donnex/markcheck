@@ -23,8 +23,12 @@ use std::time::{Duration, Instant};
 
 use crate::model::{PendingSync, hash_bytes};
 
-/// Backoff between automatic push retries after `CommittedNotPushed`.
+/// Backoff before the first automatic push retry after `CommittedNotPushed`.
+/// Each failed retry of the same commit doubles it, up to
+/// `PUSH_RETRY_MAX_INTERVAL`, so an offline laptop isn't polling the remote
+/// every 30 seconds for hours.
 const PUSH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+const PUSH_RETRY_MAX_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// The sticky status-bar message for an outcome polled while the TUI runs;
 /// `None` for the ones not worth interrupting the user for: a landed sync
@@ -92,6 +96,8 @@ pub struct GitSync {
     pending: Option<PendingSync>,
     /// The commit SHA to retry pushing and when the last attempt finished.
     retry: Option<(String, Instant)>,
+    /// How long after the last attempt the next retry is due.
+    retry_interval: Duration,
     /// Hash of the latest request, read live by the worker so `run_sync` can
     /// tell a superseded request from an outside edit.
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
@@ -165,6 +171,7 @@ impl GitSync {
             busy: false,
             pending: None,
             retry: None,
+            retry_interval: PUSH_RETRY_INTERVAL,
             latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
         })
     }
@@ -249,15 +256,27 @@ impl GitSync {
     /// `SyncOutcome` variant can't silently leave a retry firing every frame.
     fn apply_outcome(&mut self, outcome: &SyncOutcome) {
         match outcome {
-            SyncOutcome::Synced => self.retry = None,
+            SyncOutcome::Synced | SyncOutcome::RetryAbandoned => {
+                self.retry = None;
+                self.retry_interval = PUSH_RETRY_INTERVAL;
+            }
             SyncOutcome::CommittedNotPushed { commit, .. } => {
+                let same_commit = self
+                    .retry
+                    .as_ref()
+                    .is_some_and(|(armed, _)| armed == commit);
+                self.retry_interval = if same_commit {
+                    self.grown_retry_interval()
+                } else {
+                    PUSH_RETRY_INTERVAL
+                };
                 self.retry = Some((commit.clone(), Instant::now()));
             }
-            SyncOutcome::RetryAbandoned => self.retry = None,
             // Keep it armed but restart the backoff.
             SyncOutcome::RetryFailed(_) => {
                 if let Some((_, last_attempt)) = &mut self.retry {
                     *last_attempt = Instant::now();
+                    self.retry_interval = self.grown_retry_interval();
                 }
             }
             // A content sync's failure says nothing about an earlier commit's retry.
@@ -266,7 +285,11 @@ impl GitSync {
         }
     }
 
-    /// Re-attempts a failed push once `PUSH_RETRY_INTERVAL` has passed, since
+    fn grown_retry_interval(&self) -> Duration {
+        (self.retry_interval * 2).min(PUSH_RETRY_MAX_INTERVAL)
+    }
+
+    /// Re-attempts a failed push once `retry_interval` has passed, since
     /// content that's already committed never triggers another request. `now`
     /// is a parameter so tests can skip the wait.
     pub fn retry_push_if_due(&mut self, now: Instant) {
@@ -276,14 +299,14 @@ impl GitSync {
         let Some((commit, last_attempt)) = &self.retry else {
             return;
         };
-        if now.saturating_duration_since(*last_attempt) < PUSH_RETRY_INTERVAL {
+        if now.saturating_duration_since(*last_attempt) < self.retry_interval {
             return;
         }
         let commit = commit.clone();
         self.spawn_retry(commit);
     }
 
-    /// Used only when quitting.
+    /// Drives the title bar's "syncing" state, and the wait when quitting.
     pub fn is_busy(&self) -> bool {
         self.busy
     }
@@ -650,6 +673,46 @@ mod tests {
             let (_, at) = sync.retry.clone().expect("left armed");
             assert_eq!(at, old, "{outcome:?} must leave an unrelated retry alone");
         }
+
+        fs::remove_dir_all(work.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn repeated_push_failures_grow_the_retry_interval_up_to_a_cap() {
+        let work = init_repo_without_remote();
+        let commit = current_head(&work).unwrap();
+        let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+        let not_pushed = |commit: &str| SyncOutcome::CommittedNotPushed {
+            message: "offline".to_string(),
+            commit: commit.to_string(),
+        };
+
+        sync.apply_outcome(&not_pushed(&commit));
+        assert_eq!(sync.retry_interval, PUSH_RETRY_INTERVAL);
+
+        sync.apply_outcome(&not_pushed(&commit));
+        assert_eq!(sync.retry_interval, PUSH_RETRY_INTERVAL * 2);
+        sync.apply_outcome(&SyncOutcome::RetryFailed("offline".to_string()));
+        assert_eq!(sync.retry_interval, PUSH_RETRY_INTERVAL * 4);
+
+        let (_, last_attempt) = sync.retry.clone().unwrap();
+        sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL * 3);
+        assert!(!sync.busy, "the grown interval hasn't elapsed yet");
+
+        for _ in 0..10 {
+            sync.apply_outcome(&not_pushed(&commit));
+        }
+        assert_eq!(sync.retry_interval, PUSH_RETRY_MAX_INTERVAL);
+
+        sync.apply_outcome(&not_pushed("a-newer-commit"));
+        assert_eq!(
+            sync.retry_interval, PUSH_RETRY_INTERVAL,
+            "a new commit starts the backoff over"
+        );
+
+        sync.apply_outcome(&not_pushed("a-newer-commit"));
+        sync.apply_outcome(&SyncOutcome::Synced);
+        assert_eq!(sync.retry_interval, PUSH_RETRY_INTERVAL, "a push resets it");
 
         fs::remove_dir_all(work.parent().unwrap()).ok();
     }
