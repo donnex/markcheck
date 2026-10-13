@@ -222,7 +222,8 @@ How each piece maps to the UI:
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
-| inline HTML (`<kbd>`, `<br>`, …) and HTML blocks | **Dropped.** Inline tags are not shown on the card, though the text between them is (`<kbd>Enter</kbd>` shows as `Enter`); a block of HTML, including an `<!-- comment -->`, is not shown at all. |
+| inline HTML (`<kbd>`, `<br>`, …) and HTML blocks | **Dropped.** Inline tags are not shown on the card, though the text between them is (`<kbd>Enter</kbd>` shows as `Enter`); a block of HTML, including an `<!-- comment -->`, is not shown at all. A dropped tag still counts as a space, so `line one<br>line two` shows as `line one line two` rather than running the words together. |
+| a task or note continuing in a **second paragraph** (a blank line, then indented text) | Joined to the first paragraph with a space and shown as one flowing body, the same as a line wrapped in the source. Text after a code block or a sub-list inside the item joins the same way. |
 | `> - [ ]` (a task inside a blockquote) | A **non-interactive** display-only card — a quoted/illustrative example (e.g. from another runbook), never a live, toggleable task. |
 
 Finer points:

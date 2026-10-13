@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A task whose text continues in a second paragraph no longer has the two
+  paragraphs run together: `Restart the service`, a blank line, then
+  `Then check status` used to show as "Restart the serviceThen check status"
+  on the card, in the overview and in commit messages, and `/` search couldn't
+  find words across the join. The same happened around an inline HTML tag
+  such as `<br>`. Both now read as separate words. (#72)
+
 - With `--git-sync` on, a branch that tracks another local branch rather
   than a remote one (set up with `git checkout -b <name> --track main`, for
   example) is no longer "pushed" into that local branch. Ticking a box used
