@@ -460,6 +460,14 @@ file comes back. Restore the
 file (or save it again from your editor) and the app reloads it and resumes
 normally.
 
+Changes are normally picked up the moment they're saved. Where the
+filesystem doesn't report them — a network share (NFS, SMB/CIFS), an sshfs
+or other FUSE mount, or a system that has run out of file-watch slots —
+`markcheck` still checks the file every 2 seconds, so a reload can take that
+long to appear. If the file can't be watched at all, a startup message says
+so (`Live reload slowed: can't watch the file (…) — checking every 2 s
+instead`).
+
 ### Git sync
 
 With `--git-sync` (or a matching `git_sync_paths` entry, above) active for a

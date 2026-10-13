@@ -32,7 +32,7 @@ use ratatui::layout::Rect;
 
 use cli::{Cli, Settings};
 use model::{AppState, IconSet};
-use watcher::FileWatcher;
+use watcher::ReloadTrigger;
 
 struct TerminalGuard {
     mouse: bool,
@@ -147,10 +147,9 @@ fn main() -> anyhow::Result<()> {
     state.auto_copy = settings.auto_copy;
     // Pick the richest color representation the terminal supports.
     state.palette = model::Palette::detect();
-    // Reload-from-disk is a convenience feature, not core functionality:
-    // if the watch can't be set up (e.g. inotify unavailable), continue
-    // without it rather than failing to start.
-    let watcher = FileWatcher::new(&state.document.file_path).ok();
+    // A failed watch (e.g. inotify limits reached) only costs reload latency:
+    // the trigger's timed recheck still runs, and the user is told.
+    let (mut reload, watch_error) = ReloadTrigger::new(&state.document.file_path, Instant::now());
 
     // Git-sync activates only if requested and `GitSync::detect` finds a work
     // tree. Either half failing is reported rather than silently leaving it
@@ -169,6 +168,7 @@ fn main() -> anyhow::Result<()> {
     let warnings = [
         launch::startup_warning(read_only, hard_links, foreign_owner),
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
+        watch_error.map(|error| launch::watch_warning(&error.to_string())),
     ];
     match launch::startup_message(created_new, &warnings) {
         Some((message, true)) => state.set_error(message),
@@ -199,13 +199,7 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(
-        &mut terminal,
-        &mut state,
-        watcher.as_ref(),
-        &mut git_sync,
-        mouse,
-    );
+    let result = run(&mut terminal, &mut state, &mut reload, &mut git_sync, mouse);
     drop(guard);
     clipboard::release_system_clipboard();
     // Printed only once the alternate screen is gone, so it stays visible.
@@ -218,7 +212,7 @@ fn main() -> anyhow::Result<()> {
 fn run<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
-    watcher: Option<&FileWatcher>,
+    reload: &mut ReloadTrigger,
     git_sync: &mut Option<git_sync::GitSync>,
     mouse: bool,
 ) -> anyhow::Result<Option<String>>
@@ -230,10 +224,7 @@ where
     let mut dirty = true;
     let mut label_due: Option<SystemTime> = None;
     loop {
-        if watcher.is_some_and(FileWatcher::poll_changed) {
-            state.reload_if_changed();
-            dirty = true;
-        }
+        dirty |= reload.check(state, Instant::now());
         // Drain a finished background sync before requesting the next
         // one, so a request queued during the finished run's `pending` slot
         // (see `GitSync::poll`) is already spawned by the time we check
