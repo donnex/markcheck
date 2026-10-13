@@ -499,7 +499,8 @@ impl IconSet {
 /// Terminal color capability, detected once at startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorDepth {
-    /// 24-bit `Rgb` (`COLORTERM=truecolor`/`24bit`).
+    /// 24-bit `Rgb` (`COLORTERM=truecolor`/`24bit`, or a known truecolor
+    /// `TERM` such as `xterm-kitty`, or one ending in `-direct`).
     TrueColor,
     /// 256-color palette (`TERM` contains `256color`).
     Palette256,
@@ -509,6 +510,50 @@ pub enum ColorDepth {
     /// modifiers alone.
     Mono,
 }
+
+/// The `--color` flag / `color` config key: `Auto` detects the terminal's
+/// capability, anything else forces that palette.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+pub enum ColorChoice {
+    #[default]
+    #[value(name = "auto")]
+    #[serde(rename = "auto")]
+    Auto,
+    #[value(name = "truecolor")]
+    #[serde(rename = "truecolor")]
+    TrueColor,
+    #[value(name = "256")]
+    #[serde(rename = "256")]
+    Palette256,
+    #[value(name = "16")]
+    #[serde(rename = "16")]
+    Basic,
+}
+
+impl ColorChoice {
+    /// The depth this choice forces, or `None` for `Auto`.
+    pub fn forced_depth(self) -> Option<ColorDepth> {
+        match self {
+            ColorChoice::Auto => None,
+            ColorChoice::TrueColor => Some(ColorDepth::TrueColor),
+            ColorChoice::Palette256 => Some(ColorDepth::Palette256),
+            ColorChoice::Basic => Some(ColorDepth::Basic),
+        }
+    }
+}
+
+/// `TERM` values of terminals that support 24-bit color but don't put
+/// `256color` in their name, and whose `COLORTERM` is lost over SSH, `sudo`
+/// or a multiplexer started without it.
+const TRUECOLOR_TERMS: &[&str] = &[
+    "xterm-kitty",
+    "alacritty",
+    "foot",
+    "foot-extra",
+    "wezterm",
+    "contour",
+    "xterm-ghostty",
+];
 
 /// Decides color depth from the `NO_COLOR`, `COLORTERM` and `TERM` values
 /// (pure, so it's unit-testable; `detect_color_depth` supplies the real env).
@@ -526,6 +571,9 @@ pub fn depth_from_env(
         if ct.contains("truecolor") || ct.contains("24bit") {
             return ColorDepth::TrueColor;
         }
+    }
+    if term.is_some_and(|t| TRUECOLOR_TERMS.contains(&t) || t.ends_with("-direct")) {
+        return ColorDepth::TrueColor;
     }
     if term.is_some_and(|t| t.contains("256color")) {
         return ColorDepth::Palette256;
@@ -636,9 +684,10 @@ impl Palette {
         self.depth == ColorDepth::Mono
     }
 
-    /// The palette for the current terminal's detected capability.
-    pub fn detect() -> Self {
-        Self::for_depth(detect_color_depth())
+    /// The palette `choice` forces, or with `Auto` the one for the current
+    /// terminal's detected capability.
+    pub fn detect(choice: ColorChoice) -> Self {
+        Self::for_depth(choice.forced_depth().unwrap_or_else(detect_color_depth))
     }
 
     /// Guide color for a nested sub-list, from a small cycle of distinct hues.

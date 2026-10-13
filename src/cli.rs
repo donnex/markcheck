@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::config;
+use crate::model::ColorChoice;
 
 /// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
@@ -60,6 +61,10 @@ pub struct Cli {
     /// Don't auto-copy on navigation, overriding `auto_copy = true` in the config
     #[arg(long, conflicts_with = "auto_copy")]
     pub no_auto_copy: bool,
+    /// Color palette: auto detects the terminal's support; truecolor, 256 or 16
+    /// force one (config: color = "...")
+    #[arg(long, value_name = "PALETTE", value_enum)]
+    pub color: Option<ColorChoice>,
     /// Commit and push this file's changes after every toggle, when it's inside a
     /// git repo (config: git_sync_paths matches this file's path; --no-git-sync
     /// turns it off)
@@ -76,14 +81,15 @@ pub struct Cli {
     pub no_config: bool,
 }
 
-/// The four boolean settings, resolved in one place so the wiring can be
-/// tested through real argv.
+/// The four boolean settings and the palette choice, resolved in one place
+/// so the wiring can be tested through real argv.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Settings {
     pub nerd_font: bool,
     pub mouse: bool,
     pub primary: bool,
     pub auto_copy: bool,
+    pub color: ColorChoice,
 }
 
 impl Settings {
@@ -93,6 +99,7 @@ impl Settings {
             mouse: resolve_flag(cli.mouse, cli.no_mouse, config.mouse, true),
             primary: resolve_flag(cli.primary, cli.no_primary, config.primary, false),
             auto_copy: resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false),
+            color: cli.color.or(config.color).unwrap_or_default(),
         }
     }
 }

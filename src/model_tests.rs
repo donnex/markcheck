@@ -321,6 +321,52 @@ fn depth_from_env_prefers_truecolor_then_256_then_basic() {
 }
 
 #[test]
+fn depth_from_env_knows_truecolor_terms_without_colorterm() {
+    for term in [
+        "xterm-kitty",
+        "alacritty",
+        "foot",
+        "foot-extra",
+        "wezterm",
+        "contour",
+        "xterm-ghostty",
+        "xterm-direct",
+        "alacritty-direct",
+    ] {
+        assert_eq!(
+            depth_from_env(None, None, Some(term)),
+            ColorDepth::TrueColor,
+            "TERM={term}"
+        );
+    }
+    assert_eq!(
+        depth_from_env(Some("1"), None, Some("xterm-kitty")),
+        ColorDepth::Mono
+    );
+    assert_eq!(
+        depth_from_env(None, None, Some("screen")),
+        ColorDepth::Basic
+    );
+}
+
+#[test]
+fn palette_detect_honours_a_forced_color_choice() {
+    for (choice, depth) in [
+        (ColorChoice::TrueColor, ColorDepth::TrueColor),
+        (ColorChoice::Palette256, ColorDepth::Palette256),
+        (ColorChoice::Basic, ColorDepth::Basic),
+    ] {
+        assert_eq!(choice.forced_depth(), Some(depth));
+        assert_eq!(Palette::detect(choice).depth, depth);
+    }
+    assert_eq!(ColorChoice::Auto.forced_depth(), None);
+    assert_eq!(
+        Palette::detect(ColorChoice::Auto).depth,
+        detect_color_depth()
+    );
+}
+
+#[test]
 fn depth_from_env_honours_a_non_empty_no_color() {
     assert_eq!(
         depth_from_env(Some("1"), Some("truecolor"), Some("xterm-256color")),

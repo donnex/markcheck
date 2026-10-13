@@ -82,7 +82,13 @@ workflow and file-backed state.
 - Mouse and keyboard driven; works on a plain terminal or a Nerd Font one
 - Colors adapt to your terminal: curated 24-bit hues on truecolor terminals,
   a 256-color match otherwise, and named ANSI colors as a safe fallback.
-  Set `NO_COLOR` (to any non-empty value, per [no-color.org](https://no-color.org/))
+  Truecolor is detected from `COLORTERM=truecolor`/`24bit`, or from a
+  `TERM` of `xterm-kitty`, `alacritty`, `foot`, `foot-extra`, `wezterm`,
+  `contour`, `xterm-ghostty` or one ending in `-direct` (so those terminals
+  keep their colors over SSH, where `COLORTERM` is usually not forwarded);
+  256 colors from a `TERM` containing `256color`. `--color
+  auto|truecolor|256|16` (or the `color` config key) forces a palette when
+  detection gets it wrong. Set `NO_COLOR` (to any non-empty value, per [no-color.org](https://no-color.org/))
   to turn color off entirely
 
 ## Installation
@@ -124,6 +130,7 @@ markcheck --mouse runbook.md          # ...or force it back on, if your config d
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
 markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
+markcheck --color 256 runbook.md      # force a palette: auto, truecolor, 256 or 16
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --no-git-sync runbook.md    # ...or never, even under a git_sync_paths entry
 markcheck --config other.toml runbook.md  # read another config file instead
@@ -142,7 +149,7 @@ USB sticks and SD cards, many network shares). `--new` and the positional
 
 ## Config file
 
-Set defaults for the four flags above so you don't have to pass them every
+Set defaults for the flags above so you don't have to pass them every
 time, in a TOML file at `$XDG_CONFIG_HOME/markcheck/config.toml` (falling
 back to `~/.config/markcheck/config.toml` if `XDG_CONFIG_HOME` isn't set).
 All keys are optional; a flag passed on the command line always overrides
@@ -153,6 +160,7 @@ nerd_font = true    # false = --no-nerd-font, true = --nerd-font
 mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
+color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths
 ```
 
@@ -179,6 +187,9 @@ Each of the four boolean settings has a flag in both directions, so a config
 value can always be overridden for a single run:
 `--nerd-font`/`--no-nerd-font`, `--mouse`/`--no-mouse`,
 `--primary`/`--no-primary`, and `--auto-copy`/`--no-auto-copy`.
+`color` works the same way: `--color` overrides it, and `--color auto` goes
+back to detecting the terminal. An explicit `color` (from either) also wins
+over `NO_COLOR`, per [no-color.org](https://no-color.org/).
 
 `git_sync_paths` is the odd one out: a list of path prefixes rather than a
 plain default. A file whose path starts with one of them gets git-sync

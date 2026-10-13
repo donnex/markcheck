@@ -53,7 +53,7 @@ fn load_config_parses_all_fields() {
     fs::write(
         &path,
         "nerd_font = false\nmouse = false\nprimary = true\nauto_copy = true\n\
-             git_sync_paths = [\"/home/user/checklists\"]\n",
+             color = \"256\"\ngit_sync_paths = [\"/home/user/checklists\"]\n",
     )
     .unwrap();
 
@@ -70,6 +70,7 @@ fn load_config_parses_all_fields() {
             mouse: Some(false),
             primary: Some(true),
             auto_copy: Some(true),
+            color: Some(ColorChoice::Palette256),
             git_sync_paths: Some(vec![PathBuf::from("/home/user/checklists")]),
         }
     );
@@ -138,6 +139,26 @@ fn load_config_wrong_type_for_each_known_key_errors() {
 
         fs::remove_file(&path).ok();
     }
+}
+
+#[test]
+fn load_config_reads_every_color_value_and_rejects_others() {
+    for (value, expected) in [
+        ("auto", ColorChoice::Auto),
+        ("truecolor", ColorChoice::TrueColor),
+        ("256", ColorChoice::Palette256),
+        ("16", ColorChoice::Basic),
+    ] {
+        let path = unique_temp_path();
+        fs::write(&path, format!("color = \"{value}\"\n")).unwrap();
+        assert_eq!(load_config(&path).unwrap().config.color, Some(expected));
+        fs::remove_file(&path).ok();
+    }
+
+    let path = unique_temp_path();
+    fs::write(&path, "color = \"rainbow\"\n").unwrap();
+    assert!(load_config(&path).is_err());
+    fs::remove_file(&path).ok();
 }
 
 #[test]

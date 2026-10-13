@@ -1,4 +1,4 @@
-use super::{Cli, Settings, config, resolve_flag};
+use super::{Cli, ColorChoice, Settings, config, resolve_flag};
 use clap::Parser as _;
 
 #[test]
@@ -38,6 +38,7 @@ fn config_all(value: bool) -> config::Config {
         mouse: Some(value),
         primary: Some(value),
         auto_copy: Some(value),
+        color: None,
         git_sync_paths: None,
     }
 }
@@ -51,6 +52,7 @@ fn settings_resolve_the_built_in_defaults_with_no_flags_and_no_config() {
             mouse: true,
             primary: false,
             auto_copy: false,
+            color: ColorChoice::Auto,
         }
     );
 }
@@ -64,6 +66,7 @@ fn settings_take_the_config_when_no_flag_is_passed() {
             mouse: true,
             primary: true,
             auto_copy: true,
+            color: ColorChoice::Auto,
         }
     );
     assert_eq!(
@@ -73,6 +76,7 @@ fn settings_take_the_config_when_no_flag_is_passed() {
             mouse: false,
             primary: false,
             auto_copy: false,
+            color: ColorChoice::Auto,
         }
     );
 }
@@ -91,6 +95,7 @@ fn every_setting_can_be_forced_on_over_a_config_that_disables_it() {
             mouse: true,
             primary: true,
             auto_copy: true,
+            color: ColorChoice::Auto,
         },
         "a passed flag must beat the config in the positive direction"
     );
@@ -114,6 +119,7 @@ fn every_setting_can_be_forced_off_over_a_config_that_enables_it() {
             mouse: false,
             primary: false,
             auto_copy: false,
+            color: ColorChoice::Auto,
         },
         "a passed flag must beat the config in the negative direction"
     );
@@ -163,4 +169,30 @@ fn config_flags_parse_into_their_own_fields() {
         (Some(std::path::PathBuf::from("other.toml")), false)
     );
     assert_eq!(parse(&["--no-config"]), (None, true));
+}
+
+#[test]
+fn color_flag_beats_the_config_which_beats_auto() {
+    let config = |color| config::Config {
+        color,
+        ..config::Config::default()
+    };
+    assert_eq!(settings_from(&[], config(None)).color, ColorChoice::Auto);
+    assert_eq!(
+        settings_from(&[], config(Some(ColorChoice::Basic))).color,
+        ColorChoice::Basic
+    );
+    for (flag, expected) in [
+        ("auto", ColorChoice::Auto),
+        ("truecolor", ColorChoice::TrueColor),
+        ("256", ColorChoice::Palette256),
+        ("16", ColorChoice::Basic),
+    ] {
+        assert_eq!(
+            settings_from(&["--color", flag], config(Some(ColorChoice::Basic))).color,
+            expected,
+            "--color {flag} must win over the config"
+        );
+    }
+    assert!(Cli::try_parse_from(["markcheck", "checklist.md", "--color", "rainbow"]).is_err());
 }
