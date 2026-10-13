@@ -380,7 +380,7 @@ mod tests {
         let (work, _remote) = init_repo_with_remote();
         let file = work.join(OsStr::from_bytes(b"list-\xff.md"));
         fs::write(&file, "- [ ] one\n").unwrap();
-        let status = std::process::Command::new("git")
+        let status = crate::test_support::git()
             .current_dir(&work)
             .arg("add")
             .arg(&file)

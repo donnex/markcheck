@@ -3,7 +3,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use super::shared::{RACE_HOOKS, RacePoint};
@@ -13,7 +12,7 @@ pub(super) fn unique_dir(name_hint: &str) -> PathBuf {
     crate::test_support::unique_temp_path("git-sync", name_hint, None)
 }
 pub(super) fn run(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = crate::test_support::git()
         .current_dir(dir)
         .args(args)
         .status()
@@ -21,7 +20,7 @@ pub(super) fn run(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?} failed in {dir:?}");
 }
 pub(super) fn git_stdout(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = crate::test_support::git()
         .current_dir(dir)
         .args(args)
         .output()
@@ -165,7 +164,7 @@ pub(super) fn commit_unrelated(work: &Path, name: &str) -> String {
     git_stdout(work, &["rev-parse", "HEAD"])
 }
 pub(super) fn still_on_branch(work: &Path, sha: &str) -> bool {
-    Command::new("git")
+    crate::test_support::git()
         .current_dir(work)
         .args(["merge-base", "--is-ancestor", sha, "HEAD"])
         .status()
@@ -173,7 +172,7 @@ pub(super) fn still_on_branch(work: &Path, sha: &str) -> bool {
         .unwrap_or(false)
 }
 pub(super) fn reached_the_remote(remote: &Path, sha: &str) -> bool {
-    Command::new("git")
+    crate::test_support::git()
         .current_dir(remote)
         .args(["merge-base", "--is-ancestor", sha, "main"])
         .status()

@@ -8,6 +8,8 @@ mod sync;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(test)]
+pub(crate) use process::REDIRECTING_GIT_VARS;
 pub use shared::SyncOutcome;
 use shared::lock_hash;
 
@@ -233,7 +235,6 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use std::fs;
-    use std::process::Command;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -325,7 +326,7 @@ mod tests {
             "first attempt has a real, unpushed change: {outcomes:?}"
         );
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&work)
             .args(["log", "--format=%s"])
             .output()
@@ -347,7 +348,7 @@ mod tests {
             &["remote", "set-url", "origin", remote.to_str().unwrap()],
         );
         run(&work, &["push", "-q", "origin", "main:recovered"]);
-        let remote_log = Command::new("git")
+        let remote_log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "--format=%s", "recovered"])
             .output()
@@ -637,7 +638,7 @@ mod tests {
         }
         assert_eq!(outcomes, vec![SyncOutcome::Synced, SyncOutcome::Skipped]);
 
-        let log = Command::new("git")
+        let log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()

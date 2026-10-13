@@ -102,8 +102,31 @@ const KEY_PACING_MS: u64 = 80;
 /// OSC 52 fallback lands in the pseudo-terminal instead.
 fn markcheck_command() -> CommandBuilder {
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_markcheck"));
+    isolate(&mut cmd);
+    cmd
+}
+
+/// Isolates a spawned process per [`common::isolated_env`] and from the
+/// desktop session.
+fn isolate(cmd: &mut CommandBuilder) {
     cmd.env_remove("DISPLAY");
     cmd.env_remove("WAYLAND_DISPLAY");
+    for var in common::AMBIENT_GIT_VARS {
+        cmd.env_remove(var);
+    }
+    for (key, value) in common::isolated_env("pty") {
+        cmd.env(key, value);
+    }
+}
+
+/// A fixture `git` command in `dir`, isolated like the binary under test.
+fn git(dir: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(dir);
+    for var in common::AMBIENT_GIT_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.envs(common::isolated_env("pty"));
     cmd
 }
 
@@ -123,12 +146,6 @@ fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[S
         cmd.arg(arg);
     }
     cmd.arg(md_path);
-    // Isolate from a real config file that might exist on the machine
-    // running the tests — std::env::temp_dir() is a directory that
-    // exists but never has a markcheck/config.toml under it, so this is
-    // equivalent to no config file being present. A test that wants to
-    // exercise the config file overrides XDG_CONFIG_HOME itself below.
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -143,7 +160,6 @@ fn drive_new(md_path: &PathBuf, steps: &[Step]) -> bool {
     cmd.arg("--no-nerd-font");
     cmd.arg("--new");
     cmd.arg(md_path);
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     run_with_pty(cmd, md_path, steps)
 }
 
@@ -751,11 +767,7 @@ fn config_file_sets_auto_copy_default_without_the_flag() {
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .status()
-        .unwrap();
+    let status = git(dir).args(args).status().unwrap();
     assert!(status.success(), "git {args:?} failed in {dir:?}");
 }
 
@@ -808,8 +820,7 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut subject = String::new();
     while Instant::now() < deadline {
-        let out = std::process::Command::new("git")
-            .current_dir(&remote)
+        let out = git(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
             .unwrap();
@@ -856,7 +867,6 @@ fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes()
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     let (ok, output) = run_with_pty_capturing(
         cmd,
         &path,
@@ -927,8 +937,7 @@ fn git_sync_does_not_commit_uncommitted_changes_just_because_the_file_was_opened
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         for dir in [&work, &remote] {
-            let out = std::process::Command::new("git")
-                .current_dir(dir)
+            let out = git(dir)
                 .args(["log", "--format=%s", "main"])
                 .output()
                 .unwrap();
@@ -1001,8 +1010,7 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut subject = String::new();
     while Instant::now() < deadline {
-        let out = std::process::Command::new("git")
-            .current_dir(&remote)
+        let out = git(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
             .unwrap();
@@ -1076,8 +1084,7 @@ fn git_sync_paths_config_matches_through_a_symlinked_prefix() {
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut subject = String::new();
     while Instant::now() < deadline {
-        let out = std::process::Command::new("git")
-            .current_dir(&remote)
+        let out = git(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
             .unwrap();
@@ -1153,8 +1160,7 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut subject = String::new();
     while Instant::now() < deadline {
-        let out = std::process::Command::new("git")
-            .current_dir(&remote)
+        let out = git(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
             .unwrap();
@@ -1240,11 +1246,7 @@ fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it
     // asserting it didn't: poll briefly, then confirm the log is still
     // exactly the one "init" commit.
     thread::sleep(Duration::from_millis(500));
-    let out = std::process::Command::new("git")
-        .current_dir(&remote)
-        .args(["log", "--format=%s"])
-        .output()
-        .unwrap();
+    let out = git(&remote).args(["log", "--format=%s"]).output().unwrap();
     let log = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         log.trim(),
@@ -1277,7 +1279,6 @@ fn git_sync_reports_when_the_file_is_untracked() {
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     let pty = native_pty_system();
     let pair = pty
         .openpty(PtySize {
@@ -1319,11 +1320,7 @@ fn git_sync_reports_when_the_file_is_untracked() {
         "expected the untracked-file message in the rendered output: {visible:?}"
     );
 
-    let status_out = std::process::Command::new("git")
-        .current_dir(&root)
-        .args(["status", "--porcelain"])
-        .output()
-        .unwrap();
+    let status_out = git(&root).args(["status", "--porcelain"]).output().unwrap();
     assert!(
         String::from_utf8_lossy(&status_out.stdout).contains("?? checklist.md"),
         "the file must still never be added"
@@ -1392,7 +1389,6 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
     cmd.arg(&path);
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     let pty = native_pty_system();
     let pair = pty
         .openpty(PtySize {
@@ -1463,8 +1459,7 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut subject = String::new();
     while Instant::now() < deadline {
-        let out = std::process::Command::new("git")
-            .current_dir(&remote)
+        let out = git(&remote)
             .args(["log", "-1", "--format=%s"])
             .output()
             .unwrap();
@@ -1696,7 +1691,6 @@ fn a_hard_linked_checklist_warns_the_user_at_startup() {
     let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg(&path);
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     let (ok, screen) = run_with_pty_capturing(cmd, &path, &[Step::Key("q")]);
 
     assert!(ok, "binary should exit successfully");
@@ -1719,7 +1713,6 @@ fn an_ordinary_checklist_is_not_warned_about() {
     let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg(&path);
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
     let (ok, screen) = run_with_pty_capturing(cmd, &path, &[Step::Key("q")]);
 
     assert!(ok, "binary should exit successfully");
@@ -1750,9 +1743,7 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
     ));
     cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
     cmd.arg(&path);
-    cmd.env_remove("DISPLAY");
-    cmd.env_remove("WAYLAND_DISPLAY");
-    cmd.env("XDG_CONFIG_HOME", std::env::temp_dir());
+    isolate(&mut cmd);
     let (ok, screen) = run_with_pty_capturing(
         cmd,
         &path,

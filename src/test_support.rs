@@ -4,7 +4,10 @@
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::git_sync::REDIRECTING_GIT_VARS;
 
 /// Paths handed out on this thread, removed when it exits. libtest runs
 /// every test on its own thread, so this cleans up after each test even
@@ -56,9 +59,69 @@ pub fn unique_temp_path(module: &str, hint: &str, ext: Option<&str>) -> PathBuf 
     path
 }
 
+thread_local! {
+    static GIT_HOME: PathBuf = {
+        let home = unique_temp_path("git", "home", None);
+        fs::create_dir_all(&home).expect("create an empty HOME for git");
+        home
+    };
+}
+
+/// Cuts a git command off from the machine running the tests: no ambient
+/// variable pointing it at another repository (a hook running the suite
+/// exports `GIT_DIR`/`GIT_INDEX_FILE`) or injecting config, no global or
+/// system config (signing, `core.hooksPath`, templates), and an empty `HOME`
+/// and `XDG_CONFIG_HOME` so no global ignore or attributes file applies.
+pub fn isolate_git(cmd: &mut Command) {
+    for var in REDIRECTING_GIT_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    GIT_HOME.with(|home| {
+        cmd.env("HOME", home).env("XDG_CONFIG_HOME", home);
+    });
+}
+
+/// A bare `git` command for a test fixture, isolated by [`isolate_git`].
+pub fn git() -> Command {
+    let mut cmd = Command::new("git");
+    isolate_git(&mut cmd);
+    cmd
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixture_git_ignores_the_ambient_repository_and_global_config() {
+        let mut cmd = git();
+        let envs: Vec<_> = cmd
+            .get_envs()
+            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.is_some()))
+            .collect();
+        for var in REDIRECTING_GIT_VARS
+            .iter()
+            .chain(&["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"])
+        {
+            assert!(envs.contains(&(var.to_string(), false)), "{var} kept");
+        }
+        for var in ["GIT_CONFIG_NOSYSTEM", "HOME", "XDG_CONFIG_HOME"] {
+            assert!(envs.contains(&(var.to_string(), true)), "{var} not set");
+        }
+        let home = GIT_HOME.with(Clone::clone);
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 0, "HOME not empty");
+
+        let global = cmd.args(["config", "--global", "--list"]).output().unwrap();
+        assert!(
+            global.stdout.is_empty(),
+            "global config leaked in: {}",
+            String::from_utf8_lossy(&global.stdout)
+        );
+    }
 
     #[test]
     fn temp_paths_are_removed_when_the_test_thread_ends() {

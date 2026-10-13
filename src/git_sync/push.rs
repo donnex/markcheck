@@ -197,7 +197,6 @@ mod tests {
     use super::super::test_support::*;
     use super::*;
     use std::fs;
-    use std::process::Command;
 
     #[test]
     fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verification() {
@@ -218,7 +217,7 @@ mod tests {
             "{outcome:?}"
         );
 
-        let remote_log = Command::new("git")
+        let remote_log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "--format=%s", "main"])
             .output()
@@ -242,7 +241,7 @@ mod tests {
         let outcome = push_if_head_unchanged(&work, &work, &created_commit);
         assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
 
-        let remote_log = Command::new("git")
+        let remote_log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "--format=%s", "main"])
             .output()
@@ -266,7 +265,7 @@ mod tests {
             matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("which commit to push")),
             "{outcome:?}"
         );
-        let branches = Command::new("git")
+        let branches = crate::test_support::git()
             .current_dir(&remote)
             .args(["branch", "--format=%(refname:short)"])
             .output()
@@ -410,7 +409,7 @@ mod tests {
         let outcome = push(&work, &older_commit);
         assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
 
-        let remote_log = Command::new("git")
+        let remote_log = crate::test_support::git()
             .current_dir(&remote)
             .args(["log", "--format=%s", "main"])
             .output()
@@ -463,7 +462,7 @@ mod tests {
         let outcome = retry_commit(&work, &commit);
 
         assert_eq!(outcome, SyncOutcome::Synced);
-        let show = Command::new("git")
+        let show = crate::test_support::git()
             .current_dir(&remote)
             .args(["show", "HEAD:tracked.md"])
             .output()
