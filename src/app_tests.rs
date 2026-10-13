@@ -688,11 +688,48 @@ fn search_esc_restores_the_pre_search_cursor() {
 }
 
 #[test]
-fn n_without_an_active_search_is_a_noop() {
-    let mut state = AppState::new(two_list_document());
-    state.handle_key(KeyCode::Char('n'));
-    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
-    assert!(state.search.last.is_none());
+fn n_without_an_active_search_stays_put_and_says_so() {
+    for key in ['n', 'N'] {
+        let mut state = AppState::new(two_list_document());
+        state.handle_key(KeyCode::Char(key));
+        assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+        assert!(state.search.last.is_none());
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("No previous search — press / to search")
+        );
+        assert!(state.status_is_error);
+    }
+}
+
+#[test]
+fn unbound_key_on_list_complete_hints_at_the_screen_keys() {
+    for key in [KeyCode::Char(' '), KeyCode::Char('/'), KeyCode::Char('y')] {
+        let mut state = AppState::new(two_list_document());
+        state.screen = Screen::ListComplete;
+        state.handle_key(key);
+        assert_eq!(state.screen, Screen::ListComplete);
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("List complete — press l for the next list or h to review")
+        );
+        assert!(state.status_is_error);
+    }
+}
+
+#[test]
+fn unbound_key_on_all_complete_hints_at_the_screen_keys() {
+    for key in [KeyCode::Char(' '), KeyCode::Char('l'), KeyCode::Enter] {
+        let mut state = AppState::new(two_list_document());
+        state.screen = Screen::AllComplete;
+        state.handle_key(key);
+        assert_eq!(state.screen, Screen::AllComplete);
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("All tasks complete — press h to review, R to reset or q to quit")
+        );
+        assert!(state.status_is_error);
+    }
 }
 
 #[test]

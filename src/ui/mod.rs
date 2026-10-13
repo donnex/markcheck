@@ -1794,6 +1794,27 @@ mod tests {
     }
 
     #[test]
+    fn completion_screens_show_their_own_legend() {
+        let mut list_complete = sample_state();
+        list_complete.screen = Screen::ListComplete;
+        let text = buffer_text(&mut list_complete, 100, 30);
+        assert!(text.contains("l/enter:next list  h:review  ?:help  q:quit"));
+        assert!(
+            !text.contains("space:toggle"),
+            "no keys that do nothing here"
+        );
+
+        let mut all_complete = sample_state();
+        all_complete.screen = Screen::AllComplete;
+        let text = buffer_text(&mut all_complete, 100, 30);
+        assert!(text.contains("h:review  R:reset  ?:help  q:quit"));
+        assert!(
+            !text.contains("space:toggle"),
+            "no keys that do nothing here"
+        );
+    }
+
+    #[test]
     fn status_bar_shows_the_search_prompt_while_searching() {
         // Entering search shows the live query vim-style in the status bar,
         // and the checklist cards stay visible behind it.

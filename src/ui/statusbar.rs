@@ -13,6 +13,8 @@ const MAX_STATUS_ROWS: u16 = 6;
 
 // Trimmed to the essentials; the `?` overlay is the full reference.
 const KEYBIND_LEGEND: &str = "hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit";
+const LIST_COMPLETE_LEGEND: &str = "l/enter:next list  h:review  ?:help  q:quit";
+const ALL_COMPLETE_LEGEND: &str = "h:review  R:reset  ?:help  q:quit";
 const CONFIRM_LEGEND: &str = "y:reset  any other key:cancel";
 const CONFIRM_QUIT_LEGEND: &str = "y:reset & quit  n:quit  esc:cancel";
 const HELP_LEGEND: &str = "j/k ↑↓: scroll  ·  any other key: close help";
@@ -84,7 +86,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Screen::ConfirmQuitReset => CONFIRM_QUIT_LEGEND,
         Screen::Help => HELP_LEGEND,
         Screen::ListPicker => PICKER_LEGEND,
-        _ => KEYBIND_LEGEND,
+        Screen::ListComplete => LIST_COMPLETE_LEGEND,
+        Screen::AllComplete => ALL_COMPLETE_LEGEND,
+        Screen::Checklist | Screen::Search => KEYBIND_LEGEND,
     };
     // While a multi-link `o` or multi-command `y` is armed, the status bar shows
     // its digit prompt; the URLs themselves live in the panel below the card.
