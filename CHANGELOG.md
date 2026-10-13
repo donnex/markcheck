@@ -105,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer replaces whatever message is in the status bar on every retry; it
   reports again only when the reason changes.
 
+- The mouse wheel now works in the `?` help overlay and the `T` "go to task"
+  overlay: it scrolls the help and moves the highlight in the task list.
+  It used to do nothing in either, even though the help draws a scrollbar
+  when it doesn't fit. On the checklist, wheeling past the last task of a
+  list now carries on into the next list, as `j`/`k` do, instead of stopping
+  there with no message. A row in the `T` overlay can also be clicked: the
+  first click highlights it and a second jumps to it. (#65)
+
 - `o` no longer says "Opening" followed by the link when nothing opens. On a headless
   machine — typically an SSH session to a server, with no `$BROWSER` and no
   graphical display — it now copies the link to your clipboard instead (over
