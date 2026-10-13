@@ -931,8 +931,10 @@ impl AppState {
         }
 
         if new_state == TaskState::Done {
+            self.set_status("Marked done".to_string());
             self.maybe_transition_screen();
         } else {
+            self.set_status("Marked not done".to_string());
             self.view = View::Checklist;
         }
     }
@@ -1134,7 +1136,25 @@ impl AppState {
                 View::ListComplete
             };
         } else {
-            self.navigate_next();
+            self.advance_to_next_open();
+        }
+    }
+
+    /// After completing a task, move to the next item that isn't a done task
+    /// (notes still stop the cursor), wrapping to the list's first open task.
+    /// Landing on a done task would let the next `Space` silently uncheck it.
+    fn advance_to_next_open(&mut self) {
+        let list = self.current_list();
+        let target = list
+            .items
+            .iter()
+            .enumerate()
+            .skip(self.current_item_index + 1)
+            .find(|(_, item)| !matches!(item.kind, ItemKind::Checkbox(TaskState::Done)))
+            .map(|(index, _)| index)
+            .or_else(|| first_undone_index(list));
+        if let Some(target) = target {
+            self.focus_item(self.current_list_index, target, CursorMove::Navigate);
         }
     }
 

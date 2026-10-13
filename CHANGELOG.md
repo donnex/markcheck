@@ -105,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Checking a task with `Space` or `Enter` now moves on to the next task that
+  is still open, skipping tasks already done and wrapping back to an open one
+  earlier in the list. It used to move to the adjacent item even when that
+  was already done, or stay put on the last task while an earlier one was
+  open, so pressing the key again in rhythm silently unchecked a finished
+  step. The status bar now also says "Marked done" or "Marked not done" after
+  each keyboard toggle. (#84)
+
 - In the wide layout, the dimmed side cards for the previous and next task
   now show the task's bold title above its text. They used to show only the
   text after the title, so a neighbour wasn't recognisable by the name the

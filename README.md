@@ -354,7 +354,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | mouse wheel | scroll an overflowing card, otherwise previous / next task like `k`/`j` (crossing list edges). In the `?` help overlay it scrolls the help, and in the `T` overlay it moves the highlight. Over the overview panel it still moves the task cursor; the panel follows it |
 | left-click a command on the card | copy that specific command; clicking elsewhere on the card acts like `y`. Needs mouse capture, so not with `--no-mouse` |
 | left-click an overview row | on a task row, click its **icon** to toggle it done/not-done (cursor stays put), or its **label** to jump to that task; click a list title to jump to that list. Needs mouse capture, so not with `--no-mouse` |
-| `Space` / `Enter` | toggle the current task done; on an info card (nothing to toggle) advance to the next card instead |
+| `Space` / `Enter` | toggle the current task done; after checking a task, move to the next card that isn't a done task (skipping done tasks, wrapping to the list's first open task), so pressing it again never unchecks a finished step; on an info card (nothing to toggle) advance to the next card instead |
 | `s` | mark the current task started / in progress (`[/]`) |
 | `u` / `Ctrl-R` | undo / redo the last change (toggle, start, or reset) |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around) |

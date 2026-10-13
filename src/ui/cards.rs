@@ -245,7 +245,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
                 "scroll an overflowing card, else prev/next task",
             ),
             ("wheel in ? / T", "scroll this help / move the T highlight"),
-            ("space / Enter", "toggle the task done"),
+            ("space / Enter", "toggle the task done, then next open task"),
             ("s", "mark the task started / in progress"),
             ("u / Ctrl-R", "undo / redo the last change"),
             ("Tab", "jump to the next unfinished task"),
