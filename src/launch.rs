@@ -249,11 +249,14 @@ pub struct GitSyncRequest {
     pub unresolved: Vec<PathBuf>,
 }
 
-/// Resolves `--git-sync` and `git_sync_paths` for `file_path`. An OR, not
-/// the flag-over-config precedence of the boolean settings. Every entry is
-/// checked, even once one matches, so a typo is reported either way.
+/// Resolves `--git-sync`, `--no-git-sync` and `git_sync_paths` for
+/// `file_path`. `--git-sync` and a matching entry are an OR, not the
+/// flag-over-config precedence of the boolean settings; `--no-git-sync`
+/// beats both. Every entry is checked, even once one matches or the feature
+/// is forced off, so a typo is reported either way.
 pub fn git_sync_request(
     cli_flag: bool,
+    cli_off: bool,
     paths: Option<&[PathBuf]>,
     file_path: &Path,
     home: Option<&str>,
@@ -269,7 +272,7 @@ pub fn git_sync_request(
         }
     }
     GitSyncRequest {
-        requested,
+        requested: requested && !cli_off,
         unresolved,
     }
 }
@@ -691,10 +694,10 @@ mod tests {
         let covering = vec![root.clone()];
         let other = vec![root.join("missing")];
 
-        assert!(git_sync_request(true, None, &file, None).requested);
-        assert!(git_sync_request(false, Some(&covering), &file, None).requested);
-        assert!(!git_sync_request(false, Some(&other), &file, None).requested);
-        assert!(!git_sync_request(false, None, &file, None).requested);
+        assert!(git_sync_request(true, false, None, &file, None).requested);
+        assert!(git_sync_request(false, false, Some(&covering), &file, None).requested);
+        assert!(!git_sync_request(false, false, Some(&other), &file, None).requested);
+        assert!(!git_sync_request(false, false, None, &file, None).requested);
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -710,16 +713,36 @@ mod tests {
         let paths = vec![typo.clone(), root.clone()];
 
         assert_eq!(
-            git_sync_request(false, Some(&paths), &file, None),
+            git_sync_request(false, false, Some(&paths), &file, None),
             GitSyncRequest {
                 requested: true,
                 unresolved: vec![typo.clone()],
             }
         );
         assert_eq!(
-            git_sync_request(true, Some(&paths[..1]), &file, None).unresolved,
+            git_sync_request(true, false, Some(&paths[..1]), &file, None).unresolved,
             vec![typo]
         );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn no_git_sync_turns_off_a_matching_entry_but_still_reports_typos() {
+        let root = crate::test_support::unique_temp_path("launch-gitsync-off", "", None);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = std::fs::canonicalize(&root).unwrap().join("todo.md");
+        let typo = root.join("checklsts");
+        let paths = vec![typo.clone(), root.clone()];
+
+        assert_eq!(
+            git_sync_request(false, true, Some(&paths), &file, None),
+            GitSyncRequest {
+                requested: false,
+                unresolved: vec![typo],
+            }
+        );
+        assert!(!git_sync_request(false, true, None, &file, None).requested);
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -734,13 +757,13 @@ mod tests {
         let paths = vec![PathBuf::from("~/checklists")];
 
         assert_eq!(
-            git_sync_request(false, Some(&paths), &file, home.to_str()),
+            git_sync_request(false, false, Some(&paths), &file, home.to_str()),
             GitSyncRequest {
                 requested: true,
                 unresolved: Vec::new(),
             }
         );
-        let without_home = git_sync_request(false, Some(&paths), &file, None);
+        let without_home = git_sync_request(false, false, Some(&paths), &file, None);
         assert!(!without_home.requested);
         assert_eq!(without_home.unresolved, paths);
 

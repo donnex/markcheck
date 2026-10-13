@@ -60,9 +60,13 @@ pub struct Cli {
     #[arg(long, conflicts_with = "auto_copy")]
     pub no_auto_copy: bool,
     /// Commit and push this file's changes after every toggle, when it's inside a
-    /// git repo (config: git_sync_paths matches this file's path)
-    #[arg(long)]
+    /// git repo (config: git_sync_paths matches this file's path; --no-git-sync
+    /// turns it off)
+    #[arg(long, conflicts_with = "no_git_sync")]
     pub git_sync: bool,
+    /// Never commit or push, even when git_sync_paths matches this file's path
+    #[arg(long)]
+    pub no_git_sync: bool,
 }
 
 /// The four boolean settings, resolved in one place so the wiring can be
@@ -231,9 +235,23 @@ mod tests {
             ["--mouse", "--no-mouse"],
             ["--primary", "--no-primary"],
             ["--auto-copy", "--no-auto-copy"],
+            ["--git-sync", "--no-git-sync"],
         ] {
             let result = Cli::try_parse_from(["markcheck", "checklist.md", pair[0], pair[1]]);
             assert!(result.is_err(), "{pair:?} must be rejected together");
         }
+    }
+
+    #[test]
+    fn git_sync_flags_parse_into_their_own_fields() {
+        let parse = |flags: &[&str]| {
+            let mut argv = vec!["markcheck", "checklist.md"];
+            argv.extend_from_slice(flags);
+            let cli = Cli::parse_from(argv);
+            (cli.git_sync, cli.no_git_sync)
+        };
+        assert_eq!(parse(&[]), (false, false));
+        assert_eq!(parse(&["--git-sync"]), (true, false));
+        assert_eq!(parse(&["--no-git-sync"]), (false, true));
     }
 }

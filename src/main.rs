@@ -156,6 +156,7 @@ fn main() -> anyhow::Result<()> {
     // off: the user asked for it.
     let request = launch::git_sync_request(
         cli.git_sync,
+        cli.no_git_sync,
         config.git_sync_paths.as_deref(),
         &state.document.file_path,
         std::env::var("HOME").ok().as_deref(),
