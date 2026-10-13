@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
+use pulldown_cmark::utils::TextMergeWithOffset;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::model::{
@@ -294,16 +295,32 @@ impl ItemBuilder {
             self.text.push_str(text);
         } else {
             self.text.push_str(text);
-            let style = self.style;
-            self.body.push(if style.is_plain() {
-                BodySpan::Text(text.to_string())
-            } else {
-                BodySpan::Styled {
-                    text: text.to_string(),
-                    style,
-                }
-            });
+            let mut rest_start = 0;
+            for bare in find_bare_urls(text) {
+                self.push_prose(&text[rest_start..bare.range.start]);
+                self.body.push(BodySpan::Link {
+                    text: text[bare.range.clone()].to_string(),
+                    url: bare.url,
+                });
+                rest_start = bare.range.end;
+            }
+            self.push_prose(&text[rest_start..]);
         }
+    }
+
+    fn push_prose(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let style = self.style;
+        self.body.push(if style.is_plain() {
+            BodySpan::Text(text.to_string())
+        } else {
+            BodySpan::Styled {
+                text: text.to_string(),
+                style,
+            }
+        });
     }
 
     /// A soft/hard line break within a paragraph is whitespace: without this
@@ -361,6 +378,93 @@ impl ItemBuilder {
             kind,
         }
     }
+}
+
+/// A bare URL found in plain text: where it sits, and the URL to open.
+#[derive(Debug, PartialEq, Eq)]
+struct BareUrl {
+    range: std::ops::Range<usize>,
+    url: String,
+}
+
+const BARE_URL_PREFIXES: [&str; 3] = ["https://", "http://", "www."];
+
+/// Bare `http://`, `https://` and `www.` URLs in a plain text run, following
+/// GFM's extended-autolink rules (which pulldown-cmark does not implement):
+/// the URL starts at the run's start or after whitespace or `*_~(`, runs to
+/// whitespace or `<`, needs a dotted domain, and sheds trailing punctuation
+/// and any unbalanced closing `)`. A `www.` URL opens as `http://`.
+fn find_bare_urls(text: &str) -> Vec<BareUrl> {
+    let mut found = Vec::new();
+    let mut previous: Option<char> = None;
+    let mut skip_until = 0;
+    for (start, ch) in text.char_indices() {
+        let at_boundary =
+            previous.is_none_or(|p| p.is_whitespace() || matches!(p, '*' | '_' | '~' | '('));
+        previous = Some(ch);
+        if start < skip_until || !at_boundary {
+            continue;
+        }
+        let rest = &text[start..];
+        let Some(prefix) = BARE_URL_PREFIXES.iter().find(|prefix| {
+            rest.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        }) else {
+            continue;
+        };
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == '<')
+            .unwrap_or(rest.len());
+        let candidate = trim_url_end(&rest[..end]);
+        let domain_start = if prefix.starts_with('w') {
+            0
+        } else {
+            prefix.len()
+        };
+        if !is_valid_domain(&candidate[domain_start..]) {
+            continue;
+        }
+        let url = if domain_start == 0 {
+            format!("http://{candidate}")
+        } else {
+            candidate.to_string()
+        };
+        skip_until = start + candidate.len();
+        found.push(BareUrl {
+            range: start..skip_until,
+            url,
+        });
+    }
+    found
+}
+
+fn trim_url_end(mut url: &str) -> &str {
+    loop {
+        let trimmed = url.trim_end_matches(['?', '!', '.', ',', ':', '*', '_', '~']);
+        let trimmed = match trimmed.strip_suffix(')') {
+            Some(shorter) if trimmed.matches(')').count() > trimmed.matches('(').count() => shorter,
+            _ => trimmed,
+        };
+        if trimmed.len() == url.len() {
+            return url;
+        }
+        url = trimmed;
+    }
+}
+
+/// GFM's "valid domain": dot-separated segments of alphanumerics, `_` and
+/// `-`, at least one dot, and no `_` in the last two segments.
+fn is_valid_domain(after_prefix: &str) -> bool {
+    let domain_end = after_prefix
+        .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
+        .unwrap_or(after_prefix.len());
+    let domain = after_prefix[..domain_end].trim_end_matches('.');
+    let segments: Vec<&str> = domain.split('.').collect();
+    segments.len() >= 2
+        && segments.iter().all(|segment| !segment.is_empty())
+        && segments[segments.len() - 2..]
+            .iter()
+            .all(|segment| !segment.contains('_'))
 }
 
 /// Whether a finished top-level-eligible item could be its list's banner,
@@ -761,7 +865,11 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     let (source, started_offsets) = extract_started_markers(&without_front_matter);
 
     let mut state = ParseState::new(&source, started_offsets);
-    for (event, range) in Parser::new_ext(&source, PARSE_OPTIONS).into_offset_iter() {
+    // Merged so a bare URL that pulldown-cmark splits across several text
+    // events (at a `_` or `&`, say) reaches `find_bare_urls` whole.
+    let events =
+        TextMergeWithOffset::new(Parser::new_ext(&source, PARSE_OPTIONS).into_offset_iter());
+    for (event, range) in events {
         state.handle(event, range.start);
     }
     state.finish(path, raw_lines)
@@ -1245,6 +1353,130 @@ mod tests {
         // exposed for the `o` open action.
         assert_eq!(item.display_text, "see the runbook now");
         assert_eq!(item.link_urls(), vec!["https://example.com/rb"]);
+    }
+
+    fn bare_urls(text: &str) -> Vec<(&str, String)> {
+        find_bare_urls(text)
+            .into_iter()
+            .map(|bare| (&text[bare.range], bare.url))
+            .collect()
+    }
+
+    #[test]
+    fn bare_url_becomes_a_link_span() {
+        let document = parse("## S\n\n- [ ] Check the dashboard at https://example.com/status.\n");
+        let item = &document.lists[0].items[0];
+        assert_eq!(
+            item.body,
+            vec![
+                BodySpan::Text("Check the dashboard at ".to_string()),
+                BodySpan::Link {
+                    text: "https://example.com/status".to_string(),
+                    url: "https://example.com/status".to_string(),
+                },
+                BodySpan::Text(".".to_string()),
+            ]
+        );
+        assert_eq!(
+            item.display_text,
+            "Check the dashboard at https://example.com/status."
+        );
+        assert_eq!(item.link_urls(), vec!["https://example.com/status"]);
+    }
+
+    #[test]
+    fn bare_url_sheds_trailing_punctuation_and_unbalanced_parens() {
+        assert_eq!(
+            bare_urls("see https://example.com/a, then https://example.com/b!?"),
+            vec![
+                ("https://example.com/a", "https://example.com/a".to_string()),
+                ("https://example.com/b", "https://example.com/b".to_string()),
+            ]
+        );
+        assert_eq!(
+            bare_urls("(see https://example.com/x)."),
+            vec![("https://example.com/x", "https://example.com/x".to_string())]
+        );
+        assert_eq!(
+            bare_urls("https://example.com/wiki/Foo_(bar)"),
+            vec![(
+                "https://example.com/wiki/Foo_(bar)",
+                "https://example.com/wiki/Foo_(bar)".to_string()
+            )]
+        );
+        assert_eq!(
+            bare_urls("HTTPS://example.com<br>"),
+            vec![("HTTPS://example.com", "HTTPS://example.com".to_string())]
+        );
+    }
+
+    #[test]
+    fn bare_www_url_opens_over_http() {
+        assert_eq!(
+            bare_urls("go to www.example.com/docs: now"),
+            vec![(
+                "www.example.com/docs",
+                "http://www.example.com/docs".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn text_that_only_looks_like_a_url_is_not_linked() {
+        assert!(bare_urls("https://localhost/x").is_empty());
+        assert!(bare_urls("https://").is_empty());
+        assert!(bare_urls("www.").is_empty());
+        assert!(bare_urls("https://a..b").is_empty());
+        assert!(bare_urls("https://example.under_score").is_empty());
+        assert!(bare_urls("xhttps://example.com").is_empty());
+        assert!(bare_urls("plain text, no links").is_empty());
+    }
+
+    #[test]
+    fn bare_url_split_by_pulldown_cmark_stays_whole() {
+        let document = parse("## S\n\n- [ ] open https://example.com/a_b?x=1&amp;y=2 now\n");
+        let item = &document.lists[0].items[0];
+        assert_eq!(item.link_urls(), vec!["https://example.com/a_b?x=1&y=2"]);
+    }
+
+    #[test]
+    fn bare_url_in_a_link_or_title_or_code_is_not_linked_again() {
+        let linked = parse("## S\n\n- [ ] [https://example.com/a](https://example.com/b)\n");
+        assert_eq!(
+            linked.lists[0].items[0].link_urls(),
+            vec!["https://example.com/b"]
+        );
+        let titled = parse("## S\n\n- [ ] **See https://example.com/a** body\n");
+        assert!(titled.lists[0].items[0].link_urls().is_empty());
+        let coded = parse("## S\n\n- [ ] run `curl https://example.com/a`\n");
+        assert!(coded.lists[0].items[0].link_urls().is_empty());
+    }
+
+    #[test]
+    fn bare_url_inside_emphasis_keeps_the_surrounding_style() {
+        let document = parse("## S\n\n- [ ] *see www.example.com today*\n");
+        let item = &document.lists[0].items[0];
+        let style = TextStyle {
+            emphasis: true,
+            ..TextStyle::default()
+        };
+        assert_eq!(
+            item.body,
+            vec![
+                BodySpan::Styled {
+                    text: "see ".to_string(),
+                    style,
+                },
+                BodySpan::Link {
+                    text: "www.example.com".to_string(),
+                    url: "http://www.example.com".to_string(),
+                },
+                BodySpan::Styled {
+                    text: " today".to_string(),
+                    style,
+                },
+            ]
+        );
     }
 
     #[test]

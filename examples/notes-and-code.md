@@ -2,6 +2,8 @@
 
 <!-- markdownlint-disable MD046 -- one task deliberately uses an indented code block, to show it renders like a fenced one -->
 
+<!-- markdownlint-disable MD034 -- one task deliberately uses a bare URL, to show it is a link too -->
+
 Non-task content and the ways code is handled.
 
 ## Reference
@@ -82,6 +84,8 @@ Non-task content and the ways code is handled.
 - [ ] A task linking to [a local file](file:///etc/hosts) — only `http://`,
   `https://` and `mailto:` links open, so `o` refuses this one and says so,
   even though it still renders like any other link
+- [ ] Check the dashboard at https://example.com/status. A bare URL is a link
+  too, as on GitHub, so `o` opens it; the trailing full stop is left out
 - [ ] Mail the [on-call owner](mailto:oncall@example.com) with `o` — `mailto:`
   is a safe scheme, so this one opens in your mail client
 
