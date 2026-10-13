@@ -712,10 +712,12 @@ normally either way; only the resulting commit's scope is enforced.
 task whose text matches, counting from where you started (the task you're on
 counts, and the search wraps around to the top past the last task, as vim's `/`
 does), with the query and the **number of matches** shown in
-the status bar (and a clear "no matches" when nothing hits). Press `Enter`
+the status bar (and a clear "no matches" when nothing hits — the cursor then
+goes back to where the search started, as in vim). Press `Enter`
 to keep the match — the status bar then reports your position (`Match 2/5`) as
 `n` / `N` cycle forward / backward through the rest, wrapping around (`Match 1/5 · wrapped to top`, as vim reports `search hit BOTTOM`) — or `Esc`
-to cancel and return to where you were. Matching is
+to cancel and return to where you were. A search that matches nothing, or an
+empty one, never moves you and never triggers `--auto-copy`. Matching is
 **smart-case** (case-insensitive unless your query has an uppercase letter) and
 covers a task's title, its body text, *and* its commands — so you can find a
 step by the command it runs, not just its description.

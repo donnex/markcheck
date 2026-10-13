@@ -132,6 +132,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `/` search that matches nothing now leaves you on the card where the
+  search started, and with `--auto-copy` it no longer copies anything.
+  Previously the cursor stayed on whichever card an earlier part of the query
+  had matched, so after `No matches` you were on a step you never chose, and
+  `--auto-copy` then copied that step's command and replaced the `No matches`
+  error with `Copied to clipboard`. Committing an empty search no longer
+  re-copies the current card's command either. (#117)
+
 - `e` now opens Kakoune, micro, Helix, Sublime Text, VS Code and VSCodium on
   the selected task's line, as it already did for vi, nano and emacs.
   Previously they opened at the top of the file, leaving you to find the step
