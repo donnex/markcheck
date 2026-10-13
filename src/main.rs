@@ -423,7 +423,9 @@ where
     if let Some(line) = state.current_item().map(|item| item.line_number) {
         command.args(launch::editor_line_args(&program, line));
     }
+    let started = std::time::Instant::now();
     let status = command.arg(&state.document.file_path).status();
+    let elapsed = started.elapsed();
 
     // Restore the terminal regardless of how the editor fared.
     enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
@@ -437,7 +439,7 @@ where
     let size = terminal.size()?;
     terminal.resize(Rect::new(0, 0, size.width, size.height))?;
 
-    state.finish_editor(&program, warning, status);
+    state.finish_editor(&program, warning, status, elapsed);
     Ok(())
 }
 

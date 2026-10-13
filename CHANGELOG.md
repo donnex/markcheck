@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pressing `e` with a GUI editor that returns at once, such as VS Code
+  without `--wait`, now shows a hint to add the editor's wait flag.
+  Previously markcheck said nothing: the editor window opened elsewhere, and
+  with git-sync on, the edit you saved there later was treated as an outside
+  change and not committed as its own edit, despite the README saying `e`
+  edits are synced. The README now says the editor has to stay open until
+  you close the file, with the flags for common editors. (#109)
+
 - A list's warning banner (a bold-only first bullet) now comes only from a
   list that has tasks. Previously a plain bullet list with no checkboxes
   placed above the task list under the same heading, which markcheck drops

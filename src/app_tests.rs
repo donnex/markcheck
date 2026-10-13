@@ -2264,11 +2264,18 @@ fn exit_status(raw: i32) -> std::process::ExitStatus {
     std::process::ExitStatus::from_raw(raw)
 }
 
+const EDITOR_WAITED: Duration = Duration::from_secs(30);
+
 #[test]
 fn finish_editor_launch_failure_is_a_sticky_error_naming_the_editor() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("no-such-editor", None, Err(io::Error::other("not found")));
+    state.finish_editor(
+        "no-such-editor",
+        None,
+        Err(io::Error::other("not found")),
+        Duration::ZERO,
+    );
     assert_eq!(
         state.status_message.as_deref(),
         Some("Failed to launch no-such-editor: not found")
@@ -2283,7 +2290,7 @@ fn finish_editor_launch_failure_is_a_sticky_error_naming_the_editor() {
 fn finish_editor_non_zero_exit_is_a_sticky_error() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("vi", None, Ok(exit_status(1 << 8)));
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)), Duration::ZERO);
     assert_eq!(
         state.status_message.as_deref(),
         Some("vi exited with exit status: 1")
@@ -2298,7 +2305,7 @@ fn finish_editor_non_zero_exit_is_a_sticky_error() {
 fn finish_editor_with_no_change_is_silent_and_queues_no_sync() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("vi", None, Ok(exit_status(0)));
+    state.finish_editor("vi", None, Ok(exit_status(0)), EDITOR_WAITED);
     assert_eq!(state.status_message, None);
     assert!(state.take_git_sync_request().is_none());
     fs::remove_file(&path).ok();
@@ -2311,7 +2318,7 @@ fn finish_editor_reloads_an_edit_and_queues_a_sync_naming_the_editor() {
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     let edited = "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n";
     touch_with_new_mtime(&path, edited);
-    state.finish_editor("vi", None, Ok(exit_status(0)));
+    state.finish_editor("vi", None, Ok(exit_status(0)), EDITOR_WAITED);
     assert_eq!(state.current_list().items.len(), 2);
     let pending = state.take_git_sync_request().expect("a sync is queued");
     assert_eq!(pending.description, "Edited in vi");
@@ -2326,7 +2333,7 @@ fn finish_editor_non_zero_exit_after_an_edit_reloads_but_keeps_the_error_and_ski
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     state.git_sync.active = true;
     touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
-    state.finish_editor("vi", None, Ok(exit_status(1 << 8)));
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)), Duration::ZERO);
     assert_eq!(state.current_list().items.len(), 2);
     assert_eq!(
         state.status_message.as_deref(),
@@ -2344,7 +2351,7 @@ fn finish_editor_without_git_sync_does_not_mention_syncing() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
     touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
-    state.finish_editor("vi", None, Ok(exit_status(1 << 8)));
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)), Duration::ZERO);
     assert_eq!(
         state.status_message.as_deref(),
         Some("vi exited with exit status: 1; Reloaded: file changed on disk")
@@ -2362,6 +2369,7 @@ fn finish_editor_keeps_the_editor_warning_past_a_reload_and_still_syncs() {
         "vi",
         Some("Bad $EDITOR/$VISUAL — using vi".to_string()),
         Ok(exit_status(0)),
+        Duration::ZERO,
     );
     assert_eq!(
         state.status_message.as_deref(),
@@ -2377,9 +2385,68 @@ fn finish_editor_keeps_the_editor_warning_past_a_reload_and_still_syncs() {
 fn finish_editor_warning_alone_is_a_sticky_error() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
-    state.finish_editor("vi", Some("a warning".to_string()), Ok(exit_status(0)));
+    state.finish_editor(
+        "vi",
+        Some("a warning".to_string()),
+        Ok(exit_status(0)),
+        EDITOR_WAITED,
+    );
     assert_eq!(state.status_message.as_deref(), Some("a warning"));
     assert!(state.status_is_error);
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_returning_at_once_without_a_change_hints_at_a_wait_flag() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor(
+        "/usr/bin/code",
+        None,
+        Ok(exit_status(0)),
+        Duration::from_millis(200),
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(
+            "code returned immediately — if it opened a window, make it wait: \
+             EDITOR=\"code --wait\" (subl -w, gedit --wait)"
+        )
+    );
+    assert!(state.status_is_error);
+    assert!(state.take_git_sync_request().is_none());
+    fs::remove_file(&path).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn finish_editor_wait_hint_needs_a_quick_successful_exit_and_an_unchanged_file() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor("code", None, Ok(exit_status(0)), Duration::from_secs(1));
+    assert_eq!(
+        state.status_message, None,
+        "a full second is a real session"
+    );
+
+    touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `two`\n");
+    state.finish_editor("vi", None, Ok(exit_status(0)), Duration::ZERO);
+    assert!(
+        !state
+            .status_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("returned immediately"),
+        "a quick edit still changed the file"
+    );
+    assert!(state.take_git_sync_request().is_some());
+
+    state.finish_editor("vi", None, Ok(exit_status(1 << 8)), Duration::ZERO);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("vi exited with exit status: 1")
+    );
     fs::remove_file(&path).ok();
 }
 
