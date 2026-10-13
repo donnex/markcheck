@@ -41,7 +41,8 @@ markcheck examples/basics.md
   off at the card edge, links whose URL shows
   centered below the card rather than on it — including a long URL that
   no longer wraps and a two-link task with `[1]`/`[2]` markers keyed to the
-  numbered list below the card — an `https://` and a `mailto:` one that `o`
+  numbered list below the card, a twelve-link task whose `[10]`–`[12]` are
+  opened by typing both digits after `o` — an `https://` and a `mailto:` one that `o`
   opens, plus a `file://` one that `o` refuses as an unsupported scheme, a
   bare URL in the task text that `o` opens just the same,
   a fenced block placed directly after a list that attaches to the list's last

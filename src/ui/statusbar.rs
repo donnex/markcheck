@@ -97,10 +97,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let item = state.current_item();
         if state.pending_open_link {
             let n = item.map_or(0, |item| item.link_urls().len());
-            Some(format!("press 1–{n} to open · esc cancels"))
+            Some(number_prompt("open", n, state.pending_number))
         } else if state.pending_copy_code {
             let n = item.map_or(0, |item| clipboard::candidates(item).len());
-            Some(format!("press 1–{n} to copy · esc cancels"))
+            Some(number_prompt("copy", n, state.pending_number))
         } else {
             None
         }
@@ -109,4 +109,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let text = armed_prompt.as_deref().unwrap_or(legend);
     frame.render_widget(Paragraph::new(Line::raw(text)), area);
+}
+
+/// The armed `o`/`y` prompt: the range to choose from, then, once a digit that
+/// could start a longer number is typed, that number and how to finish it.
+fn number_prompt(verb: &str, count: usize, typed: usize) -> String {
+    if typed == 0 {
+        format!("press 1–{count} to {verb} · esc cancels")
+    } else {
+        format!("{verb} [{typed}…] of 1–{count} · next digit, or enter for [{typed}] · esc cancels")
+    }
 }

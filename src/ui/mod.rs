@@ -1040,6 +1040,27 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_number_at_the_prompt_shows_what_was_typed() {
+        let mut item = checkbox(1, "cmds", false);
+        item.code_blocks = (1..=12).map(|n| format!("cmd-{n}")).collect();
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![item],
+        }]);
+        state.handle_key(KeyCode::Char('y'));
+        assert_eq!(
+            buffer_rows(&mut state, 120, 26).last().unwrap().trim(),
+            "press 1–12 to copy · esc cancels"
+        );
+        state.handle_key(KeyCode::Char('1'));
+        assert_eq!(
+            buffer_rows(&mut state, 120, 26).last().unwrap().trim(),
+            "copy [1…] of 1–12 · next digit, or enter for [1] · esc cancels"
+        );
+    }
+
+    #[test]
     fn overview_pins_the_sub_section_header_when_its_divider_scrolls_off() {
         // Deep inside a long sub-section, its `── divider` scrolls above
         // the panel, so the deepest active sub-heading is pinned on the first

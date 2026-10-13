@@ -1282,6 +1282,106 @@ fn o_with_multiple_links_arms_a_digit_without_hiding_them() {
     assert_eq!(state.status_message, None, "links stay visible, not hidden");
 }
 
+fn twelve_link_state() -> AppState {
+    let urls: Vec<String> = (1..=12)
+        .map(|n| format!("https://example.com/{n}"))
+        .collect();
+    let urls: Vec<&str> = urls.iter().map(String::as_str).collect();
+    AppState::new(single_item_document(item_with_links(1, &urls)))
+}
+
+#[test]
+fn o_then_two_digits_opens_link_twelve() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('1'));
+    assert!(state.pending_open_link, "1 could still become 10, 11 or 12");
+    assert_eq!(state.pending_number, 1);
+    assert!(state.link_open_request.is_none());
+    state.handle_key(KeyCode::Char('2'));
+    assert!(!state.pending_open_link, "consumed");
+    assert_eq!(state.pending_number, 0);
+    assert_eq!(
+        state.take_link_open_request().as_deref(),
+        Some("https://example.com/12")
+    );
+}
+
+#[test]
+fn o_then_a_digit_that_cannot_grow_opens_at_once_on_a_long_card() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('3'));
+    assert!(!state.pending_open_link);
+    assert_eq!(
+        state.take_link_open_request().as_deref(),
+        Some("https://example.com/3")
+    );
+}
+
+#[test]
+fn o_then_one_and_enter_opens_link_one_of_twelve() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('1'));
+    state.handle_key(KeyCode::Enter);
+    assert!(!state.pending_open_link);
+    assert_eq!(
+        state.take_link_open_request().as_deref(),
+        Some("https://example.com/1")
+    );
+}
+
+#[test]
+fn backspace_at_the_open_prompt_deletes_the_last_digit() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('1'));
+    state.handle_key(KeyCode::Backspace);
+    assert!(state.pending_open_link, "still armed");
+    assert_eq!(state.pending_number, 0);
+    state.handle_key(KeyCode::Char('7'));
+    assert_eq!(
+        state.take_link_open_request().as_deref(),
+        Some("https://example.com/7")
+    );
+}
+
+#[test]
+fn o_then_a_number_past_the_last_link_says_so() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('1'));
+    state.handle_key(KeyCode::Char('3'));
+    assert!(!state.pending_open_link);
+    assert!(state.link_open_request.is_none());
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No link [13] on this card")
+    );
+}
+
+#[test]
+fn another_key_after_a_partial_number_cancels_and_acts() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('1'));
+    state.handle_key(KeyCode::Char('?'));
+    assert!(!state.pending_open_link);
+    assert_eq!(state.pending_number, 0);
+    assert!(state.link_open_request.is_none());
+    assert_eq!(state.overlay, Some(Overlay::Help));
+}
+
+#[test]
+fn a_click_clears_a_partial_link_number() {
+    let mut state = twelve_link_state();
+    state.handle_key(KeyCode::Char('o'));
+    state.handle_key(KeyCode::Char('1'));
+    state.clear_pending_chords();
+    assert_eq!(state.pending_number, 0);
+}
+
 #[test]
 fn esc_cancels_the_open_prompt_without_quitting() {
     // Regression: while armed, Esc must cancel the prompt, not fall through
@@ -2737,6 +2837,22 @@ fn y_with_multiple_candidates_arms_a_digit_prompt() {
     assert!(state.pending_copy_code, "armed for a command number");
     assert_eq!(state.status_message, None);
     crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn y_then_two_digits_copies_command_ten() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = (1..=10).map(|n| format!("cmd-{n}")).collect();
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('1'));
+    assert!(state.pending_copy_code, "1 could still become 10");
+    state.handle_key(KeyCode::Char('0'));
+    assert!(!state.pending_copy_code, "consumed");
+    assert_eq!(state.current_list_index, 0, "no list jump");
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("cmd-10".to_string(), false)]);
+    });
 }
 
 #[test]
@@ -5581,7 +5697,7 @@ fn every_digit_prompt_key_has_a_help_row() {
         state.handle_key_with_mods(code, modifiers);
         observable(&state)
     };
-    let titles = ["Waiting for a digit after o / y"];
+    let titles = ["Waiting for a number after o / y"];
     assert_handled_keys_have_help_rows(
         "o prompt",
         &titles,

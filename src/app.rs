@@ -30,6 +30,14 @@ pub enum CursorMove {
     Quiet,
 }
 
+/// What one key did at an armed `o`/`y` number prompt.
+enum NumberKey {
+    Typing,
+    Picked(usize),
+    Cancelled,
+    Other,
+}
+
 /// The modification time and byte length of `path` from a single `stat()`
 /// call, or `None` if it can't be read. Cross-checking both narrows (but
 /// doesn't eliminate) the window where a same-instant external edit could be
@@ -172,6 +180,7 @@ impl AppState {
             pending_g: false,
             pending_open_link: false,
             pending_copy_code: false,
+            pending_number: 0,
             icons: IconSet::nerd(),
             editor_requested: false,
             suspend_requested: false,
@@ -724,6 +733,7 @@ impl AppState {
         self.pending_g = false;
         self.pending_open_link = false;
         self.pending_copy_code = false;
+        self.pending_number = 0;
     }
 
     /// Shared guard for every mutating action: once the watched file
@@ -1272,6 +1282,7 @@ impl AppState {
                 self.pending_g = false;
                 self.pending_open_link = false;
                 self.pending_copy_code = false;
+                self.pending_number = 0;
                 if let Some(cancelled) = cancelled {
                     self.set_error(format!("File changed on disk — {cancelled} cancelled"));
                 } else {
@@ -1982,35 +1993,72 @@ impl AppState {
         }
     }
 
-    /// A pending `o` waits for a link digit. Runs before the digit list jump and
+    /// A pending `o` waits for a link number. Runs before the digit list jump and
     /// the Esc quit. Any other key cancels the prompt and still takes its normal
     /// action, returning `false`.
     fn handle_pending_open_link_key(&mut self, code: KeyCode) -> bool {
         if !std::mem::take(&mut self.pending_open_link) {
             return false;
         }
-        match code {
-            KeyCode::Char(c @ '1'..='9') => {
-                self.open_link_number((c as u8 - b'0') as usize);
+        let count = self.current_item().map_or(0, |item| item.link_urls().len());
+        match self.pick_number_key(code, count) {
+            NumberKey::Typing => {
+                self.pending_open_link = true;
                 true
             }
-            KeyCode::Esc => true,
-            _ => false,
+            NumberKey::Picked(n) => {
+                self.open_link_number(n);
+                true
+            }
+            NumberKey::Cancelled => true,
+            NumberKey::Other => false,
         }
     }
 
-    /// A pending `y` waits for a command digit, exactly like `o`'s link prompt.
+    /// A pending `y` waits for a command number, exactly like `o`'s link prompt.
     fn handle_pending_copy_code_key(&mut self, code: KeyCode) -> bool {
         if !std::mem::take(&mut self.pending_copy_code) {
             return false;
         }
-        match code {
-            KeyCode::Char(c @ '1'..='9') => {
-                self.copy_code_number((c as u8 - b'0') as usize);
+        let count = self
+            .current_item()
+            .map_or(0, |item| clipboard::candidates(item).len());
+        match self.pick_number_key(code, count) {
+            NumberKey::Typing => {
+                self.pending_copy_code = true;
                 true
             }
-            KeyCode::Esc => true,
-            _ => false,
+            NumberKey::Picked(n) => {
+                self.copy_code_number(n);
+                true
+            }
+            NumberKey::Cancelled => true,
+            NumberKey::Other => false,
+        }
+    }
+
+    /// One key at an armed `o`/`y` prompt choosing among `count` entries. A digit
+    /// picks at once unless a longer valid number could still follow (`1` with
+    /// twelve links might be `[12]`); then it waits for another digit or `Enter`.
+    fn pick_number_key(&mut self, code: KeyCode, count: usize) -> NumberKey {
+        let typed = std::mem::take(&mut self.pending_number);
+        match code {
+            KeyCode::Char(c @ '0'..='9') if typed > 0 || c != '0' => {
+                let n = typed * 10 + usize::from(c as u8 - b'0');
+                if n * 10 <= count {
+                    self.pending_number = n;
+                    NumberKey::Typing
+                } else {
+                    NumberKey::Picked(n)
+                }
+            }
+            KeyCode::Enter if typed > 0 => NumberKey::Picked(typed),
+            KeyCode::Backspace if typed > 0 => {
+                self.pending_number = typed / 10;
+                NumberKey::Typing
+            }
+            KeyCode::Esc => NumberKey::Cancelled,
+            _ => NumberKey::Other,
         }
     }
 

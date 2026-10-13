@@ -272,7 +272,11 @@ Finer points:
   clipboard`. Set `$BROWSER` to force an opener anyway. With **several**, the URLs stay
   listed below the card and the status bar shows `press 1–N to open · esc
   cancels` — press the number (matching the card's `[1]`/`[2]` markers) to open
-  that one, or Esc to cancel. With no link, the status bar says so.
+  that one, or Esc to cancel. On a card with ten or more links, type the
+  digits of `[10]` and up in turn: a digit opens its link at once unless a
+  longer number could still follow, so with twelve links `1` waits (the
+  status bar shows `open [1…] of 1–12`), then `2` opens `[12]` and `Enter`
+  opens `[1]`; `Backspace` deletes the digit. With no link, the status bar says so.
 - **Only `http://`, `https://` and `mailto:` links open.** Any other link —
   `file://`, `javascript:`, `data:`, or a schemeless one like `example.com` —
   still renders normally on the card, but `o` refuses it and says so. This keeps
@@ -367,9 +371,9 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `}` / `{` | jump to the first task of the next / previous sub-section (within the current list) |
 | `T` | open the "go to task" overlay: a filterable list of every task |
 | `y` | copy the task's command to the clipboard |
-| `y` then `1`–`9` | when a card has several commands, copy command `[N]` |
+| `y` then a number | when a card has several commands, copy command `[N]` (see below for `[10]` and up) |
 | `o` | open the current card's link in your browser |
-| `o` then `1`–`9` | when a card has several links, open link `[N]` |
+| `o` then a number | when a card has several links, open link `[N]` (see below for `[10]` and up) |
 | `e` | edit the file in `$EDITOR` (at the current task's line for editors that support it) |
 | `Ctrl-Z` | suspend to the shell, as in vim or less; `fg` brings markcheck back, picking up any change made to the file meanwhile |
 | `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
@@ -744,8 +748,9 @@ numbers them — a dim `[1]`, `[2]` after each inline command, or in the top
 border of each fenced block — and `y` shows `press 1–N to copy · esc cancels`
 in the status bar; press the number to copy that command, or `Esc` to cancel.
 Fenced blocks take priority, as for a single command: on a task with any
-fenced block, only the blocks are numbered. Up to nine commands can be picked
-this way.
+fenced block, only the blocks are numbered. With ten or more commands, type
+the digits of `[10]` and up in turn, exactly as for links: `1` then `0` copies
+`[10]`, and `1` then `Enter` copies `[1]`.
 
 With the mouse, you can also **left-click the command** you want and that
 specific one is copied, in full (an inline command, the trailing command, or
