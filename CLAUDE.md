@@ -130,6 +130,94 @@ A `new-issues.md` file in the repo root holds issue drafts the user wants filed 
 
 **When the user says yes**, create the approved issues from the reworded versions, not the raw drafts. Follow the project's issue conventions: check for an existing open issue covering the same thing first, and add any required trailer. Then delete `new-issues.md`, since its content now lives in the tracker. Report each new issue's number, and list any drafts that were declined or skipped as duplicates, so none disappears without a mention. Then resume the interrupted work.
 
+### Idea review: `ideas`
+
+**`ideas` is shorthand for "review the open idea issues".** A message consisting of only `ideas` (ignoring surrounding whitespace) starts the review below. Inside a longer message it is ordinary text. Idea issues are the ones the project's issue conventions mark as ideas, such as an `[IDEA]` title prefix or an idea label.
+
+**Fetch every open idea.** List all open issues, paging through the tracker until a page comes back empty, since one listing can be cut off silently. Keep the idea issues, and present them **oldest first** (lowest issue number first). Say up front how many there are.
+
+**Present them one at a time.** For each idea:
+
+1. **The issue's identifier and title, in bold**, e.g. **#12 [IDEA] Cache the API responses**.
+2. **A summary of the idea**, written from the issue's body and comments and checked against the current code: what it is, where it applies, and what done would look like. A simple idea gets two or three sentences. A technical or complicated one says so, and gets as long a description as it needs to be understood without opening the issue. A well-described idea matters more than a short one. If the code has already changed what the idea is about (done, superseded, or no longer applicable), say so.
+3. **A short list of pros, cons and the cost to implement**: a few bullets each, with the cost in rough effort (small, medium or large) and what it would touch.
+4. **A prompt with four choices**, asked with a blocking question, so the user answers each idea before the next is shown:
+   - **Keep**: leave the issue open and add it to the "to implement" list. Nothing is implemented during the review.
+   - **Keep open for later**: leave the issue open and untouched, but not on the "to implement" list: it stays in the backlog for a later look, such as a research report to work through some other time. Nothing is posted to the issue.
+   - **Close as won't do**: post a one-line comment giving the reason (ask for it when it isn't obvious from the answer), with the required trailer, then close the issue.
+   - **Needs refinement**: leave it open and set it aside for the refinement round at the end.
+
+**Refinement round.** Once every idea has been through the prompt, go back through the ones marked for refinement, one at a time. Ask what is unclear or missing, or propose a sharper description, then update the issue (its title and body, or a comment) with the result. Finish each one with the same prompt, minus refinement: keep, keep open for later, or close as won't do.
+
+**Close with a summary**: how many ideas were reviewed, then three tables covering every reviewed issue:
+
+- **To implement**: identifier, title, and a one-line gist with its cost, for every idea kept (refined ones included).
+- **Kept open for later**: identifier, title, and a one-line gist.
+- **Closed as won't do**: identifier, title, and the reason given.
+
+Mention the refined ones too (what changed in each). Never start implementing anything from the review unless the user asks.
+
+### Naming an issue
+
+**This must always be followed, with no exceptions.** Whenever a reply mentions an issue by number, write the number and the issue's title together in bold, followed by a very short summary of what it is about: one or two sentences. For example: **#12 [IDEA] Cache the API responses**: the client refetches every page on each run; a small on-disk cache would make reruns instant.
+
+- This applies everywhere an issue is named: prose, lists, summaries, questions, commit reports and tables. A table of issues gets title and summary columns, never numbers alone.
+- Give the full form at least the first time an issue appears in a reply. A later mention in the same reply may repeat just the bold number and title.
+- Never write a bare number, and never guess a title or summary from memory: look it up.
+
+**Cache issue data when lookups would be slow.** When a reply names many issues, or the tracker is slow to query, fetch the open issues once into a cache file in a temporary working directory (e.g. a JSON array of `{number, title, state, summary}`, under the session's scratch directory or `$TMPDIR`), and look issues up there instead of querying the tracker for each one. The cache is a convenience, not a record:
+
+- Refresh it at the start of a session and after creating, closing, retitling or editing any issue, and refetch any issue missing from it.
+- Never commit it, and keep it out of the repository's working tree.
+
+### Deciding on an issue
+
+**This must always be followed, with no exceptions: every question that asks the user to decide something about an issue comes after a summary of that issue, shown first in plain text.** The summary is never optional, never skipped because the issue seems familiar or was discussed earlier, and never left for the prompt to carry. This holds everywhere such a question is asked, not only in the `ideas` and `issues` reviews: while planning, mid-task, after a review, or when an open question on an issue comes up in passing. A decision prompt naming only an issue's number and title asks the user to decide from memory.
+
+The summary, written out before the prompt appears:
+
+- **The issue's identifier and title, in bold.**
+- **What it is about**, checked against the current code: the problem or request, where it applies, and what is still open. Size it to the issue, neither too long nor too short: two or three sentences for a simple one; for a technical issue, or one that needs more to be understood, as long an explanation as it takes to decide without opening the issue.
+- **The choice being asked**, with what each option would mean.
+- **Pros, cons and cost**: a few bullets each, always, even when the choice looks small. The cost is the rough effort (small, medium or large) and what it would touch; for a choice between several options, give each option its own pros, cons and cost.
+
+When one prompt asks about several issues at once, summarize each of them before it. A prompt's own option labels and descriptions don't count as the summary: they are too short, and some interfaces hide them until an option is selected.
+
+### Issue review: `issues`
+
+**`issues` is shorthand for "review the open issues".** A message consisting of only `issues` (ignoring surrounding whitespace) starts the review below. Inside a longer message it is ordinary text.
+
+1. **Fetch every open issue**, paging through the tracker until a page comes back empty, and refresh the local issue cache if the project keeps one (see Naming an issue above).
+2. **Start with a summary list of every open issue**: number and title in bold plus a one-line gist each, grouped so it stays readable (e.g. by area or by severity), with the total count.
+3. **Then take the issues waiting on a decision from the user**, one at a time, oldest first. These are:
+   - idea issues, as the project's issue conventions mark them;
+   - issues only the user can move forward, such as a check that has to be done on their own machines;
+   - issues that end in an open question to the user, or whose next step depends on a choice between options.
+
+   Present each the same way as an idea in the `ideas` review above: number and title in bold, a summary checked against the current code (longer for a technical one), pros, cons and cost, then a prompt answered before the next one is shown. The prompt offers the choices that fit the issue: keep (onto the "to implement" list), keep open for later (left open and off that list), close as won't do (with a one-line reason comment), needs refinement (gone through at the end of the batch), or, for a check or question, the answer itself, recorded as a comment on the issue.
+
+   **Work in batches of 10.** After every 10 issues (or fewer, for the last batch), go through that batch's refinements, show the batch's summary tables (as at the end of the `ideas` review), then ask with a prompt whether to **start working on the issues this batch put on the "to implement" list** or **continue with the next 10**. Starting work ends the review; the issues not yet reviewed wait for the next `issues`.
+4. **When no issue is waiting on a decision**, or once they have all been through the prompt, ask with a prompt whether to plan the open issues that are left: an order to work through them, grouping issues that touch the same code.
+
+Never start implementing anything from the review unless the user chooses to, in the batch prompt or otherwise.
+
+### Change summary: `changes`
+
+**`changes` is shorthand for "summarize what changed".** A message consisting of only `changes`, optionally followed by a period such as `changes since yesterday` or `changes 2026-03-01..2026-03-03`, starts the summary below. Inside a longer message it is ordinary text. With no period given, cover everything on the working branch not yet on `main`.
+
+1. **Collect every change in the period**: the commit log of the working branch (and of `main`, if anything was merged in the period), the issues closed or filed, and any pull requests opened in other repositories the work depends on, with their state.
+2. **Group the changes by kind**, each entry one line with its short commit hash, a plain description written from the user's side, and its issue numbers:
+   - **New features**: something the user can do that they couldn't before.
+   - **Changed behaviour**: something that works differently now.
+   - **Bug fixes**: something that was wrong and now isn't.
+   - **Tests and CI**, then **Docs and housekeeping**.
+
+   Group within a kind by area when it runs long. Fold a commit that only fixes another commit in the same period into that commit's entry. Every commit in the period appears somewhere: brief, but complete.
+3. **Then the state of things**: what still has to happen before the changes are live (merge and deploy order, pull requests elsewhere), and what is still open, such as issues waiting on a decision or ideas filed.
+4. **End with what is worth verifying**: the checks that could only be done on the real systems, grouped by area, with anything already verified marked as done. Draw on the checks recorded in the issues rather than inventing new ones.
+
+Publish it as a shareable page when the environment can host one (an artifact or similar), otherwise write it as a Markdown file in a temporary working directory, outside the repository. Reply with the link or path and a few lines on the headline changes. Keep the page's name stable for a period that is asked for again, so a later run updates it rather than starting another.
+
 ## CI
 
 If a project has no CI workflow configured yet, suggest setting one up — don't wait to be asked. This is a suggestion, not something to set up unprompted: propose it and let the user decide.
