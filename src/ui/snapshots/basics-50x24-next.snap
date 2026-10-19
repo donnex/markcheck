@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Deployment Runbook │ basics.md           ☑ 3/11
+ [1] Prepare   [2] Verify   [3] Ordered steps
+━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
+
+
+
+
+
+                     • Prepare
+          ▪ Do not run against production
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓
+┃                                                ┃
+┃          Check out the release branch:         ┃
+┃                                                ┃
+┃              git checkout release              ┃
+┃                                                ┃
+┃                                                ┃
+┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

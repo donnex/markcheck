@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Weekly maintenance │ front-matter.md                                                                            ☑ 0/5
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] Monday               │
+                                                                                          │   ☐ Rotate the logs: rota… │
+                                                                                          │   ❯ Check the backup repo… │
+                                                                                          │   ☐ Review open alerts     │
+                                                                                          │ • [2] Friday               │
+                                                                                          │   ☐ Run verify-output      │
+                                                                                          │   ☐ Archive the week's no… │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                        • Monday                                          │                            │
+                                                                                          │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓               │                            │
+┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
+│  Rotate th┃                                                             ┃            │  │                            │
+│     logs: ┃                   Check the backup report                   ┃eview open  │  │                            │
+│  rotate-lo┃                                                             ┃ alerts     │  │                            │
+│   --keep 7┃                                                             ┃            │  │                            │
+└───────────┃                                                             ┃────────────┘  │                            │
+            ┗ ·◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

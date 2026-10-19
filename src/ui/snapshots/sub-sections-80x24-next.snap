@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Release checklist │ sub-sections.md                                    ☑ 1/30
+━━━━────────────────────────────────────────────────────────────────────────────
+                                                  ┌ Overview ──────────────────┐
+                                                  │ • [1] Deploy               ▲
+                                                  │   ☐ refresh-cache          ▓
+                                                  │   ❯ build-tool sync --pro… ▓
+                                                  │   ── Pre-flight checks ─── ▓
+                                                  │   ☐ confirm the staging h… ▓
+                    • Deploy                      │   ◐ run verify-output and… ▓
+                                                  │     ── Data safety ─────── ▓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/29 ┓  │   ☐ take a snapshot: snap… ▓
+┃                                              ┃  │   ☐ confirm the snapshot … ▓
+┃                                              ┃  │   ── Rollout ───────────── │
+┃       build-tool sync --profile default      ┃  │   ☑ restart-service        │
+┃                                              ┃  │   ☐ check-status example-… │
+┃                                              ┃  │   ▪ Watch the dashboards   │
+┃                                              ┃  │   ☐ confirm the error rat… │
+┗ ·◉·●··●······················ ━━━━━━━━━━━━━━━┛  │   ☐ announce the rollout … │
+                                                  │   ── Post-rollout ──────── │
+                                                  │   ☐ tail the logs for one… │
+                                                  │   ☐ verify-output --final  │
+                                                  │   ── Extended verificati…  ▼
+                                                  └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

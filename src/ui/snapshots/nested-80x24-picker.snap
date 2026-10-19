@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ ≡ Nested Checklist │ nested.md                                           ☑ 0/12
+━━━━━━──────────────────────────────────────────────────────────────────────────
+╭ Go to task ──────────────────────── 13 items ╮  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ • [1] Rebuild              │
+│ ☐ Rebuild all packages  — Rebuild            │  │   ❯ Rebuild all packages   │
+│ ☐ Fetch sources fetch-sources --…  — Rebuild │  │   │ ☐ Fetch sources fetch… │
+│ ◐ Compile  — Rebuild                         │  │   │ ◐ Compile              │
+│ ☐ Compile the core  — Rebuild                │  │   │ │ ☐ Compile the core   │
+│ ☐ Compile the plugins  — Rebuild             │  │   │ │ ☐ Compile the plugi… │
+│ ☐ Run the test suite  — Rebuild              │  │   │ ☐ Run the test suite   │
+│ ▪ Preparation notes:  — Rebuild              │  │   ▪ Preparation notes:     │
+│ ☐ Free up disk space  — Rebuild              │  │   │ ☐ Free up disk space   │
+│ ☐ Notify the team on example.com  — Rebuild  │  │   │ ☐ Notify the team on … │
+│ ☐ Tag the release  — Release                 │  │ • [2] Release              │
+│ ☐ Publish  — Release                         │  │   ☐ Tag the release        │
+│ ☐ Upload the artifact  — Release             │  │   ☐ Publish                │
+│ ☐ Announce the release  — Release            │  │   │ ☐ Upload the artifact  │
+│                                              │  │   │ ☐ Announce the release │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

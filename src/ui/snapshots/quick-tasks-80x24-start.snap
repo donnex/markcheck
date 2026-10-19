@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Quick Tasks │ quick-tasks.md                                            ☑ 0/4
+────────────────────────────────────────────────────────────────────────────────
+                                                  ┌ Overview ──────────────────┐
+                                                  │ • [1] (Default)            │
+                                                  │   ❯ A loose task before a… │
+                                                  │   ☐ The title bar shows "… │
+                                                  │   ☐ Copy this command wit… │
+                                                  │ • [2] A named section      │
+                                                  │   ☐ A task under a real #… │
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/3 ┓  │                            │
+┃                                              ┃  │                            │
+┃                                              ┃  │                            │
+┃  A loose task before any heading — this goes ┃  │                            │
+┃      into the title-less default section     ┃  │                            │
+┃                                              ┃  │                            │
+┃                                              ┃  │                            │
+┗ ◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

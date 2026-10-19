@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Release checklist │ sub-sections.md      ☑ 1/30
+ [1] Deploy   [2] Second workspace
+━━────────────────────────────────────────────────
+
+
+
+
+
+                     • Deploy
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/29 ┓
+┃                                                ┃
+┃                                                ┃
+┃        build-tool sync --profile default       ┃
+┃                                                ┃
+┃                                                ┃
+┃                                                ┃
+┗ ·◉·●··●······················ ━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

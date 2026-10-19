@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Nested Checklist │ nested.md                                                                                   ☑ 0/12
+━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] Rebuild              │
+                                                                                          │   ❯ Rebuild all packages   │
+                                                                                          │   │ ☐ Fetch sources fetch… │
+                                                                                          │   │ ◐ Compile              │
+                                                                                          │   │ │ ☐ Compile the core   │
+                                                                                          │   │ │ ☐ Compile the plugi… │
+                                                                                          │   │ ☐ Run the test suite   │
+                                                                                          │   ▪ Preparation notes:     │
+                                                                                          │   │ ☐ Free up disk space   │
+                                                                                          │   │ ☐ Notify the team on … │
+                                                                                          │ • [2] Release              │
+                                                                                          │   ☐ Tag the release        │
+                                                                                          │   ☐ Publish                │
+                                        • Rebuild                                         │   │ ☐ Upload the artifact  │
+                                                                                          │   │ ☐ Announce the release │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/9 ┓               │                            │
+            ┃                                                             ┃────────────┐  │                            │
+            ┃                                                             ┃tch sources │  │                            │
+            ┃                    Rebuild all packages                     ┃tch-sources │  │                            │
+            ┃                                                             ┃  --all     │  │                            │
+            ┃                                                             ┃            │  │                            │
+            ┃                                                             ┃────────────┘  │                            │
+            ┗ ◉·●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ ≡ Weekly maintenance │ front-matter.md                                    ☑ 0/5
+────────────────────────────────────────────────────────────────────────────────
+╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
+│                                              ▲  │ • [1] Monday               │
+│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ❯ Rotate the logs: rota… │
+│  gg / G             first / last task in the ▓  │   ☐ Check the backup repo… │
+│  } / {              next / previous sub-secti▓  │   ☐ Review open alerts     │
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │ • [2] Friday               │
+│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ Run verify-output      │
+│  PageDn / PageUp    scroll card body one page│  │   ☐ Archive the week's no… │
+│  mouse wheel        scroll an overflowing car│  │                            │
+│  wheel in ? / T     scroll this help / move t│  │                            │
+│  space / Enter      toggle the task done, the│  │                            │
+│  s                  mark the task started / i│  │                            │
+│  u / Ctrl-R         undo / redo the last chan│  │                            │
+│  Tab                jump to the next unfinish│  │                            │
+│  Shift-H / Shift-L  previous / next unfinishe│  │                            │
+│  /                  search tasks by text     │  │                            │
+│  n / N              next / previous search ma│  │                            │
+│  T                  go to task (filterable li│  │                            │
+│  click T picker row highlight it; click it ag│  │                            │
+│  click overview row toggle (icon) or jump to ▼  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+j/k ↑↓: scroll  ·  any other key: close help

@@ -579,3 +579,7 @@ fn fg(color: Option<Color>) -> Style {
 #[cfg(test)]
 #[path = "ui_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "golden_tests.rs"]
+mod golden_tests;

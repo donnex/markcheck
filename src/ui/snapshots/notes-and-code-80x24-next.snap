@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/24
+────────────────────────────────────────────────────────────────────────────────
+                                                  ┌ Overview ──────────────────┐
+                                                  │ • [1] Reference            ▲
+                                                  │   ▪ Read before proceedin… ▓
+                                                  │   ▪ A note with a command… ▓
+                   • Reference                    │   ☐ A task with a single … ▓
+   ▪ Read before proceeding: every step below     │   ❯ Restart the primary a… ▓
+  assumes the service has already been drained    │   ☐ Restart example-servi… ▓
+             from the load balancer               │   ☐ A task with a fenced … ▓
+                                                  │   ☐ A task with an indent… ▓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/24 ┓  │   ☐ A task with a short o… ▓
+┃   ▪ Restart the primary application service  ┃  │   ☐ A task with fenced li… ▓
+┃  and confirm that every health check passes  ┃  │   ☐ A task with a tab-ind… ▓
+┃                                              ┃  │   ☐ A task with two comma… │
+┃   — a card title too long for one row wraps  ┃  │   ☐ A task with a command… │
+┃     inside the card instead of being cut     ┃  │   ☐ Fetch curl -fsSL http… │
+┃                                              ┃  │   ☐ A task with emphasis,… │
+┗ ··◉····················· ━━━━━━━━━━━━━━━━━━━━┛  │   ☐ A task whose text run… │
+                                                  │   ☐ A task in wide (two-c… │
+                                                  │   ☐ Open the project runb… │
+                                                  │   ☐ A task with a very lo… ▼
+                                                  └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

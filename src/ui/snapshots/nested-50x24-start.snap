@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Nested Checklist │ nested.md             ☑ 0/12
+ [1] Rebuild   [2] Release
+━━━━──────────────────────────────────────────────
+
+
+
+
+
+                     • Rebuild
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/9 ┓
+┃                                                ┃
+┃                                                ┃
+┃              Rebuild all packages              ┃
+┃                                                ┃
+┃                                                ┃
+┃                                                ┃
+┗ ◉·●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

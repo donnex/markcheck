@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/24
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] Reference            │
+                                                                                          │   ▪ Read before proceedin… │
+                                                                                          │   ▪ A note with a command… │
+                                                                                          │   ❯ A task with a single … │
+                                                                                          │   ☐ Restart the primary a… │
+                                                                                          │   ☐ Restart example-servi… │
+                                                                                          │   ☐ A task with a fenced … │
+                                                                                          │   ☐ A task with an indent… │
+                                                                                          │   ☐ A task with a short o… │
+                                                                                          │   ☐ A task with fenced li… │
+                                                                                          │   ☐ A task with a tab-ind… │
+                                                                                          │   ☐ A task with two comma… │
+                                       • Reference                                        │   ☐ A task with a command… │
+             ▪ Read before proceeding: every step below assumes the service               │   ☐ Fetch curl -fsSL http… │
+                     has already been drained from the load balancer                      │   ☐ A task with emphasis,… │
+                                                                                          │   ☐ A task whose text run… │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/24 ┓               │   ☐ A task in wide (two-c… │
+┌ ▪ ────────┃                                                             ┃────────────┐  │   ☐ Open the project runb… │
+│  A note wi┃             A task with a single inline command             ┃estart the  │  │   ☐ A task with a very lo… │
+│   a comman┃                                                             ┃ primary    │  │   ☐ A task with two links… │
+│    but no ┃                     apply-config --now                      ┃pplication  │  │   ☐ See also every servic… │
+│  checkbox ┃                                                             ┃ervice and  │  │   ☐ A task linking to a l… │
+└───────────┃                                                             ┃────────────┘  │   ☐ Check the dashboard a… │
+            ┗ ·◉······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ Mail the on-call owne… │
+                                                                                          │   ▪ A quoted example from… │
+                                                                                          │   ▪ Neither does a quoted… │
+                                                                                          │ • [2] Precondition with a  │
+                                                                                          │   ▪ Export the environmen… │
+                                                                                          │   ☐ Run the step that nee… │
+                                                                                          │ • [3] Fence after a list   │
+                                                                                          │   ☐ Confirm the release n… │
+                                                                                          │   ☐ Run the smoke test — … │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

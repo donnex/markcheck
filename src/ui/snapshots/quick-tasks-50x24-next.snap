@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Quick Tasks │ quick-tasks.md              ☑ 0/4
+ [1] (Default)   [2] A named section
+──────────────────────────────────────────────────
+
+
+
+
+
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓
+┃                                                ┃
+┃  The title bar shows "Quick Tasks", made from  ┃
+┃        the filename, because there is no       ┃
+┃                                                ┃
+┃                      # H1                      ┃
+┃                                                ┃
+┗ ·◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

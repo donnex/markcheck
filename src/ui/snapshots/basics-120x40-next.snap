@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Deployment Runbook │ basics.md                                                                                 ☑ 3/11
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] Prepare              │
+                                                                                          │   ▪ Do not run against pr… │
+                                                                                          │   ☑ Confirm access to exa… │
+                                                                                          │   ◐ Warm the build cache   │
+                                                                                          │   ❯ Check out the release… │
+                                                                                          │   ☐ Build the artifact     │
+                                                                                          │   ▪ Keep this runbook ope… │
+                                                                                          │ • [2] Verify               │
+                                                                                          │   ☐ Check the health endp… │
+                                                                                          │   ☐ Run the smoke tests    │
+                                                                                          │   ☐ Tail the logs and wat… │
+                                                                                          │   ☑ Record the start time… │
+                                        • Prepare                                         │ • [3] Ordered steps        │
+                             ▪ Do not run against production                              │   ☑ 1. Confirm the change… │
+                                                                                          │   ◐ 2. Notify the on-call… │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │   ☐ 3. Announce completion │
+┌ ◐ ────────┃                                                             ┃────────────┐  │                            │
+│           ┃                Check out the release branch:                ┃Build the   │  │                            │
+│   Warm the┃                                                             ┃artifact    │  │                            │
+│  build cac┃                    git checkout release                     ┃            │  │                            │
+│           ┃                                                             ┃ompile and  │  │                            │
+└───────────┃                                                             ┃────────────┘  │                            │
+            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

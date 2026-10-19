@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Quick Tasks │ quick-tasks.md                                                                                    ☑ 0/4
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] (Default)            │
+                                                                                          │   ☐ A loose task before a… │
+                                                                                          │   ❯ The title bar shows "… │
+                                                                                          │   ☐ Copy this command wit… │
+                                                                                          │ • [2] A named section      │
+                                                                                          │   ☐ A task under a real #… │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓               │                            │
+┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
+│ A loose ta┃ The title bar shows "Quick Tasks", made from the filename,  ┃Copy this   │  │                            │
+│  before an┃                     because there is no                     ┃mmand with  │  │                            │
+│   heading ┃                                                             ┃: do-thing  │  │                            │
+│   this goe┃                            # H1                             ┃--verbose   │  │                            │
+└───────────┃                                                             ┃────────────┘  │                            │
+            ┗ ·◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

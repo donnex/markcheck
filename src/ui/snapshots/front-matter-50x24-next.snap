@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Weekly maintenance │ front-matter.md      ☑ 0/5
+ [1] Monday   [2] Friday
+──────────────────────────────────────────────────
+
+
+
+
+
+                     • Monday
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓
+┃                                                ┃
+┃                                                ┃
+┃             Check the backup report            ┃
+┃                                                ┃
+┃                                                ┃
+┃                                                ┃
+┗ ·◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

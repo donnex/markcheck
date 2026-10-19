@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Notes, Banners, an… │ notes-and-code.md  ☑ 0/24
+ [1] Ref…   [2] Precondition …   [3] Fence af…
+──────────────────────────────────────────────────
+
+
+
+
+                    • Reference
+▪ Read before proceeding: every step below assumes
+the service has already been drained from the load
+                     balancer
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/24 ┓
+┃  ▪ Restart the primary application service and ┃
+┃     confirm that every health check passes     ┃
+┃                                                ┃
+┃    — a card title too long for one row wraps   ┃
+┃      inside the card instead of being cut      ┃
+┃                                                ┃
+┗ ··◉····················· ━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Deployment Runbook │ basics.md                                         ☑ 3/11
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────────────────
+                                                  ┌ Overview ──────────────────┐
+                                                  │ • [1] Prepare              │
+                                                  │   ▪ Do not run against pr… │
+                                                  │   ☑ Confirm access to exa… │
+                                                  │   ◐ Warm the build cache   │
+                    • Prepare                     │   ☐ Check out the release… │
+         ▪ Do not run against production          │   ☐ Build the artifact     │
+                                                  │   ▪ Keep this runbook ope… │
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓  │ • [2] Verify               │
+┃                                              ┃  │   ☐ Check the health endp… │
+┃                                              ┃  │   ☐ Run the smoke tests    │
+┃             Warm the build cache             ┃  │   ☐ Tail the logs and wat… │
+┃                                              ┃  │   ☑ Record the start time… │
+┃                                              ┃  │ • [3] Ordered steps        │
+┃                                              ┃  │   ☑ 1. Confirm the change… │
+┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ◐ 2. Notify the on-call… │
+                                                  │   ☐ 3. Announce completion │
+                                                  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

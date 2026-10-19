@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Release checklist │ sub-sections.md                                                                            ☑ 1/30
+━━━━━━━━────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] Deploy               ▲
+                                                                                          │   ☐ refresh-cache          ▓
+                                                                                          │   ❯ build-tool sync --pro… ▓
+                                                                                          │   ── Pre-flight checks ─── ▓
+                                                                                          │   ☐ confirm the staging h… ▓
+                                                                                          │   ◐ run verify-output and… ▓
+                                                                                          │     ── Data safety ─────── ▓
+                                                                                          │   ☐ take a snapshot: snap… ▓
+                                                                                          │   ☐ confirm the snapshot … ▓
+                                                                                          │   ── Rollout ───────────── ▓
+                                                                                          │   ☑ restart-service        ▓
+                                                                                          │   ☐ check-status example-… ▓
+                                                                                          │   ▪ Watch the dashboards   ▓
+                                        • Deploy                                          │   ☐ confirm the error rat… ▓
+                                                                                          │   ☐ announce the rollout … ▓
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/29 ┓               │   ── Post-rollout ──────── ▓
+┌ ☐ ────────┃                                                             ┃────────────┐  │   ☐ tail the logs for one… ▓
+│           ┃                                                             ┃onfirm the  │  │   ☐ verify-output --final  ▓
+│ refresh-ca┃              build-tool sync --profile default              ┃aging host  │  │   ── Extended verificati…  ▓
+│       e   ┃                                                             ┃ is idle    │  │     ── Line-by-line chec…  ▓
+│           ┃                                                             ┃            │  │   ☐ verify service A resp… ▓
+└───────────┃                                                             ┃────────────┘  │   ☐ verify service B resp… ▓
+            ┗ ·◉·●··●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service C resp… ▓
+                                                                                          │   ☐ confirm queue depth i… ▓
+                                                                                          │   ☐ confirm cache hit rat… ▓
+                                                                                          │   ☐ confirm error rate is… ▓
+                                                                                          │   ☐ check disk usage on t… ▓
+                                                                                          │   ☐ check disk usage on t… ▓
+                                                                                          │   ☐ check memory headroom… ▓
+                                                                                          │   ☐ confirm scheduled job… ▓
+                                                                                          │   ☐ confirm overnight bac… ▓
+                                                                                          │   ☐ confirm alerting is a… │
+                                                                                          │   ☐ review the latest dep… │
+                                                                                          │   ☐ spot-check a sample r… │
+                                                                                          │   ☐ confirm metrics dashb… ▼
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

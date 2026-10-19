@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ ≡ Standalone Checklist │ no-headings.md                                   ☑ 1/3
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
+╭ Go to task ───────────────────────── 4 items ╮  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ ❯ First step: example-too… │
+│ ☐ First step: example-tool init              │  │ ◐ Second step, in progress │
+│ ◐ Second step, in progress                   │  │ ☑ Third step, already done │
+│ ☑ Third step, already done                   │  │ ▪ A plain note with no ch… │
+│ ▪ A plain note with no checkbox              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

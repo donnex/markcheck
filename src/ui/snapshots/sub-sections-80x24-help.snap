@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ ≡ Release checklist │ sub-sections.md                                    ☑ 1/30
+━━━━────────────────────────────────────────────────────────────────────────────
+╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
+│                                              ▲  │ • [1] Deploy               ▲
+│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ❯ refresh-cache          ▓
+│  gg / G             first / last task in the ▓  │   ☐ build-tool sync --pro… ▓
+│  } / {              next / previous sub-secti▓  │   ── Pre-flight checks ─── ▓
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ☐ confirm the staging h… ▓
+│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ◐ run verify-output and… ▓
+│  PageDn / PageUp    scroll card body one page│  │     ── Data safety ─────── ▓
+│  mouse wheel        scroll an overflowing car│  │   ☐ take a snapshot: snap… ▓
+│  wheel in ? / T     scroll this help / move t│  │   ☐ confirm the snapshot … ▓
+│  space / Enter      toggle the task done, the│  │   ── Rollout ───────────── │
+│  s                  mark the task started / i│  │   ☑ restart-service        │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ check-status example-… │
+│  Tab                jump to the next unfinish│  │   ▪ Watch the dashboards   │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ confirm the error rat… │
+│  /                  search tasks by text     │  │   ☐ announce the rollout … │
+│  n / N              next / previous search ma│  │   ── Post-rollout ──────── │
+│  T                  go to task (filterable li│  │   ☐ tail the logs for one… │
+│  click T picker row highlight it; click it ag│  │   ☐ verify-output --final  │
+│  click overview row toggle (icon) or jump to ▼  │   ── Extended verificati…  ▼
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+j/k ↑↓: scroll  ·  any other key: close help

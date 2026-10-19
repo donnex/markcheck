@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ ≡ Weekly maintenance │ front-matter.md                                    ☑ 0/5
+────────────────────────────────────────────────────────────────────────────────
+╭ Go to task ───────────────────────── 5 items ╮  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ • [1] Monday               │
+│ ☐ Rotate the logs: rotate-logs --…  — Monday │  │   ❯ Rotate the logs: rota… │
+│ ☐ Check the backup report  — Monday          │  │   ☐ Check the backup repo… │
+│ ☐ Review open alerts  — Monday               │  │   ☐ Review open alerts     │
+│ ☐ Run verify-output  — Friday                │  │ • [2] Friday               │
+│ ☐ Archive the week's notes  — Friday         │  │   ☐ Run verify-output      │
+│                                              │  │   ☐ Archive the week's no… │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close
