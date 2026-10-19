@@ -171,9 +171,12 @@ fn main() -> anyhow::Result<()> {
         &state.document.file_path,
         std::env::var("HOME").ok().as_deref(),
     );
-    let detected = request
-        .requested
-        .then(|| git_sync::GitSync::detect(&state.document.file_path));
+    // `detect` runs only `rev-parse`, which runs no hooks or helpers, so the
+    // scope check comes before any command a nested repository could hijack.
+    let detected = request.requested.then(|| {
+        git_sync::GitSync::detect(&state.document.file_path)
+            .and_then(|sync| launch::git_sync_scope(&request, sync.repo_root()).map(|()| sync))
+    });
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
     // What no signal handler can catch (SIGKILL, the OOM killer, a power

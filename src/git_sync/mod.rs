@@ -337,6 +337,11 @@ impl GitSync {
         self.spawn_retry(commit);
     }
 
+    /// The repository's top level, which every git-sync command runs from.
+    pub fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
     /// Drives the title bar's "syncing" state, and the wait when quitting.
     pub fn is_busy(&self) -> bool {
         self.busy

@@ -159,7 +159,7 @@ mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
-git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths
+git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths (end with /** to include nested repositories)
 ```
 
 No config file is not an error — `markcheck` just uses the built-in
@@ -205,6 +205,16 @@ A leading `~` in a `git_sync_paths` entry means your home directory
 doesn't exist can never match anything, so `markcheck` says so at startup
 (`git_sync_paths: ~/checklsts does not exist — ignored`) rather than leaving
 you to wonder why git-sync never turns on.
+
+An entry covers only the repository it names (or one it sits in). A
+separate repository *nested* somewhere inside it, such as a project folder
+copied in or an unpacked archive, is not synced, because git would run that
+repository's own hooks and settings, chosen by whoever made it, just because
+you opened a checklist there. `markcheck` says so at startup (`Git sync off:
+the checklist's repository (...) is nested inside git_sync_paths entry
+~/notes; ...`). To cover nested repositories too, end the entry with `/**`,
+as in `"~/work/**"`; `--git-sync` on the command line also works for one
+run.
 
 ## Markdown
 

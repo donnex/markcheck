@@ -1546,6 +1546,133 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// A repository nested inside `notes/` that arrived from elsewhere: its
+/// config runs `uploadpack` on any `ls-remote`, its hook runs on any commit,
+/// and an unpushed commit invites the startup push. Returns the checklist,
+/// the `notes/` prefix and the two marker files they would create.
+fn nested_repository_with_hostile_config(
+    hint: &str,
+) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
+    let root = unique_path(hint);
+    let notes = root.join("notes");
+    let nested = notes.join("imported");
+    let remote = root.join("remote.git");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::create_dir_all(&remote).unwrap();
+    run_git(&notes, &["init", "-q", "-b", "main"]);
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&nested, &["init", "-q", "-b", "main"]);
+    run_git(&nested, &["config", "user.email", "test@example.com"]);
+    run_git(&nested, &["config", "user.name", "test"]);
+    let path = nested.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&nested, &["add", "checklist.md"]);
+    run_git(&nested, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &nested,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&nested, &["push", "-q", "-u", "origin", "main"]);
+    write_file(&path, "## Work\n\n- [/] `alpha`\n- [ ] `beta`\n");
+    run_git(
+        &nested,
+        &[
+            "commit",
+            "-q",
+            "-am",
+            "checklist.md: Start",
+            "-m",
+            "Synced-by: markcheck",
+        ],
+    );
+
+    let fetched = root.join("uploadpack-ran");
+    let committed = root.join("hook-ran");
+    run_git(
+        &nested,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            &format!("touch '{}'; git-upload-pack", fetched.display()),
+        ],
+    );
+    let hook = nested.join(".git/hooks/pre-commit");
+    write_file(
+        &hook,
+        &format!("#!/bin/sh\ntouch '{}'\n", committed.display()),
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (root, path, notes, fetched, committed)
+}
+
+fn config_home_with_git_sync_path(root: &Path, entry: &str) -> PathBuf {
+    let xdg_config_home = root.join("xdg-config");
+    std::fs::create_dir_all(xdg_config_home.join("markcheck")).unwrap();
+    std::fs::write(
+        xdg_config_home.join("markcheck").join("config.toml"),
+        format!("git_sync_paths = [{entry:?}]\n"),
+    )
+    .unwrap();
+    xdg_config_home
+}
+
+#[test]
+fn a_plain_git_sync_paths_entry_never_runs_git_in_a_nested_repository() {
+    let (root, path, notes, fetched, committed) =
+        nested_repository_with_hostile_config("gitsync-nested");
+    let xdg = config_home_with_git_sync_path(&root, notes.to_str().unwrap());
+
+    let ok = drive_args(
+        &path,
+        &[],
+        &[("XDG_CONFIG_HOME", xdg.to_str().unwrap())],
+        &[
+            Step::WaitForScreen("nested inside git_sync_paths"),
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+    assert!(
+        !fetched.exists(),
+        "no ls-remote may run in the nested repository"
+    );
+    assert!(
+        !committed.exists(),
+        "no commit may run in the nested repository"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_double_star_git_sync_paths_entry_covers_a_nested_repository() {
+    let (root, path, notes, _fetched, committed) =
+        nested_repository_with_hostile_config("gitsync-nested-star");
+    let entry = format!("{}/**", notes.display());
+    let xdg = config_home_with_git_sync_path(&root, &entry);
+
+    let ok = drive_args(
+        &path,
+        &[],
+        &[("XDG_CONFIG_HOME", xdg.to_str().unwrap())],
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully");
+    assert!(
+        committed.exists(),
+        "the opted-in nested repository is synced"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn git_sync_paths_config_matches_through_a_symlinked_prefix() {
     // git_sync_paths is compared against the file's *canonicalized* path

@@ -1,8 +1,8 @@
 use super::{
-    GitSyncRequest, OPENER_FAILURE_WINDOW, editor_file_args, expand_tilde, git_sync_path_matches,
-    git_sync_request, git_sync_warning, leftovers_warning, no_browser_available,
-    opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
-    watch_warning,
+    CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, editor_file_args, expand_tilde,
+    git_sync_path_matches, git_sync_request, git_sync_scope, git_sync_warning, leftovers_warning,
+    no_browser_available, opener_failure_message, resolve_editor, resolve_opener, startup_message,
+    startup_warning, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -360,6 +360,12 @@ fn git_sync_request_reports_entries_that_do_not_resolve() {
         GitSyncRequest {
             requested: true,
             unresolved: vec![typo.clone()],
+            by_flag: false,
+            covering: vec![CoveringEntry {
+                entry: root.clone(),
+                prefix: std::fs::canonicalize(&root).unwrap(),
+                nested: false,
+            }],
         }
     );
     assert_eq!(
@@ -383,6 +389,12 @@ fn no_git_sync_turns_off_a_matching_entry_but_still_reports_typos() {
         GitSyncRequest {
             requested: false,
             unresolved: vec![typo],
+            by_flag: false,
+            covering: vec![CoveringEntry {
+                entry: root.clone(),
+                prefix: std::fs::canonicalize(&root).unwrap(),
+                nested: false,
+            }],
         }
     );
     assert!(!git_sync_request(false, true, None, &file, None).requested);
@@ -404,6 +416,12 @@ fn git_sync_request_expands_a_tilde_entry_against_home() {
         GitSyncRequest {
             requested: true,
             unresolved: Vec::new(),
+            by_flag: false,
+            covering: vec![CoveringEntry {
+                entry: PathBuf::from("~/checklists"),
+                prefix: std::fs::canonicalize(home.join("checklists")).unwrap(),
+                nested: false,
+            }],
         }
     );
     let without_home = git_sync_request(false, false, Some(&paths), &file, None);
@@ -528,4 +546,80 @@ fn leftovers_warning_counts_what_was_removed() {
         leftovers_warning(3).as_deref(),
         Some("removed 3 files left by an interrupted markcheck")
     );
+}
+
+fn covering_request(entry: &str, prefix: &Path, nested: bool) -> GitSyncRequest {
+    GitSyncRequest {
+        requested: true,
+        unresolved: Vec::new(),
+        by_flag: false,
+        covering: vec![CoveringEntry {
+            entry: PathBuf::from(entry),
+            prefix: prefix.to_path_buf(),
+            nested,
+        }],
+    }
+}
+
+#[test]
+fn git_sync_scope_keeps_a_plain_entry_to_its_own_repository() {
+    let root = crate::test_support::unique_temp_path("launch-gitsync-scope", "", None);
+    let nested = root.join("notes").join("imported");
+    std::fs::create_dir_all(&nested).unwrap();
+    let root = std::fs::canonicalize(&root).unwrap();
+    let notes = root.join("notes");
+    let nested = notes.join("imported");
+
+    let plain = covering_request("~/notes", &notes, false);
+    assert_eq!(
+        git_sync_scope(&plain, &notes),
+        Ok(()),
+        "the entry's own repository"
+    );
+    assert_eq!(
+        git_sync_scope(&plain, &root),
+        Ok(()),
+        "a repository above it"
+    );
+    let refused = git_sync_scope(&plain, &nested).unwrap_err();
+    assert!(
+        refused.contains("nested inside git_sync_paths entry ~/notes")
+            && refused.contains("/**")
+            && refused.contains("--git-sync"),
+        "{refused}"
+    );
+
+    let recursive = covering_request("~/notes/**", &notes, true);
+    assert_eq!(git_sync_scope(&recursive, &nested), Ok(()));
+
+    let mut by_flag = covering_request("~/notes", &notes, false);
+    by_flag.by_flag = true;
+    assert_eq!(git_sync_scope(&by_flag, &nested), Ok(()));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_trailing_double_star_marks_an_entry_as_covering_nested_repositories() {
+    let root = crate::test_support::unique_temp_path("launch-gitsync-star", "", None);
+    std::fs::create_dir_all(root.join("deep")).unwrap();
+    let file = std::fs::canonicalize(&root)
+        .unwrap()
+        .join("deep")
+        .join("todo.md");
+    let paths = vec![root.join("**")];
+
+    let request = git_sync_request(false, false, Some(&paths), &file, None);
+    assert!(request.requested);
+    assert!(request.unresolved.is_empty());
+    assert_eq!(
+        request.covering,
+        vec![CoveringEntry {
+            entry: root.join("**"),
+            prefix: std::fs::canonicalize(&root).unwrap(),
+            nested: true,
+        }]
+    );
+
+    std::fs::remove_dir_all(&root).ok();
 }

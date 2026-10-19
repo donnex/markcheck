@@ -247,6 +247,54 @@ pub struct GitSyncRequest {
     /// Entries, as written in the config, that don't resolve to an existing
     /// path, so they can never match anything.
     pub unresolved: Vec<PathBuf>,
+    /// Asked for with `--git-sync`, which accepts whatever repository holds
+    /// the file.
+    pub by_flag: bool,
+    /// The configured entries covering the file.
+    pub covering: Vec<CoveringEntry>,
+}
+
+/// A `git_sync_paths` entry that covers the file.
+#[derive(Debug, PartialEq)]
+pub struct CoveringEntry {
+    /// As written in the config.
+    pub entry: PathBuf,
+    /// Canonical, without any `/**`.
+    pub prefix: PathBuf,
+    /// Written with a trailing `/**`, so repositories nested below the
+    /// prefix are covered too.
+    pub nested: bool,
+}
+
+/// An entry's path and whether it ends in `/**`.
+fn split_nested(entry: &Path) -> (&Path, bool) {
+    match (entry.file_name(), entry.parent()) {
+        (Some(name), Some(parent)) if name == "**" => (parent, true),
+        _ => (entry, false),
+    }
+}
+
+/// Whether the repository at `repo_root` may be synced for `request`: a
+/// plain entry covers only a repository rooted at the entry or above it,
+/// since a repository nested inside it may have come from anywhere and git
+/// would run its hooks and config (#124). `--git-sync` and a `/**` entry
+/// accept any. `Err` holds why git sync stays off.
+pub fn git_sync_scope(request: &GitSyncRequest, repo_root: &Path) -> Result<(), String> {
+    let root = std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    let allowed = request.by_flag
+        || request
+            .covering
+            .iter()
+            .any(|covering| covering.nested || covering.prefix.starts_with(&root));
+    match request.covering.first() {
+        Some(covering) if !allowed => Err(format!(
+            "the checklist's repository ({}) is nested inside git_sync_paths entry {}; \
+             end the entry with /** to cover nested repositories, or pass --git-sync",
+            root.display(),
+            covering.entry.display()
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Resolves `--git-sync`, `--no-git-sync` and `git_sync_paths` for
@@ -261,19 +309,28 @@ pub fn git_sync_request(
     file_path: &Path,
     home: Option<&str>,
 ) -> GitSyncRequest {
-    let mut requested = cli_flag;
     let mut unresolved = Vec::new();
+    let mut covering = Vec::new();
     for entry in paths.unwrap_or(&[]) {
-        let prefix = expand_tilde(entry, home);
+        let (path, nested) = split_nested(entry);
+        let prefix = expand_tilde(path, home);
         if !prefix.exists() {
             unresolved.push(entry.clone());
-        } else if git_sync_path_matches(file_path, &prefix) {
-            requested = true;
+        } else if git_sync_path_matches(file_path, &prefix)
+            && let Ok(prefix) = std::fs::canonicalize(&prefix)
+        {
+            covering.push(CoveringEntry {
+                entry: entry.clone(),
+                prefix,
+                nested,
+            });
         }
     }
     GitSyncRequest {
-        requested: requested && !cli_off,
+        requested: (cli_flag || !covering.is_empty()) && !cli_off,
         unresolved,
+        by_flag: cli_flag,
+        covering,
     }
 }
 

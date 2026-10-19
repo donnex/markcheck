@@ -78,6 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A `git_sync_paths` entry in the config file now turns on git sync only
+  for the repository it names, not for other repositories nested inside
+  it. A repository copied or unpacked into a synced folder brings its own
+  git hooks and settings, and opening a checklist there ran them. If you
+  keep several repositories under one entry, end the entry with `/**`
+  (for example `"~/work/**"`) to keep them all synced; markcheck says at
+  startup when a checklist is left out this way. (#124)
+
 - Opening a checklist with git sync on now pushes only commits markcheck
   made itself. Before, the push it makes at startup sent any unpushed
   commit that changed only the checklist, including one you had made by
