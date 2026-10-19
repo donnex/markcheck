@@ -534,6 +534,49 @@ pub enum ColorDepth {
     Mono,
 }
 
+/// The `--clipboard` flag / `clipboard` config key (#133).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+pub enum ClipboardChoice {
+    /// The system clipboard, falling back to OSC 52; over SSH, both.
+    #[default]
+    #[value(name = "auto")]
+    #[serde(rename = "auto")]
+    Auto,
+    /// The system clipboard only.
+    #[value(name = "system")]
+    #[serde(rename = "system")]
+    System,
+    /// OSC 52 only, through the terminal in front of the user.
+    #[value(name = "osc52")]
+    #[serde(rename = "osc52")]
+    Osc52,
+}
+
+/// Where a copy goes, resolved once at startup from [`ClipboardChoice`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CopyRoute {
+    /// The system clipboard, then OSC 52 if that fails.
+    #[default]
+    SystemThenOsc52,
+    /// Both: over SSH the system clipboard may be a stale `DISPLAY`'s,
+    /// on another machine than the user's.
+    Both,
+    SystemOnly,
+    Osc52Only,
+}
+
+impl ClipboardChoice {
+    /// `remote` is whether this is an SSH session.
+    pub fn route(self, remote: bool) -> CopyRoute {
+        match self {
+            ClipboardChoice::Auto if remote => CopyRoute::Both,
+            ClipboardChoice::Auto => CopyRoute::SystemThenOsc52,
+            ClipboardChoice::System => CopyRoute::SystemOnly,
+            ClipboardChoice::Osc52 => CopyRoute::Osc52Only,
+        }
+    }
+}
+
 /// The `--color` flag / `color` config key: `Auto` detects the terminal's
 /// capability, anything else forces that palette.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
@@ -935,6 +978,8 @@ pub struct AppState {
     pub icons: IconSet,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
+    /// Where `y` copies to (`--clipboard`).
+    pub copy_route: CopyRoute,
     /// Auto-copy an item's code when navigating to its card (`--auto-copy`);
     /// announces a successful copy, silent otherwise.
     pub auto_copy: bool,

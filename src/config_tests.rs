@@ -53,7 +53,7 @@ fn load_config_parses_all_fields() {
     fs::write(
         &path,
         "nerd_font = false\nmouse = false\nprimary = true\nauto_copy = true\n\
-             color = \"256\"\ngit_sync_paths = [\"/home/user/checklists\"]\ngit_sync_delay = 30\n",
+             color = \"256\"\ngit_sync_paths = [\"/home/user/checklists\"]\ngit_sync_delay = 30\nclipboard = \"osc52\"\n",
     )
     .unwrap();
 
@@ -73,6 +73,7 @@ fn load_config_parses_all_fields() {
             color: Some(ColorChoice::Palette256),
             git_sync_paths: Some(vec![PathBuf::from("/home/user/checklists")]),
             git_sync_delay: Some(30),
+            clipboard: Some(ClipboardChoice::Osc52),
         }
     );
 

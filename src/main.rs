@@ -153,6 +153,10 @@ fn main() -> anyhow::Result<()> {
         state.icons = IconSet::nerd();
     }
     state.clipboard_primary = settings.primary;
+    state.copy_route = cli::clipboard_choice(&cli, &config).route(cli::is_remote_session(
+        std::env::var("SSH_CONNECTION").ok().as_deref(),
+        std::env::var("SSH_TTY").ok().as_deref(),
+    ));
     state.auto_copy = settings.auto_copy;
     // Pick the richest color representation the terminal supports, unless
     // `--color`/`color` forces one.

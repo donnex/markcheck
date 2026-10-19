@@ -129,6 +129,7 @@ markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
 markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --color 256 runbook.md      # force a palette: auto, truecolor, 256 or 16
+markcheck --clipboard osc52 runbook.md  # copy through the terminal only: auto, system or osc52
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --no-git-sync runbook.md    # ...or never, even under a git_sync_paths entry
 markcheck --git-sync-delay 0 runbook.md  # commit every change at once instead of after 10 s
@@ -160,6 +161,7 @@ mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
+clipboard = "auto"  # = --clipboard: "auto", "system" or "osc52"
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths (end with /** to include nested repositories)
 git_sync_delay = 10 # = --git-sync-delay: seconds without a change before git sync commits; 0 = at once
 ```
@@ -810,6 +812,17 @@ the system clipboard when available and otherwise emits an OSC 52 escape,
 which travels over SSH to your local terminal emulator (kitty, alacritty,
 wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
 bar distinguishes a system-clipboard copy from an OSC 52 one.
+
+Over SSH (when `SSH_CONNECTION` or `SSH_TTY` is set), `markcheck` does both:
+it writes the system clipboard and also sends OSC 52, and says `Copied
+(system clipboard + OSC 52)`. The "system clipboard" it finds there may not
+be yours. A tmux session started on a workstation's desktop and reattached
+over SSH from a laptop keeps `DISPLAY` pointing at the workstation, so a
+system-clipboard copy alone would land on the other machine. To choose for
+yourself, pass `--clipboard system` or `--clipboard osc52` (or set
+`clipboard = "osc52"` in the config file): `osc52` always uses the escape
+through your terminal and never the system clipboard, and `system` never
+falls back. `auto`, the default, is the behaviour described above.
 
 On X11 the program that copied something has to stay running to hand it over
 when you paste. markcheck holds the clipboard for as long as it runs, so a

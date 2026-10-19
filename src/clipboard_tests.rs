@@ -73,14 +73,20 @@ fn an_oversized_payload_is_reported_as_too_large_not_as_a_missing_clipboard() {
         osc52_sequence(&huge, 'c').is_none(),
         "test setup: payload must exceed the cap once base64-encoded"
     );
-    assert_eq!(copy_text(&huge, false), CopyOutcome::TooLarge);
+    assert_eq!(
+        copy_text(&huge, false, CopyRoute::SystemThenOsc52),
+        CopyOutcome::TooLarge
+    );
     assert!(fake::with(|c| c.osc52.is_empty()), "nothing is emitted");
 }
 
 #[test]
 fn the_system_clipboard_is_used_when_available() {
     fake::with(|c| c.system_available = true);
-    assert_eq!(copy_text("hello", false), CopyOutcome::CopiedSystem);
+    assert_eq!(
+        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        CopyOutcome::CopiedSystem
+    );
     fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("hello".to_string(), false)]);
         assert!(c.osc52.is_empty(), "no OSC 52 fallback after success");
@@ -89,7 +95,10 @@ fn the_system_clipboard_is_used_when_available() {
 
 #[test]
 fn osc52_is_the_fallback_without_a_system_clipboard() {
-    assert_eq!(copy_text("hello", false), CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        CopyOutcome::CopiedOsc52
+    );
     fake::with(|c| assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07"));
 }
 
@@ -119,7 +128,13 @@ fn a_failed_terminal_write_is_reported_as_failed() {
         }
     }
     assert_eq!(
-        copy_text_with("hello", false, |_, _| false, &mut Broken),
+        copy_text_with(
+            "hello",
+            false,
+            CopyRoute::SystemThenOsc52,
+            |_, _| false,
+            &mut Broken
+        ),
         CopyOutcome::Failed
     );
 }
@@ -127,14 +142,20 @@ fn a_failed_terminal_write_is_reported_as_failed() {
 #[test]
 fn copy_text_with_primary_also_targets_the_primary_selection() {
     fake::with(|c| c.system_available = true);
-    assert_eq!(copy_text("hello", true), CopyOutcome::CopiedSystem);
+    assert_eq!(
+        copy_text("hello", true, CopyRoute::SystemThenOsc52),
+        CopyOutcome::CopiedSystem
+    );
     fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("hello".to_string(), true)]);
         c.system_available = false;
         c.system_attempts.clear();
     });
 
-    assert_eq!(copy_text("hello", true), CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        copy_text("hello", true, CopyRoute::SystemThenOsc52),
+        CopyOutcome::CopiedOsc52
+    );
     fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("hello".to_string(), true)]);
         assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07\x1b]52;p;aGVsbG8=\x07");
@@ -143,7 +164,10 @@ fn copy_text_with_primary_also_targets_the_primary_selection() {
 
 #[test]
 fn without_primary_only_the_clipboard_selection_is_targeted() {
-    assert_eq!(copy_text("hello", false), CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        CopyOutcome::CopiedOsc52
+    );
     fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("hello".to_string(), false)]);
         assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07");
@@ -153,7 +177,10 @@ fn without_primary_only_the_clipboard_selection_is_targeted() {
 #[test]
 fn releasing_the_system_clipboard_leaves_copying_working() {
     release_system_clipboard();
-    assert_eq!(copy_text("hello", false), CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        CopyOutcome::CopiedOsc52
+    );
 }
 
 #[test]
@@ -179,11 +206,11 @@ fn newlines_and_tabs_are_not_hidden_characters() {
 #[test]
 fn copy_refuses_escape_and_carriage_return_tricks() {
     assert_eq!(
-        copy("ls\x1b[201~\nrm -rf ~", false),
+        copy("ls\x1b[201~\nrm -rf ~", false, CopyRoute::SystemThenOsc52),
         CopyOutcome::HiddenCharacters
     );
     assert_eq!(
-        copy("echo ok\rrm -rf ~", true),
+        copy("echo ok\rrm -rf ~", true, CopyRoute::SystemThenOsc52),
         CopyOutcome::HiddenCharacters
     );
 }
@@ -191,7 +218,55 @@ fn copy_refuses_escape_and_carriage_return_tricks() {
 #[test]
 fn copy_refuses_backspace_overwrites() {
     assert_eq!(
-        copy("safe\x08\x08\x08\x08evil", false),
+        copy(
+            "safe\x08\x08\x08\x08evil",
+            false,
+            CopyRoute::SystemThenOsc52
+        ),
         CopyOutcome::HiddenCharacters
+    );
+}
+
+fn fake_copy(text: &str, system_available: bool, route: CopyRoute) -> (CopyOutcome, usize, bool) {
+    fake::with(|c| {
+        c.system_available = system_available;
+        c.system_attempts.clear();
+        c.osc52.clear();
+    });
+    let outcome = copy_text(text, false, route);
+    fake::with(|c| (outcome, c.system_attempts.len(), !c.osc52.is_empty()))
+}
+
+#[test]
+fn each_copy_route_uses_the_clipboards_it_names() {
+    use CopyRoute::*;
+    // (route, system available) -> (outcome, system attempts, OSC 52 sent)
+    for (route, available, expected) in [
+        (SystemThenOsc52, true, (CopyOutcome::CopiedSystem, 1, false)),
+        (SystemThenOsc52, false, (CopyOutcome::CopiedOsc52, 1, true)),
+        (Both, true, (CopyOutcome::CopiedBoth, 1, true)),
+        (Both, false, (CopyOutcome::CopiedOsc52, 1, true)),
+        (SystemOnly, true, (CopyOutcome::CopiedSystem, 1, false)),
+        (SystemOnly, false, (CopyOutcome::Failed, 1, false)),
+        (Osc52Only, true, (CopyOutcome::CopiedOsc52, 0, true)),
+    ] {
+        assert_eq!(
+            fake_copy("hello", available, route),
+            expected,
+            "{route:?} {available}"
+        );
+    }
+}
+
+#[test]
+fn too_large_for_osc52_still_counts_when_the_system_clipboard_took_it() {
+    let huge = "x".repeat(OSC52_MAX_BASE64_BYTES);
+    assert_eq!(
+        fake_copy(&huge, true, CopyRoute::Both).0,
+        CopyOutcome::CopiedSystem
+    );
+    assert_eq!(
+        fake_copy(&huge, true, CopyRoute::Osc52Only).0,
+        CopyOutcome::TooLarge
     );
 }

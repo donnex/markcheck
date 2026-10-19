@@ -1,4 +1,7 @@
-use super::{Cli, ColorChoice, Settings, config, git_sync_delay, resolve_flag};
+use super::{
+    Cli, ColorChoice, Settings, clipboard_choice, config, git_sync_delay, is_remote_session,
+    resolve_flag,
+};
 use clap::Parser as _;
 
 #[test]
@@ -41,6 +44,7 @@ fn config_all(value: bool) -> config::Config {
         color: None,
         git_sync_paths: None,
         git_sync_delay: None,
+        clipboard: None,
     }
 }
 
@@ -220,4 +224,39 @@ fn git_sync_delay_takes_the_flag_then_the_config_then_ten_seconds() {
         git_sync_delay(&parse(&["--git-sync-delay", "0"]), &config),
         Duration::ZERO
     );
+}
+
+#[test]
+fn clipboard_choice_takes_the_flag_then_the_config_then_auto() {
+    use crate::model::ClipboardChoice;
+    let parse = |flags: &[&str]| {
+        let mut argv = vec!["markcheck", "checklist.md"];
+        argv.extend_from_slice(flags);
+        Cli::parse_from(argv)
+    };
+    let mut config = config_all(false);
+    assert_eq!(
+        clipboard_choice(&parse(&[]), &config),
+        ClipboardChoice::Auto
+    );
+    config.clipboard = Some(ClipboardChoice::System);
+    assert_eq!(
+        clipboard_choice(&parse(&[]), &config),
+        ClipboardChoice::System
+    );
+    assert_eq!(
+        clipboard_choice(&parse(&["--clipboard", "osc52"]), &config),
+        ClipboardChoice::Osc52
+    );
+}
+
+#[test]
+fn an_ssh_session_is_recognised_from_either_variable() {
+    assert!(!is_remote_session(None, None));
+    assert!(!is_remote_session(Some(""), None));
+    assert!(is_remote_session(
+        Some("203.0.113.10 50000 203.0.113.20 22"),
+        None
+    ));
+    assert!(is_remote_session(None, Some("/dev/pts/3")));
 }

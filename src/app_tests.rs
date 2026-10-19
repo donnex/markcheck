@@ -6289,3 +6289,21 @@ fn ctrl_w_deletes_a_word_in_the_picker_and_ctrl_u_still_pages() {
         "Ctrl-U moves, it doesn't clear"
     );
 }
+
+#[test]
+fn a_copy_to_both_clipboards_says_so() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_copy_outcome(CopyKind::Command, "ls", CopyOutcome::CopiedBoth);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Copied (system clipboard + OSC 52)")
+    );
+    state.apply_copy_outcome(CopyKind::LinkFallback, "x", CopyOutcome::CopiedBoth);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .unwrap()
+            .contains("system clipboard + OSC 52")
+    );
+}

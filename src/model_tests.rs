@@ -568,3 +568,14 @@ fn the_progress_ramp_runs_between_the_truecolor_started_and_done_colors() {
     let (r, g, b) = progress_rgb_parts(1.0);
     assert_eq!(palette.done, Color::Rgb(r, g, b));
 }
+
+#[test]
+fn auto_copies_to_both_clipboards_over_ssh_only() {
+    assert_eq!(
+        ClipboardChoice::Auto.route(false),
+        CopyRoute::SystemThenOsc52
+    );
+    assert_eq!(ClipboardChoice::Auto.route(true), CopyRoute::Both);
+    assert_eq!(ClipboardChoice::System.route(true), CopyRoute::SystemOnly);
+    assert_eq!(ClipboardChoice::Osc52.route(false), CopyRoute::Osc52Only);
+}

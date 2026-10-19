@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--clipboard auto|system|osc52`, and a matching `clipboard` setting in the
+  config file, choose where `y` copies to. Over SSH, the default `auto` now
+  also sends the copy through the terminal (OSC 52) as well as to the
+  system clipboard, and says `Copied (system clipboard + OSC 52)`. Before,
+  a tmux session reattached over SSH, still pointing at the desktop it was
+  started on, copied to that other machine's clipboard and reported
+  "Copied to clipboard". (#133)
+
 - Git sync now waits until 10 seconds pass without another change before it
   commits and pushes, so a run of ticks becomes one commit
   (`checklist.md: 3 changes`, each listed in the commit message) instead of

@@ -2,7 +2,7 @@ use std::io::Write;
 
 use base64::Engine;
 
-use crate::model::Item;
+use crate::model::{CopyRoute, Item};
 
 /// tmux truncates OSC 52 payloads around 74 KB. Measures the base64 payload
 /// only.
@@ -12,9 +12,12 @@ const OSC52_MAX_BASE64_BYTES: usize = 70_000;
 pub enum CopyOutcome {
     /// arboard succeeded — verifiable, definitely on the clipboard.
     CopiedSystem,
-    /// arboard failed; an OSC 52 escape was emitted. Fire-and-forget:
-    /// whether it lands depends on the terminal (and tmux config).
+    /// An OSC 52 escape was emitted, without the system clipboard (it failed,
+    /// or the route skips it). Fire-and-forget: whether it lands depends on
+    /// the terminal (and tmux config).
     CopiedOsc52,
+    /// Both the system clipboard and OSC 52 (`CopyRoute::Both`).
+    CopiedBoth,
     /// No clipboard backend usable at all.
     Failed,
     /// Too large for OSC 52. Distinct from `Failed`: the clipboard is fine.
@@ -47,53 +50,77 @@ pub fn candidates(item: &Item) -> &[String] {
     }
 }
 
-/// Copies `text`, also to the X11 PRIMARY selection when `primary` is set.
-pub fn copy(text: &str, primary: bool) -> CopyOutcome {
-    copy_text(text, primary)
+/// Copies `text` along `route`, also to the X11 PRIMARY selection when
+/// `primary` is set.
+pub fn copy(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
+    copy_text(text, primary, route)
 }
 
-/// arboard first (works locally, verifiable), OSC 52 on failure — the
-/// escape travels through SSH to the local terminal emulator, which is
-/// the only option on headless servers. With `primary`, the PRIMARY
-/// selection is targeted in addition to the normal clipboard.
+/// arboard is verifiable and works locally; the OSC 52 escape travels
+/// through SSH to the local terminal emulator, the only option on headless
+/// servers. `route` says which to use (see [`CopyRoute`]).
 #[cfg(not(test))]
-fn copy_text(text: &str, primary: bool) -> CopyOutcome {
-    copy_text_with(text, primary, set_via_arboard, &mut std::io::stdout())
+fn copy_text(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
+    copy_text_with(
+        text,
+        primary,
+        route,
+        set_via_arboard,
+        &mut std::io::stdout(),
+    )
 }
 
 /// Tests never reach arboard or stdout; they go through `fake` instead.
 #[cfg(test)]
-fn copy_text(text: &str, primary: bool) -> CopyOutcome {
-    fake::copy(text, primary)
+fn copy_text(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
+    fake::copy(text, primary, route)
 }
 
 fn copy_text_with(
     text: &str,
     primary: bool,
+    route: CopyRoute,
     set_system: impl FnOnce(&str, bool) -> bool,
     osc52_out: &mut impl Write,
 ) -> CopyOutcome {
     if has_hidden_characters(text) {
         return CopyOutcome::HiddenCharacters;
     }
-    if set_system(text, primary) {
-        return CopyOutcome::CopiedSystem;
+    let system_ok = match route {
+        CopyRoute::Osc52Only => false,
+        _ => set_system(text, primary),
+    };
+    match route {
+        CopyRoute::SystemOnly => {
+            return if system_ok {
+                CopyOutcome::CopiedSystem
+            } else {
+                CopyOutcome::Failed
+            };
+        }
+        CopyRoute::SystemThenOsc52 if system_ok => return CopyOutcome::CopiedSystem,
+        _ => {}
     }
-    // Fallback: emit OSC 52 for the clipboard, and for PRIMARY too when
-    // requested. Success of the clipboard write decides the outcome.
+    // OSC 52 for the clipboard, and for PRIMARY too when requested. Success
+    // of the clipboard write decides the outcome.
     if osc52_sequence(text, 'c').is_none() {
         // Too big for the escape sequence — say so rather than blaming the
-        // clipboard, which we never even got to try through this path.
-        return CopyOutcome::TooLarge;
+        // clipboard, unless the system clipboard already has it.
+        return if system_ok {
+            CopyOutcome::CopiedSystem
+        } else {
+            CopyOutcome::TooLarge
+        };
     }
-    let clipboard_ok = emit_osc52(osc52_out, text, 'c');
+    let osc52_ok = emit_osc52(osc52_out, text, 'c');
     if primary {
         let _ = emit_osc52(osc52_out, text, 'p');
     }
-    if clipboard_ok {
-        CopyOutcome::CopiedOsc52
-    } else {
-        CopyOutcome::Failed
+    match (system_ok, osc52_ok) {
+        (true, true) => CopyOutcome::CopiedBoth,
+        (true, false) => CopyOutcome::CopiedSystem,
+        (false, true) => CopyOutcome::CopiedOsc52,
+        (false, false) => CopyOutcome::Failed,
     }
 }
 
@@ -200,13 +227,14 @@ pub(crate) mod fake {
         CLIPBOARD.with(|c| f(&mut c.borrow_mut()))
     }
 
-    pub(super) fn copy(text: &str, primary: bool) -> CopyOutcome {
+    pub(super) fn copy(text: &str, primary: bool, route: super::CopyRoute) -> CopyOutcome {
         with(|c| {
             let available = c.system_available;
             let mut system_attempts = std::mem::take(&mut c.system_attempts);
             let outcome = super::copy_text_with(
                 text,
                 primary,
+                route,
                 |t, p| {
                     system_attempts.push((t.to_string(), p));
                     available

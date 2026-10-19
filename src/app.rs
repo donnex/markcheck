@@ -9,9 +9,9 @@ use crate::clipboard::{self, CopyOutcome};
 use crate::effect::{CopyKind, Effect};
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
-    AppState, Document, FileGone, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
-    OverviewTarget, Palette, PendingSync, PickerState, SearchState, StateSnapshot, TaskState,
-    UNDO_HISTORY_CAP, View, hash_bytes,
+    AppState, CopyRoute, Document, FileGone, GitSyncState, HelpState, IconSet, Item, ItemKind,
+    List, Overlay, OverviewTarget, Palette, PendingSync, PickerState, SearchState, StateSnapshot,
+    TaskState, UNDO_HISTORY_CAP, View, hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -194,6 +194,7 @@ impl AppState {
             pending_number: 0,
             icons: IconSet::unicode(),
             clipboard_primary: false,
+            copy_route: CopyRoute::default(),
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this
             // to the terminal's detected capability at startup.
@@ -808,11 +809,14 @@ impl AppState {
     pub fn apply_copy_outcome(&mut self, kind: CopyKind, text: &str, outcome: CopyOutcome) {
         const COPIED: &str = "Copied to clipboard";
         const SENT: &str = "Sent to clipboard (OSC 52)";
+        const BOTH: &str = "Copied (system clipboard + OSC 52)";
         match (kind, outcome) {
             (CopyKind::Auto, CopyOutcome::CopiedSystem) => self.report_auto_copy(COPIED),
             (CopyKind::Auto, CopyOutcome::CopiedOsc52) => self.report_auto_copy(SENT),
+            (CopyKind::Auto, CopyOutcome::CopiedBoth) => self.report_auto_copy(BOTH),
             (CopyKind::Command, CopyOutcome::CopiedSystem) => self.set_status(COPIED.to_string()),
             (CopyKind::Command, CopyOutcome::CopiedOsc52) => self.set_status(SENT.to_string()),
+            (CopyKind::Command, CopyOutcome::CopiedBoth) => self.set_status(BOTH.to_string()),
             (CopyKind::Auto | CopyKind::Command, CopyOutcome::HiddenCharacters) => {
                 self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string())
             }
@@ -829,6 +833,9 @@ impl AppState {
             (CopyKind::LinkFallback, CopyOutcome::CopiedOsc52) => {
                 self.set_status("No browser here — link sent to clipboard (OSC 52)".to_string())
             }
+            (CopyKind::LinkFallback, CopyOutcome::CopiedBoth) => self.set_status(
+                "No browser here — link copied (system clipboard + OSC 52)".to_string(),
+            ),
             (CopyKind::LinkFallback, CopyOutcome::TooLarge) => self.set_error(
                 "No browser here, and the link is too large for the terminal clipboard".to_string(),
             ),

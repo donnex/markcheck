@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::config;
-use crate::model::ColorChoice;
+use crate::model::{ClipboardChoice, ColorChoice};
 
 /// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
@@ -65,6 +65,11 @@ pub struct Cli {
     /// force one (config: color = "...")
     #[arg(long, value_name = "PALETTE", value_enum)]
     pub color: Option<ColorChoice>,
+    /// Where y copies to: auto uses the system clipboard and falls back to
+    /// OSC 52 (both over SSH); system or osc52 use only that one
+    /// (config: clipboard = "...")
+    #[arg(long, value_name = "WHERE", value_enum)]
+    pub clipboard: Option<ClipboardChoice>,
     /// Commit and push this file's changes after every toggle, when it's inside a
     /// git repo (config: git_sync_paths matches this file's path; --no-git-sync
     /// turns it off)
@@ -109,6 +114,18 @@ impl Settings {
             color: cli.color.or(config.color).unwrap_or_default(),
         }
     }
+}
+
+/// Where copies go: the flag, then the config, then `auto`.
+pub fn clipboard_choice(cli: &Cli, config: &config::Config) -> ClipboardChoice {
+    cli.clipboard.or(config.clipboard).unwrap_or_default()
+}
+
+/// Whether this runs inside an SSH session, from the variables sshd sets.
+pub fn is_remote_session(ssh_connection: Option<&str>, ssh_tty: Option<&str>) -> bool {
+    [ssh_connection, ssh_tty]
+        .iter()
+        .any(|var| var.is_some_and(|value| !value.is_empty()))
 }
 
 /// How long git sync waits for the changes to stop before committing: the

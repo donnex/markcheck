@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::model::ColorChoice;
+use crate::model::{ClipboardChoice, ColorChoice};
 
 /// Defaults for the CLI flags, from a TOML file. Keys use the positive
 /// sense (`nerd_font`). Unknown keys are ignored here and reported by
@@ -24,6 +24,8 @@ pub struct Config {
     /// Seconds git sync waits after the last change before committing, like
     /// `--git-sync-delay`.
     pub git_sync_delay: Option<u64>,
+    /// Where copies go, like `--clipboard`: `auto`, `system` or `osc52`.
+    pub clipboard: Option<ClipboardChoice>,
 }
 
 /// Every key `Config` reads; anything else in the file is reported as
@@ -36,6 +38,7 @@ const KNOWN_KEYS: &[&str] = &[
     "color",
     "git_sync_paths",
     "git_sync_delay",
+    "clipboard",
 ];
 
 /// A parsed config plus the top-level keys it ignored, sorted.
