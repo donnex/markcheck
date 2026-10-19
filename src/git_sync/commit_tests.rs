@@ -120,7 +120,6 @@ fn commit_temp_index_reports_failure_for_a_tree_unchanged_from_head() {
     let _ = fs::remove_file(&temp_index);
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn commit_temp_index_reconciles_when_a_post_commit_hook_outlives_the_timeout() {
     // A `post-commit` hook outliving the timeout: the commit already
@@ -163,7 +162,6 @@ fn commit_temp_index_reconciles_when_a_post_commit_hook_outlives_the_timeout() {
     let _ = fs::remove_file(&temp_index);
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn a_failing_pre_commit_hook_is_reported_by_its_last_line() {
     use std::os::unix::fs::PermissionsExt;
@@ -203,7 +201,6 @@ fn a_failing_pre_commit_hook_is_reported_by_its_last_line() {
     let _ = fs::remove_file(&temp_index);
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn commit_temp_index_still_fails_when_the_commit_never_lands() {
     // A `pre-commit` hook outliving the timeout: the commit never happened.
@@ -241,7 +238,6 @@ fn commit_temp_index_still_fails_when_the_commit_never_lands() {
     let _ = fs::remove_file(&temp_index);
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
     // A `pre-commit` hook past the timeout: SIGTERM lets git and the hook
@@ -255,7 +251,6 @@ fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
     }
     panic!("no attempt saw the hook ready and signalled within the grace period");
 }
-#[cfg(unix)]
 fn sigterm_attempt(timeout: Duration) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
@@ -312,7 +307,6 @@ fn sigterm_attempt(timeout: Duration) -> bool {
     fs::remove_dir_all(work.parent().unwrap()).ok();
     counted
 }
-#[cfg(unix)]
 #[test]
 fn commit_temp_index_does_not_adopt_an_unrelated_commit_after_a_timeout() {
     // A `pre-commit` hook commits something unrelated and sleeps past the
@@ -378,7 +372,6 @@ fn commit_temp_index_does_not_adopt_an_unrelated_commit_after_a_timeout() {
     let _ = fs::remove_file(&temp_index);
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn commit_temp_index_does_not_adopt_a_commit_that_landed_on_top_of_its_own() {
     // Our commit lands and a `post-commit` hook commits on top without touching

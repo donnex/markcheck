@@ -183,7 +183,6 @@ fn a_successful_command_does_not_kill_a_descendant_it_no_longer_owns() {
 
     fs::remove_dir_all(&dir).ok();
 }
-#[cfg(unix)]
 #[test]
 fn a_timed_out_command_gets_sigterm_before_sigkill() {
     // The trap only runs on a catchable signal, so the marker proves SIGTERM
@@ -215,7 +214,6 @@ fn a_timed_out_command_gets_sigterm_before_sigkill() {
     );
     fs::remove_file(&marker).ok();
 }
-#[cfg(unix)]
 #[test]
 fn a_command_ignoring_sigterm_is_force_killed_with_a_lock_hint() {
     let mut cmd = Command::new("sh");

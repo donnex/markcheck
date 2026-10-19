@@ -76,16 +76,14 @@ impl WriteLock {
 
     fn try_create(path: &Path) -> io::Result<WriteLock> {
         use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
         let token = format!("markcheck {} {:x}", std::process::id(), random_suffix());
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
         // The path is derivable by anyone, so keep it unreadable to others.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(path)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
         file.write_all(token.as_bytes())?;
         file.sync_all()?;
         Ok(WriteLock {
@@ -115,15 +113,9 @@ impl Drop for WriteLock {
 /// can't be told. Above 1, `write_back`'s rename will break the hard link,
 /// which is warned about at startup rather than refused, as atomic-save
 /// editors do the same.
-#[cfg(unix)]
 pub fn hard_link_count(target: &Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
     fs::metadata(target).ok().map(|meta| meta.nlink())
-}
-
-#[cfg(not(unix))]
-pub fn hard_link_count(_target: &Path) -> Option<u64> {
-    None
 }
 
 /// The UID owning `target` when it isn't the user running markcheck, who
@@ -131,17 +123,10 @@ pub fn hard_link_count(_target: &Path) -> Option<u64> {
 /// the owner is kept (it already is the current user, or that user is
 /// root) or either side can't be told. Warned about at startup, like a hard
 /// link, since a teammate may then lose write access.
-#[cfg(unix)]
 pub fn foreign_owner(target: &Path) -> Option<u32> {
     foreign_owner_for(target, current_uid()?)
 }
 
-#[cfg(not(unix))]
-pub fn foreign_owner(_target: &Path) -> Option<u32> {
-    None
-}
-
-#[cfg(unix)]
 fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     let owner = fs::metadata(target).ok()?.uid();
@@ -151,7 +136,6 @@ fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
 /// The UID a file created by this process gets — exactly what a save's
 /// temp file will be owned by — read off a throwaway probe file, as std
 /// exposes no `geteuid`.
-#[cfg(unix)]
 fn current_uid() -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     let probe = std::env::temp_dir().join(format!(
@@ -319,14 +303,12 @@ pub fn write_back(document: &Document) -> io::Result<String> {
         let _ = fs::remove_file(&temp_path);
         return Err(err);
     }
-    #[cfg(unix)]
     sync_parent_dir(&document.file_path);
     Ok(contents)
 }
 
 /// Best-effort fsync of `path`'s parent directory so the rename survives a
 /// crash. Errors are ignored: the rename already succeeded.
-#[cfg(unix)]
 pub(crate) fn sync_parent_dir(path: &Path) {
     if let Some(parent) = path.parent()
         && let Ok(dir) = fs::File::open(parent)
@@ -341,7 +323,6 @@ pub(crate) fn sync_parent_dir(path: &Path) {
 /// (immune to umask) and fsyncs. If the name
 /// is taken it retries once at a fresh name, never deleting the existing
 /// file, which may belong to a live writer. Returns the path written.
-#[cfg(unix)]
 fn write_temp(base_temp_path: &Path, contents: &str, source: &fs::Metadata) -> io::Result<PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, fchown};
@@ -387,21 +368,6 @@ fn write_temp(base_temp_path: &Path, contents: &str, source: &fs::Metadata) -> i
             Err(err)
         }
     }
-}
-
-#[cfg(not(unix))]
-fn write_temp(temp_path: &Path, contents: &str, source: &fs::Metadata) -> io::Result<PathBuf> {
-    use std::io::Write;
-
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(temp_path)?;
-    file.write_all(contents.as_bytes())?;
-    file.set_permissions(source.permissions())?;
-    file.sync_all()?;
-    Ok(temp_path.to_path_buf())
 }
 
 #[cfg(test)]

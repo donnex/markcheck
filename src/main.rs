@@ -1,3 +1,6 @@
+#[cfg(not(unix))]
+compile_error!("markcheck supports Unix-like systems only");
+
 mod app;
 mod cli;
 mod clipboard;

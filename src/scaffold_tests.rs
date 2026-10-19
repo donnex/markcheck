@@ -133,7 +133,6 @@ fn create_new_checklist_leaves_no_temp_file_behind_when_the_target_exists() {
     fs::remove_dir_all(&dir).ok();
 }
 
-#[cfg(unix)]
 #[test]
 fn create_new_checklist_uses_default_umask_permissions() {
     use std::os::unix::fs::PermissionsExt;
@@ -154,7 +153,6 @@ fn create_new_checklist_uses_default_umask_permissions() {
     fs::remove_dir_all(&dir).ok();
 }
 
-#[cfg(unix)]
 #[test]
 fn create_new_checklist_cleans_up_and_errors_when_the_temp_write_fails() {
     // A read-only directory makes the temp file's creation fail.

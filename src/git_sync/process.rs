@@ -30,19 +30,17 @@ impl ScratchFiles {
 
     /// 0600, because git's output names branches and repository paths.
     fn create(&mut self, purpose: &str) -> io::Result<(PathBuf, fs::File)> {
+        use std::os::unix::fs::OpenOptionsExt;
         let path = std::env::temp_dir().join(format!(
             "markcheck-git-{purpose}-{}-{:x}",
             std::process::id(),
             crate::writer::random_suffix()
         ));
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options.open(&path)?;
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
         self.paths.push(path.clone());
         Ok((path, file))
     }
@@ -123,11 +121,8 @@ fn run_with_optional_stdin(
 }
 /// Its own process group, so a timeout can kill git's descendants too.
 fn spawn_in_own_process_group(mut cmd: Command) -> io::Result<Child> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
     cmd.spawn()
 }
 /// `SIGTERM` first: git's signal handlers remove the lock files it holds in
@@ -150,20 +145,15 @@ fn terminate_and_reap(child: &mut Child, grace: Duration) -> bool {
     true
 }
 fn signal_group(child: &Child, signal: &str) {
-    #[cfg(unix)]
-    {
-        // Nulled: `kill` complains on stderr if the group is gone, and
-        // markcheck owns the terminal.
-        let _ = Command::new("kill")
-            .args([signal, "--"])
-            .arg(format!("-{}", child.id()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(not(unix))]
-    let _ = (child, signal);
+    // Nulled: `kill` complains on stderr if the group is gone, and
+    // markcheck owns the terminal.
+    let _ = Command::new("kill")
+        .args([signal, "--"])
+        .arg(format!("-{}", child.id()))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 /// The variables that would make git act on a different repository than the
 /// one holding the checklist (hooks and `git rebase --exec` export `GIT_DIR`

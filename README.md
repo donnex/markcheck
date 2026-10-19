@@ -113,11 +113,9 @@ backend builds in automatically.
 **Platform support:** Linux is what CI builds and tests, and the only
 platform release binaries are published for. macOS is expected to work
 (build from source) but is not tested anywhere, so a macOS-only regression
-could go unnoticed. Windows is not supported: the `o` link-opener falls
-back to `xdg-open`, and the editor fallback (when neither `$VISUAL` nor
-`$EDITOR` is set) is `vi`, neither of which exists on a stock Windows
-install. `cargo install --path .` will build on Windows, but will fail at
-runtime the first time either fallback is hit.
+could go unnoticed. Windows and other non-Unix systems are not supported:
+building there stops with the error "markcheck supports Unix-like systems
+only".
 
 ## Usage
 

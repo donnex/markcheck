@@ -129,7 +129,6 @@ fn undo_commit_refuses_to_rewind_a_commit_that_landed_after_the_one_being_undone
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn undo_commit_refuses_to_delete_a_root_commit_that_already_has_a_child() {
     let work = unique_dir("repo-root-commit-cas").join("work");

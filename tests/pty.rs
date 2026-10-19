@@ -16,10 +16,8 @@
 //! screen, the file's content, the child's exit) up to a deadline, and a
 //! deadline that passes fails the test rather than hanging it.
 //!
-//! Unix-only, matching the project's own platform support (Linux/macOS —
-//! see README's Installation section) and CI (`check.yml` runs on
-//! `ubuntu-latest` only).
-#![cfg(unix)]
+//! Unix-only, like the crate itself (Linux/macOS — see README's
+//! Installation section); CI (`check.yml`) runs on `ubuntu-latest` only.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -566,7 +564,6 @@ fn editor_flow_reloads_after_edit() {
         "#!/bin/sh\nprintf -- '- [ ] `beta`\\n' >> \"$1\"\n",
     );
     let mut perms = std::fs::metadata(&editor).unwrap().permissions();
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         perms.set_mode(0o755);
@@ -632,7 +629,6 @@ fn editor_non_zero_exit_does_not_crash_or_change_the_file() {
     let editor = unique_path("fakeeditorfail");
     let editor = editor.with_extension("sh");
     write_file(&editor, "#!/bin/sh\nexit 1\n");
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&editor).unwrap().permissions();
@@ -1331,7 +1327,6 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
 }
 
 #[test]
-#[cfg(unix)]
 fn git_sync_paths_config_matches_through_a_symlinked_prefix() {
     // git_sync_paths is compared against the file's *canonicalized* path
     // (main.rs resolves symlinks before this check), but the configured
@@ -1437,7 +1432,6 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
         &editor,
         "#!/bin/sh\nprintf -- '- [ ] `beta`\\n' >> \"$1\"\n",
     );
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&editor).unwrap().permissions();
@@ -1516,7 +1510,6 @@ fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it
     let editor = unique_path("fakeeditor-gitsync-noop");
     let editor = editor.with_extension("sh");
     write_file(&editor, "#!/bin/sh\ntouch -d '+2 seconds' \"$1\"\n");
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&editor).unwrap().permissions();

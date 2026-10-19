@@ -37,7 +37,6 @@ fn detects_write_to_watched_file() {
 /// watcher watches the symlink target's parent directory, so edits to
 /// the target are detected even when the symlink lives in a different
 /// directory.
-#[cfg(unix)]
 #[test]
 fn detects_target_changes_through_canonicalized_symlink() {
     let target = unique_temp_path("linktarget");

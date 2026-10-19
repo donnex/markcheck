@@ -115,7 +115,6 @@ fn create_new_checklist_with(
         Err(_) => write_new_file(&full_path, &contents)?,
     }
 
-    #[cfg(unix)]
     crate::writer::sync_parent_dir(&full_path);
 
     Ok(full_path)

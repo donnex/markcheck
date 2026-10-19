@@ -467,7 +467,6 @@ fn run_sync_never_includes_an_unrelated_staged_file() {
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
     // A `pre-commit` hook staging an unrelated file into the temporary index:
@@ -537,7 +536,6 @@ fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
-#[cfg(unix)]
 #[test]
 fn run_sync_undoes_a_hook_violated_root_commit_by_deleting_the_branch_ref() {
     // A root commit is undone by deleting the branch ref.

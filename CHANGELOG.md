@@ -134,6 +134,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match in the whole file, so searching for the next restart step from
   step 40 threw you back to step 3. (#61)
 
+- Building markcheck on Windows or another non-Unix system now stops at
+  once with "markcheck supports Unix-like systems only". Before, the build
+  succeeded but produced a program that had never been tested there and
+  failed at runtime. (#78)
+
 ### Fixed
 
 - `y` and `--auto-copy` now ignore inline code inside a task's bold title,

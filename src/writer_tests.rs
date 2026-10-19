@@ -236,7 +236,6 @@ fn a_writer_arriving_through_a_symlink_is_locked_out_by_the_first() {
 
 /// The lock sits in a shared temp directory at a path any account on the
 /// machine can derive, so it should not be readable by all of them.
-#[cfg(unix)]
 #[test]
 fn the_lock_file_is_not_world_readable() {
     use std::os::unix::fs::PermissionsExt;
@@ -453,7 +452,6 @@ fn two_checklists_do_not_share_a_lock() {
     fs::remove_file(&b).ok();
 }
 
-#[cfg(unix)]
 #[test]
 fn a_write_protected_checklist_is_refused_and_left_unchanged() {
     use std::os::unix::fs::PermissionsExt;
@@ -823,7 +821,6 @@ fn toggling_second_duplicate_item_updates_correct_line() {
     fs::remove_file(&path).ok();
 }
 
-#[cfg(unix)]
 #[test]
 fn write_back_preserves_file_permissions() {
     use std::os::unix::fs::PermissionsExt;
@@ -843,7 +840,6 @@ fn write_back_preserves_file_permissions() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn write_back_clears_setuid_setgid_and_sticky_bits() {
     use std::os::unix::fs::PermissionsExt;
@@ -889,7 +885,6 @@ fn write_back_errors_on_deleted_source_file() {
 /// Mirrors main.rs's startup canonicalization: with the resolved path,
 /// toggling through a symlink must update the target and leave the
 /// link itself intact.
-#[cfg(unix)]
 #[test]
 fn write_back_through_canonicalized_symlink_keeps_link_intact() {
     use std::os::unix::fs::PermissionsExt;
@@ -979,7 +974,6 @@ fn started_marker_transitions_to_done_and_not_started() {
     fs::remove_file(&path).ok();
 }
 
-#[cfg(unix)]
 #[test]
 fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
     // A pre-existing file at the temp name must be left untouched.
