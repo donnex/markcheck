@@ -26,6 +26,10 @@ pub struct Config {
     pub git_sync_delay: Option<u64>,
     /// Where copies go, like `--clipboard`: `auto`, `system` or `osc52`.
     pub clipboard: Option<ClipboardChoice>,
+    /// Show the checklist and its progress in the terminal title (default on).
+    pub terminal_title: Option<bool>,
+    /// Print where the run stopped after quitting (default on).
+    pub exit_summary: Option<bool>,
 }
 
 /// Every key `Config` reads; anything else in the file is reported as
@@ -39,6 +43,8 @@ const KNOWN_KEYS: &[&str] = &[
     "git_sync_paths",
     "git_sync_delay",
     "clipboard",
+    "terminal_title",
+    "exit_summary",
 ];
 
 /// A parsed config plus the top-level keys it ignored, sorted.

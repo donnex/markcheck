@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The terminal title now shows the open checklist and its progress
+  (`Deployment Runbook · 3/11 — markcheck`), and the title you had comes
+  back on exit; after quitting, one line says where the run stopped
+  (`3/11 done, stopped at "Warm the build cache"`). Turn them off with
+  `terminal_title = false` and `exit_summary = false` in the config file.
+  (#135)
+
 - Opening a checklist that is already open in another markcheck (on the
   same machine, as the same user) now warns at startup, naming the other
   session's process and how long it has been open. Before, two people (or one

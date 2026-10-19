@@ -45,6 +45,8 @@ fn config_all(value: bool) -> config::Config {
         git_sync_paths: None,
         git_sync_delay: None,
         clipboard: None,
+        terminal_title: None,
+        exit_summary: None,
     }
 }
 

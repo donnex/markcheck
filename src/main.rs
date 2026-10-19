@@ -42,11 +42,19 @@ use watcher::ReloadTrigger;
 
 struct TerminalGuard {
     mouse: bool,
+    /// Whether the terminal title was saved at startup, to restore it.
+    title: bool,
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         restore_terminal(self.mouse);
+        if self.title {
+            // Pop the title saved at startup (xterm's title stack, which tmux
+            // and most terminals keep).
+            let _ = write!(io::stdout(), "\x1b[23;2t");
+            let _ = io::stdout().flush();
+        }
     }
 }
 
@@ -246,7 +254,15 @@ fn main() -> anyhow::Result<()> {
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
-    let guard = TerminalGuard { mouse };
+    let show_title = config.terminal_title.unwrap_or(true);
+    if show_title {
+        // Push the current title, restored by `TerminalGuard`.
+        let _ = write!(io::stdout(), "\x1b[22;2t");
+    }
+    let guard = TerminalGuard {
+        mouse,
+        title: show_title,
+    };
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -258,9 +274,13 @@ fn main() -> anyhow::Result<()> {
         &mut git_sync,
         mouse,
         &stop,
+        show_title,
     );
     drop(guard);
     clipboard::release_system_clipboard();
+    if result.is_ok() && config.exit_summary.unwrap_or(true) {
+        let _ = writeln!(io::stdout(), "{}", launch::exit_summary(&state));
+    }
     // Printed only once the alternate screen is gone, so it stays visible.
     // Ignored on failure: after SIGHUP there may be no terminal left.
     if let Some(report) = result? {
@@ -297,6 +317,7 @@ fn run<B: Backend>(
     git_sync: &mut Option<git_sync::GitSync>,
     mouse: bool,
     stop: &AtomicBool,
+    show_title: bool,
 ) -> anyhow::Result<Option<String>>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
@@ -310,6 +331,8 @@ where
     // is the one reported after the TUI closes.
     let mut quitting = false;
     let mut last_outcome = None;
+    // Written only when it changes, not on every frame.
+    let mut shown_title = String::new();
     loop {
         // Nothing is drawn from here on: after SIGHUP the terminal is gone.
         if stop.load(Ordering::Relaxed) {
@@ -357,6 +380,13 @@ where
         dirty |= label_due.is_some_and(|due| now >= due);
         if dirty {
             terminal.draw(|frame| ui::render(frame, state))?;
+            if show_title {
+                let title = launch::terminal_title(state);
+                if title != shown_title {
+                    let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(&title));
+                    shown_title = title;
+                }
+            }
             label_due = ui::next_label_change(state, SystemTime::now());
             dirty = false;
             // Debug builds only: lets `tests/pty.rs` force a main-thread

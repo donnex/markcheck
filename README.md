@@ -26,6 +26,7 @@ file is the state** — it's still just a text file when you close the app.
 - [Keybindings](#keybindings)
 - [Behavior](#behavior)
   - [Write-back](#write-back)
+  - [Terminal title and exit line](#terminal-title-and-exit-line)
   - [Live reload](#live-reload)
   - [Git sync](#git-sync)
   - [Search](#search)
@@ -164,6 +165,8 @@ primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
 clipboard = "auto"  # = --clipboard: "auto", "system" or "osc52"
+terminal_title = true  # show the checklist and its progress in the terminal title
+exit_summary = true    # print where the run stopped after quitting
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths (end with /** to include nested repositories)
 git_sync_delay = 10 # = --git-sync-delay: seconds without a change before git sync commits; 0 = at once
 ```
@@ -520,6 +523,17 @@ If the file changed on disk since it was last loaded — another `markcheck`
 instance, or an external editor, saved to it after you did — a toggle is
 refused rather than silently overwriting that change: the file is reloaded
 and a sticky error asks you to retry.
+
+### Terminal title and exit line
+
+While `markcheck` runs, the terminal window or tab title (and tmux's pane
+title) reads `Deployment Runbook · 3/11 — markcheck`, so with several
+checklists or shells open you can see which tab holds which and how far each
+is. The title you had before comes back when you quit. After a normal quit,
+one line on the screen says where the run stopped, for notes or a handover:
+`runbook.md — Deployment Runbook: 3/11 done (1 started), stopped at "Warm the
+build cache"`, or `all 11 done`. Turn either off with `terminal_title =
+false` or `exit_summary = false` in the config file.
 
 ### Live reload
 

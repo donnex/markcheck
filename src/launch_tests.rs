@@ -1,8 +1,9 @@
 use super::{
     CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, already_open_warning, editor_file_args,
-    expand_tilde, git_sync_path_matches, git_sync_request, git_sync_scope, git_sync_warning,
-    leftovers_warning, no_browser_available, opener_failure_message, resolve_editor,
-    resolve_opener, startup_message, startup_warning, unshown_warning, watch_warning,
+    exit_summary, expand_tilde, git_sync_path_matches, git_sync_request, git_sync_scope,
+    git_sync_warning, leftovers_warning, no_browser_available, opener_failure_message,
+    resolve_editor, resolve_opener, startup_message, startup_warning, terminal_title,
+    unshown_warning, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -687,4 +688,34 @@ fn already_open_warning_names_the_other_sessions() {
             .unwrap()
             .starts_with("already open in 2 other markcheck sessions (pids 1, 2)")
     );
+}
+
+fn state_from(markdown: &str, name: &str) -> crate::model::AppState {
+    let dir = crate::test_support::unique_temp_path("launch", "summary", None);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, markdown).unwrap();
+    crate::model::AppState::new(crate::parser::parse_document(path).unwrap())
+}
+
+#[test]
+fn the_terminal_title_names_the_checklist_and_its_progress() {
+    let state = state_from("# Deploy\n\n## A\n\n- [x] one\n- [ ] two\n", "deploy.md");
+    assert_eq!(terminal_title(&state), "Deploy · 1/2 — markcheck");
+    let untitled = state_from("- [ ] one\n", "night-shift.md");
+    assert_eq!(terminal_title(&untitled), "Night Shift · 0/1 — markcheck");
+}
+
+#[test]
+fn the_exit_summary_says_where_the_run_stopped_or_that_it_finished() {
+    let state = state_from(
+        "# Deploy\n\n## A\n\n- [x] one\n- [/] two\n- [-] three\n- [ ] four\n",
+        "deploy.md",
+    );
+    assert_eq!(
+        exit_summary(&state),
+        "deploy.md — Deploy: 1/3 done (1 started, 1 skipped), stopped at \"two\""
+    );
+    let finished = state_from("# Deploy\n\n- [x] one\n- [x] two\n", "deploy.md");
+    assert_eq!(exit_summary(&finished), "deploy.md — Deploy: all 2 done");
 }

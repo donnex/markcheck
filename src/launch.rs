@@ -392,6 +392,58 @@ pub fn unshown_warning(unshown: &crate::model::Unshown) -> Option<String> {
     Some(format!("{listed} outside task lists not shown"))
 }
 
+/// The document's title for the terminal title and the exit line: its
+/// `# H1`, or one made from the file name.
+fn document_name(state: &crate::model::AppState) -> String {
+    state
+        .document
+        .title
+        .clone()
+        .unwrap_or_else(|| crate::scaffold::derive_title(&state.document.file_path))
+}
+
+/// The terminal (and tmux pane) title while markcheck runs (#135):
+/// `Deployment Runbook · 3/11 — markcheck`, so a tab says which checklist
+/// it holds and how far along it is.
+pub fn terminal_title(state: &crate::model::AppState) -> String {
+    let (done, total) = state.document.checkbox_stats();
+    format!("{} · {done}/{total} — markcheck", document_name(state))
+}
+
+/// The line printed after a normal quit (#135), for handovers and notes:
+/// where the run stopped, or that it finished.
+pub fn exit_summary(state: &crate::model::AppState) -> String {
+    let file = state
+        .document
+        .file_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (done, started, total) = state.document.checkbox_progress();
+    let skipped = state.document.skipped_count();
+    let mut extras = Vec::new();
+    if started > 0 {
+        extras.push(format!("{started} started"));
+    }
+    if skipped > 0 {
+        extras.push(format!("{skipped} skipped"));
+    }
+    let extras = if extras.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", extras.join(", "))
+    };
+    let name = document_name(state);
+    if total > 0 && done == total {
+        return format!("{file} — {name}: all {total} done{extras}");
+    }
+    let stopped = state
+        .current_item()
+        .map(|item| format!(", stopped at \"{}\"", item.label()))
+        .unwrap_or_default();
+    format!("{file} — {name}: {done}/{total} done{extras}{stopped}")
+}
+
 /// The startup warning that the checklist is already open in another
 /// markcheck session (#101), whose changes will show up here as reloads.
 pub fn already_open_warning(others: &[crate::writer::OtherSession]) -> Option<String> {

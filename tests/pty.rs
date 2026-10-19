@@ -2505,3 +2505,29 @@ fn a_hash_anchor_or_plus_line_opens_at_that_task() {
     session.key("q");
     assert!(session.finish().0);
 }
+
+#[test]
+fn the_terminal_title_shows_progress_and_the_exit_line_says_where_it_stopped() {
+    let path = unique_path("title-summary");
+    write_file(
+        &path,
+        "# Night shift\n\n## Work\n\n- [ ] alpha\n- [ ] beta\n",
+    );
+    let mut cmd = markcheck_command();
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.key(" ");
+    session.wait_until(SCREEN_TIMEOUT, "the updated title", |raw| {
+        raw.contains("\x1b]0;Night shift · 1/2 — markcheck\x07")
+    });
+    session.key("q");
+    let (ok, output) = session.finish();
+    assert!(ok);
+    assert!(output.contains("\x1b[22;2t"), "the old title is saved");
+    let tail = output.rsplit("\x1b[?1049l").next().unwrap_or_default();
+    assert!(tail.contains("\x1b[23;2t"), "and restored on exit");
+    assert!(
+        tail.contains("Night shift: 1/2 done, stopped at \"beta\""),
+        "the exit line comes after the TUI: {tail:?}"
+    );
+}
