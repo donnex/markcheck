@@ -221,12 +221,6 @@ impl AppState {
         self.current_list().items.get(self.current_item_index)
     }
 
-    fn current_item_mut(&mut self) -> Option<&mut Item> {
-        self.document.lists[self.current_list_index]
-            .items
-            .get_mut(self.current_item_index)
-    }
-
     pub fn navigate_next(&mut self) {
         self.focus_item(
             self.current_list_index,
@@ -1016,22 +1010,14 @@ impl AppState {
             ItemKind::Checkbox(state) => state,
         };
 
-        // Space/Enter toggles *done*: a Done task reverts to NotStarted,
-        // anything else (including Started) completes.
-        let new_state = if state == TaskState::Done {
-            TaskState::NotStarted
-        } else {
-            TaskState::Done
-        };
+        let new_state = toggled_done(state);
         if !self.set_current_state(new_state) {
             return;
         }
-
+        self.set_status(toggle_message(new_state).to_string());
         if new_state == TaskState::Done {
-            self.set_status("Marked done".to_string());
             self.maybe_transition_screen();
         } else {
-            self.set_status("Marked not done".to_string());
             self.view = View::Checklist;
         }
     }
@@ -1043,46 +1029,21 @@ impl AppState {
         if self.blocked_by_deletion() {
             return;
         }
-        // Validate there's a checkbox to toggle (immutable borrow) before
-        // recording an undo point, so a click on a missing/display-only row
-        // doesn't push a no-op entry.
-        let Some(item) = self
+        // A click on a missing or display-only row does nothing, and pushes
+        // no undo point.
+        let Some(ItemKind::Checkbox(state)) = self
             .document
             .lists
             .get(list_index)
             .and_then(|list| list.items.get(item_index))
+            .map(|item| item.kind)
         else {
             return;
         };
-        let ItemKind::Checkbox(state) = item.kind else {
-            return; // nothing to toggle on a display-only item
-        };
-        let new_state = if state == TaskState::Done {
-            TaskState::NotStarted
-        } else {
-            TaskState::Done
-        };
-        let item_text = item.label();
-
-        let pre_state = self.state_snapshot();
-        // Re-fetch mutably now that the snapshot is taken.
-        if let Some(item) = self
-            .document
-            .lists
-            .get_mut(list_index)
-            .and_then(|list| list.items.get_mut(item_index))
-        {
-            item.kind = ItemKind::Checkbox(new_state);
-        }
-
-        if !self.commit_write(
-            &pre_state,
-            "Write failed — change not saved to disk",
-            &format!("{} \"{item_text}\"", state_verb(new_state)),
-        ) {
+        let new_state = toggled_done(state);
+        if !self.set_state(list_index, item_index, new_state) {
             return;
         }
-        self.push_undo_point(pre_state);
 
         // Leave the cursor put. Only demote a completion screen that this
         // toggle just invalidated (a task un-done); never promote to one.
@@ -1094,15 +1055,7 @@ impl AppState {
         if !still_complete {
             self.view = View::Checklist;
         }
-
-        self.set_status(
-            if new_state == TaskState::Done {
-                "Marked done"
-            } else {
-                "Marked not done"
-            }
-            .to_string(),
-        );
+        self.set_status(toggle_message(new_state).to_string());
     }
 
     /// `s` toggles the *started* state. Never completes and never advances.
@@ -1131,14 +1084,27 @@ impl AppState {
     /// Sets the current checkbox's state and writes it back. Returns whether
     /// the write succeeded.
     fn set_current_state(&mut self, state: TaskState) -> bool {
+        self.set_state(self.current_list_index, self.current_item_index, state)
+    }
+
+    /// Sets one checkbox's state and writes it back, the one path every
+    /// toggle takes: the keyboard's and the overview click's. Returns whether
+    /// the write succeeded.
+    fn set_state(&mut self, list_index: usize, item_index: usize, state: TaskState) -> bool {
         if self.blocked_by_deletion() {
             return false;
         }
         let pre_state = self.state_snapshot();
-        let item_text = self.current_item().map(Item::label).unwrap_or_default();
-        if let Some(current) = self.current_item_mut() {
-            current.kind = ItemKind::Checkbox(state);
-        }
+        let Some(item) = self
+            .document
+            .lists
+            .get_mut(list_index)
+            .and_then(|list| list.items.get_mut(item_index))
+        else {
+            return false;
+        };
+        let item_text = item.label();
+        item.kind = ItemKind::Checkbox(state);
         if !self.commit_write(
             &pre_state,
             "Write failed — change not saved to disk",
@@ -2419,6 +2385,24 @@ fn list_all_done(list: &List) -> bool {
 
 /// The verb naming a transition *into* `state`, used to build the git-sync
 /// commit message: `Check "Restart service"`, `Start "..."`,
+/// Space/Enter and the overview click toggle *done*: a done task reverts to
+/// not started, anything else (started included) completes.
+fn toggled_done(state: TaskState) -> TaskState {
+    if state == TaskState::Done {
+        TaskState::NotStarted
+    } else {
+        TaskState::Done
+    }
+}
+
+fn toggle_message(state: TaskState) -> &'static str {
+    if state == TaskState::Done {
+        "Marked done"
+    } else {
+        "Marked not done"
+    }
+}
+
 /// `Uncheck "..."`.
 fn state_verb(state: TaskState) -> &'static str {
     match state {
