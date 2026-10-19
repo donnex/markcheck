@@ -1625,15 +1625,8 @@ impl AppState {
     /// `o`: open the current card's link. With several links, arm a digit that
     /// picks link `[N]`. The spawn happens in the main loop.
     fn open_current_link(&mut self) {
-        let urls: Vec<String> = self
-            .current_item()
-            .map(|item| item.link_urls().iter().map(|u| u.to_string()).collect())
-            .unwrap_or_default();
-        match urls.as_slice() {
-            [url] if is_safe_link(url) => {
-                self.effects.push(Effect::OpenLink(url.clone()));
-            }
-            [url] => self.set_error(format!("Not opened: unsupported link type ({url})")),
+        match self.current_link_urls().as_slice() {
+            [url] => self.open_url(url),
             [] => self.set_error("Nothing to open: card has no link".to_string()),
             // Several links: arm a digit. No sticky message, which would hide the list
             // being chosen from.
@@ -1643,16 +1636,25 @@ impl AppState {
 
     /// Opens link `[n]` (1-based) after `o` on a multi-link card.
     fn open_link_number(&mut self, n: usize) {
-        let urls: Vec<String> = self
-            .current_item()
-            .map(|item| item.link_urls().iter().map(|u| u.to_string()).collect())
-            .unwrap_or_default();
-        match urls.get(n - 1) {
-            Some(url) if is_safe_link(url) => {
-                self.effects.push(Effect::OpenLink(url.clone()));
-            }
-            Some(url) => self.set_error(format!("Not opened: unsupported link type ({url})")),
+        match self.current_link_urls().get(n - 1) {
+            Some(url) => self.open_url(url),
             None => self.set_error(format!("No link [{n}] on this card")),
+        }
+    }
+
+    fn current_link_urls(&self) -> Vec<String> {
+        self.current_item()
+            .map(|item| item.link_urls().iter().map(|u| u.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Hands `url` to the main loop's opener, unless its scheme isn't one
+    /// markcheck opens.
+    fn open_url(&mut self, url: &str) {
+        if is_safe_link(url) {
+            self.effects.push(Effect::OpenLink(url.to_string()));
+        } else {
+            self.set_error(format!("Not opened: unsupported link type ({url})"));
         }
     }
 
