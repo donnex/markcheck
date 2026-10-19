@@ -1,18 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Variables that point `git` at another repository, removed as in
-/// `git_sync::process::git_command`, so `--version` describes this checkout.
-const REDIRECTING_GIT_VARS: [&str; 8] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_COMMON_DIR",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-];
+// Removed as in `git_sync::process::git_command`, so `--version` describes
+// this checkout.
+include!("src/git_env.rs");
 
 /// Trimmed stdout of a `git` command run against the crate's own directory,
 /// or `None` if it can't be run, fails, or says nothing.

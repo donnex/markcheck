@@ -25,6 +25,7 @@ markcheck/
     ├── writer.rs        # Write completion state back to file (atomic, perms-preserving)
     ├── scaffold.rs      # `--new`: build and atomically create a starter checklist file
     ├── watcher.rs       # Filesystem watch for external file changes
+    ├── git_env.rs       # REDIRECTING_GIT_VARS, include!d by git_sync/process.rs and build.rs
     ├── git_sync/        # Background git commit+push after write-back
     │   ├── mod.rs       # GitSync (request/poll/retry), status messages, exit report
     │   ├── shared.rs    # Leaf: SyncOutcome, request-hash lock, race points
