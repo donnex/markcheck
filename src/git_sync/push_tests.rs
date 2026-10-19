@@ -1,3 +1,4 @@
+use super::super::guards::OWN_COMMIT_TRAILER;
 use super::super::test_support::*;
 use super::*;
 use std::fs;
@@ -349,7 +350,10 @@ fn retry_commit_pushes_when_head_still_matches() {
 fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
     let (work, remote) = init_repo_with_remote();
     fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
-    run(&work, &["commit", "-q", "-am", "checklist"]);
+    run(
+        &work,
+        &["commit", "-q", "-am", "checklist", "-m", OWN_COMMIT_TRAILER],
+    );
     let validated = git_stdout(&work, &["rev-parse", "HEAD"]);
 
     let racer = work.clone();
@@ -359,7 +363,7 @@ fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
 
     let outcome = catch_up_push(&work, &work.join("tracked.md"));
 
-    assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+    assert_eq!(outcome, SyncOutcome::CaughtUp { pushed: 1 }, "{outcome:?}");
     assert_eq!(
         git_stdout(&remote, &["rev-parse", "main"]),
         validated,
@@ -409,13 +413,23 @@ fn catch_up_push_pushes_a_local_only_commit_without_committing_a_dirty_tree() {
     let (work, remote) = init_repo_with_remote();
     let file = work.join("tracked.md");
     fs::write(&file, "- [x] one\n").unwrap();
-    run(&work, &["commit", "-q", "-am", "tracked.md: Check \"one\""]);
+    run(
+        &work,
+        &[
+            "commit",
+            "-q",
+            "-am",
+            "tracked.md: Check \"one\"",
+            "-m",
+            OWN_COMMIT_TRAILER,
+        ],
+    );
     let dirty = "- [x] one\n- [ ] two\n";
     fs::write(&file, dirty).unwrap();
 
     let outcome = catch_up_push(&work, &file);
 
-    assert_eq!(outcome, SyncOutcome::Synced);
+    assert_eq!(outcome, SyncOutcome::CaughtUp { pushed: 1 });
     assert_eq!(
         git_stdout(&remote, &["log", "--format=%s", "main"]),
         "tracked.md: Check \"one\"\ninit",
@@ -463,8 +477,8 @@ fn catch_up_push_refuses_when_unrelated_commits_are_unpushed() {
     let outcome = catch_up_push(&work, &work.join("tracked.md"));
 
     assert!(
-        matches!(&outcome, SyncOutcome::Failed(msg)
-                if msg.contains("not part of this change")),
+        matches!(&outcome, SyncOutcome::NotCaughtUp(msg)
+                if msg.contains("\"unrelated\" is not pushed")),
         "{outcome:?}"
     );
     assert_eq!(
@@ -680,5 +694,47 @@ fn a_push_url_is_checked_and_pushed_instead_of_the_fetch_url() {
     assert_eq!(git_stdout(&push_repo, &["rev-parse", "main"]), commit);
     assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), fetch_tip);
 
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn catch_up_push_leaves_a_hand_made_checklist_commit_alone() {
+    // The user reworked the checklist, committed it to review before sharing,
+    // and only opened it: nothing may be published (#62).
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    fs::write(&file, "- [ ] two\n- [ ] one\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "WIP: reorder steps"]);
+
+    let outcome = catch_up_push(&work, &file);
+
+    assert!(
+        matches!(&outcome, SyncOutcome::NotCaughtUp(msg)
+                if msg.contains("\"WIP: reorder steps\"") && msg.contains("push it yourself")),
+        "{outcome:?}"
+    );
+    assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+#[test]
+fn catch_up_push_counts_every_earlier_markcheck_commit_it_pushes() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    for content in ["- [x] one\n", "- [ ] one\n"] {
+        fs::write(&file, content).unwrap();
+        run(
+            &work,
+            &["commit", "-q", "-am", "toggle", "-m", OWN_COMMIT_TRAILER],
+        );
+    }
+
+    assert_eq!(
+        catch_up_push(&work, &file),
+        SyncOutcome::CaughtUp { pushed: 2 }
+    );
+    assert_eq!(
+        git_stdout(&remote, &["log", "--format=%s", "main"]),
+        "toggle\ntoggle\ninit"
+    );
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }

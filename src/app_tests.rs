@@ -6144,3 +6144,35 @@ fn git_sync_descriptions_name_an_ordered_step_by_its_number() {
     );
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn a_startup_catch_up_push_is_announced_with_its_count() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_git_sync_outcome(&SyncOutcome::CaughtUp { pushed: 2 });
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Pushed 2 earlier markcheck commits")
+    );
+    assert!(!state.status_is_error);
+    assert!(state.git_sync.last_at.is_some());
+
+    state.apply_git_sync_outcome(&SyncOutcome::CaughtUp { pushed: 1 });
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Pushed 1 earlier markcheck commit")
+    );
+}
+
+#[test]
+fn a_catch_up_that_pushed_nothing_says_why_and_stays() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_git_sync_outcome(&SyncOutcome::NotCaughtUp(
+        "commit abc1234 \"WIP\" is not pushed".to_string(),
+    ));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Git sync: commit abc1234 \"WIP\" is not pushed")
+    );
+    assert_eq!(state.status_expiry, None, "sticky until read");
+    assert_eq!(state.git_sync.problem, Some("not pushed"));
+}

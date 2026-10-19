@@ -39,6 +39,13 @@ const PUSH_RETRY_MAX_INTERVAL: Duration = Duration::from_secs(5 * 60);
 pub fn status_message(outcome: &SyncOutcome) -> Option<String> {
     match outcome {
         SyncOutcome::Synced | SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => None,
+        SyncOutcome::CaughtUp { pushed: 1 } => {
+            Some("Pushed 1 earlier markcheck commit".to_string())
+        }
+        SyncOutcome::CaughtUp { pushed } => {
+            Some(format!("Pushed {pushed} earlier markcheck commits"))
+        }
+        SyncOutcome::NotCaughtUp(message) => Some(format!("Git sync: {message}")),
         SyncOutcome::SkippedUntracked => {
             Some("Git sync skipped: file is not tracked in git (run `git add` on it)".to_string())
         }
@@ -67,7 +74,11 @@ pub fn exit_report(last: Option<&SyncOutcome>, still_running: bool) -> Option<St
         );
     }
     match last? {
-        SyncOutcome::Synced | SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => None,
+        SyncOutcome::Synced
+        | SyncOutcome::CaughtUp { .. }
+        | SyncOutcome::NotCaughtUp(_)
+        | SyncOutcome::Skipped
+        | SyncOutcome::RetryAbandoned => None,
         SyncOutcome::SkippedUntracked => Some(
             "markcheck: git sync skipped: file is not tracked in git (run `git add` on it)"
                 .to_string(),
@@ -276,7 +287,7 @@ impl GitSync {
     /// `SyncOutcome` variant can't silently leave a retry firing every frame.
     fn apply_outcome(&mut self, outcome: &SyncOutcome) {
         match outcome {
-            SyncOutcome::Synced | SyncOutcome::RetryAbandoned => {
+            SyncOutcome::Synced | SyncOutcome::CaughtUp { .. } | SyncOutcome::RetryAbandoned => {
                 self.retry = None;
                 self.retry_interval = PUSH_RETRY_INTERVAL;
             }
@@ -301,7 +312,7 @@ impl GitSync {
             }
             // A content sync's failure says nothing about an earlier commit's retry.
             SyncOutcome::Failed(_) => {}
-            SyncOutcome::Skipped | SyncOutcome::SkippedUntracked => {}
+            SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::NotCaughtUp(_) => {}
         }
     }
 

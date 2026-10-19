@@ -553,7 +553,9 @@ UTF-8 isn't synced either: each sync fails with a red status-bar message
 saying so, and nothing is committed. Commit messages name the
 actual change (`checklist.md: Check "Restart service"`, `checklist.md:
 Reset all tasks to not done`, …) rather than a generic "updated by
-markcheck", so `git log`/`git blame` stay useful across hosts. A failed
+markcheck", so `git log`/`git blame` stay useful across hosts. Each one
+also ends with a `Synced-by: markcheck` trailer line, which is how
+`markcheck` later tells its own commits from yours. A failed
 commit (diverged history, mid-merge, …) is reported as a red status-bar
 message — `markcheck` never attempts to resolve it for you (no auto
 `git pull --rebase`), so fix it in a terminal as usual. A commit that
@@ -563,7 +565,13 @@ nothing is lost, and `markcheck` retries the push on its own — after 30
 seconds, then waiting twice as long after each further failure, up to 5
 minutes between tries — as well as on the next sync of any kind and once
 more right at startup, so you don't have to make another edit just to nudge
-it once the network's back. If a retry fails for a new reason, the status
+it once the network's back. The startup push only sends `markcheck`'s own
+commits (`Pushed 2 earlier markcheck commits`): if a commit you made
+yourself is waiting to be pushed, opening the checklist pushes nothing and
+the status bar names that commit, so a change you kept local on purpose is
+never published just by looking at the file. Commits made by markcheck
+versions before the trailer existed count as yours here; push those by
+hand once. If a retry fails for a new reason, the status
 bar says `Push retry failed: ... (will keep retrying)`; one that fails the
 same way as before stays quiet, so it doesn't replace whatever message you
 are reading, and the title bar keeps showing `not pushed` (see below). When
@@ -589,13 +597,15 @@ files it left in the checklist's folder and the repository and says so in
 the status bar.
 
 Running plain `git push` yourself sends the whole current branch — so if
-the branch already has other local commits ahead of the remote that aren't
-from this checklist, git-sync refuses to create its own commit on top
-rather than pushing your other work for you: `Git sync failed: this branch
-has unpushed commits that are not part of this change; push them yourself
-first`. Push those yourself, then the next toggle syncs normally. (Several
-of *markcheck's own* commits accumulating while offline is fine and
-expected — this only refuses for commits that aren't the checklist file.)
+the branch already has other local commits ahead of the remote,
+git-sync refuses to create its own commit on top rather than pushing your
+other work for you, and names the commit in the way: `Git sync failed:
+commit abc1234 "WIP: reorder" is not pushed yet and isn't markcheck's; push
+or drop it first`. Push it yourself, then the next toggle syncs normally.
+Commits that only change this checklist don't block a toggle, and neither
+do *markcheck's own* commits for any checklist: several of them piling up
+while offline, or one left behind by another checklist in the same
+repository, are pushed together with the new change.
 If the checklist itself has **staged changes** that differ from the file on
 disk, git-sync refuses rather than committing: `Git sync failed: the
 checklist has staged changes that differ from the file on disk;

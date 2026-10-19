@@ -401,8 +401,8 @@ fn undo_commit_rewinds_one_commit_and_keeps_the_branch() {
 fn a_tipless_branch_has_no_unrelated_unpushed_commits() {
     let work = init_repo_without_remote();
     assert_eq!(
-        unpushed_history(&work, None, "x.md"),
-        Ok(UnpushedHistory::Safe)
+        unpushed_history(&work, None, "x.md", Publishable::OwnOrThisChecklist),
+        Ok(UnpushedHistory::Safe(0))
     );
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
@@ -433,7 +433,13 @@ fn an_unanswerable_history_check_refuses_instead_of_permitting_a_push() {
     let bogus = "0".repeat(40);
 
     assert!(
-        unpushed_history(&work, Some(&bogus), "tracked.md").is_err(),
+        unpushed_history(
+            &work,
+            Some(&bogus),
+            "tracked.md",
+            Publishable::OwnOrThisChecklist
+        )
+        .is_err(),
         "an unresolvable range must surface as an error, not a verdict"
     );
     let refusal = unpushed_history_blocks(&work, Some(&bogus), "tracked.md");
@@ -455,8 +461,13 @@ fn a_head_that_moves_after_the_tip_is_captured_cannot_broaden_the_push() {
     let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
 
     assert_eq!(
-        unpushed_history(&work, Some(&tip), "tracked.md"),
-        Ok(UnpushedHistory::Safe)
+        unpushed_history(
+            &work,
+            Some(&tip),
+            "tracked.md",
+            Publishable::OwnOrThisChecklist
+        ),
+        Ok(UnpushedHistory::Safe(1))
     );
 
     fs::write(work.join("other.txt"), "unrelated\n").unwrap();
@@ -472,10 +483,10 @@ fn a_head_that_moves_after_the_tip_is_captured_cannot_broaden_the_push() {
         "the unrelated commit must not reach the remote"
     );
 
-    assert_eq!(
-        unpushed_history(&work, Some(&moved), "tracked.md"),
-        Ok(UnpushedHistory::ContainsUnrelated)
-    );
+    assert!(matches!(
+        unpushed_history(&work, Some(&moved), "tracked.md", Publishable::OwnOrThisChecklist),
+        Ok(UnpushedHistory::Blocked(blocking)) if blocking.subject == "unrelated"
+    ));
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
@@ -486,7 +497,12 @@ fn a_branch_without_an_upstream_is_not_a_verification_failure() {
     let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
 
     assert_eq!(
-        unpushed_history(&work, Some(&tip), "tracked.md"),
+        unpushed_history(
+            &work,
+            Some(&tip),
+            "tracked.md",
+            Publishable::OwnOrThisChecklist
+        ),
         Ok(UnpushedHistory::NoUpstream)
     );
     assert!(unpushed_history_blocks(&work, Some(&tip), "tracked.md").is_none());
@@ -512,7 +528,12 @@ fn a_configured_but_unfetched_upstream_still_counts_as_no_upstream() {
         "but the tracking ref does not resolve"
     );
     assert_eq!(
-        unpushed_history(&work, Some(&tip), "tracked.md"),
+        unpushed_history(
+            &work,
+            Some(&tip),
+            "tracked.md",
+            Publishable::OwnOrThisChecklist
+        ),
         Ok(UnpushedHistory::NoUpstream)
     );
 

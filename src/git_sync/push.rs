@@ -4,7 +4,9 @@
 
 use std::path::Path;
 
-use super::guards::{repo_sync_blocked, unpushed_history_blocks};
+use super::guards::{
+    Publishable, UnpushedHistory, repo_sync_blocked, unpushed_check_failed, unpushed_history,
+};
 use super::inspect::{
     RemoteBranch, commits_ahead_of_upstream, current_head, index_entry, is_ancestor,
     push_goes_to_upstream, push_url, remote_branch_state, resolve_upstream, upstream_parts,
@@ -153,7 +155,9 @@ pub(super) fn retry_commit(repo_root: &Path, expected_commit: &str) -> SyncOutco
 /// commit: opening a checklist must not publish uncommitted edits. An
 /// untracked checklist is always reported, since git-sync can never act on
 /// it; a blocked repository or a refused history is `Failed`; nothing to
-/// push, or a tip that can't be read, is a quiet `Skipped`.
+/// push, or a tip that can't be read, is a quiet `Skipped`. Only commits
+/// carrying markcheck's own trailer are pushed (#62): one the user made and
+/// kept local is left alone, with `NotCaughtUp` saying so.
 pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(repo_root) {
         return SyncOutcome::Failed(reason);
@@ -175,11 +179,23 @@ pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
         Ok(relpath) => relpath,
         Err(err) => return SyncOutcome::Failed(err),
     };
-    if let Some(refusal) = unpushed_history_blocks(repo_root, Some(&head), &relpath) {
-        return refusal;
-    }
+    let pushed = match unpushed_history(repo_root, Some(&head), &relpath, Publishable::OwnOnly) {
+        Ok(UnpushedHistory::Safe(commits)) => commits,
+        Ok(UnpushedHistory::NoUpstream) => return SyncOutcome::Skipped,
+        Ok(UnpushedHistory::Blocked(blocking)) => {
+            return SyncOutcome::NotCaughtUp(format!(
+                "{} is not pushed and wasn't made by this version of markcheck, so nothing \
+                 was pushed at startup; push it yourself",
+                blocking.describe()
+            ));
+        }
+        Err(err) => return SyncOutcome::Failed(unpushed_check_failed(&err)),
+    };
     race_point(RacePoint::AfterHistoryValidation);
-    push(repo_root, &head)
+    match push(repo_root, &head) {
+        SyncOutcome::Synced => SyncOutcome::CaughtUp { pushed },
+        other => other,
+    }
 }
 
 #[cfg(test)]

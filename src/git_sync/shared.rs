@@ -40,6 +40,14 @@ pub(super) fn race_point(_point: RacePoint) {}
 #[derive(Debug, PartialEq, Eq)]
 pub enum SyncOutcome {
     Synced,
+    /// The startup catch-up pushed `pushed` commits an earlier session left
+    /// local-only.
+    CaughtUp {
+        pushed: usize,
+    },
+    /// The startup catch-up found a commit markcheck didn't make in the way,
+    /// so it pushed nothing; the message names it.
+    NotCaughtUp(String),
     /// Nothing to do: already committed and pushed. Not reported.
     Skipped,
     /// The file isn't tracked. Reported, but never `git add`ed automatically.

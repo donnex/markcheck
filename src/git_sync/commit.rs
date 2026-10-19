@@ -6,7 +6,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use super::guards::{repo_sync_blocked, verify_commit_scope};
+use super::guards::{OWN_COMMIT_TRAILER, repo_sync_blocked, verify_commit_scope};
 use super::inspect::{blob_at, current_head, descends_directly_from, git_dir, index_blob};
 use super::process::{
     COMMIT_TIMEOUT, PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout,
@@ -141,7 +141,7 @@ fn commit_temp_index(
 ) -> Result<String, String> {
     let mut cmd = git_command(repo_root);
     cmd.env("GIT_INDEX_FILE", temp_index)
-        .args(["commit", "-m", message]);
+        .args(["commit", "-m", message, "-m", OWN_COMMIT_TRAILER]);
     match run_with_timeout(cmd, timeout) {
         Ok(output) if output.status.success() => current_head(repo_root)
             .ok_or_else(|| "could not read the repository's state after committing".to_string()),

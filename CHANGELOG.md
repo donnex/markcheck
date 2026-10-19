@@ -78,6 +78,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Opening a checklist with git sync on now pushes only commits markcheck
+  made itself. Before, the push it makes at startup sent any unpushed
+  commit that changed only the checklist, including one you had made by
+  hand and kept local to review first. Every commit markcheck makes now
+  ends with a `Synced-by: markcheck` line, the startup push sends only
+  those and says how many ("Pushed 2 earlier markcheck commits"), and
+  anything else waiting to be pushed is named in the status bar instead.
+  Commits made by earlier versions don't have that line, so push those by
+  hand once. (#62)
+
 - An unrecognized key in the config file no longer stops markcheck from
   starting: the key is ignored and a warning naming it stays in the status
   bar. Previously any unknown key was a hard error, so a setting added to a
@@ -140,6 +150,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed at runtime. (#78)
 
 ### Fixed
+
+- Two git-synced checklists in one repository no longer block each
+  other. If one checklist's commit was left unpushed (say, while offline),
+  every toggle in the other failed with "this branch has unpushed commits
+  that are not part of this change", and that change was never committed.
+  markcheck's own unpushed commits for another checklist are now pushed
+  along with the new change. When a commit that isn't markcheck's is in the
+  way, the message names it. (#99)
 
 - Quitting, closing the terminal or stopping markcheck with `SIGTERM` while
   git sync is running no longer leaves the sync half done. Before, markcheck

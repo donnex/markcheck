@@ -784,7 +784,7 @@ fn run_sync_refuses_when_branch_has_unrelated_unpushed_commits() {
     );
 
     assert!(
-        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
+        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("is not pushed yet")),
         "{outcome:?}"
     );
     assert_eq!(
@@ -829,7 +829,7 @@ fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commit
     );
 
     assert!(
-        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
+        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("is not pushed yet")),
         "{outcome:?}"
     );
     assert_eq!(
@@ -881,7 +881,7 @@ fn run_sync_refuses_when_an_unrelated_commit_is_reverted_before_the_checklist_co
     );
 
     assert!(
-        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
+        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("is not pushed yet")),
         "the reverted commit must still count as unrelated history: {outcome:?}"
     );
     assert_eq!(
@@ -920,7 +920,7 @@ fn run_sync_refuses_when_a_merge_commit_is_in_the_unpushed_range() {
     );
 
     assert!(
-        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("unpushed commits that are not part of this change")),
+        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("is not pushed yet")),
         "a merge commit in range must refuse, even a clean one: {outcome:?}"
     );
     assert_eq!(current_head(&work).unwrap(), head_before);
@@ -1772,4 +1772,85 @@ fn run_sync_proceeds_when_the_staged_checklist_matches_the_working_tree() {
     );
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_second_checklist_syncs_past_the_first_one_s_stranded_commit() {
+    // Two git-synced checklists in one repository: a.md's commit is left
+    // unpushed while the remote is away, and b.md's later toggle must still
+    // commit and push, taking a.md's commit with it (#99).
+    let (work, remote) = init_repo_with_remote();
+    let a = work.join("tracked.md");
+    let b = work.join("b.md");
+    fs::write(&b, "- [ ] two\n").unwrap();
+    run(&work, &["add", "b.md"]);
+    run(&work, &["commit", "-q", "-m", "add b"]);
+    run(&work, &["push", "-q", "origin", "main"]);
+
+    let away = work.parent().unwrap().join("gone.git");
+    run(
+        &work,
+        &["remote", "set-url", "origin", away.to_str().unwrap()],
+    );
+    fs::write(&a, "- [x] one\n").unwrap();
+    let stranded = run_sync(
+        &work,
+        &a,
+        "- [x] one\n",
+        &commit_message(&a, "Check \"one\""),
+        &no_race("- [x] one\n"),
+        None,
+    );
+    assert!(
+        matches!(stranded, SyncOutcome::CommittedNotPushed { .. }),
+        "{stranded:?}"
+    );
+    run(
+        &work,
+        &["remote", "set-url", "origin", remote.to_str().unwrap()],
+    );
+
+    fs::write(&b, "- [x] two\n").unwrap();
+    let outcome = run_sync(
+        &work,
+        &b,
+        "- [x] two\n",
+        &commit_message(&b, "Check \"two\""),
+        &no_race("- [x] two\n"),
+        None,
+    );
+    assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
+    assert_eq!(
+        git_stdout(&remote, &["log", "--format=%s", "-2", "main"]),
+        "b.md: Check \"two\"\ntracked.md: Check \"one\""
+    );
+    assert_eq!(
+        super::super::push::catch_up_push(&work, &b),
+        SyncOutcome::Skipped,
+        "opening b.md afterwards reports nothing"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn markcheck_s_commits_carry_its_trailer() {
+    let (work, _remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    fs::write(&file, "- [x] one\n").unwrap();
+    let outcome = run_sync(
+        &work,
+        &file,
+        "- [x] one\n",
+        &commit_message(&file, "Check \"one\""),
+        &no_race("- [x] one\n"),
+        None,
+    );
+    assert_eq!(outcome, SyncOutcome::Synced);
+    assert_eq!(
+        git_stdout(
+            &work,
+            &["log", "-1", "--format=%(trailers:key=Synced-by,valueonly)"]
+        ),
+        "markcheck"
+    );
 }

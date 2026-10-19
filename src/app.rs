@@ -1690,12 +1690,22 @@ impl AppState {
                 }
                 return;
             }
+            SyncOutcome::CaughtUp { .. } => {
+                self.record_git_sync();
+                self.git_sync.reported_reason = None;
+                self.git_sync.problem = None;
+                if let Some(message) = git_sync::status_message(outcome) {
+                    self.set_status(message);
+                }
+                return;
+            }
             SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => return,
             SyncOutcome::SkippedUntracked => ("not tracked", None),
             SyncOutcome::CommittedNotPushed { message, .. } | SyncOutcome::RetryFailed(message) => {
                 ("not pushed", Some(message))
             }
             SyncOutcome::Failed(_) => ("not synced", None),
+            SyncOutcome::NotCaughtUp(_) => ("not pushed", None),
         };
         self.git_sync.problem = Some(label);
         self.git_sync.last_at = None;
