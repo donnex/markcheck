@@ -18,11 +18,11 @@ expression: "screen(&mut state, 80, 24)"
 │  s                  mark the task started / i│  │   ☐ Check the health endp… ▓
 │  -                  skip the task (doesn't ap│  │   ☐ Run the smoke tests    ▓
 │  u / Ctrl-R         undo / redo the last chan│  │   ☐ Tail the logs and wat… ▓
-│  Tab                jump to the next unfinish│  │   ☑ Record the start time… ▓
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ⊘ Restart the replica —… ▓
-│  /                  search tasks by text     │  │ • [3] Ordered steps        ▓
-│  n / N              next / previous search ma│  │   The three task states w… ▓
-│  T                  go to task (filterable li│  │   ☑ 1. Confirm the change… │
-│  click T picker row highlight it; click it ag▼  │   ◐ 2. Notify the on-call… ▼
+│  Ctrl-O             go back after o followed │  │   ☑ Record the start time… ▓
+│  Tab                jump to the next unfinish│  │   ⊘ Restart the replica —… ▓
+│  Shift-H / Shift-L  previous / next unfinishe│  │ • [3] Ordered steps        ▓
+│  /                  search tasks by text     │  │   The three task states w… ▓
+│  n / N              next / previous search ma│  │   ☑ 1. Confirm the change… │
+│  T                  go to task (filterable li▼  │   ◐ 2. Notify the on-call… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

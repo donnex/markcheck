@@ -18,11 +18,11 @@ expression: "screen(&mut state, 80, 24)"
 │  s                  mark the task started / i│  │                            │
 │  -                  skip the task (doesn't ap│  │                            │
 │  u / Ctrl-R         undo / redo the last chan│  │                            │
+│  Ctrl-O             go back after o followed │  │                            │
 │  Tab                jump to the next unfinish│  │                            │
 │  Shift-H / Shift-L  previous / next unfinishe│  │                            │
 │  /                  search tasks by text     │  │                            │
 │  n / N              next / previous search ma│  │                            │
-│  T                  go to task (filterable li│  │                            │
-│  click T picker row highlight it; click it ag▼  │                            │
+│  T                  go to task (filterable li▼  │                            │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

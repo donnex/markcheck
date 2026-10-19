@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `o` on a link to a heading in the same file, such as
+  `[Rollback](#rollback)`, now jumps to the first task under that heading,
+  and `Ctrl-O` jumps back, as in vim. Before, such a link was refused as an
+  unsupported link type. The same GitHub-style anchors work when starting
+  markcheck: `markcheck runbook.md#rollback` opens at that section, and
+  `markcheck +120 runbook.md` at the task on or after line 120. (#114, #139)
+
 - A skipped task state, `[-]`, for a step that doesn't apply this run ("only
   if a replica exists"). Press `-` to skip the current task (or unskip it).
   A skipped task is dimmed and struck through, counts as resolved so the

@@ -2179,3 +2179,31 @@ fn a_dash_marker_is_a_skipped_task() {
     let quoted = parse("- [ ] a\n\n```\n- [-] in a fence\n```\n");
     assert_eq!(quoted.lists[0].items.len(), 1);
 }
+
+#[test]
+fn headings_get_github_style_anchors_numbered_when_repeated() {
+    let document = parse(
+        "# Server Upgrade!\n\n## Roll back (v2)\n\n- [ ] a\n\n## Roll back (v2)\n\n- [ ] b\n\n> ## Quoted\n\n### Step_3 — check\n\n- [ ] c\n",
+    );
+    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    assert_eq!(
+        anchors,
+        vec![
+            "server-upgrade",
+            "roll-back-v2",
+            "roll-back-v2-1",
+            "step_3--check"
+        ],
+        "a quoted heading has no anchor"
+    );
+    assert_eq!(document.anchor_target("roll-back-v2-1"), Some((1, 0)));
+    assert_eq!(
+        document.anchor_target("Roll-Back-V2"),
+        Some((0, 0)),
+        "case-insensitive"
+    );
+    assert_eq!(document.anchor_target("missing"), None);
+    assert_eq!(document.first_task_from(4), Some((0, 0)));
+    assert_eq!(document.first_task_from(6), Some((1, 0)));
+    assert_eq!(document.first_task_from(99), None);
+}

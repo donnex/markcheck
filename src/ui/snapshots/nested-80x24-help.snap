@@ -18,11 +18,11 @@ expression: "screen(&mut state, 80, 24)"
 │  s                  mark the task started / i│  │   │ ☐ Notify the team on … │
 │  -                  skip the task (doesn't ap│  │ • [2] Release              │
 │  u / Ctrl-R         undo / redo the last chan│  │   ☐ Tag the release        │
-│  Tab                jump to the next unfinish│  │   ☐ Publish                │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   │ ☐ Upload the artifact  │
-│  /                  search tasks by text     │  │   │ ☐ Announce the release │
+│  Ctrl-O             go back after o followed │  │   ☐ Publish                │
+│  Tab                jump to the next unfinish│  │   │ ☐ Upload the artifact  │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   │ ☐ Announce the release │
+│  /                  search tasks by text     │  │                            │
 │  n / N              next / previous search ma│  │                            │
-│  T                  go to task (filterable li│  │                            │
-│  click T picker row highlight it; click it ag▼  │                            │
+│  T                  go to task (filterable li▼  │                            │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

@@ -145,6 +145,7 @@ fn document_with_missing_file(lists: Vec<List>) -> Document {
         lists,
         preambles: Default::default(),
         unshown: Default::default(),
+        anchors: Vec::new(),
         raw_lines,
     }
 }
@@ -6370,4 +6371,66 @@ fn reset_also_clears_skipped_tasks() {
     );
     state.handle_key(KeyCode::Char('y'));
     assert!(fs::read_to_string(&path).unwrap().contains("- [ ] one"));
+}
+
+#[test]
+fn o_follows_an_anchor_link_and_ctrl_o_comes_back() {
+    let path = write_real_file(
+        "## Run\n\n- [ ] if it fails, see [Rollback](#rollback)\n- [ ] next\n\n## Rollback\n\n- [ ] undo it\n",
+    );
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    state.handle_key(KeyCode::Char('o'));
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Jumped to #rollback · Ctrl-O goes back")
+    );
+    assert!(
+        state.link_open_request().is_none(),
+        "nothing is handed to a browser"
+    );
+
+    state.handle_key_with_mods(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(state.status_message.as_deref(), Some("Jumped back"));
+
+    state.handle_key_with_mods(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Nothing to go back to"))
+    );
+}
+
+#[test]
+fn an_anchor_link_to_no_heading_says_so() {
+    let path = write_real_file("## Run\n\n- [ ] see [there](#nowhere)\n");
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    state.handle_key(KeyCode::Char('o'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No section named #nowhere in this file")
+    );
+}
+
+#[test]
+fn open_at_moves_to_a_line_or_an_anchor_or_says_why_not() {
+    use crate::model::StartAt;
+    let path = write_real_file("## A\n\n- [ ] one\n- [ ] two\n\n## B\n\n- [ ] three\n");
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    assert_eq!(
+        state.open_at(&StartAt::Line(4)),
+        Ok("Opened at line 4".to_string())
+    );
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 1));
+    assert_eq!(
+        state.open_at(&StartAt::Anchor("b".to_string())),
+        Ok("Opened at #b".to_string())
+    );
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
+    assert_eq!(
+        state.open_at(&StartAt::Anchor("c".to_string())),
+        Err("no list or task at #c, so opened at the start".to_string())
+    );
 }

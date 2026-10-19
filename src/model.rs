@@ -399,6 +399,16 @@ pub struct ItemLinks {
     pub info_state: Option<TaskState>,
 }
 
+/// Where to open the checklist: `markcheck +N file.md` or `file.md#anchor`
+/// (#114).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartAt {
+    /// The task on, or the first one after, this source line.
+    Line(LineNumber),
+    /// The first task under the heading with this GitHub-style anchor.
+    Anchor(String),
+}
+
 /// One block of prose under a heading, before its first task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreambleBlock {
@@ -457,6 +467,9 @@ pub struct Document {
     pub preambles: std::collections::BTreeMap<LineNumber, Vec<PreambleBlock>>,
     /// What the file has outside task lists that markcheck can't show.
     pub unshown: Unshown,
+    /// Each structural heading's GitHub-style anchor (`rollback` for
+    /// `## Rollback`) and its line, in document order (#114, #139).
+    pub anchors: Vec<(String, LineNumber)>,
     /// The source file's lines, each including its own terminator, indexed by
     /// `Item::line_number`. `writer::write_back` edits one line and rejoins by
     /// concatenation, so mixed line endings round-trip exactly.
@@ -472,6 +485,25 @@ impl Document {
                 (done_acc + done, started_acc + started, total_acc + total)
             },
         )
+    }
+
+    /// The first task after the heading `anchor` names (without its `#`),
+    /// as `(list, item)`. `None` when no heading has that anchor or nothing
+    /// follows it.
+    pub fn anchor_target(&self, anchor: &str) -> Option<(usize, usize)> {
+        let wanted = anchor.to_lowercase();
+        let (_, line) = self.anchors.iter().find(|(taken, _)| *taken == wanted)?;
+        self.first_task_from(*line + 1)
+    }
+
+    /// The first item on or after source line `line`, as `(list, item)`.
+    pub fn first_task_from(&self, line: LineNumber) -> Option<(usize, usize)> {
+        self.lists.iter().enumerate().find_map(|(li, list)| {
+            list.items
+                .iter()
+                .position(|item| item.line_number >= line)
+                .map(|ii| (li, ii))
+        })
     }
 
     /// Skipped tasks summed across all lists.
@@ -1056,6 +1088,8 @@ pub struct AppState {
     pub icons: IconSet,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
+    /// Where `o` on a `#anchor` link jumped from, latest last, for `Ctrl-O`.
+    pub jump_back: Vec<(usize, usize)>,
     /// Where `y` copies to (`--clipboard`).
     pub copy_route: CopyRoute,
     /// Auto-copy an item's code when navigating to its card (`--auto-copy`);

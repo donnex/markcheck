@@ -121,6 +121,8 @@ only".
 
 ```sh
 markcheck runbook.md
+markcheck runbook.md#rollback         # open at the first task under "## Rollback"
+markcheck +120 runbook.md             # open at the task on (or after) line 120
 markcheck --nerd-font runbook.md      # Nerd Font icons, if your terminal has one
 markcheck --no-nerd-font runbook.md   # ...or plain Unicode again, if your config enables them
 markcheck --no-mouse runbook.md       # leave terminal text selection alone
@@ -265,6 +267,7 @@ How each piece maps to the UI:
 | a fenced block **directly after a list** (at column 0) | **Attached to that list's last card**, as if it were indented under it: shown in a box and copyable with `y`. Anything in between — a paragraph, a heading, another block — breaks the attachment, and a fence after a list that was dropped (no checkboxes) attaches nowhere; such a fence is not shown. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
+| `[Rollback](#rollback)` (a link to a heading in the same file) | `o` **jumps** to the first task under that heading instead of opening a browser, and `Ctrl-O` jumps back. Anchors are GitHub's: the heading lowercased, punctuation dropped, spaces as `-`, and `-1`, `-2` added to repeats, so links that work on GitHub work here. The same anchor opens a file there from the command line: `markcheck runbook.md#rollback`. |
 | a bare URL (`https://example.com/status`, `www.example.com`) and `<https://example.com>` | Also a **link**, the same as `[text](url)` with the URL as its text — as on GitHub. Trailing punctuation (`.`, `,`, `!`, an unmatched `)`, …) is left out of the URL, and a `www.` one opens as `http://`. Not inside the bold card title or inline code. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
 | inline HTML (`<kbd>`, `<br>`, …) and HTML blocks | **Dropped.** Inline tags are not shown on the card, though the text between them is (`<kbd>Enter</kbd>` shows as `Enter`); a block of HTML, including an `<!-- comment -->`, is not shown at all. A dropped tag still counts as a space, so `line one<br>line two` shows as `line one line two` rather than running the words together. |
@@ -416,6 +419,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `s` | mark the current task started / in progress (`[/]`) |
 | `-` | skip the current task (`[-]`: it doesn't apply this run), or unskip it; skipping moves on to the next open task |
 | `u` / `Ctrl-R` | undo / redo the last change (toggle, start, or reset) |
+| `Ctrl-O` | go back to where you were before `o` followed a `#section` link, as in vim |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around, and the status bar says when it does) |
 | `Shift-H` / `Shift-L` | jump to the previous / next list with unfinished tasks |
 | `/` | search tasks by text — jump to the next match from the cursor as you type |

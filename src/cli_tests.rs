@@ -260,3 +260,39 @@ fn an_ssh_session_is_recognised_from_either_variable() {
     ));
     assert!(is_remote_session(None, Some("/dev/pts/3")));
 }
+
+#[test]
+fn a_plus_line_argument_is_taken_out_before_clap() {
+    use std::ffi::OsString;
+    let args: Vec<OsString> = ["markcheck", "+42", "runbook.md", "+x", "+"]
+        .iter()
+        .map(OsString::from)
+        .collect();
+    let (rest, line) = super::take_start_line(args);
+    assert_eq!(line, Some(42));
+    assert_eq!(rest, vec!["markcheck", "runbook.md", "+x", "+"]);
+    let (_, none) = super::take_start_line(vec![OsString::from("+7")]);
+    assert_eq!(none, None, "the program name is never a line");
+}
+
+#[test]
+fn a_hash_suffix_is_an_anchor_only_when_the_file_before_it_exists() {
+    let dir = crate::test_support::unique_temp_path("cli", "anchor", None);
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("runbook.md");
+    std::fs::write(&file, "- [ ] x\n").unwrap();
+    let hashed = dir.join("notes#1.md");
+    std::fs::write(&hashed, "- [ ] y\n").unwrap();
+
+    assert_eq!(
+        super::split_anchor(&dir.join("runbook.md#rollback")),
+        Some((file.clone(), "rollback".to_string()))
+    );
+    assert_eq!(
+        super::split_anchor(&hashed),
+        None,
+        "a real file with # opens as itself"
+    );
+    assert_eq!(super::split_anchor(&dir.join("runbook.md#")), None);
+    assert_eq!(super::split_anchor(&dir.join("missing.md#x")), None);
+}

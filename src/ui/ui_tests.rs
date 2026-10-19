@@ -350,6 +350,7 @@ fn state_with(lists: Vec<List>) -> AppState {
         lists,
         preambles: Default::default(),
         unshown: Default::default(),
+        anchors: Vec::new(),
         raw_lines: vec![],
     };
     let mut state = AppState::new(document);

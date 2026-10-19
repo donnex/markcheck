@@ -544,6 +544,16 @@ fn keeps_fence_attachment(event: &Event) -> bool {
     )
 }
 
+/// A heading's GitHub anchor: lowercase, punctuation other than `-` and `_`
+/// dropped, spaces turned into `-`.
+pub(crate) fn slug(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
 /// A quote opening with GitHub's `[!WARNING]`, `[!CAUTION]` or
 /// `[!IMPORTANT]` becomes an alert, its marker replaced by a label.
 fn as_alert(block: PreambleBlock) -> PreambleBlock {
@@ -589,6 +599,10 @@ struct ParseState<'a> {
     /// heading outside any list item; one inside an item is that item's
     /// content and is read by the item itself.
     heading: Option<(HeadingLevel, String)>,
+    /// The open heading's source line, for its anchor.
+    heading_line: LineNumber,
+    /// Every structural heading's GitHub-style anchor and line, in order.
+    anchors: Vec<(String, LineNumber)>,
     /// Set while the open heading sits inside a `>` blockquote outside any
     /// item: a quoted heading never opens a list, sets the title or starts a
     /// sub-section.
@@ -662,6 +676,8 @@ impl<'a> ParseState<'a> {
             default_items: Vec::new(),
             default_banner: None,
             heading: None,
+            heading_line: 0,
+            anchors: Vec::new(),
             heading_quoted: false,
             document_title: None,
             section_stack: Vec::new(),
@@ -733,6 +749,20 @@ impl<'a> ParseState<'a> {
         self.scope_level = level;
     }
 
+    /// Records the heading's anchor the way GitHub derives it, numbering a
+    /// repeat `-1`, `-2`, …, so `[Rollback](#rollback)` links work as they do
+    /// there (#139).
+    fn add_anchor(&mut self, text: &str) {
+        let base = slug(text);
+        let mut anchor = base.clone();
+        let mut repeat = 0;
+        while self.anchors.iter().any(|(taken, _)| *taken == anchor) {
+            repeat += 1;
+            anchor = format!("{base}-{repeat}");
+        }
+        self.anchors.push((anchor, self.heading_line));
+    }
+
     /// The first task after a heading takes the preamble written above it.
     fn claim_preamble(&mut self, line: LineNumber) {
         self.preamble_open = false;
@@ -752,7 +782,7 @@ impl<'a> ParseState<'a> {
             self.attach_fence_to_last_item = false;
         }
         match event {
-            Event::Start(Tag::Heading { level, .. }) => self.on_heading_start(level),
+            Event::Start(Tag::Heading { level, .. }) => self.on_heading_start(level, offset),
             Event::End(TagEnd::Heading(level)) => self.on_heading_end(level),
             Event::Start(Tag::List(_)) => self.on_list_start(),
             Event::End(TagEnd::List(_)) => self.on_list_end(),
@@ -827,12 +857,13 @@ impl<'a> ParseState<'a> {
 
     /// A heading inside a list item (`- ## Rollback`) is read like a bold
     /// run: a leading one becomes the card title, a later one bold body text.
-    fn on_heading_start(&mut self, level: HeadingLevel) {
+    fn on_heading_start(&mut self, level: HeadingLevel, offset: usize) {
         if let Some(item) = self.item_stack.last_mut() {
             item.mark_boundary();
             item.start_strong();
         } else {
             self.heading = Some((level, String::new()));
+            self.heading_line = self.line_counter.line_at(offset, self.source);
             self.heading_quoted = self.blockquote_depth > 0;
         }
     }
@@ -851,6 +882,7 @@ impl<'a> ParseState<'a> {
         }
         let text = text.trim();
         self.open_preamble_scope(heading_level_number(level));
+        self.add_anchor(text);
         match level {
             HeadingLevel::H2 => {
                 self.lists.push(List {
@@ -1102,6 +1134,7 @@ impl<'a> ParseState<'a> {
             lists,
             preambles,
             unshown,
+            anchors: self.anchors,
             raw_lines,
         }
     }

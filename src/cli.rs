@@ -1,12 +1,13 @@
 //! The command line: clap's `Cli`, and the CLI-plus-config precedence that
 //! resolves it into `Settings`.
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
 use crate::config;
-use crate::model::{ClipboardChoice, ColorChoice};
+use crate::model::{ClipboardChoice, ColorChoice, LineNumber};
 
 /// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
@@ -114,6 +115,45 @@ impl Settings {
             color: cli.color.or(config.color).unwrap_or_default(),
         }
     }
+}
+
+/// Takes a vim-style `+N` (open at line N) out of the arguments, so clap
+/// sees only the rest. Only an argument that is `+` and digits counts.
+pub fn take_start_line(args: Vec<OsString>) -> (Vec<OsString>, Option<LineNumber>) {
+    let mut line = None;
+    let rest = args
+        .into_iter()
+        .enumerate()
+        .filter(|(index, arg)| {
+            let number = arg
+                .to_str()
+                .and_then(|arg| arg.strip_prefix('+'))
+                .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|digits| digits.parse().ok());
+            match number {
+                Some(number) if *index > 0 => {
+                    line = Some(number);
+                    false
+                }
+                _ => true,
+            }
+        })
+        .map(|(_, arg)| arg)
+        .collect();
+    (rest, line)
+}
+
+/// `file.md#anchor` as the file and the anchor, when the path as given
+/// doesn't exist but the part before its last `#` does, so a real file name
+/// with a `#` in it still opens as itself.
+pub fn split_anchor(path: &Path) -> Option<(PathBuf, String)> {
+    if path.exists() {
+        return None;
+    }
+    let text = path.to_str()?;
+    let (file, anchor) = text.rsplit_once('#')?;
+    let file = PathBuf::from(file);
+    (!anchor.is_empty() && file.exists()).then(|| (file, anchor.to_string()))
 }
 
 /// Where copies go: the flag, then the config, then `auto`.

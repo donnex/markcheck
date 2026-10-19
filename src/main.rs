@@ -80,7 +80,8 @@ fn install_panic_hook() {
 const ISSUES_URL: &str = "https://github.com/donnex/markcheck/issues";
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let (args, start_line) = cli::take_start_line(std::env::args_os().collect());
+    let cli = Cli::parse_from(args);
     // A passed flag wins, then the config, then the default. A malformed
     // config is an error rather than a silent fallback; an unknown key is
     // only a warning, since it may come from a newer release.
@@ -97,6 +98,7 @@ fn main() -> anyhow::Result<()> {
     // Canonicalize up front: write-back would replace a symlink with a regular
     // file, and the watcher would watch the wrong directory. `--new` already
     // returns a canonical path.
+    let mut start_at = start_line.map(model::StartAt::Line);
     let (file_path, created_new) = if let Some(new_path) = &cli.new {
         let created = scaffold::create_new_checklist(new_path)
             .with_context(|| format!("cannot create {}", new_path.display()))?;
@@ -104,11 +106,15 @@ fn main() -> anyhow::Result<()> {
     } else {
         // clap's `required_unless_present = "new"` guarantees this is `Some`
         // whenever `cli.new` is `None`.
-        let file = cli
+        let mut file = cli
             .file
-            .as_ref()
+            .clone()
             .expect("clap requires FILE when --new is absent");
-        let resolved = std::fs::canonicalize(file)
+        if let Some((path, anchor)) = cli::split_anchor(&file) {
+            file = path;
+            start_at = Some(model::StartAt::Anchor(anchor));
+        }
+        let resolved = std::fs::canonicalize(&file)
             .with_context(|| format!("cannot resolve path: {}", file.display()))?;
         (resolved, false)
     };
@@ -200,10 +206,22 @@ fn main() -> anyhow::Result<()> {
         launch::leftovers_warning(leftovers),
         launch::unshown_warning(&state.document.unshown),
     ];
+    let opened_at = start_at.as_ref().map(|start| state.open_at(start));
+    let mut warnings = warnings.to_vec();
+    let mut opened_note = None;
+    match opened_at {
+        Some(Err(reason)) => warnings.push(Some(reason)),
+        Some(Ok(note)) => opened_note = Some(note),
+        None => {}
+    }
     match launch::startup_message(created_new, &warnings) {
         Some((message, true)) => state.set_error(message),
         Some((message, false)) => state.set_status(message),
-        None => {}
+        None => {
+            if let Some(note) = opened_note {
+                state.set_status(note);
+            }
+        }
     }
     // Drives the persistent `⇅ git` section in the title bar
     // (`render_title_bar` in `ui/mod.rs`) — set once here and never touched

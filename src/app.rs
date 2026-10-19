@@ -194,6 +194,7 @@ impl AppState {
             pending_number: 0,
             icons: IconSet::unicode(),
             clipboard_primary: false,
+            jump_back: Vec::new(),
             copy_route: CopyRoute::default(),
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this
@@ -1361,6 +1362,8 @@ impl AppState {
                 self.undo_stack.clear();
                 self.redo_stack.clear();
                 self.history_epoch += 1;
+                // Positions from before the edit may no longer mean the same card.
+                self.jump_back.clear();
                 // A queued git-sync request describes content this reload replaced. The
                 // new content queues nothing: markcheck doesn't commit edits it didn't
                 // make.
@@ -1674,6 +1677,51 @@ impl AppState {
         }
     }
 
+    /// `o` on `[Rollback](#rollback)`: jump to the first task under that
+    /// heading, remembering where from for `Ctrl-O`, as in vim (#139).
+    fn follow_anchor(&mut self, anchor: &str) {
+        let Some(target) = self.document.anchor_target(anchor) else {
+            self.set_error(format!("No section named #{anchor} in this file"));
+            return;
+        };
+        self.jump_back
+            .push((self.current_list_index, self.current_item_index));
+        self.focus_and_report(
+            target,
+            Some(format!("Jumped to #{anchor} · Ctrl-O goes back")),
+        );
+        self.view = View::Checklist;
+    }
+
+    /// `Ctrl-O`: back to where the last `#anchor` jump left from.
+    fn jump_back(&mut self) {
+        match self.jump_back.pop() {
+            Some(target) => self.focus_and_report(target, Some("Jumped back".to_string())),
+            None => self.set_error(
+                "Nothing to go back to: Ctrl-O returns from following a #link with o".to_string(),
+            ),
+        }
+    }
+
+    /// Moves to where `markcheck file.md#anchor` or `+N` asked to start
+    /// (#114). `Ok` is the confirmation to show; `Err` says why it couldn't,
+    /// with the cursor left on the first unfinished task. The caller shows
+    /// either alongside the other startup messages.
+    pub fn open_at(&mut self, start: &crate::model::StartAt) -> Result<String, String> {
+        let (target, description) = match start {
+            crate::model::StartAt::Line(line) => {
+                (self.document.first_task_from(*line), format!("line {line}"))
+            }
+            crate::model::StartAt::Anchor(anchor) => {
+                (self.document.anchor_target(anchor), format!("#{anchor}"))
+            }
+        };
+        let (list_index, item_index) = target
+            .ok_or_else(|| format!("no list or task at {description}, so opened at the start"))?;
+        self.focus_item(list_index, item_index, CursorMove::Navigate);
+        Ok(format!("Opened at {description}"))
+    }
+
     fn current_link_urls(&self) -> Vec<String> {
         self.current_item()
             .map(|item| item.link_urls().iter().map(|u| u.to_string()).collect())
@@ -1681,9 +1729,11 @@ impl AppState {
     }
 
     /// Hands `url` to the main loop's opener, unless its scheme isn't one
-    /// markcheck opens.
+    /// markcheck opens. A `#anchor` link is followed within the document.
     fn open_url(&mut self, url: &str) {
-        if is_safe_link(url) {
+        if let Some(anchor) = url.strip_prefix('#') {
+            self.follow_anchor(anchor);
+        } else if is_safe_link(url) {
             self.effects.push(Effect::OpenLink(url.to_string()));
         } else {
             self.set_error(format!("Not opened: unsupported link type ({url})"));
@@ -2069,7 +2119,7 @@ impl AppState {
             return false;
         };
         let bound: &[char] = match (self.overlay, self.view) {
-            (None, View::Checklist) => &['e', 'y', 'd', 'u', 'r'],
+            (None, View::Checklist) => &['e', 'y', 'd', 'u', 'r', 'o'],
             (None, View::ListComplete | View::AllComplete) => &['r'],
             (Some(Overlay::Help), _) => &['e', 'y', 'd', 'u'],
             (Some(Overlay::ListPicker), _) => &['p', 'n', 'd', 'u', 'w'],
@@ -2355,6 +2405,13 @@ impl AppState {
         }
         if code == KeyCode::Char('r') && modifiers.contains(KeyModifiers::CONTROL) {
             self.redo();
+            return true;
+        }
+        if code == KeyCode::Char('o')
+            && modifiers.contains(KeyModifiers::CONTROL)
+            && self.view == View::Checklist
+        {
+            self.jump_back();
             return true;
         }
 

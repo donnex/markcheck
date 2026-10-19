@@ -2473,3 +2473,35 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
 
     std::fs::remove_file(&path).ok();
 }
+
+#[test]
+fn a_hash_anchor_or_plus_line_opens_at_that_task() {
+    let path = unique_path("start-at");
+    write_file(
+        &path,
+        "## First\n\n- [ ] alpha\n- [ ] beta\n\n## Second section\n\n- [ ] gamma\n",
+    );
+
+    let mut cmd = markcheck_command();
+    cmd.arg(format!("{}#second-section", path.display()));
+    let mut session = Session::spawn(cmd);
+    session.wait_for_screen("Opened at #second-section");
+    session.wait_for_screen("gamma");
+    session.key("q");
+    assert!(session.finish().0);
+
+    let mut cmd = markcheck_command();
+    cmd.arg("+4");
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.wait_for_screen("Opened at line 4");
+    session.key("q");
+    assert!(session.finish().0);
+
+    let mut cmd = markcheck_command();
+    cmd.arg(format!("{}#nowhere", path.display()));
+    let mut session = Session::spawn(cmd);
+    session.wait_for_screen("no list or task at #nowhere");
+    session.key("q");
+    assert!(session.finish().0);
+}

@@ -25,7 +25,8 @@ a note card.
 
 - [ ] Check the health endpoint `curl https://example.com/health`
 - [ ] **Run the smoke tests**
-- [ ] Tail the logs and watch for errors
+- [ ] Tail the logs and watch for errors; if they show a failure, go back to
+  [Prepare](#prepare) (`o` follows the link, `Ctrl-O` comes back)
 - [X] Record the start time — an uppercase `[X]` counts as done too
 - [-] Restart the replica — skipped (`[-]`): there is no replica this time
 
