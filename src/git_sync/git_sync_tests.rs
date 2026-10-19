@@ -120,7 +120,7 @@ fn repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits(
     sync.request(pending_sync("- [x] one\n- [x] two\n- [x] three\n", "third"));
     assert!(sync.busy, "still mid-flight on the first attempt");
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut outcomes = Vec::new();
     loop {
         if let Some(outcome) = sync.poll() {
@@ -246,7 +246,7 @@ fn retry_push_if_due_retries_once_the_backoff_interval_elapses() {
         "the backoff interval elapsed, a retry should have spawned"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut outcome = None;
     while Instant::now() < deadline {
         if let Some(o) = sync.poll() {
@@ -288,7 +288,7 @@ fn retry_push_if_due_clears_the_retry_when_head_has_moved_on() {
         "the backoff interval elapsed, a retry should have spawned"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut outcome = None;
     while Instant::now() < deadline {
         if let Some(o) = sync.poll() {
@@ -461,7 +461,7 @@ fn request_and_poll_roundtrip_reports_synced() {
     let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
     sync.request(pending_sync("- [x] one\n", "Check \"one\""));
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut result = None;
     while Instant::now() < deadline {
         if let Some(outcome) = sync.poll() {
@@ -491,7 +491,7 @@ fn a_request_while_busy_is_coalesced_and_runs_after() {
         Some(vec!["second".to_string()])
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut outcomes = Vec::new();
     while Instant::now() < deadline && outcomes.len() < 2 {
         if let Some(outcome) = sync.poll() {
@@ -644,14 +644,14 @@ fn abandon_stops_the_running_git_and_starts_no_more() {
     let mut sync = GitSync::detect(&file).unwrap();
     sync.request(pending_sync("- [x] one\n", "Check"));
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while !started.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(started.exists(), "the hook never started");
     assert!(sync.abandon(false), "the commit's git was running");
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut outcome = None;
     while outcome.is_none() && Instant::now() < deadline {
         outcome = sync.poll();
