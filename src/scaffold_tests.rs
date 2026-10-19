@@ -7,32 +7,6 @@ fn unique_temp_dir() -> PathBuf {
 }
 
 #[test]
-fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
-    // A file at the generated name must be left untouched.
-    let dir = unique_temp_dir();
-    let base = dir.join(".todo.md.markcheck-new-collision");
-    fs::write(&base, "a live process's own temp file, not markcheck's\n").unwrap();
-
-    let written_path = write_temp(&base, "# Todo\n\n- [ ]\n").unwrap();
-
-    assert_ne!(
-        written_path, base,
-        "must not have written to (or reused) the colliding name"
-    );
-    assert_eq!(
-        fs::read_to_string(&base).unwrap(),
-        "a live process's own temp file, not markcheck's\n",
-        "the pre-existing file at the colliding name must be completely untouched"
-    );
-    assert_eq!(
-        fs::read_to_string(&written_path).unwrap(),
-        "# Todo\n\n- [ ]\n"
-    );
-
-    fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
 fn derive_title_splits_and_title_cases_hyphens_and_underscores() {
     assert_eq!(
         derive_title(Path::new("meeting-notes_draft.md")),

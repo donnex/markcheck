@@ -485,54 +485,79 @@ pub(crate) fn sync_parent_dir(path: &Path) {
 /// Creates the temp file 0600, writes the contents, gives it the source's
 /// owner and group as far as this user may, applies the source's ordinary
 /// permission bits (never setuid, setgid or sticky) through the handle
-/// (immune to umask) and fsyncs. If the name
-/// is taken it retries once at a fresh name, never deleting the existing
-/// file, which may belong to a live writer. Returns the path written.
+/// (immune to umask) and fsyncs. Returns the path written.
 fn write_temp(base_temp_path: &Path, contents: &str, source: &fs::Metadata) -> io::Result<PathBuf> {
-    use std::io::Write;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, fchown};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
 
-    let open = |path: &Path| {
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-    };
-    let (path, mut file) = match open(base_temp_path) {
-        Ok(file) => (base_temp_path.to_path_buf(), file),
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            let mut retry_path = base_temp_path.as_os_str().to_os_string();
-            retry_path.push(format!("-{:x}", random_suffix()));
-            let retry_path = PathBuf::from(retry_path);
-            let file = open(&retry_path)?;
-            (retry_path, file)
-        }
-        Err(err) => return Err(err),
-    };
-
-    let write_result = (|| {
-        file.write_all(contents.as_bytes())?;
+    write_new_temp(base_temp_path, 0o600, contents, |file| {
         // Best effort: keeping the UID needs root, but any group the
         // user belongs to may be set, which keeps a shared group
         // checklist writable by the group rather than handing it to the
         // saver's primary group.
-        if fchown(&file, Some(source.uid()), Some(source.gid())).is_err() {
-            let _ = fchown(&file, None, Some(source.gid()));
+        if fchown(file, Some(source.uid()), Some(source.gid())).is_err() {
+            let _ = fchown(file, None, Some(source.gid()));
         }
         // Only the ordinary bits: the new file belongs to the saver, so
         // copying setuid/setgid/sticky would bypass the kernel clearing
         // them when someone other than the owner writes the file.
-        file.set_permissions(fs::Permissions::from_mode(source.mode() & 0o777))?;
+        file.set_permissions(fs::Permissions::from_mode(source.mode() & 0o777))
+    })
+}
+
+/// [`write_new_file`] at `base`, or once more at a fresh name if `base` is
+/// taken, never deleting the file there, which may belong to a live writer.
+/// Returns the path written.
+pub(crate) fn write_new_temp(
+    base: &Path,
+    mode: u32,
+    contents: &str,
+    prepare: impl FnOnce(&fs::File) -> io::Result<()>,
+) -> io::Result<PathBuf> {
+    let mut retry_path = base.as_os_str().to_os_string();
+    retry_path.push(format!("-{:x}", random_suffix()));
+    let retry_path = PathBuf::from(retry_path);
+    let mut prepare = Some(prepare);
+    let mut attempt = |path: &Path| {
+        write_new_file(path, mode, contents, |file| {
+            prepare.take().map_or(Ok(()), |prepare| prepare(file))
+        })
+    };
+    match attempt(base) {
+        Ok(()) => Ok(base.to_path_buf()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            attempt(&retry_path)?;
+            Ok(retry_path)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Creates `path` with `mode` (before the umask), failing if it exists,
+/// writes `contents`, runs `prepare` on the handle and fsyncs, removing the
+/// file again if any of that fails.
+pub(crate) fn write_new_file(
+    path: &Path,
+    mode: u32,
+    contents: &str,
+    prepare: impl FnOnce(&fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(path)?;
+    let result = (|| {
+        file.write_all(contents.as_bytes())?;
+        prepare(&file)?;
         file.sync_all()
     })();
-    match write_result {
-        Ok(()) => Ok(path),
-        Err(err) => {
-            let _ = fs::remove_file(&path);
-            Err(err)
-        }
+    if result.is_err() {
+        let _ = fs::remove_file(path);
     }
+    result
 }
 
 #[cfg(test)]

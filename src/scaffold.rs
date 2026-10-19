@@ -1,8 +1,8 @@
 //! Creates a starter checklist file for `--new`.
 
+use crate::writer::{write_new_file, write_new_temp};
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Builds a human title from a file stem: splits on `-`/`_`, title-cases
@@ -103,8 +103,9 @@ fn create_new_checklist_with(
         std::process::id(),
         crate::writer::random_suffix()
     ));
-    // `write_temp` cleans up after its own failures.
-    let temp_path = write_temp(&temp_path_base, &contents)?;
+    // A new file gets the umask default rather than explicit permissions.
+    // `write_new_temp` cleans up after its own failures.
+    let temp_path = write_new_temp(&temp_path_base, 0o666, &contents, |_| Ok(()))?;
     let link_result = link(&temp_path, &full_path);
     let _ = fs::remove_file(&temp_path);
     match link_result {
@@ -112,46 +113,12 @@ fn create_new_checklist_with(
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => return Err(err),
         // FAT32/exFAT, many SMB mounts and some FUSE filesystems have no hard
         // links, and report it with a range of error codes.
-        Err(_) => write_new_file(&full_path, &contents)?,
+        Err(_) => write_new_file(&full_path, 0o666, &contents, |_| Ok(()))?,
     }
 
     crate::writer::sync_parent_dir(&full_path);
 
     Ok(full_path)
-}
-
-/// Like `writer::write_temp`, without explicit permissions: a new file gets
-/// the umask default. Retries once at a fresh name if taken, never deleting
-/// the existing file.
-fn write_temp(base_temp_path: &Path, contents: &str) -> io::Result<PathBuf> {
-    match write_new_file(base_temp_path, contents) {
-        Ok(()) => Ok(base_temp_path.to_path_buf()),
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            let mut retry_path = base_temp_path.as_os_str().to_os_string();
-            retry_path.push(format!("-{:x}", crate::writer::random_suffix()));
-            let retry_path = PathBuf::from(retry_path);
-            write_new_file(&retry_path, contents)?;
-            Ok(retry_path)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-/// Creates `path` (failing if it exists), writes and fsyncs `contents`, and
-/// removes the file again if the write fails.
-fn write_new_file(path: &Path, contents: &str) -> io::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    let write_result = (|| {
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()
-    })();
-    if write_result.is_err() {
-        let _ = fs::remove_file(path);
-    }
-    write_result
 }
 
 #[cfg(test)]
