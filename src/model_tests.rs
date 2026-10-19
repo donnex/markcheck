@@ -463,8 +463,8 @@ fn for_depth_records_the_depth() {
 #[test]
 fn progress_rgb_hits_the_two_stops() {
     // Yellow at 0% done, green at 100%.
-    assert_eq!(progress_rgb_parts(0.0), PROGRESS_YELLOW);
-    assert_eq!(progress_rgb_parts(1.0), PROGRESS_GREEN);
+    assert_eq!(progress_rgb_parts(0.0), STARTED_RGB);
+    assert_eq!(progress_rgb_parts(1.0), DONE_RGB);
 }
 
 #[test]
@@ -472,29 +472,29 @@ fn progress_rgb_is_monotonic_between_stops() {
     // Half-way is strictly between yellow and green on the channels that move
     // in one direction (r falls and b falls yellow→green).
     let (r, _g, b) = progress_rgb_parts(0.5);
-    assert!(r < PROGRESS_YELLOW.0 && r > PROGRESS_GREEN.0);
-    assert!(b < PROGRESS_YELLOW.2 && b > PROGRESS_GREEN.2);
+    assert!(r < STARTED_RGB.0 && r > DONE_RGB.0);
+    assert!(b < STARTED_RGB.2 && b > DONE_RGB.2);
 }
 
 #[test]
 fn progress_rgb_clamps_out_of_range_ratios() {
-    assert_eq!(progress_rgb_parts(-1.0), PROGRESS_YELLOW);
-    assert_eq!(progress_rgb_parts(2.0), PROGRESS_GREEN);
+    assert_eq!(progress_rgb_parts(-1.0), STARTED_RGB);
+    assert_eq!(progress_rgb_parts(2.0), DONE_RGB);
 }
 
 #[test]
 fn truecolor_progress_color_fades_with_completion() {
     let p = Palette::for_depth(ColorDepth::TrueColor);
-    let (yr, yg, yb) = PROGRESS_YELLOW;
-    let (er, eg, eb) = PROGRESS_GREEN;
+    let (yr, yg, yb) = STARTED_RGB;
+    let (er, eg, eb) = DONE_RGB;
     // Starts at yellow (not gray), ends at green.
     assert_eq!(p.progress_color(0, 4).fg, Some(Color::Rgb(yr, yg, yb)));
     assert_eq!(p.progress_color(4, 4).fg, Some(Color::Rgb(er, eg, eb)));
     // Half done is a blend strictly between the yellow and green stops.
     let (mr, mg, mb) = progress_rgb_parts(0.5);
     assert_eq!(p.progress_color(2, 4).fg, Some(Color::Rgb(mr, mg, mb)));
-    assert_ne!((mr, mg, mb), PROGRESS_YELLOW);
-    assert_ne!((mr, mg, mb), PROGRESS_GREEN);
+    assert_ne!((mr, mg, mb), STARTED_RGB);
+    assert_ne!((mr, mg, mb), DONE_RGB);
 }
 
 #[test]
@@ -502,7 +502,7 @@ fn empty_document_counter_reads_complete() {
     // total == 0 is treated as fully done (green), matching the old
     // done == total semantics rather than the 0%-done yellow.
     let p = Palette::for_depth(ColorDepth::TrueColor);
-    let (er, eg, eb) = PROGRESS_GREEN;
+    let (er, eg, eb) = DONE_RGB;
     assert_eq!(p.progress_color(0, 0).fg, Some(Color::Rgb(er, eg, eb)));
 }
 
@@ -558,4 +558,13 @@ fn document_checkbox_stats_sums_across_lists() {
         raw_lines: vec![],
     };
     assert_eq!(document.checkbox_stats(), (2, 3));
+}
+
+#[test]
+fn the_progress_ramp_runs_between_the_truecolor_started_and_done_colors() {
+    let palette = Palette::truecolor();
+    let (r, g, b) = progress_rgb_parts(0.0);
+    assert_eq!(palette.started, Color::Rgb(r, g, b));
+    let (r, g, b) = progress_rgb_parts(1.0);
+    assert_eq!(palette.done, Color::Rgb(r, g, b));
 }

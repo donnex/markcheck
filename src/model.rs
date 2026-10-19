@@ -665,8 +665,8 @@ impl Palette {
     /// Curated 24-bit hues (One Dark).
     pub const fn truecolor() -> Self {
         Palette {
-            done: Color::Rgb(0x98, 0xc3, 0x79),
-            started: Color::Rgb(0xe5, 0xc0, 0x7b),
+            done: rgb(DONE_RGB),
+            started: rgb(STARTED_RGB),
             // One Dark foreground on its selection gray.
             code: Style::new()
                 .fg(Color::Rgb(0xab, 0xb2, 0xbf))
@@ -773,9 +773,14 @@ impl Palette {
     }
 }
 
-/// The progress ramp's stops; yellow, not gray, so 0% stays readable.
-const PROGRESS_YELLOW: (u8, u8, u8) = (0xe5, 0xc0, 0x7b);
-const PROGRESS_GREEN: (u8, u8, u8) = (0x98, 0xc3, 0x79);
+/// The truecolor done and started colors, which are also the progress
+/// ramp's stops: yellow, not gray, so 0% stays readable.
+const DONE_RGB: (u8, u8, u8) = (0x98, 0xc3, 0x79);
+const STARTED_RGB: (u8, u8, u8) = (0xe5, 0xc0, 0x7b);
+
+const fn rgb((r, g, b): (u8, u8, u8)) -> Color {
+    Color::Rgb(r, g, b)
+}
 
 /// Linear interpolation from started-yellow (0% done) to done-green (100%),
 /// returning raw `(r, g, b)`. `ratio` is clamped to `[0, 1]`.
@@ -783,9 +788,9 @@ fn progress_rgb_parts(ratio: f32) -> (u8, u8, u8) {
     let ratio = ratio.clamp(0.0, 1.0);
     let lerp = |a: u8, b: u8, t: f32| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
     (
-        lerp(PROGRESS_YELLOW.0, PROGRESS_GREEN.0, ratio),
-        lerp(PROGRESS_YELLOW.1, PROGRESS_GREEN.1, ratio),
-        lerp(PROGRESS_YELLOW.2, PROGRESS_GREEN.2, ratio),
+        lerp(STARTED_RGB.0, DONE_RGB.0, ratio),
+        lerp(STARTED_RGB.1, DONE_RGB.1, ratio),
+        lerp(STARTED_RGB.2, DONE_RGB.2, ratio),
     )
 }
 
