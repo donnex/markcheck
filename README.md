@@ -131,6 +131,7 @@ markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your c
 markcheck --color 256 runbook.md      # force a palette: auto, truecolor, 256 or 16
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --no-git-sync runbook.md    # ...or never, even under a git_sync_paths entry
+markcheck --git-sync-delay 0 runbook.md  # commit every change at once instead of after 10 s
 markcheck --config other.toml runbook.md  # read another config file instead
 markcheck --no-config runbook.md      # ignore the config file for this run
 markcheck --new runbook.md            # create a starter checklist, then open it
@@ -160,6 +161,7 @@ primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths (end with /** to include nested repositories)
+git_sync_delay = 10 # = --git-sync-delay: seconds without a change before git sync commits; 0 = at once
 ```
 
 No config file is not an error — `markcheck` just uses the built-in
@@ -536,15 +538,21 @@ instead`).
 
 With `--git-sync` (or a matching `git_sync_paths` entry, above) active for a
 file that's already in a git repository, every toggle/start/reset/undo/redo
-commits and pushes the change in the background, so a checklist shared via
-git stays in sync across machines without leaving the app. Changes are never
-lost, but if several land while a previous commit/push is still in flight,
-they coalesce into one commit rather than one apiece — the commit message
-then names only the last of them, though its content still reflects every
-change up to that point. Editing the file
-in `$EDITOR` (`e`) syncs too, as its own commit (`checklist.md: Edited in
-vim`, naming only the editor program, never its directory) — even if you
-only edit and quit without toggling anything afterward. An editor that
+is committed and pushed in the background, so a checklist shared via git
+stays in sync across machines without leaving the app. It waits until 10
+seconds pass without another change (the title bar shows `⇅ git · pending`
+meanwhile), so a burst of ticks becomes one commit and a tick you undo
+straight away is never published at all. Set `git_sync_delay` in the config
+file or pass `--git-sync-delay SECONDS` to change the wait, or `0` to
+commit every change at once. A single change is committed as
+`checklist.md: Check "Restart service"`; several are committed as
+`checklist.md: 3 changes`, listing each in the commit body. Changes are
+never lost: quitting sends a waiting change straight away, and changes made
+while a commit/push is still running are folded into the next one. Editing
+the file in `$EDITOR` (`e`) syncs too, at once rather than after the wait
+(`checklist.md: Edited in vim`, naming only the editor program, never its
+directory) — even if you only edit and quit without toggling anything
+afterward. An editor that
 exits with an error (vim's `:cq`) counts as an abort: the edit is reloaded
 but not synced, and the status bar keeps the error, ending in `not synced`. The editor has to stay open until you close the file (see [Editor and reset](#editor-and-reset)): an edit saved later from a window it handed off to reaches markcheck as an outside change, which is not synced. If something *else* changes the file in the meantime — an
 edit made outside markcheck entirely, or the file getting deleted — while

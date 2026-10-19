@@ -1232,6 +1232,7 @@ fn git_sync_session(path: &Path) -> Session {
     let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
+    cmd.args(["--git-sync-delay", "0"]);
     cmd.arg(path);
     Session::spawn(cmd)
 }
@@ -1357,6 +1358,41 @@ fn sigterm_mid_sync_quits_cleanly_and_leaves_nothing_behind() {
         "the hook must not outlive markcheck"
     );
     assert_eq!(temp_indexes_left(&work), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_burst_of_toggles_waits_then_becomes_one_commit_on_quit() {
+    // The default quiet period holds the sync; the title bar says so, and
+    // quitting sends it at once as one commit.
+    let (root, path, _pid_file) = repo_with_a_slow_hook("gitsync-batch", "true");
+    let work = path.parent().unwrap().to_path_buf();
+
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--git-sync");
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.key(" ");
+    session.key("s");
+    session.wait_for_screen("git · pending");
+    session.key("q");
+    let (ok, _) = session.finish();
+    assert!(ok, "binary should exit successfully");
+
+    let out = git(&work)
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "checklist.md: 2 changes"
+    );
+    let count = git(&work)
+        .args(["rev-list", "--count", "HEAD"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -2050,6 +2086,7 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     let mut cmd = markcheck_command();
     cmd.arg("--no-nerd-font");
     cmd.arg("--git-sync");
+    cmd.args(["--git-sync-delay", "0"]);
     cmd.arg(&path);
     let mut session = Session::spawn(cmd);
     session.key(" "); // toggle: commits locally, push fails

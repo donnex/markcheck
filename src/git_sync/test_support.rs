@@ -139,6 +139,7 @@ pub(super) fn pending_sync(content: &str, description: &str) -> PendingSync {
         content_hash: hash_bytes(content.as_bytes()),
         previous_content: None,
         description: description.to_string(),
+        immediate: false,
     }
 }
 /// Removed on drop, so a hook never leaks into the next test on the thread.

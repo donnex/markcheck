@@ -24,6 +24,18 @@ const MAX_COMMIT_MESSAGE_LEN: usize = 80;
 /// The smallest description budget worth keeping after a cut.
 const MIN_DESC_LEN: usize = 8;
 /// Bounds the file-name prefix so a very long name can't push the message
+/// One description as it is; several as a count, listed in the body, for a
+/// batch of changes synced together.
+pub(super) fn batch_message(file_path: &Path, descriptions: &[String]) -> String {
+    match descriptions {
+        [one] => commit_message(file_path, one),
+        many => {
+            let subject = commit_message(file_path, &format!("{} changes", many.len()));
+            let body: Vec<String> = many.iter().map(|desc| format!("- {desc}")).collect();
+            format!("{subject}\n\n{}", body.join("\n"))
+        }
+    }
+}
 /// past `MAX_COMMIT_MESSAGE_LEN`.
 const MAX_FILE_NAME_LEN: usize = MAX_COMMIT_MESSAGE_LEN - (2 + MIN_DESC_LEN + 1);
 pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {

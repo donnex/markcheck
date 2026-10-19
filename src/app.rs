@@ -1218,6 +1218,7 @@ impl AppState {
             content_hash,
             previous_content,
             description: change_desc.to_string(),
+            immediate: false,
         });
         true
     }
@@ -1389,6 +1390,7 @@ impl AppState {
             content,
             content_hash,
             description: format!("Edited in {}", program_name(editor)),
+            immediate: true,
         });
     }
 

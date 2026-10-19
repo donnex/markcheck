@@ -1187,6 +1187,21 @@ fn git_sync_failure_outranks_a_running_retry() {
 }
 
 #[test]
+fn git_sync_shows_pending_while_a_change_waits_to_sync() {
+    let mut state = sample_state();
+    state.git_sync.active = true;
+    state.git_sync.waiting = true;
+    let row = title_row(&mut state, 100, 30);
+    assert!(row.contains("git · pending"), "{row:?}");
+    state.git_sync.busy = true;
+    let row = title_row(&mut state, 100, 30);
+    assert!(
+        row.contains("git · syncing…"),
+        "running outranks waiting: {row:?}"
+    );
+}
+
+#[test]
 fn git_sync_shows_syncing_while_a_sync_runs() {
     let mut state = sample_state();
     state.git_sync.active = true;

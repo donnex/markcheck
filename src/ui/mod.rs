@@ -514,6 +514,14 @@ fn sync_section(state: &AppState, now: SystemTime) -> (String, Style) {
                 .add_modifier(Modifier::DIM),
         );
     }
+    if state.git_sync.waiting {
+        return (
+            format!("{prefix} · pending"),
+            Style::default()
+                .fg(palette.started)
+                .add_modifier(Modifier::DIM),
+        );
+    }
     // Green (`palette.done`) rather than the update tag's `palette.started`,
     // so a completed sync reads as a distinct, successful outcome.
     let healthy = Style::default()

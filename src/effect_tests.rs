@@ -17,6 +17,7 @@ fn sync(description: &str) -> PendingSync {
         content_hash: [0; 32],
         previous_content: None,
         description: description.to_string(),
+        immediate: false,
     }
 }
 

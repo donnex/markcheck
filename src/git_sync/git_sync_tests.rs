@@ -141,7 +141,7 @@ fn repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits(
         "at most 2 sync attempts, never one per request: {outcomes:?}"
     );
     assert!(!sync.busy, "must settle back to idle, not stuck busy");
-    assert!(sync.pending.is_none(), "no request left dangling");
+    assert!(sync.queued.is_none(), "no request left dangling");
     assert!(
         matches!(
             outcomes.first(),
@@ -487,8 +487,8 @@ fn a_request_while_busy_is_coalesced_and_runs_after() {
     assert!(sync.busy, "first request should mark the worker busy");
     sync.request(pending_sync("- [x] one\n", "second"));
     assert_eq!(
-        sync.pending.as_ref().map(|p| p.description.as_str()),
-        Some("second")
+        sync.queued.as_ref().map(|q| q.descriptions.clone()),
+        Some(vec!["second".to_string()])
     );
 
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -711,6 +711,75 @@ fn a_checklist_in_a_subdirectory_syncs_from_the_repository_root() {
     assert_eq!(
         git_stdout(&remote, &["show", "HEAD:docs/list.md"]),
         "- [x] one"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn requests_inside_the_quiet_period_become_one_commit() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let mut sync = GitSync::detect(&file).unwrap();
+    sync.set_delay(Duration::from_secs(60));
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(pending_sync("- [x] one\n", "Check \"one\""));
+    fs::write(&file, "- [/] one\n").unwrap();
+    sync.request(pending_sync("- [/] one\n", "Start \"one\""));
+    assert!(
+        !sync.is_busy() && sync.is_waiting(),
+        "held for the quiet period"
+    );
+
+    sync.tick(Instant::now() + Duration::from_secs(30));
+    assert!(sync.is_waiting(), "the second request restarted the timer");
+    sync.tick(Instant::now() + Duration::from_secs(61));
+    assert!(sync.is_busy());
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut outcome = None;
+    while outcome.is_none() && Instant::now() < deadline {
+        outcome = sync.poll();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(outcome, Some(SyncOutcome::Synced));
+    assert_eq!(
+        git_stdout(&remote, &["log", "-1", "--format=%B", "main"]),
+        "tracked.md: 2 changes\n\n- Check \"one\"\n- Start \"one\"\n\nSynced-by: markcheck"
+    );
+    assert_eq!(git_stdout(&remote, &["rev-list", "--count", "main"]), "2");
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn an_immediate_request_or_a_flush_skips_the_quiet_period() {
+    let (work, _remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let mut sync = GitSync::detect(&file).unwrap();
+    sync.set_delay(Duration::from_secs(60));
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    let mut edited = pending_sync("- [x] one\n", "Edited in vi");
+    edited.immediate = true;
+    sync.request(edited);
+    assert!(sync.is_busy(), "an editor's edit doesn't wait");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while sync.poll().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    fs::write(&file, "- [ ] one\n").unwrap();
+    sync.request(pending_sync("- [ ] one\n", "Uncheck \"one\""));
+    assert!(sync.is_waiting());
+    sync.flush();
+    assert!(sync.is_busy(), "quitting flushes the waiting change");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while sync.poll().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        git_stdout(&work, &["log", "-1", "--format=%s"]),
+        "tracked.md: Uncheck \"one\""
     );
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }

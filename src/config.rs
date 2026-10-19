@@ -21,6 +21,9 @@ pub struct Config {
     pub color: Option<ColorChoice>,
     /// Path prefixes under which git-sync activates, like `--git-sync`.
     pub git_sync_paths: Option<Vec<PathBuf>>,
+    /// Seconds git sync waits after the last change before committing, like
+    /// `--git-sync-delay`.
+    pub git_sync_delay: Option<u64>,
 }
 
 /// Every key `Config` reads; anything else in the file is reported as
@@ -32,6 +35,7 @@ const KNOWN_KEYS: &[&str] = &[
     "auto_copy",
     "color",
     "git_sync_paths",
+    "git_sync_delay",
 ];
 
 /// A parsed config plus the top-level keys it ignored, sorted.

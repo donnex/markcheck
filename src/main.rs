@@ -179,6 +179,9 @@ fn main() -> anyhow::Result<()> {
     });
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
+    if let Some(sync) = git_sync.as_mut() {
+        sync.set_delay(cli::git_sync_delay(&cli, &config));
+    }
     // What no signal handler can catch (SIGKILL, the OOM killer, a power
     // loss) still leaves these behind.
     let leftovers = writer::sweep_interrupted_saves(&state.document.file_path)
@@ -285,6 +288,7 @@ where
         // Nothing is drawn from here on: after SIGHUP the terminal is gone.
         if stop.load(Ordering::Relaxed) {
             return Ok(git_sync.as_mut().and_then(|sync| {
+                sync.flush();
                 let last = wait_for_git_sync(sync, QUIT_WAIT).or(last_outcome);
                 finish_git_sync(sync, last)
             }));
@@ -310,12 +314,13 @@ where
             // frame where nothing just finished polling, and this is a
             // no-op unless one is actually pending and the backoff interval
             // has elapsed — see `retry_push_if_due`'s doc comment.
-            sync.retry_push_if_due(Instant::now());
+            sync.tick(Instant::now());
         }
         if let Some(sync) = git_sync.as_ref()
-            && state.git_sync.busy != sync.is_busy()
+            && (state.git_sync.busy, state.git_sync.waiting) != (sync.is_busy(), sync.is_waiting())
         {
             state.git_sync.busy = sync.is_busy();
+            state.git_sync.waiting = sync.is_waiting();
             dirty = true;
         }
         if quitting && !state.git_sync.busy {
@@ -378,6 +383,10 @@ where
         )?;
         dirty |= drained.ran_any;
         if drained.quit {
+            // A change still in its quiet period goes out now, not never.
+            if let Some(sync) = git_sync.as_mut() {
+                sync.flush();
+            }
             if git_sync.as_ref().is_some_and(git_sync::GitSync::is_busy) {
                 quitting = true;
                 state.set_notice(WAITING_FOR_SYNC.to_string());

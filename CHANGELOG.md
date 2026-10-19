@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Git sync now waits until 10 seconds pass without another change before it
+  commits and pushes, so a run of ticks becomes one commit
+  (`checklist.md: 3 changes`, each listed in the commit message) instead of
+  one commit and two network connections per keypress, and a tick undone
+  straight away is never published. The title bar shows `⇅ git · pending`
+  while a change waits, and quitting sends it at once. Set the wait with
+  `git_sync_delay` in the config file or `--git-sync-delay SECONDS`; `0`
+  brings back a commit per change. (#56)
+
 - `--color auto|truecolor|256|16`, and a matching `color` setting in the
   config file, to force a color palette when markcheck picks the wrong one.
   `auto`, the default, keeps detecting the terminal. (#134)

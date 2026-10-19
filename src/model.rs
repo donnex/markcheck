@@ -1014,6 +1014,8 @@ pub struct GitSyncState {
     pub last_at: Option<SystemTime>,
     /// A background sync or push retry is running.
     pub busy: bool,
+    /// A change is waiting out git sync's quiet period before it is synced.
+    pub waiting: bool,
     /// Why the latest attempt left the file unsynced, as the title bar's short
     /// label; kept until a later sync lands, whatever keys are pressed.
     pub problem: Option<&'static str>,
@@ -1039,6 +1041,9 @@ pub struct PendingSync {
     /// write lock is held.
     pub previous_content: Option<String>,
     pub description: String,
+    /// Sync at once rather than after git sync's quiet period, for an edit
+    /// made outside markcheck (the `e` editor) that shouldn't wait on keys.
+    pub immediate: bool,
 }
 
 /// Every checkbox item's state, keyed by 1-based line number. Undo skips

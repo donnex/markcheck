@@ -1,4 +1,4 @@
-use super::{Cli, ColorChoice, Settings, config, resolve_flag};
+use super::{Cli, ColorChoice, Settings, config, git_sync_delay, resolve_flag};
 use clap::Parser as _;
 
 #[test]
@@ -40,6 +40,7 @@ fn config_all(value: bool) -> config::Config {
         auto_copy: Some(value),
         color: None,
         git_sync_paths: None,
+        git_sync_delay: None,
     }
 }
 
@@ -195,4 +196,28 @@ fn color_flag_beats_the_config_which_beats_auto() {
         );
     }
     assert!(Cli::try_parse_from(["markcheck", "checklist.md", "--color", "rainbow"]).is_err());
+}
+
+#[test]
+fn git_sync_delay_takes_the_flag_then_the_config_then_ten_seconds() {
+    use std::time::Duration;
+    let parse = |flags: &[&str]| {
+        let mut argv = vec!["markcheck", "checklist.md"];
+        argv.extend_from_slice(flags);
+        Cli::parse_from(argv)
+    };
+    let mut config = config_all(false);
+    assert_eq!(
+        git_sync_delay(&parse(&[]), &config),
+        Duration::from_secs(10)
+    );
+    config.git_sync_delay = Some(30);
+    assert_eq!(
+        git_sync_delay(&parse(&[]), &config),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        git_sync_delay(&parse(&["--git-sync-delay", "0"]), &config),
+        Duration::ZERO
+    );
 }

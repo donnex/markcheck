@@ -17,7 +17,7 @@ use process::{
     Children, PLUMBING_TIMEOUT, git_command, run_with_timeout, track_children_on_this_thread,
 };
 use push::{catch_up_push, retry_commit};
-use sync::{commit_message, run_sync};
+use sync::{batch_message, run_sync};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
@@ -102,11 +102,14 @@ pub struct GitSync {
     file_path: PathBuf,
     sender: mpsc::Sender<SyncOutcome>,
     receiver: mpsc::Receiver<SyncOutcome>,
-    /// A request arriving while busy is coalesced into `pending`: two
-    /// concurrent commits on one repository could race on the index.
+    /// A request arriving while busy waits in `queued`: two concurrent
+    /// commits on one repository could race on the index.
     busy: bool,
-    /// Only the latest coalesced request matters.
-    pending: Option<PendingSync>,
+    /// The request waiting for its quiet period or for the running sync.
+    /// Requests are folded together: the latest content, every description.
+    queued: Option<Queued>,
+    /// The quiet period: how long after the last request the sync starts.
+    delay: Duration,
     /// The commit SHA to retry pushing and when the last attempt finished.
     retry: Option<(String, Instant)>,
     /// How long after the last attempt the next retry is due.
@@ -116,6 +119,13 @@ pub struct GitSync {
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
     /// The git processes the workers have running, for `abandon`.
     children: Arc<Children>,
+}
+
+/// Requests folded together while they wait (see `GitSync::queued`).
+struct Queued {
+    sync: PendingSync,
+    descriptions: Vec<String>,
+    due: Instant,
 }
 
 /// Turns a panic into `Failed`: a worker that dies without sending leaves
@@ -193,7 +203,8 @@ impl GitSync {
             sender,
             receiver,
             busy: false,
-            pending: None,
+            queued: None,
+            delay: Duration::ZERO,
             retry: None,
             retry_interval: PUSH_RETRY_INTERVAL,
             latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
@@ -201,18 +212,75 @@ impl GitSync {
         })
     }
 
-    /// Records the request's hash before coalescing, so a sync already in
-    /// flight sees that a newer request exists.
-    pub fn request(&mut self, sync: PendingSync) {
-        *lock_hash(&self.latest_requested_hash) = sync.content_hash;
-        if self.busy {
-            self.pending = Some(sync);
-            return;
-        }
-        self.spawn(sync);
+    /// Waits `delay` after each request before syncing, so a burst of
+    /// changes becomes one commit (#56). Zero syncs every request at once.
+    pub fn set_delay(&mut self, delay: Duration) {
+        self.delay = delay;
     }
 
-    fn spawn(&mut self, sync: PendingSync) {
+    /// Records the request's hash before coalescing, so a sync already in
+    /// flight sees that a newer request exists. The request then waits out the
+    /// quiet period, restarted by every later one, unless it is `immediate`.
+    pub fn request(&mut self, sync: PendingSync) {
+        *lock_hash(&self.latest_requested_hash) = sync.content_hash;
+        let now = Instant::now();
+        let due = if sync.immediate {
+            now
+        } else {
+            now + self.delay
+        };
+        self.queued = Some(match self.queued.take() {
+            // The earliest pre-write content is what the batch replaces.
+            Some(mut queued) => {
+                queued.descriptions.push(sync.description.clone());
+                queued.sync = PendingSync {
+                    previous_content: queued.sync.previous_content,
+                    ..sync
+                };
+                queued.due = due;
+                queued
+            }
+            None => Queued {
+                descriptions: vec![sync.description.clone()],
+                sync,
+                due,
+            },
+        });
+        self.spawn_if_due(now);
+    }
+
+    /// Starts the waiting request now, for a quit that shouldn't lose it.
+    pub fn flush(&mut self) {
+        let now = Instant::now();
+        if let Some(queued) = &mut self.queued {
+            queued.due = now;
+        }
+        self.spawn_if_due(now);
+    }
+
+    /// Whether a request is waiting out the quiet period (not just behind a
+    /// running sync), for the title bar.
+    pub fn is_waiting(&self) -> bool {
+        self.queued.is_some() && !self.busy
+    }
+
+    /// Starts a waiting request whose quiet period has passed, then any push
+    /// retry that has come due. Call once per frame.
+    pub fn tick(&mut self, now: Instant) {
+        self.spawn_if_due(now);
+        self.retry_push_if_due(now);
+    }
+
+    fn spawn_if_due(&mut self, now: Instant) {
+        if self.busy || !self.queued.as_ref().is_some_and(|queued| queued.due <= now) {
+            return;
+        }
+        if let Some(queued) = self.queued.take() {
+            self.spawn(queued.sync, queued.descriptions);
+        }
+    }
+
+    fn spawn(&mut self, sync: PendingSync, descriptions: Vec<String>) {
         self.busy = true;
         let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
@@ -222,7 +290,7 @@ impl GitSync {
         std::thread::spawn(move || {
             track_children_on_this_thread(children);
             let outcome = run_reporting_panics(|| {
-                let message = commit_message(&file_path, &sync.description);
+                let message = batch_message(&file_path, &descriptions);
                 run_sync(
                     &repo_root,
                     &file_path,
@@ -276,9 +344,7 @@ impl GitSync {
         if let Some(outcome) = &outcome {
             self.busy = false;
             self.apply_outcome(outcome);
-            if let Some(sync) = self.pending.take() {
-                self.spawn(sync);
-            }
+            self.spawn_if_due(Instant::now());
         }
         outcome
     }
@@ -324,7 +390,8 @@ impl GitSync {
     /// content that's already committed never triggers another request. `now`
     /// is a parameter so tests can skip the wait.
     pub fn retry_push_if_due(&mut self, now: Instant) {
-        if self.busy {
+        // A waiting request's sync pushes the armed commit along with its own.
+        if self.busy || self.queued.is_some() {
             return;
         }
         let Some((commit, last_attempt)) = &self.retry else {
@@ -360,7 +427,7 @@ impl GitSync {
     /// and no further git process starts, so the worker unwinds through its
     /// own cleanup. Returns whether a git process was running.
     pub fn abandon(&mut self, force: bool) -> bool {
-        self.pending = None;
+        self.queued = None;
         self.retry = None;
         self.children.abandon(if force { "-KILL" } else { "-TERM" })
     }

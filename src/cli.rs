@@ -73,6 +73,11 @@ pub struct Cli {
     /// Never commit or push, even when git_sync_paths matches this file's path
     #[arg(long)]
     pub no_git_sync: bool,
+    /// Wait until SECONDS pass with no further change before git sync commits,
+    /// so a burst of toggles becomes one commit; 0 commits every change at once
+    /// (default: 10; config: git_sync_delay)
+    #[arg(long, value_name = "SECONDS")]
+    pub git_sync_delay: Option<u64>,
     /// Read the config from PATH instead of the default location (PATH must exist)
     #[arg(long, value_name = "PATH", conflicts_with = "no_config")]
     pub config: Option<PathBuf>,
@@ -103,6 +108,20 @@ impl Settings {
         }
     }
 }
+
+/// How long git sync waits for the changes to stop before committing: the
+/// flag, then the config, then [`DEFAULT_GIT_SYNC_DELAY`].
+pub fn git_sync_delay(cli: &Cli, config: &config::Config) -> std::time::Duration {
+    std::time::Duration::from_secs(
+        cli.git_sync_delay
+            .or(config.git_sync_delay)
+            .unwrap_or(DEFAULT_GIT_SYNC_DELAY),
+    )
+}
+
+/// Seconds: long enough to fold a burst of ticks (or a tick and its undo)
+/// into one commit, short enough that a pause publishes the work.
+pub const DEFAULT_GIT_SYNC_DELAY: u64 = 10;
 
 /// Resolves one boolean setting: a passed flag wins, then the config, then
 /// the default. Pass `false` for a flag a setting doesn't have. clap's
