@@ -758,6 +758,11 @@ impl<'a> ParseState<'a> {
     }
 
     fn on_item_start(&mut self, offset: usize) {
+        // pulldown-cmark can start a nested item's range at the end of the line
+        // before it (a tab-indented item does), which would put it on its
+        // parent's line, so the item starts at its first non-blank byte.
+        let rest = &self.source[offset..];
+        let offset = offset + rest.len() - rest.trim_start_matches([' ', '\t', '\r', '\n']).len();
         // `list_depth` was already incremented by the enclosing Start(List),
         // so depth 0 = top-level.
         let line = self.line_counter.line_at(offset, self.source);

@@ -1979,3 +1979,20 @@ fn line_break_inside_a_bold_title_becomes_a_space() {
     let item = &doc.lists[0].items[0];
     assert_eq!(item.header.as_deref(), Some("Check the gauge"));
 }
+
+#[test]
+fn a_tab_indented_nested_task_is_on_its_own_line() {
+    // pulldown-cmark starts this item's range at the newline before the tab;
+    // found by the property tests (#79).
+    let document = parse_source("- [ ] step\n\t- [ ] nested\n", PathBuf::from("t.md"));
+    let lines: Vec<_> = document.lists[0]
+        .items
+        .iter()
+        .map(|item| (item.line_number, item.depth))
+        .collect();
+    assert_eq!(lines, vec![(1, 0), (2, 1)]);
+
+    let numbered = parse_source("1. [ ] one\n\t1. [ ] sub\n", PathBuf::from("t.md"));
+    assert_eq!(numbered.lists[0].items[1].line_number, 2);
+    assert_eq!(numbered.lists[0].items[1].ordinal.as_deref(), Some("1."));
+}

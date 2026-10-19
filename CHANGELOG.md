@@ -174,6 +174,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A nested task indented with a tab now toggles itself. Before, markcheck
+  placed it on its parent's line, so ticking it changed nothing on disk (or
+  the parent's box) and it could show the wrong step number. (#79)
+
 - A checklist in a folder you can't write to can now be saved. Every save
   used to fail there, because the temporary file it writes first couldn't
   be created, with only "Write failed — change not saved to disk" and no
