@@ -328,12 +328,12 @@ fn ps_reports_gone(mut ps: Command, pid: &str) -> bool {
         && output.stdout.iter().all(u8::is_ascii_whitespace)
 }
 
-/// Replaces the line's task checkbox (`[ ]`, `[x]`, `[X]`, `[/]`) with
+/// Replaces the line's task checkbox (`[ ]`, `[x]`, `[X]`, `[/]`, `[-]`) with
 /// `target`. The leftmost marker is the checkbox, so a marker token in the
 /// body is never the one rewritten. A checkbox already in the target state
 /// is left as written, so an untouched `[X]` keeps its casing.
 fn set_task_marker(line: &mut String, target: &str) {
-    let leftmost = ["[ ]", "[x]", "[X]", "[/]"]
+    let leftmost = ["[ ]", "[x]", "[X]", "[/]", "[-]"]
         .into_iter()
         .filter_map(|marker| line.find(marker).map(|pos| (pos, marker)))
         .min_by_key(|&(pos, _)| pos);
@@ -452,6 +452,7 @@ pub fn write_back(document: &Document) -> io::Result<Saved> {
                     TaskState::NotStarted => "[ ]",
                     TaskState::Started => "[/]",
                     TaskState::Done => "[x]",
+                    TaskState::Skipped => "[-]",
                 };
                 set_task_marker(&mut lines[item.line_number - 1], target);
             }

@@ -252,6 +252,7 @@ How each piece maps to the UI:
 | `## Heading` | A **list**: its title (the **list header**) appears above the cards and in the overview, and is jumpable with `1`–`9` (and in a dedicated list-tab row on narrow terminals). |
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. An uppercase `[X]` counts as done too; it keeps its casing until toggled, and is written back as `[x]`. |
+| `- [-]` | A **skipped** task — decided not to do it this run (it doesn't apply). Shown dimmed and struck through with a `⊘` marker. It counts as resolved, so a list of done and skipped tasks is complete, but it is left out of the done count, which the title bar reports apart (`☑ 7/9 (+2 skipped)`). The same marker as Obsidian's task plugins use for cancelled. |
 | `1. [ ]` / `1) [/]` / `1. [x]` | An **ordered (numbered) list** has the same three task states, cards and notes as a bulleted one, and each item keeps its **step number** exactly as written (`3.`, `7)`, gaps and all): in front of the card title, or of the card body when there's no title, on the overview row, in the `T` picker (where typing `3.` finds step 3), and in the side cards. The card's ` n/m ` position still counts every card in the list, notes and sub-items included, so it can differ from the step number. |
 | `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. Inline `` `code` `` inside the title is shown as plain title text, not as a command chip, so `y` never copies it — put a command you want to copy in the body. A long title wraps inside the card, which grows to fit. The dimmed previous/next side cards in the wide layout show the title too, above the body. |
 | `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is always shown in full; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries code — `` `code` `` inside the bold, or a fenced or indented code block under the bullet — is never the banner: it stays a display-only card, so a code block under it is shown and copyable with `y`. Only a list that has a checkbox counts: a plain bullet list with no checkbox, which is dropped, neither supplies the banner nor takes the first-item slot from the task list after it. |
@@ -331,8 +332,9 @@ Finer points:
   shown in reverse video, and the card's position-dot strip marks a started
   item with a half dot `◐` (a done one stays `●`), so state still reads from the
   icons and glyphs alone.
-- **`[/]` (started / in-progress)** is markcheck's own convention; GitHub and
-  most tools render it as literal text rather than a checkbox.
+- **`[/]` (started / in-progress)** is markcheck's own convention, and `[-]`
+  (skipped) the one Obsidian's task plugins use; GitHub and most other tools
+  render both as literal text rather than a checkbox.
 - **A blockquoted checkbox is never a live task.** `> - [ ] ...` reads as a
   quoted example (e.g. illustrating another runbook's output) rather than
   something to actually do, so it always renders as a plain, non-toggleable
@@ -412,6 +414,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | left-click an overview row | on a task row, click its **icon** to toggle it done/not-done (cursor stays put), or its **label** to jump to that task; click a list title to jump to that list. Needs mouse capture, so not with `--no-mouse` |
 | `Space` / `Enter` | toggle the current task done; after checking a task, move to the next card that isn't a done task (skipping done tasks, wrapping to the list's first open task), so pressing it again never unchecks a finished step; on an info card (nothing to toggle) advance to the next card instead |
 | `s` | mark the current task started / in progress (`[/]`) |
+| `-` | skip the current task (`[-]`: it doesn't apply this run), or unskip it; skipping moves on to the next open task |
 | `u` / `Ctrl-R` | undo / redo the last change (toggle, start, or reset) |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around, and the status bar says when it does) |
 | `Shift-H` / `Shift-L` | jump to the previous / next list with unfinished tasks |

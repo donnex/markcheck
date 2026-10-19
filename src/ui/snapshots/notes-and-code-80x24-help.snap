@@ -16,13 +16,13 @@ expression: "screen(&mut state, 80, 24)"
 │  wheel in ? / T     scroll this help / move t│  │   ☐ A task with an indent… ▓
 │  space / Enter      toggle the task done, the│  │   ☐ A task with a short o… ▓
 │  s                  mark the task started / i│  │   ☐ A task with fenced li… ▓
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ A task with a tab-ind… │
-│  Tab                jump to the next unfinish│  │   ☐ A task with two comma… │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ A task with a command… │
-│  /                  search tasks by text     │  │   ☐ Fetch curl -fsSL http… │
-│  n / N              next / previous search ma│  │   ☐ A task with emphasis,… │
-│  T                  go to task (filterable li│  │   ☐ A task whose text run… │
-│  click T picker row highlight it; click it ag│  │   ☐ A task in wide (two-c… │
-│  click overview row toggle (icon) or jump to ▼  │   ☐ Open the project runb… ▼
+│  -                  skip the task (doesn't ap│  │   ☐ A task with a tab-ind… │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ A task with two comma… │
+│  Tab                jump to the next unfinish│  │   ☐ A task with a command… │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ Fetch curl -fsSL http… │
+│  /                  search tasks by text     │  │   ☐ A task with emphasis,… │
+│  n / N              next / previous search ma│  │   ☐ A task whose text run… │
+│  T                  go to task (filterable li│  │   ☐ A task in wide (two-c… │
+│  click T picker row highlight it; click it ag▼  │   ☐ Open the project runb… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

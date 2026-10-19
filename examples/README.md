@@ -10,7 +10,8 @@ markcheck examples/basics.md
 - **`basics.md`** — prose under a heading shown above the first task's card
   (the intro paragraph under the `# H1` and the one under `## Ordered steps`),
   a `> [!WARNING]` alert in the warning color under `## Verify`, the three task
-  states (`[ ]` / `[/]` / `[x]`), a list banner
+  states (`[ ]` / `[/]` / `[x]`) plus a skipped `[-]` task (dimmed and
+  struck through, counted apart from done), a list banner
   (leading bold-only bullet), a card title (a task's leading `**bold**`, also as a title-only task, which
   the side cards show by its title), inline
   and fenced commands, a plain-bullet note card, and the same three task states

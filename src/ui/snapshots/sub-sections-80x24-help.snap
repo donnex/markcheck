@@ -16,13 +16,13 @@ expression: "screen(&mut state, 80, 24)"
 │  wheel in ? / T     scroll this help / move t│  │   ☐ take a snapshot: snap… ▓
 │  space / Enter      toggle the task done, the│  │   ☐ confirm the snapshot … │
 │  s                  mark the task started / i│  │   ── Rollout ───────────── │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☑ restart-service        │
-│  Tab                jump to the next unfinish│  │   ☐ check-status example-… │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ▪ Watch the dashboards   │
-│  /                  search tasks by text     │  │   ☐ confirm the error rat… │
-│  n / N              next / previous search ma│  │   ☐ announce the rollout … │
-│  T                  go to task (filterable li│  │   ── Post-rollout ──────── │
-│  click T picker row highlight it; click it ag│  │   ☐ tail the logs for one… │
-│  click overview row toggle (icon) or jump to ▼  │   ☐ verify-output --final  ▼
+│  -                  skip the task (doesn't ap│  │   ☑ restart-service        │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ check-status example-… │
+│  Tab                jump to the next unfinish│  │   ▪ Watch the dashboards   │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ confirm the error rat… │
+│  /                  search tasks by text     │  │   ☐ announce the rollout … │
+│  n / N              next / previous search ma│  │   ── Post-rollout ──────── │
+│  T                  go to task (filterable li│  │   ☐ tail the logs for one… │
+│  click T picker row highlight it; click it ag▼  │   ☐ verify-output --final  ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

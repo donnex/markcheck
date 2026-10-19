@@ -185,7 +185,13 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     // The counter fades yellow → green with completion, resolved per
     // color depth.
     let counter_style = state.palette.progress_color(done, total);
-    let counter_text = format!(" {} {done}/{total}", icons.done);
+    // Skipped tasks are outside done/total, so say how many were set aside.
+    let skipped = state.document.skipped_count();
+    let counter_text = if skipped > 0 {
+        format!(" {} {done}/{total} (+{skipped} skipped)", icons.done)
+    } else {
+        format!(" {} {done}/{total}", icons.done)
+    };
 
     let separator = Span::styled(" │ ", Style::default().add_modifier(Modifier::DIM));
 
@@ -552,6 +558,7 @@ fn state_marker(
         ItemKind::Checkbox(TaskState::Done) => icons.done,
         ItemKind::Checkbox(TaskState::Started) => icons.started,
         ItemKind::Checkbox(TaskState::NotStarted) => icons.pending,
+        ItemKind::Checkbox(TaskState::Skipped) => icons.skipped,
         ItemKind::DisplayOnly => icons.note,
     };
     (glyph, marker_color(kind, info_state, palette))
@@ -562,7 +569,7 @@ fn marker_color(kind: ItemKind, info_state: Option<TaskState>, palette: Palette)
     match kind {
         ItemKind::Checkbox(TaskState::Done) => Some(palette.done),
         ItemKind::Checkbox(TaskState::Started) => Some(palette.started),
-        ItemKind::Checkbox(TaskState::NotStarted) => None,
+        ItemKind::Checkbox(TaskState::NotStarted | TaskState::Skipped) => None,
         ItemKind::DisplayOnly => Some(match info_state {
             Some(TaskState::Done) => palette.done,
             Some(TaskState::Started) => palette.started,

@@ -1340,6 +1340,7 @@ proptest::proptest! {
             TaskState::NotStarted,
             TaskState::Started,
             TaskState::Done,
+            TaskState::Skipped,
         ]),
     ) {
         let path = write_temp_file(&source);
@@ -1393,4 +1394,14 @@ proptest::proptest! {
         let reparsed = parse_document(path).unwrap();
         proptest::prop_assert_eq!(states_by_line(&reparsed), expected);
     }
+}
+
+#[test]
+fn write_back_writes_and_replaces_a_skipped_marker() {
+    let path = write_temp_file("- [ ] a\n- [-] b\n");
+    let mut document = parse_document(path.clone()).unwrap();
+    document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Skipped);
+    document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+    write_back(&document).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "- [-] a\n- [x] b\n");
 }

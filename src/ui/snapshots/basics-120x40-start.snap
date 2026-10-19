@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Runbook │ basics.md                                                                                 ☑ 3/11
+ ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/11 (+1 skipped)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Prepare              │
@@ -19,12 +19,12 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ Run the smoke tests    │
                                         • Prepare                                         │   ☐ Tail the logs and wat… │
                              ▪ Do not run against production                              │   ☑ Record the start time… │
-                                                                                          │ • [3] Ordered steps        │
-            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓               │   The three task states w… │
-┌ ☑ ────────┃                                                             ┃────────────┐  │   ☑ 1. Confirm the change… │
-│    Confirm┃                                                             ┃eck out the │  │   ◐ 2. Notify the on-call… │
-│   access t┃                    Warm the build cache                     ┃ release    │  │   ☐ 3. Announce completion │
-│ example-ho┃                                                             ┃ranch: git  │  │                            │
+                                                                                          │   ⊘ Restart the replica —… │
+            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓               │ • [3] Ordered steps        │
+┌ ☑ ────────┃                                                             ┃────────────┐  │   The three task states w… │
+│    Confirm┃                                                             ┃eck out the │  │   ☑ 1. Confirm the change… │
+│   access t┃                    Warm the build cache                     ┃ release    │  │   ◐ 2. Notify the on-call… │
+│ example-ho┃                                                             ┃ranch: git  │  │   ☐ 3. Announce completion │
 │           ┃                                                             ┃checkout    │  │                            │
 └───────────┃                                                             ┃────────────┘  │                            │
             ┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │

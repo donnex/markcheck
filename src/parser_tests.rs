@@ -1041,7 +1041,7 @@ fn fence_with_trailing_text_on_the_would_be_closing_line_does_not_close_it() {
 
 #[test]
 fn started_marker_lookalike_inside_fenced_block_is_not_rewritten() {
-    // `extract_started_markers` must not touch a line inside a fenced
+    // `extract_extended_markers` must not touch a line inside a fenced
     // code block just because it looks like a `[/]` bullet (e.g.
     // a runbook documenting markcheck's own syntax).
     let source = "\
@@ -1806,7 +1806,12 @@ fn task_marker_offsets(source: &str) -> HashSet<usize> {
 /// `[/]` ranges, and records exactly the `[/]`s that pulldown-cmark
 /// itself reads as task markers once `[/]` is spelled `[ ]`.
 fn assert_pre_pass_agrees_with_pulldown(source: &str) -> HashSet<usize> {
-    let (processed, started) = extract_started_markers(source);
+    let (processed, markers) = extract_extended_markers(source);
+    let started: HashSet<usize> = markers
+        .iter()
+        .filter(|(_, state)| **state == TaskState::Started)
+        .map(|(offset, _)| *offset)
+        .collect();
     assert_eq!(processed.len(), source.len(), "length kept: {source:?}");
     for (offset, (before, after)) in source.bytes().zip(processed.bytes()).enumerate() {
         if before != after {
@@ -1828,7 +1833,7 @@ fn assert_pre_pass_agrees_with_pulldown(source: &str) -> HashSet<usize> {
 }
 
 #[test]
-fn extract_started_markers_boundary_sweep_agrees_with_pulldown() {
+fn extract_extended_markers_boundary_sweep_agrees_with_pulldown() {
     // The recorded markers must be exactly pulldown's task markers across
     // indentation, blockquotes, list types and every block context that can
     // hide a `[/]` lookalike.
@@ -2152,4 +2157,25 @@ fn a_fence_right_after_a_list_still_belongs_to_its_last_task() {
         vec!["cmd".to_string()]
     );
     assert!(document.unshown.is_empty());
+}
+
+#[test]
+fn a_dash_marker_is_a_skipped_task() {
+    let document = parse("- [-] not this time\n- [ ] still to do\n- [-]");
+    let kinds: Vec<_> = document.lists[0]
+        .items
+        .iter()
+        .map(|item| item.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ItemKind::Checkbox(TaskState::Skipped),
+            ItemKind::Checkbox(TaskState::NotStarted),
+            ItemKind::DisplayOnly,
+        ],
+        "[-] at the very end, with nothing after it, is no marker: a note"
+    );
+    let quoted = parse("- [ ] a\n\n```\n- [-] in a fence\n```\n");
+    assert_eq!(quoted.lists[0].items.len(), 1);
 }

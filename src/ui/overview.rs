@@ -325,6 +325,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                     Style::default().fg(palette.started),
                     Style::default(),
                 ),
+                // Skipped: dim and struck through, so it reads as set aside
+                // rather than either done or still to do.
+                (ItemKind::Checkbox(TaskState::Skipped), _) => (
+                    icons.skipped,
+                    Style::default().add_modifier(Modifier::DIM),
+                    Style::default().add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
+                ),
                 // Info item: the note glyph (shape says "information") tinted
                 // by its sub-list's aggregate state — green
                 // all-done with a dimmed label like a done task, yellow

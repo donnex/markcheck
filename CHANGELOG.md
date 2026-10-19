@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A skipped task state, `[-]`, for a step that doesn't apply this run ("only
+  if a replica exists"). Press `-` to skip the current task (or unskip it).
+  A skipped task is dimmed and struck through, counts as resolved so the
+  list can still complete, and is reported apart from done tasks
+  (`☑ 7/9 (+2 skipped)`). Before, such a step had to be ticked off, claiming
+  it was done, or left open, so the list never completed; and a `[-]`
+  written by another tool showed as a plain note. (#54)
+
 - Prose under a heading is now shown. A paragraph, quote or code block written
   under a heading before its first task (a "take a snapshot first" note, a
   `> [!WARNING]` alert, the intro under the title) appears above that task's

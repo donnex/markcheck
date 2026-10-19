@@ -117,6 +117,7 @@ fn raw_lines_for(lists: &[List]) -> Vec<String> {
             ItemKind::Checkbox(TaskState::NotStarted) => "[ ] ",
             ItemKind::Checkbox(TaskState::Started) => "[/] ",
             ItemKind::Checkbox(TaskState::Done) => "[x] ",
+            ItemKind::Checkbox(TaskState::Skipped) => "[-] ",
             ItemKind::DisplayOnly => "",
         };
         let indent = "  ".repeat(item.depth);
@@ -6308,4 +6309,65 @@ fn a_copy_to_both_clipboards_says_so() {
             .unwrap()
             .contains("system clipboard + OSC 52")
     );
+}
+
+#[test]
+fn dash_skips_a_task_counts_it_as_resolved_and_moves_on() {
+    let path = write_real_file("## S\n\n- [ ] one\n- [ ] two\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.handle_key(KeyCode::Char('-'));
+    assert_eq!(state.status_message.as_deref(), Some("Marked skipped"));
+    assert!(fs::read_to_string(&path).unwrap().contains("- [-] one"));
+    assert_eq!(
+        state.current_item_index, 1,
+        "moved on to the next open task"
+    );
+    let sync = state.git_sync_request().unwrap();
+    assert!(sync.description.starts_with("Skip"), "{}", sync.description);
+    assert_eq!(
+        state.document.checkbox_stats(),
+        (0, 1),
+        "skipped is out of the total"
+    );
+    assert_eq!(state.document.skipped_count(), 1);
+
+    state.handle_key(KeyCode::Char(' '));
+    assert_eq!(
+        state.view,
+        View::AllComplete,
+        "done plus skipped completes the list"
+    );
+
+    state.focus_item(0, 0, CursorMove::Quiet);
+    state.view = View::Checklist;
+    state.handle_key(KeyCode::Char('-'));
+    assert_eq!(state.status_message.as_deref(), Some("Marked not skipped"));
+    assert!(fs::read_to_string(&path).unwrap().contains("- [ ] one"));
+}
+
+#[test]
+fn dash_on_a_note_says_there_is_nothing_to_skip() {
+    let path = write_real_file("## S\n\n- a note\n- [ ] task\n");
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    state.focus_item(0, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('-'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Nothing to skip: this card is a note, not a task")
+    );
+}
+
+#[test]
+fn reset_also_clears_skipped_tasks() {
+    let path = write_real_file("## S\n\n- [-] one\n- [ ] two\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(
+        state.overlay,
+        Some(Overlay::ConfirmReset),
+        "there is something to reset"
+    );
+    state.handle_key(KeyCode::Char('y'));
+    assert!(fs::read_to_string(&path).unwrap().contains("- [ ] one"));
 }

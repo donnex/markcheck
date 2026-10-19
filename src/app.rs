@@ -1109,6 +1109,34 @@ impl AppState {
         self.view = View::Checklist;
     }
 
+    /// `-` sets a task aside as skipped (`[-]`, not applicable this run), or
+    /// back to not started. Like completing it, skipping moves on, since
+    /// nothing is left to decide there (#54).
+    pub fn skip_current(&mut self) {
+        let Some(current) = self.current_item() else {
+            return;
+        };
+        let ItemKind::Checkbox(state) = current.kind else {
+            self.set_error("Nothing to skip: this card is a note, not a task".to_string());
+            return;
+        };
+        let new_state = if state == TaskState::Skipped {
+            TaskState::NotStarted
+        } else {
+            TaskState::Skipped
+        };
+        if !self.set_current_state(new_state) {
+            return;
+        }
+        if new_state == TaskState::Skipped {
+            self.set_status("Marked skipped".to_string());
+            self.maybe_transition_screen();
+        } else {
+            self.set_status("Marked not skipped".to_string());
+            self.view = View::Checklist;
+        }
+    }
+
     /// Sets the current checkbox's state and writes it back. Returns whether
     /// the write succeeded.
     fn set_current_state(&mut self, state: TaskState) -> bool {
@@ -1258,7 +1286,9 @@ impl AppState {
             .iter()
             .enumerate()
             .skip(self.current_item_index + 1)
-            .find(|(_, item)| !matches!(item.kind, ItemKind::Checkbox(TaskState::Done)))
+            .find(
+                |(_, item)| !matches!(item.kind, ItemKind::Checkbox(state) if state.is_resolved()),
+            )
             .map(|(index, _)| index)
             .or_else(|| first_undone_index(list));
         if let Some(target) = target {
@@ -1726,7 +1756,7 @@ impl AppState {
 
     fn request_reset(&mut self) {
         let (done, started, _total) = self.document.checkbox_progress();
-        if done == 0 && started == 0 {
+        if done == 0 && started == 0 && self.document.skipped_count() == 0 {
             self.set_error("Nothing to reset: no tasks are done".to_string());
             return;
         }
@@ -2383,6 +2413,7 @@ impl AppState {
             KeyCode::Char('N') => self.search_cycle(false),
             KeyCode::Char(' ') | KeyCode::Enter => self.toggle_current(),
             KeyCode::Char('s') => self.start_current(),
+            KeyCode::Char('-') => self.skip_current(),
             KeyCode::Char('y') => self.copy_current_code(),
             KeyCode::Char('o') => self.open_current_link(),
             _ => {}
@@ -2441,7 +2472,7 @@ fn list_all_done(list: &List) -> bool {
     list.items
         .iter()
         .filter(|i| matches!(i.kind, ItemKind::Checkbox(_)))
-        .all(|i| matches!(i.kind, ItemKind::Checkbox(TaskState::Done)))
+        .all(|i| matches!(i.kind, ItemKind::Checkbox(state) if state.is_resolved()))
 }
 
 /// The verb naming a transition *into* `state`, used to build the git-sync
@@ -2479,6 +2510,7 @@ fn state_verb(state: TaskState) -> &'static str {
         TaskState::Done => "Check",
         TaskState::Started => "Start",
         TaskState::NotStarted => "Uncheck",
+        TaskState::Skipped => "Skip",
     }
 }
 

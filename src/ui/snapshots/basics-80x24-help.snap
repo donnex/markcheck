@@ -2,27 +2,27 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, 80, 24)"
 ---
- ≡ Deployment Runbook │ basics.md                                         ☑ 3/11
+ ≡ Deployment Runbook │ basics.md                            ☑ 3/11 (+1 skipped)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────────────────
 ╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
-│                                              ▲  │ • [1] Prepare              │
-│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ▪ Do not run against pr… │
-│  gg / G             first / last task in the ▓  │   A short checklist showi… │
-│  } / {              next / previous sub-secti▓  │   ☑ Confirm access to exa… │
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ◐ Warm the build cache   │
-│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ Check out the release… │
-│  PageDn / PageUp    scroll card body one page│  │   ☐ Build the artifact     │
-│  mouse wheel        scroll an overflowing car│  │   ▪ Keep this runbook ope… │
-│  wheel in ? / T     scroll this help / move t│  │ • [2] Verify               │
-│  space / Enter      toggle the task done, the│  │   ▪ Warning: Run these on… │
-│  s                  mark the task started / i│  │   ☐ Check the health endp… │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ Run the smoke tests    │
-│  Tab                jump to the next unfinish│  │   ☐ Tail the logs and wat… │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☑ Record the start time… │
-│  /                  search tasks by text     │  │ • [3] Ordered steps        │
-│  n / N              next / previous search ma│  │   The three task states w… │
+│                                              ▲  │ • [1] Prepare              ▲
+│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ▪ Do not run against pr… ▓
+│  gg / G             first / last task in the ▓  │   A short checklist showi… ▓
+│  } / {              next / previous sub-secti▓  │   ☑ Confirm access to exa… ▓
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ◐ Warm the build cache   ▓
+│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ Check out the release… ▓
+│  PageDn / PageUp    scroll card body one page│  │   ☐ Build the artifact     ▓
+│  mouse wheel        scroll an overflowing car│  │   ▪ Keep this runbook ope… ▓
+│  wheel in ? / T     scroll this help / move t│  │ • [2] Verify               ▓
+│  space / Enter      toggle the task done, the│  │   ▪ Warning: Run these on… ▓
+│  s                  mark the task started / i│  │   ☐ Check the health endp… ▓
+│  -                  skip the task (doesn't ap│  │   ☐ Run the smoke tests    ▓
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ Tail the logs and wat… ▓
+│  Tab                jump to the next unfinish│  │   ☑ Record the start time… ▓
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ⊘ Restart the replica —… ▓
+│  /                  search tasks by text     │  │ • [3] Ordered steps        ▓
+│  n / N              next / previous search ma│  │   The three task states w… ▓
 │  T                  go to task (filterable li│  │   ☑ 1. Confirm the change… │
-│  click T picker row highlight it; click it ag│  │   ◐ 2. Notify the on-call… │
-│  click overview row toggle (icon) or jump to ▼  │   ☐ 3. Announce completion │
+│  click T picker row highlight it; click it ag▼  │   ◐ 2. Notify the on-call… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

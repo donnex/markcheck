@@ -213,7 +213,7 @@ pub mod markdown {
             "naïve",
             "",
         ]);
-        let marker = prop::sample::select(vec!["[ ]", "[x]", "[X]", "[/]"]);
+        let marker = prop::sample::select(vec!["[ ]", "[x]", "[X]", "[/]", "[-]"]);
         let bullet = prop::sample::select(vec!["- ", "* ", "+ ", "1. ", "2) "]);
         let indent = prop::sample::select(vec!["", "  ", "    ", "\t"]);
         prop_oneof![

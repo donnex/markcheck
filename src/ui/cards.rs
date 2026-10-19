@@ -223,6 +223,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("wheel in ? / T", "scroll this help / move the T highlight"),
             ("space / Enter", "toggle the task done, then next open task"),
             ("s", "mark the task started / in progress"),
+            ("-", "skip the task (doesn't apply this run), or unskip"),
             ("u / Ctrl-R", "undo / redo the last change"),
             ("Tab", "jump to the next unfinished task"),
             ("Shift-H / Shift-L", "previous / next unfinished list"),
@@ -910,6 +911,7 @@ fn position_dots(list: &List, current: usize, palette: Palette) -> Line<'static>
                 ItemKind::Checkbox(TaskState::Done) => "●",
                 ItemKind::Checkbox(TaskState::Started) if palette.is_mono() => "◐",
                 ItemKind::Checkbox(TaskState::Started) => "●",
+                ItemKind::Checkbox(TaskState::Skipped) => "-",
                 ItemKind::Checkbox(TaskState::NotStarted) | ItemKind::DisplayOnly => "·",
             };
             match color {
@@ -1013,6 +1015,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         .current_list()
         .info_parent_state(state.current_item_index);
     let done = matches!(item.kind, ItemKind::Checkbox(TaskState::Done));
+    let skipped = item.kind == ItemKind::Checkbox(TaskState::Skipped);
     let border_style = match accent_color(item, info_state, palette) {
         Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
         None => Style::default().add_modifier(Modifier::BOLD),
@@ -1137,7 +1140,10 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         lines
     };
 
-    let body_style = if done {
+    // A skipped task is dimmed and struck through: set aside, not done.
+    let body_style = if skipped {
+        Style::default().add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+    } else if done {
         Style::default().add_modifier(Modifier::DIM)
     } else {
         Style::default()

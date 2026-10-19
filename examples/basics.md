@@ -27,6 +27,7 @@ a note card.
 - [ ] **Run the smoke tests**
 - [ ] Tail the logs and watch for errors
 - [X] Record the start time — an uppercase `[X]` counts as done too
+- [-] Restart the replica — skipped (`[-]`): there is no replica this time
 
 ## Ordered steps
 

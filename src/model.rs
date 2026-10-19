@@ -22,6 +22,16 @@ pub enum TaskState {
     NotStarted,
     Started,
     Done,
+    /// `[-]`: decided not to do it this run (not applicable). Counts as
+    /// resolved, like done, but is reported apart from it (#54).
+    Skipped,
+}
+
+impl TaskState {
+    /// Nothing left to decide: done or skipped.
+    pub fn is_resolved(self) -> bool {
+        matches!(self, TaskState::Done | TaskState::Skipped)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,23 +165,33 @@ pub struct List {
 
 impl List {
     /// Returns (done, started, total) counting only Checkbox items; DisplayOnly
-    /// items are excluded since they can't be completed. `started` is the
-    /// in-progress state, surfaced distinctly (e.g. the progress bar).
+    /// items are excluded since they can't be completed, and so are skipped
+    /// tasks, which don't apply to this run (see `skipped_count`). `started`
+    /// is the in-progress state, surfaced distinctly (e.g. the progress bar).
     pub fn checkbox_progress(&self) -> (usize, usize, usize) {
         let mut done = 0;
         let mut started = 0;
         let mut total = 0;
         for item in &self.items {
             if let ItemKind::Checkbox(state) = item.kind {
-                total += 1;
                 match state {
                     TaskState::Done => done += 1,
                     TaskState::Started => started += 1,
                     TaskState::NotStarted => {}
+                    TaskState::Skipped => continue,
                 }
+                total += 1;
             }
         }
         (done, started, total)
+    }
+
+    /// How many tasks are skipped (`[-]`).
+    pub fn skipped_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|item| item.kind == ItemKind::Checkbox(TaskState::Skipped))
+            .count()
     }
 
     /// Returns (done, total) counting only Checkbox items.
@@ -274,7 +294,6 @@ impl List {
         let mut any_active = false;
         for j in self.descendants(i) {
             if let ItemKind::Checkbox(state) = self.items[j].kind {
-                total += 1;
                 match state {
                     TaskState::Done => {
                         done += 1;
@@ -282,7 +301,9 @@ impl List {
                     }
                     TaskState::Started => any_active = true,
                     TaskState::NotStarted => {}
+                    TaskState::Skipped => continue,
                 }
+                total += 1;
             }
         }
         aggregate_state(total, done, any_active)
@@ -333,7 +354,9 @@ impl List {
                 ItemKind::Checkbox(TaskState::Done) => (total + 1, done + 1, active + 1),
                 ItemKind::Checkbox(TaskState::Started) => (total + 1, done, active + 1),
                 ItemKind::Checkbox(TaskState::NotStarted) => (total + 1, done, active),
-                ItemKind::DisplayOnly => (total, done, active),
+                ItemKind::Checkbox(TaskState::Skipped) | ItemKind::DisplayOnly => {
+                    (total, done, active)
+                }
             });
         }
         for (i, item) in self.items.iter().enumerate() {
@@ -451,6 +474,11 @@ impl Document {
         )
     }
 
+    /// Skipped tasks summed across all lists.
+    pub fn skipped_count(&self) -> usize {
+        self.lists.iter().map(List::skipped_count).sum()
+    }
+
     /// Returns (done, total) checkbox counts summed across all lists.
     pub fn checkbox_stats(&self) -> (usize, usize) {
         let (done, _started, total) = self.checkbox_progress();
@@ -524,6 +552,7 @@ pub struct IconSet {
     pub done: &'static str,
     pub pending: &'static str,
     pub started: &'static str,
+    pub skipped: &'static str,
     pub current: &'static str,
     pub note: &'static str,
     pub file: &'static str,
@@ -542,6 +571,7 @@ impl IconSet {
             done: "\u{f14a}",    // check-square (filled box + check)
             pending: "\u{f096}", // square-o (empty box)
             started: "\u{f252}", // hourglass-half
+            skipped: "\u{f05e}", // ban (circle with a slash)
             current: "\u{f0da}", // caret-right
             note: "\u{f05a}",    // info-circle
             file: "\u{f15c}",    // file-text
@@ -556,6 +586,7 @@ impl IconSet {
             done: "☑",
             pending: "☐",
             started: "◐",
+            skipped: "⊘",
             current: "❯",
             note: "▪",
             file: "≡",

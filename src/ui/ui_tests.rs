@@ -2281,10 +2281,9 @@ fn ordered_steps_example_numbers_cards_and_overview_rows() {
     for step in ["1. Confirm the change", "3. Announce completion"] {
         assert!(joined.contains(step), "overview numbers {step:?}: {joined}");
     }
-    let numbered = rows
-        .iter()
-        .filter(|row| row.contains("2. Notify the on-call"))
-        .count();
+    // Counted in the text, not by row: the card and its overview row can
+    // share a screen row.
+    let numbered = joined.matches("2. Notify the on-call").count();
     assert!(
         numbered >= 2,
         "the current card and its overview row both show step 2: {joined}"

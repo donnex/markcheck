@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use pulldown_cmark::utils::TextMergeWithOffset;
@@ -157,36 +157,37 @@ fn blank_front_matter(source: &str) -> Cow<'_, str> {
 }
 
 /// pulldown-cmark only recognizes `[ ]` and `[x]`. This pre-pass records
-/// the offset of every `[/]` exactly where a task marker would be, rewrites
-/// those to `[ ]` (same length, so offsets hold), and returns the offsets so
-/// the final parse can promote them to `Started`.
+/// the offset of every `[/]` (started) and `[-]` (skipped) exactly where a
+/// task marker would be, rewrites those to `[ ]` (same length, so offsets
+/// hold), and returns them with their state so the final parse can promote
+/// them.
 ///
 /// It repeats until a parse finds no new one, because a rewrite can change
 /// the block structure: as text, `[/]` makes a paragraph that swallows an
 /// ordered sub-list starting at 2 on the next line, which as a marker it
 /// leaves alone, hiding that sub-list's own `[/]` from the first parse.
 /// Each round only turns more markers into real ones, so it ends.
-fn extract_started_markers(raw: &str) -> (String, HashSet<usize>) {
+fn extract_extended_markers(raw: &str) -> (String, HashMap<usize, TaskState>) {
     let mut processed = raw.to_string();
-    let mut offsets = HashSet::new();
+    let mut markers = HashMap::new();
     loop {
-        let found: Vec<usize> = started_markers_in(&processed)
+        let found: Vec<(usize, TaskState)> = extended_markers_in(&processed)
             .into_iter()
-            .filter(|offset| !offsets.contains(offset))
+            .filter(|(offset, _)| !markers.contains_key(offset))
             .collect();
         if found.is_empty() {
-            return (processed, offsets);
+            return (processed, markers);
         }
-        for offset in found {
+        for (offset, state) in found {
             processed.replace_range(offset..offset + 3, "[ ]");
-            offsets.insert(offset);
+            markers.insert(offset, state);
         }
     }
 }
 
-/// The offsets of the `[/]` markers one parse of `source` sees.
-fn started_markers_in(source: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
+/// The `[/]` and `[-]` markers one parse of `source` sees, by offset.
+fn extended_markers_in(source: &str) -> Vec<(usize, TaskState)> {
+    let mut markers = Vec::new();
     let mut awaiting_first_inline = false;
     for (event, range) in Parser::new_ext(source, PARSE_OPTIONS).into_offset_iter() {
         match event {
@@ -196,26 +197,30 @@ fn started_markers_in(source: &str) -> Vec<usize> {
             Event::Start(Tag::Paragraph | Tag::Heading { .. }) => {}
             Event::Text(_) if awaiting_first_inline => {
                 awaiting_first_inline = false;
-                if is_started_marker_at(source, range.start) {
-                    offsets.push(range.start);
+                if let Some(state) = extended_marker_at(source, range.start) {
+                    markers.push((range.start, state));
                 }
             }
             _ => awaiting_first_inline = false,
         }
     }
-    offsets
+    markers
 }
 
-/// Whether `raw` holds a `[/]` marker at `offset` followed by whitespace —
+/// The state of a `[/]` or `[-]` marker at `offset` followed by whitespace —
 /// the same shape pulldown-cmark requires of `[ ]` before it reports a
 /// `TaskListMarker` (a `[ ]` at the very end of the input is not one).
-fn is_started_marker_at(raw: &str, offset: usize) -> bool {
-    raw[offset..].strip_prefix("[/]").is_some_and(|after| {
-        after
-            .chars()
-            .next()
-            .is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\r'))
-    })
+fn extended_marker_at(raw: &str, offset: usize) -> Option<TaskState> {
+    let rest = &raw[offset..];
+    let (state, after) = match rest.strip_prefix("[/]") {
+        Some(after) => (TaskState::Started, after),
+        None => (TaskState::Skipped, rest.strip_prefix("[-]")?),
+    };
+    after
+        .chars()
+        .next()
+        .is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\r'))
+        .then_some(state)
 }
 
 /// Mutable state for one list item while it's being parsed. Kept on a stack
@@ -572,7 +577,8 @@ fn strip_trailing_newline(content: String) -> String {
 /// Everything the event walk in [`parse_source`] carries between events.
 struct ParseState<'a> {
     source: &'a str,
-    started_offsets: HashSet<usize>,
+    /// The `[/]` and `[-]` markers the pre-pass found, by offset.
+    extended_markers: HashMap<usize, TaskState>,
     line_counter: LineCounter,
 
     lists: Vec<List>,
@@ -647,10 +653,10 @@ struct ParseState<'a> {
 }
 
 impl<'a> ParseState<'a> {
-    fn new(source: &'a str, started_offsets: HashSet<usize>) -> Self {
+    fn new(source: &'a str, extended_markers: HashMap<usize, TaskState>) -> Self {
         Self {
             source,
-            started_offsets,
+            extended_markers,
             line_counter: LineCounter::new(),
             lists: Vec::new(),
             default_items: Vec::new(),
@@ -933,8 +939,8 @@ impl<'a> ParseState<'a> {
         self.list_had_checkbox_syntax = true;
         let state = if checked {
             TaskState::Done
-        } else if self.started_offsets.contains(&offset) {
-            TaskState::Started
+        } else if let Some(&state) = self.extended_markers.get(&offset) {
+            state
         } else {
             TaskState::NotStarted
         };
@@ -1128,9 +1134,9 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     // Offsets are preserved by both rewrites, so line numbers still index
     // `raw_lines`.
     let without_front_matter = blank_front_matter(raw_for_parsing);
-    let (source, started_offsets) = extract_started_markers(&without_front_matter);
+    let (source, extended_markers) = extract_extended_markers(&without_front_matter);
 
-    let mut state = ParseState::new(&source, started_offsets);
+    let mut state = ParseState::new(&source, extended_markers);
     // Merged so a bare URL that pulldown-cmark splits across several text
     // events (at a `_` or `&`, say) reaches `find_bare_urls` whole.
     let events =

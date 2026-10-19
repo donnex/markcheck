@@ -16,13 +16,13 @@ expression: "screen(&mut state, 80, 24)"
 │  wheel in ? / T     scroll this help / move t│  │                            │
 │  space / Enter      toggle the task done, the│  │                            │
 │  s                  mark the task started / i│  │                            │
+│  -                  skip the task (doesn't ap│  │                            │
 │  u / Ctrl-R         undo / redo the last chan│  │                            │
 │  Tab                jump to the next unfinish│  │                            │
 │  Shift-H / Shift-L  previous / next unfinishe│  │                            │
 │  /                  search tasks by text     │  │                            │
 │  n / N              next / previous search ma│  │                            │
 │  T                  go to task (filterable li│  │                            │
-│  click T picker row highlight it; click it ag│  │                            │
-│  click overview row toggle (icon) or jump to ▼  │                            │
+│  click T picker row highlight it; click it ag▼  │                            │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help
