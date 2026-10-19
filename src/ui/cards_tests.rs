@@ -195,26 +195,6 @@ fn kind_item(kind: ItemKind) -> Item {
 }
 
 #[test]
-fn state_color_gives_an_info_parent_its_aggregate_accent() {
-    let pal = Palette::truecolor();
-    let info = kind_item(ItemKind::DisplayOnly);
-    // A display-only parent borrows the task accents from its sub-list's
-    // aggregate state, and stays unaccented when nothing's begun.
-    assert_eq!(
-        state_color(&info, Some(TaskState::Done), pal),
-        Some(pal.done)
-    );
-    assert_eq!(
-        state_color(&info, Some(TaskState::Started), pal),
-        Some(pal.started)
-    );
-    assert_eq!(state_color(&info, None, pal), None);
-    // A checkbox carries its own state and ignores the info aggregate.
-    let task = kind_item(ItemKind::Checkbox(TaskState::Done));
-    assert_eq!(state_color(&task, None, pal), Some(pal.done));
-}
-
-#[test]
 fn accent_color_falls_back_to_note_blue_for_idle_info_cards() {
     let pal = Palette::truecolor();
     let info = kind_item(ItemKind::DisplayOnly);

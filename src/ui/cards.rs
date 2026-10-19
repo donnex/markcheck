@@ -8,7 +8,9 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List as ListWidget, ListItem, ListState, Padding, Paragraph,
 };
 
-use super::{char_width, display_width, expand_tabs, split_at_width};
+use super::{
+    char_width, display_width, expand_tabs, fg, marker_color, split_at_width, state_marker,
+};
 use crate::model::{
     AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, SubHeading, TaskState,
     View,
@@ -37,28 +39,11 @@ fn clamp_to_u16(n: usize) -> u16 {
     n.min(u16::MAX as usize) as u16
 }
 
-/// The accent color for a task's state. `info_state` is a display-only
-/// parent's aggregate child state, so it borrows a task's accent.
-fn state_color(item: &Item, info_state: Option<TaskState>, palette: Palette) -> Option<Color> {
-    let state = match item.kind {
-        ItemKind::Checkbox(state) => Some(state),
-        ItemKind::DisplayOnly => info_state,
-    };
-    match state {
-        Some(TaskState::Done) => Some(palette.done),
-        Some(TaskState::Started) => Some(palette.started),
-        _ => None,
-    }
-}
-
-/// `state_color`, but an idle display-only note falls back to
-/// `palette.note` to match its icon.
+/// A card's border accent, the same color as its state icon: `info_state`
+/// is a display-only parent's aggregate child state, and an idle note is
+/// note blue.
 fn accent_color(item: &Item, info_state: Option<TaskState>, palette: Palette) -> Option<Color> {
-    match state_color(item, info_state, palette) {
-        Some(color) => Some(color),
-        None if matches!(item.kind, ItemKind::DisplayOnly) => Some(palette.note),
-        None => None,
-    }
+    marker_color(item.kind, info_state, palette)
 }
 
 /// Below this card-area width a single card is shown instead of the
@@ -102,17 +87,10 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .iter()
         .map(|&(li, ii)| {
             let item = &state.document.lists[li].items[ii];
-            let (marker, marker_style) = match item.kind {
-                ItemKind::Checkbox(TaskState::Done) => {
-                    (icons.done, Style::default().fg(palette.done))
-                }
-                ItemKind::Checkbox(TaskState::Started) => {
-                    (icons.started, Style::default().fg(palette.started))
-                }
-                ItemKind::Checkbox(TaskState::NotStarted) => {
-                    (icons.pending, Style::default().add_modifier(Modifier::DIM))
-                }
-                ItemKind::DisplayOnly => (icons.note, Style::default().fg(palette.note)),
+            let (marker, color) = state_marker(item.kind, None, icons, palette);
+            let marker_style = match color {
+                Some(color) => Style::default().fg(color),
+                None => Style::default().add_modifier(Modifier::DIM),
             };
             let label = item.label();
             // A dim `— {list} › {sub-section}` context suffix: the
@@ -720,25 +698,8 @@ fn header_line(
     icons: IconSet,
     palette: Palette,
 ) -> Line<'static> {
-    let (icon, icon_style) = match item.kind {
-        ItemKind::Checkbox(TaskState::Done) => (icons.done, Style::default().fg(palette.done)),
-        ItemKind::Checkbox(TaskState::Started) => {
-            (icons.started, Style::default().fg(palette.started))
-        }
-        ItemKind::Checkbox(TaskState::NotStarted) => (icons.pending, Style::default()),
-        // The note glyph is unchanged (shape still says "information"); only
-        // its color reflects the sub-list's aggregate state, staying the
-        // plain note blue when nothing is under way.
-        ItemKind::DisplayOnly => {
-            let color = match info_state {
-                Some(TaskState::Done) => palette.done,
-                Some(TaskState::Started) => palette.started,
-                _ => palette.note,
-            };
-            (icons.note, Style::default().fg(color))
-        }
-    };
-    Line::from(Span::styled(format!(" {icon} "), icon_style))
+    let (icon, color) = state_marker(item.kind, info_state, icons, palette);
+    Line::from(Span::styled(format!(" {icon} "), fg(color)))
 }
 
 /// A dim breadcrumb of a nested item's parent chain, truncated from the
@@ -864,19 +825,19 @@ fn position_dots(list: &List, current: usize, palette: Palette) -> Line<'static>
         let (glyph, style) = if i == current {
             ("◉", Style::default().fg(palette.current))
         } else {
-            match item.kind {
-                ItemKind::Checkbox(TaskState::Done) => ("●", Style::default().fg(palette.done)),
-                ItemKind::Checkbox(TaskState::Started) => {
-                    let glyph = if palette.is_mono() { "◐" } else { "●" };
-                    (glyph, Style::default().fg(palette.started))
-                }
-                // Info items keep the small `·` (not a task, no progress of
-                // their own) but in note blue, so the strip stays a faithful
-                // item map while reading as information, not a pending task.
-                ItemKind::DisplayOnly => ("·", Style::default().fg(palette.note)),
-                ItemKind::Checkbox(TaskState::NotStarted) => {
-                    ("·", Style::default().add_modifier(Modifier::DIM))
-                }
+            let color = marker_color(item.kind, None, palette);
+            // Info items keep the small `·` (not a task, no progress of their
+            // own) but in note blue, so the strip stays a faithful item map
+            // while reading as information, not a pending task.
+            let glyph = match item.kind {
+                ItemKind::Checkbox(TaskState::Done) => "●",
+                ItemKind::Checkbox(TaskState::Started) if palette.is_mono() => "◐",
+                ItemKind::Checkbox(TaskState::Started) => "●",
+                ItemKind::Checkbox(TaskState::NotStarted) | ItemKind::DisplayOnly => "·",
+            };
+            match color {
+                Some(color) => (glyph, Style::default().fg(color)),
+                None => (glyph, Style::default().add_modifier(Modifier::DIM)),
             }
         };
         spans.push(Span::styled(glyph, style));

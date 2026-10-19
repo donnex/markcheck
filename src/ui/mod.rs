@@ -14,7 +14,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use crate::model::AppState;
+use crate::model::{AppState, IconSet, ItemKind, Palette, TaskState};
 
 /// The scrollbar thumb glyph: a soft shaded block (`▓`) rather than the chunky
 /// default full block, with `▲`/`▼` end arrows and the box border showing
@@ -536,6 +536,44 @@ fn sync_section(state: &AppState, now: SystemTime) -> (String, Style) {
 /// A completed background git-sync commit+push.
 fn sync_label(last_sync_at: Option<SystemTime>, now: SystemTime) -> Option<String> {
     relative_label("Synced", last_sync_at, now)
+}
+
+/// An item's state glyph and color, the one mapping every view draws from:
+/// done, started, pending (no color of its own), or for a note the note glyph
+/// tinted by `info_state`, its sub-list's aggregate state, green when all
+/// done, yellow when under way, otherwise note blue.
+fn state_marker(
+    kind: ItemKind,
+    info_state: Option<TaskState>,
+    icons: IconSet,
+    palette: Palette,
+) -> (&'static str, Option<Color>) {
+    let glyph = match kind {
+        ItemKind::Checkbox(TaskState::Done) => icons.done,
+        ItemKind::Checkbox(TaskState::Started) => icons.started,
+        ItemKind::Checkbox(TaskState::NotStarted) => icons.pending,
+        ItemKind::DisplayOnly => icons.note,
+    };
+    (glyph, marker_color(kind, info_state, palette))
+}
+
+/// [`state_marker`]'s color alone.
+fn marker_color(kind: ItemKind, info_state: Option<TaskState>, palette: Palette) -> Option<Color> {
+    match kind {
+        ItemKind::Checkbox(TaskState::Done) => Some(palette.done),
+        ItemKind::Checkbox(TaskState::Started) => Some(palette.started),
+        ItemKind::Checkbox(TaskState::NotStarted) => None,
+        ItemKind::DisplayOnly => Some(match info_state {
+            Some(TaskState::Done) => palette.done,
+            Some(TaskState::Started) => palette.started,
+            _ => palette.note,
+        }),
+    }
+}
+
+/// `color` as a foreground, or the plain style for none.
+fn fg(color: Option<Color>) -> Style {
+    color.map_or_else(Style::default, |color| Style::default().fg(color))
 }
 
 #[cfg(test)]

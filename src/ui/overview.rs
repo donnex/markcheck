@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph};
 
+use super::{fg, state_marker};
 use crate::model::{
     AppState, IconSet, ItemKind, ItemLinks, OverviewTarget, Palette, SubHeading, TaskState,
 };
@@ -293,17 +294,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 // all-done with a dimmed label like a done task, yellow
                 // in-progress, else the plain note blue.
                 (ItemKind::DisplayOnly, _) => {
-                    let color = match info_state {
-                        Some(TaskState::Done) => palette.done,
-                        Some(TaskState::Started) => palette.started,
-                        _ => palette.note,
-                    };
+                    let (glyph, color) = state_marker(item.kind, info_state, icons, palette);
                     let text_style = if matches!(info_state, Some(TaskState::Done)) {
                         Style::default().add_modifier(Modifier::DIM)
                     } else {
                         Style::default()
                     };
-                    (icons.note, Style::default().fg(color), text_style)
+                    (glyph, fg(color), text_style)
                 }
                 (_, true) => (
                     icons.current,
