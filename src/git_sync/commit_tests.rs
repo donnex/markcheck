@@ -245,11 +245,23 @@ fn commit_temp_index_still_fails_when_the_commit_never_lands() {
 #[test]
 fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
     // A `pre-commit` hook past the timeout: SIGTERM lets git and the hook
-    // clean up their locks, which SIGKILL never would.
+    // clean up their locks, which SIGKILL never would. On a loaded machine the
+    // signal can beat the hook's trap, or the grace period can end before the
+    // trap runs, so such an attempt is retried with a longer timeout.
+    for timeout_ms in [300, 1_000, 3_000, 10_000] {
+        if sigterm_attempt(Duration::from_millis(timeout_ms)) {
+            return;
+        }
+    }
+    panic!("no attempt saw the hook ready and signalled within the grace period");
+}
+#[cfg(unix)]
+fn sigterm_attempt(timeout: Duration) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
     let work = init_repo_without_remote();
     let parent = current_head(&work).unwrap();
+    let ready = work.parent().unwrap().join("hook-ready");
     let marker = work.parent().unwrap().join("hook-got-sigterm");
     let hooks_dir = work.join(".git").join("hooks");
     fs::create_dir_all(&hooks_dir).unwrap();
@@ -257,8 +269,9 @@ fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
     fs::write(
         &hook_path,
         format!(
-            "#!/bin/sh\ntrap 'touch {}; exit 1' TERM\nsleep 5 &\nwait\n",
-            shell_words::quote(marker.to_str().unwrap())
+            "#!/bin/sh\ntrap ': > {}; exit 1' TERM\n: > {}\nsleep {HOOK_RACE_SLEEP} &\nwait\n",
+            shell_words::quote(marker.to_str().unwrap()),
+            shell_words::quote(ready.to_str().unwrap())
         ),
     )
     .unwrap();
@@ -276,18 +289,28 @@ fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
         &Some(parent.clone()),
         "tracked.md",
         &blob,
-        Duration::from_millis(300),
+        timeout,
     );
-    assert!(result.is_err(), "{result:?}");
-    assert!(marker.exists(), "the hook must have received SIGTERM");
-    assert!(
-        !work.join(".git").join("index.lock").exists(),
-        "no lock may be left in the user's repository"
-    );
-    assert_eq!(current_head(&work), Some(parent));
+    let force_killed = matches!(&result, Err(err) if err.contains("force-killed"));
+    let counted = ready.exists() && !force_killed;
+    if counted {
+        assert!(result.is_err(), "{result:?}");
+        // git exits on the signal without waiting for the hook's trap.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(marker.exists(), "the hook must have received SIGTERM");
+        assert!(
+            !work.join(".git").join("index.lock").exists(),
+            "no lock may be left in the user's repository"
+        );
+        assert_eq!(current_head(&work), Some(parent));
+    }
 
     let _ = fs::remove_file(&temp_index);
     fs::remove_dir_all(work.parent().unwrap()).ok();
+    counted
 }
 #[cfg(unix)]
 #[test]
