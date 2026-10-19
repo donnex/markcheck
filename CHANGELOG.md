@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `R` can now reset part of a checklist: in its confirmation, `l` resets
+  only the current list and `s` only the sub-list you are in (a task and its
+  sub-tasks), with the number of tasks each would change, while `y` still
+  resets everything. Before, re-running one procedure in a file of several
+  meant resetting all of them or unticking each task by hand. (#118)
+
 - `o` on a link to a heading in the same file, such as
   `[Rollback](#rollback)`, now jumps to the first task under that heading,
   and `Ctrl-O` jumps back, as in vim. Before, such a link was refused as an

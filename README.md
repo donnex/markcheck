@@ -433,7 +433,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `e` | edit the file in `$EDITOR` (at the current task's line for editors that support it) |
 | `Ctrl-Z` | suspend to the shell, as in vim or less; `fg` brings markcheck back, picking up any change made to the file meanwhile |
 | `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
-| `R` | reset all tasks to not-done (asks first) |
+| `R` | reset tasks to not-done (asks first): `y` resets everything, `l` only the current list, `s` only the sub-list the cursor is in |
 | `1`–`9` | jump to list N |
 | `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the `o`/`y` digit prompt, the list-complete screen). Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
 | `q` | quit; while git sync is running, wait for it (`q` again stops it) |
@@ -910,9 +910,11 @@ terminal editors do but most GUI editors don't unless told to: set
 or leave off `-n` with `emacsclient`. An editor that exits within a second
 without changing the file gets a status-bar hint saying so, since its later
 save would otherwise be picked up as an outside change and, with git-sync,
-not committed as an edit of its own. `R` resets every task to not-done after a
-confirmation prompt that says how many done and started tasks it will clear
-(press `y` to confirm — any other key cancels). When
+not committed as an edit of its own. `R` resets tasks to not-done after a
+confirmation prompt that says how many done and started tasks it will clear:
+press `y` to reset everything, `l` to reset only the current list, or `s`
+to reset only the sub-list you are in, each shown with how many tasks it
+would change; any other key cancels. When
 you quit with every task already done, `markcheck` first asks whether to
 reset the checklist so it's ready to run again: `y` resets and quits, `n`
 quits as-is, `Esc` stays in the app. If the reset can't be saved, markcheck

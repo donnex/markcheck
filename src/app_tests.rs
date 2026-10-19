@@ -6434,3 +6434,90 @@ fn open_at_moves_to_a_line_or_an_anchor_or_says_why_not() {
         Err("no list or task at #c, so opened at the start".to_string())
     );
 }
+
+#[test]
+fn r_then_l_resets_only_the_current_list() {
+    let path = write_real_file("## A\n\n- [x] a1\n- [x] a2\n\n## B\n\n- [x] b1\n- [ ] b2\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.reset_count(ResetScope::List), 1);
+    state.handle_key(KeyCode::Char('l'));
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains("- [x] a1") && written.contains("- [x] a2"),
+        "{written}"
+    );
+    assert!(written.contains("- [ ] b1"), "{written}");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("\"B\" reset to not done")
+    );
+    assert_eq!(
+        state.git_sync_request().map(|s| s.description.as_str()),
+        Some("Reset \"B\" to not done")
+    );
+    state.handle_key(KeyCode::Char('u'));
+    assert!(
+        fs::read_to_string(&path).unwrap().contains("- [x] b1"),
+        "one undo step"
+    );
+}
+
+#[test]
+fn r_then_s_resets_the_sub_list_the_cursor_is_in() {
+    let path = write_real_file(
+        "## A\n\n- [x] parent\n  - [x] child one\n  - [/] child two\n- [x] other\n",
+    );
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.focus_item(0, 2, CursorMove::Quiet);
+    assert_eq!(
+        state.sub_list_root(),
+        Some(0),
+        "a child's sub-list is its parent's"
+    );
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.reset_count(ResetScope::SubList), 3);
+    state.handle_key(KeyCode::Char('s'));
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(written.contains("- [ ] parent") && written.contains("  - [ ] child two"));
+    assert!(
+        written.contains("- [x] other"),
+        "outside the sub-list: {written}"
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("\"parent\" and its sub-tasks"))
+    );
+
+    state.focus_item(0, 3, CursorMove::Quiet);
+    assert_eq!(
+        state.sub_list_root(),
+        None,
+        "a top-level task with no sub-tasks"
+    );
+    state.handle_key(KeyCode::Char('R'));
+    state.handle_key(KeyCode::Char('s'));
+    assert_eq!(
+        state.overlay, None,
+        "s without a sub-list cancels like any other key"
+    );
+}
+
+#[test]
+fn a_scoped_reset_with_nothing_to_reset_says_so_and_stays_open() {
+    let path = write_real_file("## A\n\n- [x] a\n\n## B\n\n- [ ] b\n");
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    state.focus_item(1, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('R'));
+    state.handle_key(KeyCode::Char('l'));
+    assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Nothing to reset there"))
+    );
+}

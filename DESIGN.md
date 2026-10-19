@@ -885,7 +885,7 @@ Green border. Replaces the three-card area entirely.
 | `e` | edit file in `$EDITOR` | edit | edit |
 | `Ctrl-Z` | suspend to the shell (see Suspend) | suspend | suspend |
 | `Ctrl-C` | sticky `Type q to quit` hint (does not quit) | hint | hint |
-| `R` | reset all tasks (confirm) | reset | reset |
+| `R` | reset (confirm: all, list or sub-list) | reset | reset |
 | `u` / `Ctrl-R` | undo / redo the last state change | undo / redo | undo / redo |
 | `Ctrl-O` | back to before the last `#anchor` jump | — | — |
 | `1`–`9` | jump to list N | jump to list N | jump to list N |
@@ -935,6 +935,8 @@ Raw mode turns off the terminal's `ISIG`, so Ctrl-Z reaches markcheck as a key r
 ## Reset (`R`; quit-reset)
 
 `request_reset` opens the `ConfirmReset` modal, or shows "Nothing to reset" when no task is done or started. The modal states what will change, counting done and started tasks separately (e.g. `This marks 1 done and 2 started tasks (of 5) as not started`), since a reset clears both. `reset_all` flips every checkbox to not-done, writes back once (updating `file_mtime` to suppress a self-reload), and returns to `Checklist`. The cursor is kept. A write failure sets a sticky error (`Write failed — reset not saved to disk`) instead — the screen stays on `ConfirmReset` and the reset status is never shown, since it wasn't actually saved (the checkboxes are rolled back to their pre-reset state via `commit_write`'s failure path, matching `set_current_state`'s behavior — memory never diverges from what's actually on disk).
+
+**Scoped reset (#118).** The `ConfirmReset` dialog also takes `l` (the current `## H2` list) and `s` (the sub-list the cursor is in: `AppState::sub_list_root`, the current task when it has sub-tasks, otherwise its parent), besides `y` for everything; each key line shows how many tasks that scope would change (`reset_count`, which counts done, started and skipped tasks), and `l` appears only with more than one list, `s` only inside a sub-list. All three go through `reset_scope(ResetScope)`, the generalised `reset_all`, as one `commit_write` and one undo point, with a scoped git-sync description (`Reset "Rollback" to not done`, `Reset "Rebuild" and its sub-tasks to not done`). A scope with nothing to reset keeps the dialog open behind a sticky `Nothing to reset there` error; `s` with no sub-list cancels like any other key.
 
 Quitting with everything already done (`q` when `document.checkbox_stats()` is all-done) opens the `ConfirmQuitReset` modal instead of quitting outright, so a finished checklist can be handed back ready to run again: `y` calls `reset_all` and quits only if the reset was saved, `n` quits without resetting, `Esc`/other cancels. This keeps the "leave it clean for the next run" workflow one keystroke away without ever resetting silently.
 

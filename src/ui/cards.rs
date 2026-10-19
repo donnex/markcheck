@@ -13,7 +13,7 @@ use super::{
 };
 use crate::model::{
     AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, PreambleBlock,
-    PreambleKind, SubHeading, TaskState, View,
+    PreambleKind, ResetScope, SubHeading, TaskState, View,
 };
 
 /// Prose that wraps to at most this many lines is centered; longer prose is
@@ -322,6 +322,8 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
         "Reset dialogs (R, or q when all done)",
         &[
             ("y", "reset all tasks (and quit, after q)"),
+            ("l", "after R: reset only the current list"),
+            ("s", "after R: reset only the current sub-list"),
             ("n", "after q: quit without resetting"),
             ("Esc", "cancel (so does any other key)"),
         ],
@@ -1942,11 +1944,23 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         )),
         Line::from(format!("and rewrites {file_name}.")),
     ];
-    let keys = vec![
-        Line::from(""),
-        Line::from("Press  y  to reset"),
-        Line::from("Press any other key to cancel"),
-    ];
+    let mut keys = vec![Line::from(""), Line::from("Press  y  to reset everything")];
+    // Narrower scopes (#118), each with how many tasks it would change.
+    if state.document.lists.len() > 1 {
+        keys.push(Line::from(format!(
+            "Press  l  to reset only \"{}\" ({})",
+            super::truncate(&state.current_list().title, 28),
+            state.reset_count(ResetScope::List)
+        )));
+    }
+    if let Some(root) = state.sub_list_root() {
+        keys.push(Line::from(format!(
+            "Press  s  to reset only \"{}\" and below ({})",
+            super::truncate(&state.current_list().items[root].label(), 24),
+            state.reset_count(ResetScope::SubList)
+        )));
+    }
+    keys.push(Line::from("Press any other key to cancel"));
     modal_card(
         frame,
         area,

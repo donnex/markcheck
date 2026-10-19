@@ -2497,7 +2497,10 @@ fn confirm_reset_wraps_a_long_file_name_instead_of_clipping_it() {
         .map(|r| r.trim_matches(|c: char| c == '│' || c.is_whitespace()))
         .collect();
     assert!(joined.contains(&format!("rewrites{name}")), "{rows:#?}");
-    assert!(joined.contains("Press  y  to reset"), "{rows:#?}");
+    assert!(
+        joined.replace("  ", " ").contains("Press y to reset"),
+        "{rows:#?}"
+    );
 }
 
 #[test]

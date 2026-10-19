@@ -242,7 +242,7 @@ impl List {
 
     /// Whether item `i` heads a sub-list — i.e. the next item is nested one or
     /// more levels deeper.
-    fn has_children(&self, i: usize) -> bool {
+    pub fn has_children(&self, i: usize) -> bool {
         self.items
             .get(i + 1)
             .is_some_and(|next| next.depth > self.items[i].depth)
@@ -397,6 +397,16 @@ pub struct ItemLinks {
     pub sublist_slot: usize,
     /// `info_parent_state`.
     pub info_state: Option<TaskState>,
+}
+
+/// What `R` resets (#118).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetScope {
+    All,
+    /// The current `## H2` list.
+    List,
+    /// The sub-list the cursor is in: a parent task and everything below it.
+    SubList,
 }
 
 /// Where to open the checklist: `markcheck +N file.md` or `file.md#anchor`
