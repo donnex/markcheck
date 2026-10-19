@@ -1996,3 +1996,41 @@ fn a_tab_indented_nested_task_is_on_its_own_line() {
     assert_eq!(numbered.lists[0].items[1].line_number, 2);
     assert_eq!(numbered.lists[0].items[1].ordinal.as_deref(), Some("1."));
 }
+
+#[test]
+fn a_started_task_whose_text_became_a_setext_heading_stays_a_task() {
+    // An empty `-` item under a task's text underlines it as a heading;
+    // `[ ]` there is a task, so `[/]` must be too. Found by the property
+    // tests (#79).
+    for (source, state) in [
+        ("- [ ] step\n  - ", TaskState::NotStarted),
+        ("- [/] step\n  - ", TaskState::Started),
+    ] {
+        let document = parse_source(source, PathBuf::from("t.md"));
+        assert_eq!(
+            document.lists[0].items[0].kind,
+            ItemKind::Checkbox(state),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn a_started_sub_task_hidden_by_its_parent_s_marker_is_still_found() {
+    // As text, the parent's `[/]` makes a paragraph that would swallow the
+    // `2)` line; as a marker it doesn't, so the second round finds the sub-task.
+    // Found by the property tests (#79).
+    let document = parse_source("- [/] \n  2) [/] step\n", PathBuf::from("t.md"));
+    let states: Vec<_> = document.lists[0]
+        .items
+        .iter()
+        .map(|item| (item.line_number, item.kind))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            (1, ItemKind::Checkbox(TaskState::Started)),
+            (2, ItemKind::Checkbox(TaskState::Started)),
+        ]
+    );
+}

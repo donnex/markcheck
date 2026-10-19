@@ -155,32 +155,54 @@ fn blank_front_matter(source: &str) -> Cow<'_, str> {
     Cow::Owned(blanked)
 }
 
-/// pulldown-cmark only recognizes `[ ]` and `[x]`. This pre-pass parses
-/// `raw` once and records the offset of every `[/]` exactly where a task
-/// marker would be, rewrites those to `[ ]` (same length, so offsets hold),
-/// and returns the offsets so the second parse can promote them to
-/// `Started`.
+/// pulldown-cmark only recognizes `[ ]` and `[x]`. This pre-pass records
+/// the offset of every `[/]` exactly where a task marker would be, rewrites
+/// those to `[ ]` (same length, so offsets hold), and returns the offsets so
+/// the final parse can promote them to `Started`.
+///
+/// It repeats until a parse finds no new one, because a rewrite can change
+/// the block structure: as text, `[/]` makes a paragraph that swallows an
+/// ordered sub-list starting at 2 on the next line, which as a marker it
+/// leaves alone, hiding that sub-list's own `[/]` from the first parse.
+/// Each round only turns more markers into real ones, so it ends.
 fn extract_started_markers(raw: &str) -> (String, HashSet<usize>) {
+    let mut processed = raw.to_string();
     let mut offsets = HashSet::new();
+    loop {
+        let found: Vec<usize> = started_markers_in(&processed)
+            .into_iter()
+            .filter(|offset| !offsets.contains(offset))
+            .collect();
+        if found.is_empty() {
+            return (processed, offsets);
+        }
+        for offset in found {
+            processed.replace_range(offset..offset + 3, "[ ]");
+            offsets.insert(offset);
+        }
+    }
+}
+
+/// The offsets of the `[/]` markers one parse of `source` sees.
+fn started_markers_in(source: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
     let mut awaiting_first_inline = false;
-    for (event, range) in Parser::new_ext(raw, PARSE_OPTIONS).into_offset_iter() {
+    for (event, range) in Parser::new_ext(source, PARSE_OPTIONS).into_offset_iter() {
         match event {
             Event::Start(Tag::Item) => awaiting_first_inline = true,
-            Event::Start(Tag::Paragraph) => {}
+            // A `-` line under the task's text makes it a setext heading, and
+            // pulldown-cmark still reads `[ ]` there as a task marker.
+            Event::Start(Tag::Paragraph | Tag::Heading { .. }) => {}
             Event::Text(_) if awaiting_first_inline => {
                 awaiting_first_inline = false;
-                if is_started_marker_at(raw, range.start) {
-                    offsets.insert(range.start);
+                if is_started_marker_at(source, range.start) {
+                    offsets.push(range.start);
                 }
             }
             _ => awaiting_first_inline = false,
         }
     }
-    let mut processed = raw.to_string();
-    for &offset in &offsets {
-        processed.replace_range(offset..offset + 3, "[ ]");
-    }
-    (processed, offsets)
+    offsets
 }
 
 /// Whether `raw` holds a `[/]` marker at `offset` followed by whitespace —

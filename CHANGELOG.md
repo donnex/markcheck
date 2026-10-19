@@ -174,6 +174,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two rare layouts no longer lose a started (`[/]`) task. Marking a task
+  started could make it vanish on the next reload when the line under it
+  was a lone `-` (which turns the text above into a heading), or make a
+  started sub-task numbered from 2 (`2)`) disappear right under it. (#79)
+
 - A nested task indented with a tab now toggles itself. Before, markcheck
   placed it on its parent's line, so ticking it changed nothing on disk (or
   the parent's box) and it could show the wrong step number. (#79)
