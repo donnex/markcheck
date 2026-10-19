@@ -2,16 +2,14 @@
 //! explicit `<sha>:<branch-ref>`, so it can never publish more than what was
 //! validated.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::guards::{repo_sync_blocked, unpushed_history_blocks};
 use super::inspect::{
     RemoteBranch, commits_ahead_of_upstream, current_head, index_entry, is_ancestor,
     push_goes_to_upstream, push_url, remote_branch_state, resolve_upstream, upstream_parts,
 };
-use super::process::{
-    PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, run_with_timeout,
-};
+use super::process::{PUSH_TIMEOUT, command_error, git_command, run_with_timeout};
 use super::shared::{RacePoint, SyncOutcome, race_point};
 
 /// Pushes `expected_commit` as an explicit refspec. A failure is
@@ -20,7 +18,7 @@ use super::shared::{RacePoint, SyncOutcome, race_point};
 /// An empty `expected_commit` is `Failed`: `<remote> :<branch>` would delete
 /// the remote branch. With no resolvable upstream the push is refused rather
 /// than falling back to a bare `git push`, which can publish the whole branch.
-pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
+pub(super) fn push(repo_root: &Path, expected_commit: &str) -> SyncOutcome {
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("could not work out which commit to push".to_string());
     }
@@ -32,10 +30,10 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
             .to_string(),
         commit: expected_commit.to_string(),
     };
-    if !matches!(resolve_upstream(repo_dir), Ok(Some(_))) {
+    if !matches!(resolve_upstream(repo_root), Ok(Some(_))) {
         return no_upstream;
     }
-    let Some((remote, branch_ref)) = upstream_parts(repo_dir) else {
+    let Some((remote, branch_ref)) = upstream_parts(repo_root) else {
         return no_upstream;
     };
     // A remote of `.` is this repository: the "push" would move another
@@ -54,7 +52,7 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     }
     // The upstream is where changes are fetched from, not necessarily where
     // `git push` sends them (#98).
-    if !push_goes_to_upstream(repo_dir, &remote) {
+    if !push_goes_to_upstream(repo_root, &remote) {
         return SyncOutcome::CommittedNotPushed {
             message: format!(
                 "`git push` would not push this branch to {branch_ref} on \
@@ -65,14 +63,14 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
     }
     // Ask the repository the push will reach, which `pushurl` can make
     // different from the one `ls-remote <remote>` would ask.
-    let Some(url) = push_url(repo_dir, &remote) else {
+    let Some(url) = push_url(repo_root, &remote) else {
         return SyncOutcome::CommittedNotPushed {
             message: format!("could not work out where {remote} pushes to"),
             commit: expected_commit.to_string(),
         };
     };
     // Ask the remote: an explicit-SHA refspec recreates a deleted branch.
-    let remote_tip = match remote_branch_state(repo_dir, &url, &branch_ref) {
+    let remote_tip = match remote_branch_state(repo_root, &url, &branch_ref) {
         RemoteBranch::Present(sha) => sha,
         RemoteBranch::Absent => {
             return SyncOutcome::CommittedNotPushed {
@@ -98,7 +96,7 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 
     // Only ever a fast-forward. Checked here because the lease below permits a
     // non-fast-forward whenever it matches.
-    if !is_ancestor(repo_dir, &remote_tip, expected_commit) {
+    if !is_ancestor(repo_root, &remote_tip, expected_commit) {
         return SyncOutcome::CommittedNotPushed {
             message: format!(
                 "{branch_ref} on {remote} has commits this change is not based on; \
@@ -112,7 +110,7 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 
     // The lease makes the remote check hold across the two round trips: git
     // rejects the push if the branch was deleted or moved in between.
-    let mut cmd = git_command(repo_dir);
+    let mut cmd = git_command(repo_root);
     cmd.args([
         "push",
         &format!("--force-with-lease={branch_ref}:{remote_tip}"),
@@ -134,76 +132,54 @@ pub(super) fn push(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
 }
 /// Pushes only if `HEAD` is still `expected_commit`; otherwise reports
 /// `CommittedNotPushed` so the retry machinery tries again.
-pub(super) fn push_if_head_unchanged(
-    repo_dir: &Path,
-    repo_root: &Path,
-    expected_commit: &str,
-) -> SyncOutcome {
+pub(super) fn push_if_head_unchanged(repo_root: &Path, expected_commit: &str) -> SyncOutcome {
     if current_head(repo_root).as_deref() != Some(expected_commit) {
         return SyncOutcome::CommittedNotPushed {
             message: "the repository changed after the commit was made".to_string(),
             commit: expected_commit.to_string(),
         };
     }
-    push(repo_dir, expected_commit)
+    push(repo_root, expected_commit)
 }
 /// Retries pushing a specific commit, silently giving up if `HEAD` has moved
 /// on: rebuilding from the stale content would revert what superseded it.
-pub(super) fn retry_commit(repo_dir: &Path, expected_commit: &str) -> SyncOutcome {
-    let mut cmd = git_command(repo_dir);
-    cmd.args(["rev-parse", "--show-toplevel"]);
-    let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
-        Ok(output) if output.status.success() => {
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
-        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
-        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
-    };
-    if current_head(&repo_root).as_deref() != Some(expected_commit) {
+pub(super) fn retry_commit(repo_root: &Path, expected_commit: &str) -> SyncOutcome {
+    if current_head(repo_root).as_deref() != Some(expected_commit) {
         return SyncOutcome::RetryAbandoned;
     }
-    push(repo_dir, expected_commit)
+    push(repo_root, expected_commit)
 }
 /// Pushes a commit an earlier session left local-only, and never builds a
 /// commit: opening a checklist must not publish uncommitted edits. An
 /// untracked checklist is always reported, since git-sync can never act on
 /// it; a blocked repository or a refused history is `Failed`; nothing to
 /// push, or a tip that can't be read, is a quiet `Skipped`.
-pub(super) fn catch_up_push(repo_dir: &Path, file_path: &Path) -> SyncOutcome {
-    let mut cmd = git_command(repo_dir);
-    cmd.args(["rev-parse", "--show-toplevel"]);
-    let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
-        Ok(output) if output.status.success() => {
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
-        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
-        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
-    };
-    if let Some(reason) = repo_sync_blocked(&repo_root) {
+pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
+    if let Some(reason) = repo_sync_blocked(repo_root) {
         return SyncOutcome::Failed(reason);
     }
     // A lookup error only matters once there is something to push.
-    let relpath = match index_entry(repo_dir, file_path) {
+    let relpath = match index_entry(repo_root, file_path) {
         Ok(Some((_mode, relpath))) => Ok(relpath),
         Ok(None) => return SyncOutcome::SkippedUntracked,
         Err(err) => Err(err),
     };
     // Capture the tip before validating anything, and push that exact SHA.
-    let Some(head) = current_head(&repo_root) else {
+    let Some(head) = current_head(repo_root) else {
         return SyncOutcome::Skipped;
     };
-    if commits_ahead_of_upstream(&repo_root, &head).is_none_or(|ahead| ahead == 0) {
+    if commits_ahead_of_upstream(repo_root, &head).is_none_or(|ahead| ahead == 0) {
         return SyncOutcome::Skipped;
     }
     let relpath = match relpath {
         Ok(relpath) => relpath,
         Err(err) => return SyncOutcome::Failed(err),
     };
-    if let Some(refusal) = unpushed_history_blocks(&repo_root, Some(&head), &relpath) {
+    if let Some(refusal) = unpushed_history_blocks(repo_root, Some(&head), &relpath) {
         return refusal;
     }
     race_point(RacePoint::AfterHistoryValidation);
-    push(repo_dir, &head)
+    push(repo_root, &head)
 }
 
 #[cfg(test)]

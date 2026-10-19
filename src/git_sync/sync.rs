@@ -2,7 +2,7 @@
 //! the commit, verifies what landed and publishes it. Each guard runs before
 //! the work it protects.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use crate::model::hash_bytes;
@@ -14,9 +14,7 @@ use super::guards::{
 use super::inspect::{
     ahead_of_upstream, blob_at, blob_sha_for, hash_object, index_entry, resolve_parent,
 };
-use super::process::{
-    PLUMBING_TIMEOUT, command_error, git_command, literal_pathspec_command, run_with_timeout,
-};
+use super::process::{PLUMBING_TIMEOUT, command_error, literal_pathspec_command, run_with_timeout};
 use super::push::{push, push_if_head_unchanged};
 use super::shared::{RacePoint, SyncOutcome, lock_hash, race_point};
 
@@ -65,31 +63,20 @@ pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
 /// request's message. It goes through a temporary index and an ordinary
 /// `git commit`, so the user's staged content never rides along.
 pub(super) fn run_sync(
-    repo_dir: &Path,
+    repo_root: &Path,
     file_path: &Path,
     expected_content: &str,
     message: &str,
     latest_requested_hash: &Mutex<[u8; 32]>,
     previous_content: Option<&str>,
 ) -> SyncOutcome {
-    // Plumbing runs from the repo root with a root-relative path.
-    let mut cmd = git_command(repo_dir);
-    cmd.args(["rev-parse", "--show-toplevel"]);
-    let repo_root = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
-        Ok(output) if output.status.success() => {
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
-        Ok(output) => return SyncOutcome::Failed(command_error("git rev-parse", &output)),
-        Err(err) => return SyncOutcome::Failed(format!("git rev-parse failed: {err}")),
-    };
-
-    if let Some(reason) = repo_sync_blocked(&repo_root) {
+    if let Some(reason) = repo_sync_blocked(repo_root) {
         return SyncOutcome::Failed(reason);
     }
 
     // Empty output is not taken as "tracked and unchanged"; the index lookup
     // below settles trackedness.
-    let mut cmd = literal_pathspec_command(repo_dir);
+    let mut cmd = literal_pathspec_command(repo_root);
     cmd.args(["status", "--porcelain", "--"]).arg(file_path);
     let status = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) => output,
@@ -105,7 +92,7 @@ pub(super) fn run_sync(
     // Resolved before the empty-status short-circuit: `git status` is silent
     // about an untracked file under `status.showUntrackedFiles=no` or a
     // matching `.gitignore` rule.
-    let (mode, relpath) = match index_entry(repo_dir, file_path) {
+    let (mode, relpath) = match index_entry(repo_root, file_path) {
         Ok(Some(entry)) => entry,
         Ok(None) => return SyncOutcome::SkippedUntracked,
         Err(err) => return SyncOutcome::Failed(err),
@@ -119,12 +106,12 @@ pub(super) fn run_sync(
     // exact commit — the unrelated-history guard, the fast path, the push and
     // the new commit's parent — so what is published is what was validated.
     // The guard runs before both paths that can push.
-    let tip = match resolve_parent(&repo_root) {
+    let tip = match resolve_parent(repo_root) {
         Ok(tip) => tip,
         Err(err) => return SyncOutcome::Failed(err),
     };
 
-    if let Some(refusal) = unpushed_history_blocks(&repo_root, tip.as_deref(), &relpath) {
+    if let Some(refusal) = unpushed_history_blocks(repo_root, tip.as_deref(), &relpath) {
         return refusal;
     }
     race_point(RacePoint::AfterHistoryValidation);
@@ -133,15 +120,13 @@ pub(super) fn run_sync(
     // `status` is non-empty from a newer edit. There may still be a push to
     // retry. Compared as blob SHAs so a line-ending clean filter applies to
     // this content exactly as it did when it was committed.
-    let head_blob = tip
-        .as_deref()
-        .and_then(|t| blob_at(&repo_root, t, &relpath));
+    let head_blob = tip.as_deref().and_then(|t| blob_at(repo_root, t, &relpath));
     if let Some(tip) = tip.as_deref()
         && head_blob.is_some()
-        && blob_sha_for(&repo_root, &relpath, expected_content) == head_blob
+        && blob_sha_for(repo_root, &relpath, expected_content) == head_blob
     {
-        if ahead_of_upstream(&repo_root, tip) {
-            return push(repo_dir, tip);
+        if ahead_of_upstream(repo_root, tip) {
+            return push(repo_root, tip);
         }
         return SyncOutcome::Skipped;
     }
@@ -161,11 +146,11 @@ pub(super) fn run_sync(
     }
 
     // Checked after the fast path, which never builds a commit.
-    if staged_target_would_be_lost(&repo_root, &relpath, head_blob.as_deref(), previous_content) {
+    if staged_target_would_be_lost(repo_root, &relpath, head_blob.as_deref(), previous_content) {
         return SyncOutcome::Failed(STAGED_TARGET_REFUSAL.to_string());
     }
 
-    let blob = match hash_object(&repo_root, &relpath, expected_content) {
+    let blob = match hash_object(repo_root, &relpath, expected_content) {
         Ok(sha) => sha,
         Err(err) => return SyncOutcome::Failed(err),
     };
@@ -173,12 +158,12 @@ pub(super) fn run_sync(
     // `commit_via_temp_index` re-checks `HEAD == parent` before committing.
     let parent = tip;
     let created_commit =
-        match commit_via_temp_index(&repo_root, &parent, &mode, &blob, &relpath, message) {
+        match commit_via_temp_index(repo_root, &parent, &mode, &blob, &relpath, message) {
             Ok(sha) => sha,
             Err(err) => return SyncOutcome::Failed(err),
         };
 
-    push_if_head_unchanged(repo_dir, &repo_root, &created_commit)
+    push_if_head_unchanged(repo_root, &created_commit)
 }
 
 #[cfg(test)]

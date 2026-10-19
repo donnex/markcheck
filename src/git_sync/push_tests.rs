@@ -1,6 +1,7 @@
 use super::super::test_support::*;
 use super::*;
 use std::fs;
+use std::path::PathBuf;
 
 #[test]
 fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verification() {
@@ -14,7 +15,7 @@ fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verificatio
     run(&work, &["add", "other.md"]);
     run(&work, &["commit", "-q", "-m", "concurrent change"]);
 
-    let outcome = push_if_head_unchanged(&work, &work, &created_commit);
+    let outcome = push_if_head_unchanged(&work, &created_commit);
     assert!(
         matches!(&outcome, SyncOutcome::CommittedNotPushed { message, commit }
                 if message.contains("changed after the commit was made") && commit == &created_commit),
@@ -42,7 +43,7 @@ fn push_if_head_unchanged_pushes_normally_when_nothing_raced_it() {
     run(&work, &["commit", "-q", "-am", "markcheck commit"]);
     let created_commit = current_head(&work).unwrap();
 
-    let outcome = push_if_head_unchanged(&work, &work, &created_commit);
+    let outcome = push_if_head_unchanged(&work, &created_commit);
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
 
     let remote_log = crate::test_support::git()

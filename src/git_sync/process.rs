@@ -252,9 +252,9 @@ pub(crate) const REDIRECTING_GIT_VARS: [&str; 8] = [
 /// Strips [`REDIRECTING_GIT_VARS`]. `GIT_OPTIONAL_LOCKS=0` stops the
 /// background `git status` from taking `.git/index.lock` to refresh the stat
 /// cache, which would make the user's own git commands fail meanwhile.
-pub(super) fn git_command(repo_dir: &Path) -> Command {
+pub(super) fn git_command(repo_root: &Path) -> Command {
     let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir)
+    cmd.current_dir(repo_root)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0");
     for var in REDIRECTING_GIT_VARS {
@@ -269,8 +269,8 @@ pub(super) fn git_command(repo_dir: &Path) -> Command {
 /// A [`git_command`] whose pathspecs match literally, so `notes[1].md` cannot
 /// match `notes1.md`. Not set in `git_command` because hooks run by
 /// `git commit` inherit the environment and may rely on globs.
-pub(super) fn literal_pathspec_command(repo_dir: &Path) -> Command {
-    let mut cmd = git_command(repo_dir);
+pub(super) fn literal_pathspec_command(repo_root: &Path) -> Command {
+    let mut cmd = git_command(repo_root);
     for var in [
         "GIT_GLOB_PATHSPECS",
         "GIT_NOGLOB_PATHSPECS",

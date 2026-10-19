@@ -35,11 +35,11 @@ pub(super) enum RemoteBranch {
 }
 /// `location` is a remote name or URL.
 pub(super) fn remote_branch_state(
-    repo_dir: &Path,
+    repo_root: &Path,
     location: &str,
     branch_ref: &str,
 ) -> RemoteBranch {
-    let mut cmd = git_command(repo_dir);
+    let mut cmd = git_command(repo_root);
     cmd.args(["ls-remote", "--heads", location, branch_ref]);
     match run_with_timeout(cmd, PUSH_TIMEOUT) {
         Ok(output) if output.status.success() => {
@@ -182,10 +182,10 @@ pub(super) fn git_dir(repo_root: &Path) -> Option<PathBuf> {
     })
 }
 pub(super) fn index_entry(
-    repo_dir: &Path,
+    repo_root: &Path,
     file_path: &Path,
 ) -> Result<Option<(String, String)>, String> {
-    let mut cmd = literal_pathspec_command(repo_dir);
+    let mut cmd = literal_pathspec_command(repo_root);
     cmd.args(["ls-files", "--stage", "--full-name", "-z", "--"])
         .arg(file_path);
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)

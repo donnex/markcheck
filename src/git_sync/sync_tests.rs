@@ -994,7 +994,7 @@ fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
     let message = commit_message(&file_path, "Check \"one\"");
     assert_eq!(
         run_sync(
-            &sub,
+            &repo,
             &file_path,
             "- [x] one\n",
             &message,
@@ -1579,7 +1579,7 @@ fn run_sync_works_when_the_checklist_lives_in_a_subdirectory() {
     let expected = "- [x] one\n";
     fs::write(&file, expected).unwrap();
     let outcome = run_sync(
-        &sub,
+        &work,
         &file,
         expected,
         &commit_message(&file, "Check \"one\""),

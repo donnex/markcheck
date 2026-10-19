@@ -673,16 +673,44 @@ fn abandon_stops_the_running_git_and_starts_no_more() {
         .collect();
     assert!(left.is_empty(), "the worker removed its temp index");
 
-    sync.request(pending_sync("- [ ] one\n", "Uncheck"));
-    let deadline = Instant::now() + Duration::from_secs(10);
+    process::track_children_on_this_thread(Arc::clone(&sync.children));
+    let err = run_with_timeout(git_command(&work), PLUMBING_TIMEOUT).unwrap_err();
+    assert!(
+        err.to_string().contains("abandoned"),
+        "no git may start after abandoning: {err}"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_checklist_in_a_subdirectory_syncs_from_the_repository_root() {
+    let (work, remote) = init_repo_with_remote();
+    let sub = work.join("docs");
+    fs::create_dir_all(&sub).unwrap();
+    let file = sub.join("list.md");
+    fs::write(&file, "- [ ] one\n").unwrap();
+    run(&work, &["add", "docs/list.md"]);
+    run(&work, &["commit", "-q", "-m", "add nested checklist"]);
+    run(&work, &["push", "-q", "origin", "main"]);
+
+    let mut sync = GitSync::detect(&file).unwrap();
+    assert_eq!(
+        sync.repo_root,
+        fs::canonicalize(&work).unwrap(),
+        "detect stores the root, not the checklist's directory"
+    );
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(pending_sync("- [x] one\n", "Check \"one\""));
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut outcome = None;
     while outcome.is_none() && Instant::now() < deadline {
         outcome = sync.poll();
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(
-        matches!(&outcome, Some(SyncOutcome::Failed(message)) if message.contains("abandoned")),
-        "no git may start after abandoning: {outcome:?}"
+    assert_eq!(outcome, Some(SyncOutcome::Synced));
+    assert_eq!(
+        git_stdout(&remote, &["show", "HEAD:docs/list.md"]),
+        "- [x] one"
     );
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }

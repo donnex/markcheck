@@ -87,7 +87,7 @@ pub fn exit_report(last: Option<&SyncOutcome>, still_running: bool) -> Option<St
 /// Drives commit+push for one file on a background thread, so a slow
 /// `git push` never blocks the UI.
 pub struct GitSync {
-    repo_dir: PathBuf,
+    repo_root: PathBuf,
     file_path: PathBuf,
     sender: mpsc::Sender<SyncOutcome>,
     receiver: mpsc::Receiver<SyncOutcome>,
@@ -152,11 +152,10 @@ impl GitSync {
     /// in a git work tree or `git` can't be run; git-sync is optional, so the
     /// caller carries on without it.
     pub fn detect(file_path: &Path) -> Result<GitSync, String> {
-        let repo_dir = file_path
+        let file_dir = file_path
             .parent()
-            .ok_or_else(|| "the file has no parent directory".to_string())?
-            .to_path_buf();
-        let mut cmd = git_command(&repo_dir);
+            .ok_or_else(|| "the file has no parent directory".to_string())?;
+        let mut cmd = git_command(file_dir);
         cmd.args(["rev-parse", "--is-inside-work-tree"]);
         let output =
             run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| detect_spawn_error(&err))?;
@@ -166,9 +165,19 @@ impl GitSync {
         if String::from_utf8_lossy(&output.stdout).trim() != "true" {
             return Err("the file is not in a git work tree".to_string());
         }
+        // Resolved once: every git-sync command runs from the root, so none
+        // can resolve a path or `@{u}` differently from another (#141).
+        let mut cmd = git_command(file_dir);
+        cmd.args(["rev-parse", "--show-toplevel"]);
+        let output =
+            run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| detect_spawn_error(&err))?;
+        if !output.status.success() {
+            return Err(detect_git_error(&output.stderr));
+        }
+        let repo_root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
         let (sender, receiver) = mpsc::channel();
         Ok(GitSync {
-            repo_dir,
+            repo_root,
             file_path: file_path.to_path_buf(),
             sender,
             receiver,
@@ -194,7 +203,7 @@ impl GitSync {
 
     fn spawn(&mut self, sync: PendingSync) {
         self.busy = true;
-        let repo_dir = self.repo_dir.clone();
+        let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
         let latest_requested_hash = Arc::clone(&self.latest_requested_hash);
@@ -204,7 +213,7 @@ impl GitSync {
             let outcome = run_reporting_panics(|| {
                 let message = commit_message(&file_path, &sync.description);
                 run_sync(
-                    &repo_dir,
+                    &repo_root,
                     &file_path,
                     &sync.content,
                     &message,
@@ -218,13 +227,13 @@ impl GitSync {
 
     fn spawn_retry(&mut self, commit: String) {
         self.busy = true;
-        let repo_dir = self.repo_dir.clone();
+        let repo_root = self.repo_root.clone();
         let sender = self.sender.clone();
         let children = Arc::clone(&self.children);
         std::thread::spawn(move || {
             track_children_on_this_thread(children);
             // Every failure here is the retry's own.
-            let outcome = match run_reporting_panics(|| retry_commit(&repo_dir, &commit)) {
+            let outcome = match run_reporting_panics(|| retry_commit(&repo_root, &commit)) {
                 SyncOutcome::Failed(msg) => SyncOutcome::RetryFailed(msg),
                 other => other,
             };
@@ -239,13 +248,13 @@ impl GitSync {
             return;
         }
         self.busy = true;
-        let repo_dir = self.repo_dir.clone();
+        let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
         let children = Arc::clone(&self.children);
         std::thread::spawn(move || {
             track_children_on_this_thread(children);
-            let outcome = run_reporting_panics(|| catch_up_push(&repo_dir, &file_path));
+            let outcome = run_reporting_panics(|| catch_up_push(&repo_root, &file_path));
             let _ = sender.send(outcome);
         });
     }
@@ -325,7 +334,7 @@ impl GitSync {
     /// Removes the temporary indexes (`markcheck-index-…`) a markcheck killed
     /// mid-sync left in the repository's git directory. Returns how many.
     pub fn sweep_interrupted_syncs(&self) -> usize {
-        inspect::git_dir(&self.repo_dir).map_or(0, |git_dir| {
+        inspect::git_dir(&self.repo_root).map_or(0, |git_dir| {
             crate::writer::remove_leftovers(&git_dir, "markcheck-index-")
         })
     }
