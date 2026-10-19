@@ -68,8 +68,13 @@ pub(super) fn is_ancestor(repo_root: &Path, ancestor: &str, descendant: &str) ->
 /// `Ok(None)` when no upstream resolves (exit 1); any other failure is
 /// `Err`.
 pub(super) fn resolve_upstream(repo_root: &Path) -> Result<Option<String>, String> {
+    verify_rev(repo_root, "@{u}")
+}
+/// `rev-parse --verify -q <rev>`: `Ok(None)` on its exit 1 (the revision
+/// doesn't resolve), `Err` on any other failure.
+fn verify_rev(repo_root: &Path, rev: &str) -> Result<Option<String>, String> {
     let mut cmd = git_command(repo_root);
-    cmd.args(["rev-parse", "--verify", "-q", "@{u}"]);
+    cmd.args(["rev-parse", "--verify", "-q", rev]);
     match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
         Ok(output) if output.status.success() => Ok(Some(
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
@@ -116,6 +121,7 @@ pub(super) fn push_goes_to_upstream(repo_root: &Path, remote: &str) -> bool {
 pub(super) fn push_url(repo_root: &Path, remote: &str) -> Option<String> {
     git_stdout_line(repo_root, &["remote", "get-url", "--push", remote])
 }
+/// `git <args>`'s trimmed stdout, or `None` when it fails or can't run.
 fn git_stdout_line(repo_root: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = git_command(repo_root);
     cmd.args(args);
@@ -126,13 +132,7 @@ fn git_stdout_line(repo_root: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 fn git_config(repo_root: &Path, key: &str) -> Option<String> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["config", "--get", key]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    git_stdout_line(repo_root, &["config", "--get", key])
 }
 /// The blob SHA the real index holds for `relpath`.
 pub(super) fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
@@ -157,24 +157,11 @@ pub(super) fn parse_first_parent(listing: &str) -> Option<Option<String>> {
 /// Works before the first commit, since `git init` already points `HEAD` at
 /// the default branch.
 pub(super) fn current_branch_ref(repo_root: &Path) -> Option<String> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["symbolic-ref", "-q", "HEAD"]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    git_stdout_line(repo_root, &["symbolic-ref", "-q", "HEAD"])
 }
 /// Absolute even when git reports a relative path.
 pub(super) fn git_dir(repo_root: &Path) -> Option<PathBuf> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-parse", "--git-dir"]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = PathBuf::from(raw);
+    let path = PathBuf::from(git_stdout_line(repo_root, &["rev-parse", "--git-dir"])?);
     Some(if path.is_absolute() {
         path
     } else {
@@ -224,13 +211,7 @@ pub(super) fn index_entry(
     Ok(Some((mode.to_string(), path.to_string())))
 }
 pub(super) fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-parse", &format!("{commit}:{relpath}")]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    git_stdout_line(repo_root, &["rev-parse", &format!("{commit}:{relpath}")])
 }
 /// Exactly one parent equal to `parent`, or a root commit when `parent` is
 /// `None`. Fails closed.
@@ -292,28 +273,13 @@ fn hash_object_inner(
 /// `None` is ambiguous between "no commits yet" and a failed check; see
 /// `resolve_parent` where that matters.
 pub(super) fn current_head(repo_root: &Path) -> Option<String> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-parse", "HEAD"]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    git_stdout_line(repo_root, &["rev-parse", "HEAD"])
 }
 /// Exit 1 from `rev-parse --verify -q HEAD` means no commits yet; any other
 /// failure is `Err`. Treating a transient failure as "no commits" would build
 /// a root commit containing only the checklist.
 pub(super) fn resolve_parent(repo_root: &Path) -> Result<Option<String>, String> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-parse", "--verify", "-q", "HEAD"]);
-    match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
-        Ok(output) if output.status.success() => Ok(Some(
-            String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        )),
-        Ok(output) if output.status.code() == Some(1) => Ok(None),
-        Ok(output) => Err(command_error("git rev-parse", &output)),
-        Err(err) => Err(format!("git rev-parse failed: {err}")),
-    }
+    verify_rev(repo_root, "HEAD")
 }
 
 #[cfg(test)]
