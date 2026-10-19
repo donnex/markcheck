@@ -99,14 +99,14 @@ impl ReloadTrigger {
             return false;
         }
         self.next_recheck = now + RECHECK_INTERVAL;
-        let before = (state.file_mtime, state.file_size, state.file_deleted);
+        let before = (state.file_mtime, state.file_size, state.file_gone);
         let reloaded = state.reload_if_changed();
         if reloaded && !event {
             // The timer caught what the watch missed, so the watch is gone or
             // blind; setting it up afresh restores the fast path where it can.
             self.watcher = FileWatcher::new(&self.path).ok();
         }
-        reloaded || before != (state.file_mtime, state.file_size, state.file_deleted)
+        reloaded || before != (state.file_mtime, state.file_size, state.file_gone)
     }
 }
 

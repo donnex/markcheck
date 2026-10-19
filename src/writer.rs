@@ -244,6 +244,70 @@ pub fn document_contents(document: &Document) -> String {
     join_lines(&document.raw_lines)
 }
 
+/// Why a checklist path was refused: it is no longer a regular file but a
+/// symlink, FIFO, device or directory put in its place. Holds what it is.
+#[derive(Debug)]
+pub struct NotRegularFile(&'static str);
+
+impl std::fmt::Display for NotRegularFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "not a regular file: it is {}", self.0)
+    }
+}
+
+impl std::error::Error for NotRegularFile {}
+
+fn not_regular(file_type: fs::FileType) -> io::Error {
+    use std::os::unix::fs::FileTypeExt;
+    let what = if file_type.is_dir() {
+        "a directory"
+    } else if file_type.is_symlink() {
+        "a symlink"
+    } else if file_type.is_fifo() {
+        "a named pipe"
+    } else {
+        "a device or socket"
+    };
+    refused(what)
+}
+
+fn refused(what: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, NotRegularFile(what))
+}
+
+/// Whether `err` is [`NotRegularFile`].
+pub fn is_not_regular(err: &io::Error) -> bool {
+    err.get_ref()
+        .is_some_and(|inner| inner.is::<NotRegularFile>())
+}
+
+/// Reads the checklist without following a symlink or blocking on a FIFO,
+/// and only once the open handle is a regular file, so a path swapped after
+/// startup can neither leak another file's contents nor hang the UI.
+pub fn read_checklist(path: &Path) -> io::Result<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) if err.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(refused("a symlink"));
+        }
+        Err(err) => return Err(err),
+    };
+    let file_type = file.metadata()?.file_type();
+    if !file_type.is_file() {
+        return Err(not_regular(file_type));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// True when the file's own permission bits deny all writing (`chmod a-w`),
 /// which `write_back` honors by refusing to save. False when it can't be read.
 pub fn is_read_only(target: &Path) -> bool {
@@ -275,8 +339,12 @@ pub fn write_back(document: &Document) -> io::Result<String> {
 
     // Read the source metadata before touching anything. Any error —
     // including NotFound — aborts before writing, so a deleted file is never
-    // silently recreated. A 0600 file can also never be widened.
-    let source = fs::metadata(&document.file_path)?;
+    // silently recreated. A 0600 file can also never be widened. Not
+    // followed, so a symlink swapped in can't lend its target's mode.
+    let source = fs::symlink_metadata(&document.file_path)?;
+    if !source.is_file() {
+        return Err(not_regular(source.file_type()));
+    }
     // The rename only needs a writable directory, so without this a file the
     // user write-protected would be replaced anyway.
     if source.permissions().readonly() {

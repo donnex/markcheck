@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::fs;
 use std::path::PathBuf;
 
 use pulldown_cmark::utils::TextMergeWithOffset;
@@ -894,14 +893,11 @@ impl<'a> ParseState<'a> {
 }
 
 pub fn parse_document(path: PathBuf) -> anyhow::Result<Document> {
-    let raw = fs::read_to_string(&path).map_err(|err| {
-        if err.kind() == std::io::ErrorKind::InvalidData {
-            anyhow::Error::new(err).context(
-                "the file is not valid UTF-8 (markcheck reads UTF-8 files; convert it with e.g. iconv)",
-            )
-        } else {
-            anyhow::Error::new(err)
-        }
+    let bytes = crate::writer::read_checklist(&path)?;
+    let raw = String::from_utf8(bytes).map_err(|err| {
+        anyhow::Error::new(err).context(
+            "the file is not valid UTF-8 (markcheck reads UTF-8 files; convert it with e.g. iconv)",
+        )
     })?;
     let document = parse_source(&raw, path);
     Ok(document)

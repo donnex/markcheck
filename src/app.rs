@@ -9,7 +9,7 @@ use crate::clipboard::{self, CopyOutcome};
 use crate::effect::{CopyKind, Effect};
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
-    AppState, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
+    AppState, Document, FileGone, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
     OverviewTarget, Palette, PendingSync, PickerState, SearchState, StateSnapshot, TaskState,
     UNDO_HISTORY_CAP, View, hash_bytes,
 };
@@ -48,7 +48,7 @@ enum NumberKey {
 /// doesn't eliminate) the window where a same-instant external edit could be
 /// mistaken for a no-op on a coarse-mtime filesystem.
 fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
-    let meta = fs::metadata(path).ok()?;
+    let meta = fs::symlink_metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
 }
 
@@ -56,7 +56,9 @@ fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
 /// See `model::hash_bytes`'s doc comment for what this check is (and isn't)
 /// used for — a pre-write content check, not an atomic compare-and-swap.
 fn current_content_hash(path: &Path) -> Option<[u8; 32]> {
-    fs::read(path).ok().map(|bytes| hash_bytes(&bytes))
+    writer::read_checklist(path)
+        .ok()
+        .map(|bytes| hash_bytes(&bytes))
 }
 
 /// A program's file name without its directory, falling back to the string
@@ -192,7 +194,7 @@ impl AppState {
             // Named ANSI by default (theme-respecting); main.rs upgrades this
             // to the terminal's detected capability at startup.
             palette: Palette::basic(),
-            file_deleted: false,
+            file_gone: None,
             search: SearchState::default(),
             picker: PickerState::default(),
             help: HelpState::default(),
@@ -741,19 +743,19 @@ impl AppState {
         self.pending_number = 0;
     }
 
-    /// Shared guard for every mutating action: once the watched file
-    /// has been confirmed deleted (`reload_if_changed`), none of them may
-    /// write, so we never silently recreate it behind the user's back.
-    /// Sets the sticky error and returns `true` when blocked, so call sites
-    /// read as `if self.blocked_by_deletion() { return ...; }`.
+    /// Shared guard for every mutating action: once the watched file has
+    /// been confirmed deleted or replaced by a non-regular file
+    /// (`reload_if_changed`), none of them may write, so we never silently
+    /// recreate it or overwrite a symlink behind the user's back. Sets the
+    /// sticky error and returns `true` when blocked, so call sites read as
+    /// `if self.blocked_by_deletion() { return ...; }`.
     fn blocked_by_deletion(&mut self) -> bool {
-        if self.file_deleted {
-            self.set_error(
-                "File was deleted — changes cannot be saved until it exists again".to_string(),
-            );
-            true
-        } else {
-            false
+        match self.file_gone {
+            Some(gone) => {
+                self.set_error(gone.message().to_string());
+                true
+            }
+            None => false,
         }
     }
 
@@ -1179,15 +1181,23 @@ impl AppState {
         }
         // The pre-write content for git-sync's staged-target guard, which compares
         // in git's terms so clean filters apply.
-        let previous_content = fs::read_to_string(&self.document.file_path).ok();
-        let Ok(content) = writer::write_back(&self.document) else {
-            self.apply_snapshot(pre_state);
-            if writer::is_read_only(&self.document.file_path) {
-                self.set_error(READ_ONLY_MESSAGE.to_string());
-            } else {
-                self.set_error(fail_msg.to_string());
+        let previous_content = writer::read_checklist(&self.document.file_path)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        let content = match writer::write_back(&self.document) {
+            Ok(content) => content,
+            Err(err) => {
+                self.apply_snapshot(pre_state);
+                if writer::is_not_regular(&err) {
+                    self.file_gone = Some(FileGone::NotRegular);
+                    self.set_error(FileGone::NotRegular.message().to_string());
+                } else if writer::is_read_only(&self.document.file_path) {
+                    self.set_error(READ_ONLY_MESSAGE.to_string());
+                } else {
+                    self.set_error(fail_msg.to_string());
+                }
+                return false;
             }
-            return false;
         };
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
         self.file_mtime = file_mtime;
@@ -1248,23 +1258,27 @@ impl AppState {
     /// Re-reads the file if its mtime or size changed. Cheap enough for every
     /// tick. Returns whether new content was loaded.
     pub fn reload_if_changed(&mut self) -> bool {
-        let Some((modified, size)) = current_stat(&self.document.file_path) else {
-            // Distinguish a confirmed deletion from a transient unreadable state.
-            let is_deleted = fs::metadata(&self.document.file_path)
-                .err()
-                .is_some_and(|e| e.kind() == io::ErrorKind::NotFound);
-            if is_deleted && !self.file_deleted {
-                self.file_deleted = true;
-                self.set_error(
-                    "File was deleted — changes cannot be saved until it exists again".to_string(),
-                );
+        // A confirmed deletion or swap, as opposed to a transient unreadable state.
+        let gone = match fs::symlink_metadata(&self.document.file_path) {
+            Ok(meta) if meta.is_file() => None,
+            Ok(_) => Some(FileGone::NotRegular),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Some(FileGone::Deleted),
+            Err(_) => return false,
+        };
+        if let Some(gone) = gone {
+            if self.file_gone != Some(gone) {
+                self.file_gone = Some(gone);
+                self.set_error(gone.message().to_string());
             }
+            return false;
+        }
+        let Some((modified, size)) = current_stat(&self.document.file_path) else {
             return false;
         };
 
-        // File is accessible again. Clear the deleted flag and reload regardless
-        // of mtime/size so the restored content is always picked up.
-        let was_deleted = std::mem::take(&mut self.file_deleted);
+        // File is a regular file again. Clear the flag and reload regardless of
+        // mtime/size so the restored content is always picked up.
+        let was_deleted = self.file_gone.take().is_some();
         let unchanged = self.file_mtime == Some(modified) && self.file_size == Some(size);
 
         if !was_deleted && unchanged {
@@ -1280,7 +1294,7 @@ impl AppState {
         let Some((modified, size)) = current_stat(&self.document.file_path) else {
             return;
         };
-        let was_deleted = std::mem::take(&mut self.file_deleted);
+        let was_deleted = self.file_gone.take().is_some();
         self.reload_from_disk(modified, size, was_deleted);
     }
 

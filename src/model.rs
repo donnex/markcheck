@@ -420,6 +420,27 @@ impl Document {
     }
 }
 
+/// Why the checklist path can't currently be read or saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileGone {
+    Deleted,
+    /// A symlink, FIFO, device or directory now sits at the path.
+    NotRegular,
+}
+
+impl FileGone {
+    /// The sticky error shown while the path stays this way.
+    pub fn message(self) -> &'static str {
+        match self {
+            FileGone::Deleted => "File was deleted — changes cannot be saved until it exists again",
+            FileGone::NotRegular => {
+                "File was replaced by a symlink or special file — not loaded; changes cannot \
+                 be saved until it is a regular file again"
+            }
+        }
+    }
+}
+
 /// The base view under any overlay. Changed by navigation, toggles and
 /// reloads; an open [`Overlay`] is left alone by all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -914,9 +935,10 @@ pub struct AppState {
     pub auto_copy: bool,
     /// Semantic UI colors, resolved to the terminal's capability.
     pub palette: Palette,
-    /// Set when the file is confirmed deleted (not just transiently unreadable).
-    /// Blocks all write operations until the file reappears.
-    pub file_deleted: bool,
+    /// Set when the file is confirmed deleted or replaced by something that
+    /// isn't a regular file (not just transiently unreadable). Blocks all
+    /// write operations until a regular file is back.
+    pub file_gone: Option<FileGone>,
     /// Incremental `/` search state — see [`SearchState`].
     pub search: SearchState,
     /// `T` go-to-task overlay state — see [`PickerState`].

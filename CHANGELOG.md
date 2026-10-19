@@ -982,6 +982,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- markcheck no longer reads or saves a checklist that was replaced, while
+  it was open, by a symlink, a named pipe or another special file. Someone
+  who could write to the checklist's folder could swap it for a link to one
+  of your private files. markcheck then loaded that file, wrote it back into
+  the shared checklist on your next tick, and git sync pushed it to the
+  shared repository. A named pipe in its place froze the screen until the
+  process was killed. Now a red message says the file was replaced, nothing
+  is read or saved, and work resumes once a regular file is back. (#123)
+
 - Saving a checklist now clears its setuid, setgid and sticky bits, keeping
   the rest of its permissions as before. Each save writes a brand-new file
   owned by whoever ticked the box, so a checklist planted in a shared,

@@ -163,7 +163,7 @@ pub struct AppState {
     pub clipboard_primary: bool,             // --primary: also target X11 PRIMARY
     pub auto_copy: bool,                     // --auto-copy: copy code on navigation, announce on success
     pub palette: Palette,                    // semantic UI colors resolved at startup
-    pub file_deleted: bool,                  // set when the file is confirmed deleted; blocks writes
+    pub file_gone: Option<FileGone>,         // Deleted / NotRegular once confirmed; blocks writes
     pub search: SearchState,                 // incremental `/` search state — see below
     pub picker: PickerState,                 // `T` go-to-task overlay state — see below
     pub help: HelpState,                     // `?` help overlay scroll state — see below
@@ -411,20 +411,20 @@ Detects external edits to the open file (e.g. editing the runbook in another ter
 
 ```rust
 pub fn reload_if_changed(&mut self) {
-    let stat = current_stat(&self.document.file_path); // (mtime, size) from one stat() call
-    if stat.is_none() {
-        // Distinguish a confirmed deletion (NotFound) from a transient
-        // unreadable state; set the sticky flag once on deletion.
-        if is_not_found(&self.document.file_path) && !self.file_deleted {
-            self.file_deleted = true;
-            self.set_error("File was deleted — changes cannot be saved until it exists again".to_string());
+    // symlink_metadata, never followed: NotFound -> FileGone::Deleted,
+    // anything but a regular file -> FileGone::NotRegular, other errors ->
+    // transient, try again next tick. Each sets its sticky error once.
+    if let Some(gone) = classify(&self.document.file_path) {
+        if self.file_gone != Some(gone) {
+            self.file_gone = Some(gone);
+            self.set_error(gone.message().to_string());
         }
-        return;  // try again next tick
+        return;
     }
-    let (modified, size) = stat.unwrap();
-    // File readable again: clear the deleted flag and force a reload so the
+    let (modified, size) = current_stat(&self.document.file_path)?; // one lstat() call
+    // A regular file again: clear the flag and force a reload so the
     // restored content is always picked up, even if mtime/size look unchanged.
-    let was_deleted = std::mem::take(&mut self.file_deleted);
+    let was_deleted = self.file_gone.take().is_some();
     let unchanged = self.file_mtime == Some(modified) && self.file_size == Some(size);
     if !was_deleted && unchanged { return; }
 
@@ -451,7 +451,9 @@ pub fn reload_if_changed(&mut self) {
 }
 ```
 
-**File deletion:** a plain "unreadable" (`current_stat` returns `None`) is ambiguous — the file may be mid-rename by another writer or genuinely gone. `reload_if_changed` only treats it as a deletion when `fs::metadata` returns `NotFound`, and then sets a **sticky error** status (`File was deleted — changes cannot be saved until it exists again`, via `set_error`) exactly once and raises `AppState.file_deleted`. While that flag is set, every mutating action (`set_current_state`/`toggle_item`/`reset_all`/`undo`/`redo`) refuses to write, repeating that same message — so we never recreate the file behind the user's back (the `write_back` metadata-abort above is the second line of defense). The five identical guard blocks this used to be were consolidated into one `blocked_by_deletion()` helper (sets the error and returns `true`; call sites read as `if self.blocked_by_deletion() { return ...; }`) — no behavior change. When the file reappears the flag clears and the content is reloaded unconditionally (`File restored — reloaded`), regardless of mtime/size. These file-deleted messages are rendered `palette.error` (red) like every other failure message via the `status_is_error` flag — see `ui/statusbar.rs`.
+**File deletion:** a plain "unreadable" (`current_stat` returns `None`) is ambiguous — the file may be mid-rename by another writer or genuinely gone. `reload_if_changed` only treats it as a deletion when `fs::symlink_metadata` returns `NotFound`, and then sets a **sticky error** status (`File was deleted — changes cannot be saved until it exists again`, via `set_error`) exactly once and sets `AppState.file_gone` to `FileGone::Deleted`. While that flag is set, every mutating action (`set_current_state`/`toggle_item`/`reset_all`/`undo`/`redo`) refuses to write, repeating that same message — so we never recreate the file behind the user's back (the `write_back` metadata-abort above is the second line of defense). The five identical guard blocks this used to be were consolidated into one `blocked_by_deletion()` helper (sets the error and returns `true`; call sites read as `if self.blocked_by_deletion() { return ...; }`) — no behavior change. When a regular file reappears the flag clears and the content is reloaded unconditionally (`File restored — reloaded`), regardless of mtime/size. These file-deleted messages are rendered `palette.error` (red) like every other failure message via the `status_is_error` flag — see `ui/statusbar.rs`.
+
+**A path swapped for a symlink or special file (#123).** Startup canonicalization pins the path, but nothing stopped someone with write access to the directory from replacing the checklist afterwards. Every later read followed whatever was there: a symlink to the operator's private file was reloaded, then written back into the shared checklist (and committed by git sync) on the next toggle, and a FIFO blocked the UI thread forever on the next tick. Every read of the checklist now goes through `writer::read_checklist`, which opens with `O_NOFOLLOW | O_NONBLOCK` (from the `libc` dependency) and checks the *open handle* is a regular file, so the check and the read can't disagree: `parse_document` (startup and reload), `current_content_hash` and `commit_write`'s pre-write content (the pre-write checks), and git sync's staleness read in `run_sync`. A refusal is the `writer::NotRegularFile` error (`writer::is_not_regular`), which names what it found (`not a regular file: it is a named pipe`; also a symlink, a directory, a device or socket), so starting markcheck on such a path explains itself too. `reload_if_changed` classifies the path with `symlink_metadata` first; anything but a regular file sets `FileGone::NotRegular` and its own sticky message (`File was replaced by a symlink or special file — not loaded; changes cannot be saved until it is a regular file again`), and it then blocks writes and git sync through the same `blocked_by_deletion` guard as a deletion. `write_back` takes its metadata with `symlink_metadata` too and refuses a non-regular path, so a swap landing between two ticks is caught by the write itself, which `commit_write` turns into the same `FileGone::NotRegular` state. Putting a regular file back reloads it as `File restored — reloaded`.
 
 **Cursor remapping:** `remap_position()` keeps the cursor on the same list (matched by title) and task after a reload. The task is found by **content** — the same `header`, `display_text` and `depth` — choosing the candidate nearest the old line number when several match, because inserting or deleting a single line above the cursor shifts every following line number. It used to match by exact line number only, so adding a step with `e` or a `git pull` dropped the cursor to the list's first item without a word (#60). With no content match it takes the item on the old line (a task edited in place), and failing that the item nearest the old line number; that last case, and a list that can no longer be found (which falls back to the start of the document), return `true` so the reload status reads `Reloaded: file changed on disk — task not found, cursor moved` instead of moving the cursor silently. Title alone doesn't identify a list — nothing in the Markdown format forbids two `## H2`s sharing a title — so matching is disambiguated by *occurrence*: the old list's rank among same-titled lists in the old document (how many earlier lists shared its title) is computed once, and the new document's list at that same rank among its own same-titled lists is the target, rather than always the first same-titled match. This handles the common case (the duplicate lists' relative order is unchanged across the reload) without needing a real stable list identity; a rank that no longer exists (e.g. a duplicate was removed) falls back to the first list overall, the same as a title that vanished entirely.
 

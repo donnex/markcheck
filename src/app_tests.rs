@@ -4421,7 +4421,11 @@ fn reload_detects_deleted_file_and_blocks_writes() {
     fs::remove_file(&path).unwrap();
     state.reload_if_changed();
 
-    assert!(state.file_deleted, "flag must be set after deletion");
+    assert_eq!(
+        state.file_gone,
+        Some(FileGone::Deleted),
+        "flag must be set after deletion"
+    );
     assert_eq!(
         state.status_message.as_deref(),
         Some("File was deleted — changes cannot be saved until it exists again"),
@@ -4434,6 +4438,119 @@ fn reload_detects_deleted_file_and_blocks_writes() {
         state.status_message.as_deref(),
         Some("File was deleted — changes cannot be saved until it exists again"),
     );
+}
+
+/// Replaces the checklist at `path` with a symlink to a private file, the
+/// way someone with write access to the directory could after startup.
+fn swap_for_symlink_to_private_file(path: &Path) -> PathBuf {
+    let private = unique_temp_path();
+    fs::write(&private, "## P\n\n- [ ] secret: hunter2\n").unwrap();
+    fs::remove_file(path).unwrap();
+    std::os::unix::fs::symlink(&private, path).unwrap();
+    private
+}
+
+fn swap_for_fifo(path: &Path) {
+    fs::remove_file(path).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+fn assert_refused_as_not_regular(state: &mut AppState, path: &Path) {
+    assert_eq!(state.file_gone, Some(FileGone::NotRegular));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(FileGone::NotRegular.message())
+    );
+    assert_eq!(state.status_expiry, None, "the refusal is sticky");
+    assert!(
+        !state.document.raw_lines.concat().contains("secret"),
+        "nothing behind the swapped path may be loaded"
+    );
+
+    state.status_message = None;
+    state.toggle_current();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(FileGone::NotRegular.message()),
+        "a toggle says why it was refused"
+    );
+    assert!(state.git_sync_request().is_none(), "nothing may be synced");
+    assert!(
+        !fs::symlink_metadata(path).unwrap().is_file(),
+        "the swapped-in entry must not be written over"
+    );
+}
+
+#[test]
+fn a_checklist_swapped_for_a_symlink_is_neither_read_nor_written() {
+    let path = write_real_file("## S\n\n- [ ] `task`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    let private = swap_for_symlink_to_private_file(&path);
+    assert!(!state.reload_if_changed());
+
+    assert_refused_as_not_regular(&mut state, &path);
+    assert_eq!(
+        fs::read_to_string(&private).unwrap(),
+        "## P\n\n- [ ] secret: hunter2\n",
+        "the link's target is untouched"
+    );
+}
+
+#[test]
+fn a_checklist_swapped_for_a_fifo_does_not_block_the_reload() {
+    let path = write_real_file("## S\n\n- [ ] `task`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    swap_for_fifo(&path);
+    assert!(!state.reload_if_changed());
+
+    assert_refused_as_not_regular(&mut state, &path);
+}
+
+#[test]
+fn a_swap_between_reloads_is_caught_by_the_write_itself() {
+    let path = write_real_file("## S\n\n- [ ] `task`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    let private = swap_for_symlink_to_private_file(&path);
+    state.toggle_current();
+
+    assert_eq!(state.file_gone, Some(FileGone::NotRegular));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(FileGone::NotRegular.message())
+    );
+    assert!(state.git_sync_request().is_none());
+    assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
+    assert!(!fs::read_to_string(&private).unwrap().contains("[x]"));
+}
+
+#[test]
+fn a_regular_file_put_back_after_a_swap_restores_normal_operation() {
+    let path = write_real_file("## S\n\n- [ ] `task`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    swap_for_fifo(&path);
+    state.reload_if_changed();
+    assert_eq!(state.file_gone, Some(FileGone::NotRegular));
+
+    fs::remove_file(&path).unwrap();
+    touch_with_new_mtime(&path, "## S\n\n- [ ] `task`\n");
+    assert!(state.reload_if_changed());
+    assert_eq!(state.file_gone, None);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("File restored — reloaded")
+    );
+
+    state.toggle_current();
+    assert!(fs::read_to_string(&path).unwrap().contains("- [x] `task`"));
+    assert!(state.git_sync_request().is_some());
 }
 
 #[test]
@@ -4457,13 +4574,16 @@ fn reload_clears_deleted_flag_when_file_restored() {
 
     fs::remove_file(&path).unwrap();
     state.reload_if_changed();
-    assert!(state.file_deleted);
+    assert_eq!(state.file_gone, Some(FileGone::Deleted));
 
     // Restore the file.
     touch_with_new_mtime(&path, "## S\n\n- [ ] `task`\n");
     state.reload_if_changed();
 
-    assert!(!state.file_deleted, "flag must clear when file is restored");
+    assert_eq!(
+        state.file_gone, None,
+        "flag must clear when file is restored"
+    );
     assert_eq!(
         state.status_message.as_deref(),
         Some("File restored — reloaded"),
@@ -4478,7 +4598,7 @@ fn reset_is_blocked_when_file_deleted() {
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
 
     fs::remove_file(&path).unwrap();
-    state.file_deleted = true;
+    state.file_gone = Some(FileGone::Deleted);
     // Reach reset_all via the ConfirmReset screen's 'y' path.
     state.overlay = Some(Overlay::ConfirmReset);
     state.handle_key(KeyCode::Char('y'));
@@ -4818,7 +4938,7 @@ fn undo_history_is_capped() {
 #[test]
 fn undo_is_blocked_when_file_deleted() {
     let mut state = AppState::new(two_list_document());
-    state.file_deleted = true;
+    state.file_gone = Some(FileGone::Deleted);
     state.undo();
     assert_eq!(
         state.status_message.as_deref(),
@@ -5092,7 +5212,7 @@ fn picker_enter_with_no_matches_closes_without_jumping() {
 #[test]
 fn toggle_item_is_blocked_when_file_deleted() {
     let mut state = AppState::new(two_list_document());
-    state.file_deleted = true;
+    state.file_gone = Some(FileGone::Deleted);
     state.toggle_item(0, 0);
     assert_eq!(
         state.document.lists[0].items[0].kind,
@@ -5352,7 +5472,7 @@ fn redo_is_blocked_when_file_deleted() {
     let mut state = AppState::new(document);
     state.toggle_current();
     state.undo();
-    state.file_deleted = true;
+    state.file_gone = Some(FileGone::Deleted);
     state.redo();
     assert_eq!(
         state.document.lists[0].items[0].kind,

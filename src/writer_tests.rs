@@ -1000,3 +1000,63 @@ fn write_temp_retries_at_a_new_name_instead_of_deleting_a_collision() {
     fs::remove_file(&base).ok();
     fs::remove_file(&written_path).ok();
 }
+
+fn temp_path() -> PathBuf {
+    crate::test_support::unique_temp_path("writer", "", Some("md"))
+}
+
+#[test]
+fn read_checklist_reads_a_regular_file() {
+    let path = temp_path();
+    fs::write(&path, "- [ ] a\n").unwrap();
+    assert_eq!(read_checklist(&path).unwrap(), b"- [ ] a\n");
+}
+
+#[test]
+fn read_checklist_refuses_a_symlink_a_fifo_and_a_directory() {
+    let target = temp_path();
+    fs::write(&target, "- [ ] private\n").unwrap();
+    let link = temp_path();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let fifo = temp_path();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let dir = temp_path();
+    fs::create_dir(&dir).unwrap();
+
+    let device = PathBuf::from("/dev/null");
+    for (path, what) in [
+        (&link, "a symlink"),
+        (&fifo, "a named pipe"),
+        (&dir, "a directory"),
+        (&device, "a device or socket"),
+    ] {
+        let err = read_checklist(path).unwrap_err();
+        assert!(is_not_regular(&err), "{}: {err}", path.display());
+        assert_eq!(err.to_string(), format!("not a regular file: it is {what}"));
+    }
+    assert!(!is_not_regular(&read_checklist(&temp_path()).unwrap_err()));
+}
+
+#[test]
+fn write_back_refuses_a_symlink_and_leaves_its_target_alone() {
+    let path = temp_path();
+    fs::write(&path, "- [ ] a\n").unwrap();
+    let mut doc = parse_document(path.clone()).unwrap();
+    let target = temp_path();
+    fs::write(&target, "- [ ] private\n").unwrap();
+    fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+
+    doc.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+    let err = write_back(&doc).unwrap_err();
+
+    assert!(is_not_regular(&err), "{err}");
+    assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "- [ ] private\n");
+}

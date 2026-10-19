@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::FileGone;
 use std::fs;
 use std::time::{Duration, Instant};
 
@@ -138,12 +139,12 @@ fn a_removed_and_recreated_directory_clears_the_deleted_state() {
 
     fs::remove_dir_all(&dir).unwrap();
     assert!(trigger.check(&mut state, start + RECHECK_INTERVAL));
-    assert!(state.file_deleted);
+    assert_eq!(state.file_gone, Some(FileGone::Deleted));
 
     fs::create_dir_all(&dir).unwrap();
     fs::write(&path, "## List\n\n- [ ] one\n").unwrap();
     assert!(trigger.check(&mut state, start + RECHECK_INTERVAL * 2));
-    assert!(!state.file_deleted, "the restored file is picked up");
+    assert_eq!(state.file_gone, None, "the restored file is picked up");
     assert_eq!(
         state.status_message.as_deref(),
         Some("File restored — reloaded")

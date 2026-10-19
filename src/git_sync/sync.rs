@@ -2,7 +2,6 @@
 //! the commit, verifies what landed and publishes it. Each guard runs before
 //! the work it protects.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -151,7 +150,7 @@ pub(super) fn run_sync(
     // request git-sync knows about (`latest_requested_hash`); anything else is
     // an outside edit or a deletion, which must not be published, and which a
     // passive reload never requests a sync for.
-    match fs::read(file_path) {
+    match crate::writer::read_checklist(file_path) {
         Ok(bytes) if hash_bytes(&bytes) == *lock_hash(latest_requested_hash) => {}
         _ => {
             return SyncOutcome::Failed(

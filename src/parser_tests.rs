@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 use std::path::PathBuf;
 
 /// Every `examples/` file must parse and round-trip byte for byte, since

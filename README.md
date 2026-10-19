@@ -509,7 +509,10 @@ behind your back: it shows a red `File was deleted — changes cannot be
 saved until it exists again` message and blocks toggling and reset until the
 file comes back. Restore the
 file (or save it again from your editor) and the app reloads it and resumes
-normally.
+normally. The same goes for a file **replaced** by a symlink, a named pipe
+or anything else that isn't a regular file: `markcheck` doesn't read it or
+write over it, shows a red `File was replaced by a symlink or special
+file` message, and picks up again once a regular file is back.
 
 Changes are normally picked up the moment they're saved. Where the
 filesystem doesn't report them — a network share (NFS, SMB/CIFS), an sshfs
