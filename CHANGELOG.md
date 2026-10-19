@@ -127,6 +127,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- When the file changes on disk, the status bar now says what changed in
+  task terms, for example `Reloaded: 2 done, 1 reopened ("Restart service",
+  "Verify output") · 1 added`, instead of only "Reloaded: file changed on
+  disk". On a checklist shared with a colleague or synced from another
+  machine, a step ticked or unticked elsewhere is now visible at a glance.
+  (#140)
+
 - An empty `/` search followed by `Enter` now repeats the last search and
   moves on to its next match, as in vim and `less`. Before, it forgot the
   last search, so `n` and `N` stopped working until you typed it again.

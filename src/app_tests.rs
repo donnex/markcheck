@@ -2481,10 +2481,7 @@ fn finish_suspend_reloads_an_edit_made_while_suspended() {
     touch_with_new_mtime(&path, "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n");
     state.finish_suspend(Ok(()));
     assert_eq!(state.current_list().items.len(), 2);
-    assert_eq!(
-        state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk")
-    );
+    assert_eq!(state.status_message.as_deref(), Some("Reloaded: 1 added"));
     fs::remove_file(&path).ok();
 }
 
@@ -2562,7 +2559,7 @@ fn finish_editor_non_zero_exit_after_an_edit_reloads_but_keeps_the_error_and_ski
     assert_eq!(state.current_list().items.len(), 2);
     assert_eq!(
         state.status_message.as_deref(),
-        Some("vi exited with exit status: 1; Reloaded: file changed on disk — not synced")
+        Some("vi exited with exit status: 1; Reloaded: 1 added — not synced")
     );
     assert!(state.status_is_error);
     assert_eq!(state.status_expiry, None);
@@ -2578,7 +2575,7 @@ fn finish_editor_without_git_sync_does_not_mention_syncing() {
     state.finish_editor("vi", None, Ok(exit_status(1 << 8)), Duration::ZERO);
     assert_eq!(
         state.status_message.as_deref(),
-        Some("vi exited with exit status: 1; Reloaded: file changed on disk")
+        Some("vi exited with exit status: 1; Reloaded: 1 added")
     );
     fs::remove_file(&path).ok();
 }
@@ -2596,7 +2593,7 @@ fn finish_editor_keeps_the_editor_warning_past_a_reload_and_still_syncs() {
     );
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Bad $EDITOR/$VISUAL — using vi; Reloaded: file changed on disk")
+        Some("Bad $EDITOR/$VISUAL — using vi; Reloaded: 1 added")
     );
     assert!(state.status_is_error);
     assert!(state.take_git_sync_request().is_some());
@@ -3895,10 +3892,7 @@ fn reload_picks_up_external_change() {
     state.reload_if_changed();
 
     assert_eq!(state.current_list().items.len(), 2);
-    assert_eq!(
-        state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk")
-    );
+    assert_eq!(state.status_message.as_deref(), Some("Reloaded: 1 added"));
 
     fs::remove_file(&path).ok();
 }
@@ -4234,10 +4228,7 @@ fn reload_keeps_the_cursor_on_its_task_when_a_line_is_inserted_above() {
     assert!(state.reload_if_changed());
 
     assert_eq!(state.current_item().unwrap().display_text, "charlie");
-    assert_eq!(
-        state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk")
-    );
+    assert_eq!(state.status_message.as_deref(), Some("Reloaded: 1 added"));
 }
 
 #[test]
@@ -4268,7 +4259,7 @@ fn reload_stays_on_a_task_edited_in_place() {
     assert_eq!(state.current_item().unwrap().display_text, "bravo two");
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk")
+        Some("Reloaded: 1 added · 1 removed")
     );
 }
 
@@ -4288,7 +4279,7 @@ fn reload_moves_to_the_nearest_task_and_says_so_when_the_task_is_gone() {
     assert_eq!(state.current_item().unwrap().display_text, "bravo");
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk — task not found, cursor moved")
+        Some("Reloaded: 1 removed — task not found, cursor moved")
     );
 }
 
@@ -4304,7 +4295,7 @@ fn reload_says_so_when_the_cursor_list_is_gone() {
     assert_eq!(state.current_item().unwrap().display_text, "alpha");
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk — task not found, cursor moved")
+        Some("Reloaded: 1 added · 1 removed — task not found, cursor moved")
     );
 }
 
@@ -4324,7 +4315,7 @@ fn reload_never_auto_copies() {
     });
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Reloaded: file changed on disk")
+        Some("Reloaded: 1 done (\"bravo\")")
     );
 }
 
@@ -6519,5 +6510,32 @@ fn a_scoped_reset_with_nothing_to_reset_says_so_and_stays_open() {
             .status_message
             .as_deref()
             .is_some_and(|m| m.starts_with("Nothing to reset there"))
+    );
+}
+
+#[test]
+fn a_reload_says_which_tasks_changed_and_how() {
+    let path = write_real_file("## S\n\n- [ ] one\n- [ ] two\n- [x] three\n- [ ] four\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    touch_with_new_mtime(
+        &path,
+        "## S\n\n- [x] one\n- [x] two\n- [ ] three\n- [/] four\n- [ ] five\n",
+    );
+    assert!(state.reload_if_changed());
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 2 done, 1 started, 1 reopened (\"one\", \"two\", …) · 1 added")
+    );
+}
+
+#[test]
+fn a_reload_that_changes_no_task_keeps_the_plain_message() {
+    let path = write_real_file("## S\n\n- [ ] one\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    touch_with_new_mtime(&path, "## S\n\nAn added note above.\n\n- [ ] one\n");
+    assert!(state.reload_if_changed());
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
     );
 }

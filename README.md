@@ -526,8 +526,12 @@ and a sticky error asks you to retry.
 If the file changes on disk while the app is open, `markcheck` reloads it
 automatically and keeps your place on the same task, even when lines were
 added or removed above it. If that task is gone, the cursor moves to the
-nearest one and the status bar says so. A reload never triggers
-`--auto-copy`. A
+nearest one and the status bar says so. The status bar also says what the
+reload changed in task terms, such as `Reloaded: 2 done, 1 reopened
+("Restart service", "Verify output") · 1 added`, so a step a colleague just
+ticked (or unticked) on a shared checklist doesn't go unnoticed; an edit that
+changes no task reads `Reloaded: file changed on disk`. A reload never
+triggers `--auto-copy`. A
 relative `Updated 10s ago` tag — prefixed with a refresh icon (`↻`, or a Nerd
 Font glyph) — appears in the title bar, grouped with the progress counter on
 the right, whenever the file changes — whether from your own toggles or an

@@ -726,7 +726,7 @@ fn live_reload_picks_up_an_external_edit() {
         &[],
         &[
             Step::ExternalWrite("## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n"),
-            Step::WaitForScreen("Reloaded: file changed on disk"),
+            Step::WaitForScreen("Reloaded: 1 added"),
             Step::Key("G"),
             Step::Key(" "),
             Step::WaitForFile(|s| s.contains("[x]")),

@@ -1354,6 +1354,7 @@ impl AppState {
             Ok(new_document) if !new_document.lists.is_empty() => {
                 let search_origin = self.remapped(self.search.origin, &new_document);
                 let task_lost = self.remap_position(&new_document);
+                let changes = reload_changes(&self.document, &new_document);
                 self.document = new_document;
                 let cancelled = self.keep_overlay_across_reload(search_origin);
                 // An external edit is a hard boundary for undo history: it can
@@ -1378,14 +1379,16 @@ impl AppState {
                     self.set_error(format!("File changed on disk — {cancelled} cancelled"));
                 } else {
                     let reloaded = if was_deleted {
-                        "File restored — reloaded"
+                        "File restored — reloaded".to_string()
+                    } else if let Some(changes) = changes {
+                        format!("Reloaded: {changes}")
                     } else {
-                        "Reloaded: file changed on disk"
+                        "Reloaded: file changed on disk".to_string()
                     };
                     if task_lost {
                         self.set_status(format!("{reloaded} — task not found, cursor moved"));
                     } else {
-                        self.set_status(reloaded.to_string());
+                        self.set_status(reloaded);
                     }
                 }
                 self.last_update_at = Some(SystemTime::now());
@@ -2625,6 +2628,75 @@ fn delete_last_word(query: &mut String) {
         .trim_end()
         .trim_end_matches(|c: char| !c.is_whitespace());
     query.truncate(kept.len());
+}
+
+/// What a reload changed in task terms, for its status message (#140):
+/// tasks whose state moved, by direction and named (the first two), and
+/// tasks added or removed. Tasks are matched by list, label and depth, so a
+/// task that only moved lines isn't counted. `None` when no task changed.
+fn reload_changes(old: &Document, new: &Document) -> Option<String> {
+    type Key = (String, String, usize);
+    let key = |list: &List, item: &Item| (list.title.clone(), item.label(), item.depth);
+    let mut before: std::collections::HashMap<Key, Vec<TaskState>> = Default::default();
+    for list in &old.lists {
+        for item in &list.items {
+            if let ItemKind::Checkbox(state) = item.kind {
+                before.entry(key(list, item)).or_default().push(state);
+            }
+        }
+    }
+    let (mut done, mut started, mut reopened, mut skipped, mut added) = (0, 0, 0, 0, 0);
+    let mut names = Vec::new();
+    for list in &new.lists {
+        for item in &list.items {
+            let ItemKind::Checkbox(state) = item.kind else {
+                continue;
+            };
+            let Some(old_state) = before
+                .get_mut(&key(list, item))
+                .and_then(|states| (!states.is_empty()).then(|| states.remove(0)))
+            else {
+                added += 1;
+                continue;
+            };
+            if old_state == state {
+                continue;
+            }
+            *match state {
+                TaskState::Done => &mut done,
+                TaskState::Started => &mut started,
+                TaskState::NotStarted => &mut reopened,
+                TaskState::Skipped => &mut skipped,
+            } += 1;
+            names.push(item.label());
+        }
+    }
+    let removed: usize = before.values().map(Vec::len).sum();
+    let counted = |count: usize, what: &str| (count > 0).then(|| format!("{count} {what}"));
+    let moved: Vec<String> = [
+        counted(done, "done"),
+        counted(started, "started"),
+        counted(reopened, "reopened"),
+        counted(skipped, "skipped"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut parts = Vec::new();
+    if !moved.is_empty() {
+        let mut shown: Vec<String> = names
+            .iter()
+            .take(2)
+            .map(|name| format!("\"{name}\""))
+            .collect();
+        if names.len() > 2 {
+            shown.push("…".to_string());
+        }
+        parts.push(format!("{} ({})", moved.join(", "), shown.join(", ")));
+    }
+    parts.extend(counted(added, "added"));
+    parts.extend(counted(removed, "removed"));
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// Space/Enter and the overview click toggle *done*: a done task reverts to
