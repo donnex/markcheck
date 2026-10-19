@@ -87,6 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Esc` no longer quits markcheck. As in vim, it cancels (search, the task
+  picker, help, a confirmation or a number prompt); on the checklist and
+  completion screens, where there is nothing to cancel, it now shows "Type q
+  to quit" instead. `q` still quits. Before, an `Esc` pressed by reflex to
+  leave something already closed quit the app. (#51)
+
 - A `git_sync_paths` entry in the config file now turns on git sync only
   for the repository it names, not for other repositories nested inside
   it. A repository copied or unpacked into a synced folder brings its own

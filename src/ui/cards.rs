@@ -252,8 +252,12 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("1-9", "jump to list N"),
             ("?", "toggle this help"),
             (
-                "q / Esc",
+                "q",
                 "quit; during a git sync, wait for it (q again abandons)",
+            ),
+            (
+                "Esc",
+                "doesn't quit: hints how to (cancels everywhere else)",
             ),
         ],
     ),

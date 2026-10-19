@@ -24,6 +24,8 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
 
 const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
+/// What Esc and Ctrl-C say on a screen with nothing to cancel.
+const QUIT_HINT: &str = "Type q to quit";
 const HIDDEN_CHARACTERS_MESSAGE: &str = "Not copied: command contains hidden control characters";
 
 /// Whether a cursor move lands on a card the user navigated to, so
@@ -2015,12 +2017,12 @@ impl AppState {
         match self.overlay {
             Some(Overlay::Search) => self.cancel_search(),
             Some(_) => self.overlay = None,
-            None => self.set_error("Type q to quit".to_string()),
+            None => self.set_error(QUIT_HINT.to_string()),
         }
     }
 
     /// A pending `o` waits for a link number. Runs before the digit list jump and
-    /// the Esc quit. Any other key cancels the prompt and still takes its normal
+    /// the global Esc. Any other key cancels the prompt and still takes its normal
     /// action, returning `false`.
     fn handle_pending_open_link_key(&mut self, code: KeyCode) -> bool {
         if !std::mem::take(&mut self.pending_open_link) {
@@ -2233,9 +2235,7 @@ impl AppState {
             return true;
         }
 
-        if matches!(code, KeyCode::Char('q'))
-            || (code == KeyCode::Esc && self.view != View::Checklist)
-        {
+        if code == KeyCode::Char('q') {
             // When everything is done, offer to reset before quitting
             // instead of quitting outright.
             let (done, total) = self.document.checkbox_stats();
@@ -2246,9 +2246,11 @@ impl AppState {
             }
             return true;
         }
-        // Esc on the Checklist screen is a no-op (vim convention: Esc
-        // cancels or returns to normal mode, it does not quit).
+        // As in vim, Esc cancels (search, the picker, help, dialogs and
+        // prompts all take it first) and never quits; here, with nothing left
+        // to cancel, it says how to quit rather than doing nothing.
         if code == KeyCode::Esc {
+            self.set_error(QUIT_HINT.to_string());
             return true;
         }
 

@@ -6176,3 +6176,30 @@ fn a_catch_up_that_pushed_nothing_says_why_and_stays() {
     assert_eq!(state.status_expiry, None, "sticky until read");
     assert_eq!(state.git_sync.problem, Some("not pushed"));
 }
+
+#[test]
+fn esc_never_quits_and_says_how_to_on_every_content_screen() {
+    for view in [View::Checklist, View::ListComplete, View::AllComplete] {
+        let mut state = AppState::new(two_list_document());
+        state.view = view;
+        state.handle_key(KeyCode::Esc);
+        assert!(!state.quit_requested(), "{view:?}");
+        assert_eq!(state.status_message.as_deref(), Some("Type q to quit"));
+        assert!(state.status_is_error, "sticky, so it is read");
+        assert_eq!(state.view, view, "nothing else changes");
+    }
+}
+
+#[test]
+fn esc_still_cancels_search_and_help_without_the_quit_hint() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(state.overlay, None);
+    assert_ne!(state.status_message.as_deref(), Some("Type q to quit"));
+
+    state.handle_key(KeyCode::Char('?'));
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(state.overlay, None);
+    assert!(!state.quit_requested());
+}
