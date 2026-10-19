@@ -1980,6 +1980,26 @@ fn line_break_inside_a_bold_title_becomes_a_space() {
     assert_eq!(item.header.as_deref(), Some("Check the gauge"));
 }
 
+proptest::proptest! {
+    // 256 cases (`PROPTEST_CASES` raises it for a longer run). Shrunk
+    // failures become named regression tests rather than a
+    // proptest-regressions file.
+    #![proptest_config(proptest::prelude::ProptestConfig {
+        failure_persistence: None,
+        ..proptest::prelude::ProptestConfig::default()
+    })]
+
+    /// The file is the state: parsing and writing back with nothing toggled
+    /// must reproduce every byte, whatever the Markdown (#79).
+    #[test]
+    fn parsing_and_writing_back_unchanged_keeps_every_byte(
+        source in crate::test_support::markdown::document()
+    ) {
+        let document = parse_source(&source, PathBuf::from("generated.md"));
+        proptest::prop_assert_eq!(crate::writer::document_contents(&document), source);
+    }
+}
+
 #[test]
 fn a_tab_indented_nested_task_is_on_its_own_line() {
     // pulldown-cmark starts this item's range at the newline before the tab;

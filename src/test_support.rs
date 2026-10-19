@@ -197,3 +197,60 @@ impl crate::effect::Host for RecordingHost {
         self.syncs.push(sync);
     }
 }
+
+/// Random Markdown for the parser and write-back property tests (#79).
+pub mod markdown {
+    use proptest::prelude::*;
+
+    /// One source line, without its ending.
+    fn line() -> impl Strategy<Value = String> {
+        let word = prop::sample::select(vec![
+            "step",
+            "`cmd --flag`",
+            "**Bold**",
+            "[link](https://example.com)",
+            "x",
+            "naïve",
+            "",
+        ]);
+        let marker = prop::sample::select(vec!["[ ]", "[x]", "[X]", "[/]"]);
+        let bullet = prop::sample::select(vec!["- ", "* ", "+ ", "1. ", "2) "]);
+        let indent = prop::sample::select(vec!["", "  ", "    ", "\t"]);
+        prop_oneof![
+            3 => (indent.clone(), bullet.clone(), marker, word.clone())
+                .prop_map(|(i, b, m, w)| format!("{i}{b}{m} {w}")),
+            1 => (indent.clone(), bullet, word.clone()).prop_map(|(i, b, w)| format!("{i}{b}{w}")),
+            1 => prop::sample::select(vec!["# Title", "## List", "### Sub", "#### Deeper"])
+                .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "```", "```sh", "~~~", "    indented code", "> - [ ] quoted", "> note",
+                "<div>", "</div>", "---", "", "plain text", "  continued",
+            ])
+            .prop_map(str::to_string),
+            1 => (indent, word).prop_map(|(i, w)| format!("{i}{w}")),
+        ]
+    }
+
+    /// A whole document: lines joined by one kind of line ending, an optional
+    /// BOM, and an optional final newline.
+    pub(crate) fn document() -> impl Strategy<Value = String> {
+        let ending = prop::sample::select(vec!["\n", "\r\n", "\r"]);
+        (
+            prop::collection::vec(line(), 0..24),
+            ending,
+            any::<bool>(),
+            any::<bool>(),
+        )
+            .prop_map(|(lines, ending, bom, final_newline)| {
+                let mut text = String::new();
+                if bom {
+                    text.push('\u{feff}');
+                }
+                text.push_str(&lines.join(ending));
+                if final_newline && !lines.is_empty() {
+                    text.push_str(ending);
+                }
+                text
+            })
+    }
+}

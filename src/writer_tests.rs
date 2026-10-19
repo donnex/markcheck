@@ -1307,3 +1307,90 @@ fn describe_write_error_names_the_common_causes_plainly() {
         "something odd"
     );
 }
+
+/// Every checkbox's state, by line.
+fn states_by_line(document: &crate::model::Document) -> Vec<(usize, TaskState)> {
+    document
+        .lists
+        .iter()
+        .flat_map(|list| &list.items)
+        .filter_map(|item| match item.kind {
+            ItemKind::Checkbox(state) => Some((item.line_number, state)),
+            ItemKind::DisplayOnly => None,
+        })
+        .collect()
+}
+
+proptest::proptest! {
+    // 256 cases (`PROPTEST_CASES` raises it for a longer run). Shrunk
+    // failures become named regression tests rather than a
+    // proptest-regressions file.
+    #![proptest_config(proptest::prelude::ProptestConfig {
+        failure_persistence: None,
+        ..proptest::prelude::ProptestConfig::default()
+    })]
+
+    /// A toggle rewrites one marker and no other byte, and a re-parse sees the
+    /// new state there and the old one everywhere else (#79).
+    #[test]
+    fn one_toggle_changes_one_marker_and_nothing_else(
+        source in crate::test_support::markdown::document(),
+        pick in proptest::prelude::any::<proptest::sample::Index>(),
+        state in proptest::sample::select(vec![
+            TaskState::NotStarted,
+            TaskState::Started,
+            TaskState::Done,
+        ]),
+    ) {
+        let path = write_temp_file(&source);
+        let mut document = parse_document(path.clone()).unwrap();
+        let tasks: Vec<(usize, usize)> = document
+            .lists
+            .iter()
+            .enumerate()
+            .flat_map(|(li, list)| {
+                list.items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| matches!(item.kind, ItemKind::Checkbox(_)))
+                    .map(move |(ii, _)| (li, ii))
+            })
+            .collect();
+        if tasks.is_empty() {
+            return Ok(());
+        }
+        let (li, ii) = tasks[pick.index(tasks.len())];
+        let line = document.lists[li].items[ii].line_number;
+        let expected: Vec<(usize, TaskState)> = states_by_line(&document)
+            .into_iter()
+            .map(|(at, old)| (at, if at == line { state } else { old }))
+            .collect();
+
+        document.lists[li].items[ii].kind = ItemKind::Checkbox(state);
+        write_back(&document).unwrap();
+
+        let written = fs::read_to_string(&path).unwrap();
+        let before = crate::parser::split_lines_keeping_endings(&source);
+        let after = crate::parser::split_lines_keeping_endings(&written);
+        proptest::prop_assert_eq!(before.len(), after.len());
+        for (index, (old, new)) in before.iter().zip(&after).enumerate() {
+            if index + 1 != line {
+                proptest::prop_assert_eq!(old, new, "line {} changed", index + 1);
+                continue;
+            }
+            proptest::prop_assert_eq!(old.len(), new.len());
+            let changed: Vec<usize> = old
+                .bytes()
+                .zip(new.bytes())
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .map(|(at, _)| at)
+                .collect();
+            if let (Some(first), Some(last)) = (changed.first(), changed.last()) {
+                proptest::prop_assert!(last - first < 3, "more than a marker changed: {old:?} -> {new:?}");
+            }
+        }
+        let reparsed = parse_document(path).unwrap();
+        proptest::prop_assert_eq!(states_by_line(&reparsed), expected);
+    }
+}
