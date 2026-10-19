@@ -1,8 +1,8 @@
 use super::{
-    CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, editor_file_args, expand_tilde,
-    git_sync_path_matches, git_sync_request, git_sync_scope, git_sync_warning, leftovers_warning,
-    no_browser_available, opener_failure_message, resolve_editor, resolve_opener, startup_message,
-    startup_warning, unshown_warning, watch_warning,
+    CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, already_open_warning, editor_file_args,
+    expand_tilde, git_sync_path_matches, git_sync_request, git_sync_scope, git_sync_warning,
+    leftovers_warning, no_browser_available, opener_failure_message, resolve_editor,
+    resolve_opener, startup_message, startup_warning, unshown_warning, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -644,5 +644,47 @@ fn unshown_warning_lists_what_is_not_shown() {
         })
         .as_deref(),
         Some("2 paragraphs, 1 quote and 3 code blocks outside task lists not shown")
+    );
+}
+
+#[test]
+fn already_open_warning_names_the_other_sessions() {
+    use crate::writer::OtherSession;
+    use std::time::Duration;
+    assert_eq!(already_open_warning(&[]), None);
+    assert_eq!(
+        already_open_warning(&[OtherSession {
+            pid: 4242,
+            open_for: Some(Duration::from_secs(12 * 60 + 5)),
+        }])
+        .as_deref(),
+        Some(
+            "already open in another markcheck (pid 4242, opened 12 min ago): its changes show up here as reloads"
+        )
+    );
+    assert_eq!(
+        already_open_warning(&[OtherSession {
+            pid: 7,
+            open_for: Some(Duration::from_secs(3)),
+        }])
+        .as_deref(),
+        Some(
+            "already open in another markcheck (pid 7, opened just now): its changes show up here as reloads"
+        )
+    );
+    let two = [
+        OtherSession {
+            pid: 1,
+            open_for: None,
+        },
+        OtherSession {
+            pid: 2,
+            open_for: None,
+        },
+    ];
+    assert!(
+        already_open_warning(&two)
+            .unwrap()
+            .starts_with("already open in 2 other markcheck sessions (pids 1, 2)")
     );
 }

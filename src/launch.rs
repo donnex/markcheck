@@ -392,6 +392,34 @@ pub fn unshown_warning(unshown: &crate::model::Unshown) -> Option<String> {
     Some(format!("{listed} outside task lists not shown"))
 }
 
+/// The startup warning that the checklist is already open in another
+/// markcheck session (#101), whose changes will show up here as reloads.
+pub fn already_open_warning(others: &[crate::writer::OtherSession]) -> Option<String> {
+    let ago = |other: &crate::writer::OtherSession| match other.open_for {
+        Some(open_for) if open_for.as_secs() >= 120 => {
+            format!(", opened {} min ago", open_for.as_secs() / 60)
+        }
+        Some(_) => ", opened just now".to_string(),
+        None => String::new(),
+    };
+    match others {
+        [] => None,
+        [other] => Some(format!(
+            "already open in another markcheck (pid {}{}): its changes show up here as reloads",
+            other.pid,
+            ago(other)
+        )),
+        many => Some(format!(
+            "already open in {} other markcheck sessions (pids {}): their changes show up here as reloads",
+            many.len(),
+            many.iter()
+                .map(|other| other.pid.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
 /// The startup note for leftovers of an interrupted markcheck that were
 /// removed (see `writer::sweep_interrupted_saves`), so a vanished file is
 /// accounted for.

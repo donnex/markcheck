@@ -149,6 +149,8 @@ fn main() -> anyhow::Result<()> {
     // runner's, which can lock its owner out (see `writer::foreign_owner`).
     // A write-protected file is refused on save (`writer::write_back`), so say
     // so before the first keypress rather than at it.
+    // Held until exit, so another session opening this checklist can tell.
+    let (_session_marker, other_sessions) = writer::SessionMarker::register(&document.file_path);
     let read_only = writer::is_read_only(&document.file_path);
     let hard_links = writer::hard_link_count(&document.file_path);
     let foreign_owner = writer::foreign_owner(&document.file_path);
@@ -204,6 +206,7 @@ fn main() -> anyhow::Result<()> {
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
         launch::leftovers_warning(leftovers),
+        launch::already_open_warning(&other_sessions),
         launch::unshown_warning(&state.document.unshown),
     ];
     let opened_at = start_at.as_ref().map(|start| state.open_at(start));

@@ -1405,3 +1405,29 @@ fn write_back_writes_and_replaces_a_skipped_marker() {
     write_back(&document).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "- [-] a\n- [x] b\n");
 }
+
+#[test]
+fn a_second_session_sees_the_live_one_and_clears_a_dead_ones_marker() {
+    let target = write_temp_file(EXAMPLE);
+    let dir = lock_dir().unwrap();
+    let prefix = format!("markcheck-open-{}-", path_digest(&target));
+    let live = std::os::unix::process::parent_id();
+    let dead = a_dead_pid();
+    fs::write(dir.join(format!("{prefix}{live}")), "").unwrap();
+    fs::write(dir.join(format!("{prefix}{dead}")), "").unwrap();
+
+    let (marker, others) = SessionMarker::register(&target);
+
+    assert_eq!(others.len(), 1, "{others:?}");
+    assert_eq!(others[0].pid, live);
+    assert!(others[0].open_for.is_some());
+    assert!(
+        !dir.join(format!("{prefix}{dead}")).exists(),
+        "the dead marker is gone"
+    );
+    let own = dir.join(format!("{prefix}{}", std::process::id()));
+    assert!(own.exists(), "this session is recorded");
+    drop(marker);
+    assert!(!own.exists(), "and removed again on exit");
+    let _ = fs::remove_file(dir.join(format!("{prefix}{live}")));
+}

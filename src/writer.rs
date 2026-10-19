@@ -164,10 +164,86 @@ fn current_uid() -> Option<u32> {
 /// the missing file.
 /// `None` when there is no private directory to put it in.
 fn lock_path(target: &Path) -> Option<PathBuf> {
+    Some(lock_dir()?.join(format!("markcheck-write-lock-{}", path_digest(target))))
+}
+
+/// The hex digest of `target`'s canonical path, shared by the write lock and
+/// the session markers, so every spelling of one file shares them.
+fn path_digest(target: &Path) -> String {
     let resolved = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
     let digest = crate::model::hash_bytes(resolved.as_os_str().as_encoded_bytes());
-    let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    Some(lock_dir()?.join(format!("markcheck-write-lock-{name}")))
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Another markcheck session that has the same checklist open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherSession {
+    pub pid: u32,
+    /// How long ago it opened the checklist, when that could be read.
+    pub open_for: Option<std::time::Duration>,
+}
+
+/// This session's marker that it has a checklist open, removed on drop, so
+/// a second session on the same checklist can warn at startup (#101). Same
+/// user and machine only, like the write lock.
+pub struct SessionMarker {
+    path: Option<PathBuf>,
+}
+
+impl SessionMarker {
+    /// Records this session and returns the others with `target` open,
+    /// removing markers left by sessions that are provably gone. Without a
+    /// private directory nothing is recorded and no one is reported.
+    pub fn register(target: &Path) -> (SessionMarker, Vec<OtherSession>) {
+        let Some(dir) = lock_dir() else {
+            return (SessionMarker { path: None }, Vec::new());
+        };
+        let prefix = format!("markcheck-open-{}-", path_digest(target));
+        let mut others = Vec::new();
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name();
+            let Some(pid) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix(&prefix))
+                .filter(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+            else {
+                continue;
+            };
+            if pid == std::process::id().to_string() {
+                continue;
+            }
+            if pid_is_gone(pid) {
+                let _ = fs::remove_file(entry.path());
+                continue;
+            }
+            let open_for = entry
+                .metadata()
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|opened| opened.elapsed().ok());
+            if let Ok(pid) = pid.parse() {
+                others.push(OtherSession { pid, open_for });
+            }
+        }
+        others.sort_by_key(|other| other.pid);
+        let path = dir.join(format!("{prefix}{}", std::process::id()));
+        let recorded = write_new_file(&path, 0o600, "", |_| Ok(())).is_ok()
+            || (path.exists() && fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()));
+        (
+            SessionMarker {
+                path: recorded.then_some(path),
+            },
+            others,
+        )
+    }
+}
+
+impl Drop for SessionMarker {
+    fn drop(&mut self) {
+        if let Some(path) = &self.path {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 /// Where this user's write locks live, so another user can neither plant a

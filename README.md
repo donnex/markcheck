@@ -526,7 +526,12 @@ and a sticky error asks you to retry.
 If the file changes on disk while the app is open, `markcheck` reloads it
 automatically and keeps your place on the same task, even when lines were
 added or removed above it. If that task is gone, the cursor moves to the
-nearest one and the status bar says so. The status bar also says what the
+nearest one and the status bar says so. If the same checklist is already
+open in another `markcheck` (another terminal, tmux pane or SSH session on
+the same machine and user), the second one warns at startup
+(`already open in another markcheck (pid 4242, opened 12 min ago): its
+changes show up here as reloads`), so you can stop before two of you work
+the same procedure. The status bar also says what the
 reload changed in task terms, such as `Reloaded: 2 done, 1 reopened
 ("Restart service", "Verify output") · 1 added`, so a step a colleague just
 ticked (or unticked) on a shared checklist doesn't go unnoticed; an edit that

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opening a checklist that is already open in another markcheck (on the
+  same machine, as the same user) now warns at startup, naming the other
+  session's process and how long it has been open. Before, two people (or one
+  person with a forgotten terminal) could work the same procedure at once,
+  each seeing the other's ticks only as unexplained reloads. (#101)
+
 - `R` can now reset part of a checklist: in its confirmation, `l` resets
   only the current list and `s` only the sub-list you are in (a task and its
   sub-tasks), with the number of tasks each would change, while `y` still
