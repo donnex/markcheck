@@ -79,7 +79,7 @@ workflow and file-backed state.
   accidental reset is one keystroke away from recovery
 - Reset the whole checklist (with confirmation), and an offer to reset when
   you quit a fully-completed checklist
-- Mouse and keyboard driven; works on a plain terminal or a Nerd Font one
+- Mouse and keyboard driven; plain Unicode icons that work on any terminal, or Nerd Font ones with `--nerd-font`
 - Colors adapt to your terminal: curated 24-bit hues on truecolor terminals,
   a 256-color match otherwise, and named ANSI colors as a safe fallback.
   Truecolor is detected from `COLORTERM=truecolor`/`24bit`, or from a
@@ -121,8 +121,8 @@ only".
 
 ```sh
 markcheck runbook.md
-markcheck --no-nerd-font runbook.md   # plain-Unicode icons
-markcheck --nerd-font runbook.md      # ...or force them back on, if your config disables them
+markcheck --nerd-font runbook.md      # Nerd Font icons, if your terminal has one
+markcheck --no-nerd-font runbook.md   # ...or plain Unicode again, if your config enables them
 markcheck --no-mouse runbook.md       # leave terminal text selection alone
 markcheck --mouse runbook.md          # ...or force it back on, if your config disables it
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
@@ -155,7 +155,7 @@ All keys are optional; a flag passed on the command line always overrides
 its config value.
 
 ```toml
-nerd_font = true    # false = --no-nerd-font, true = --nerd-font
+nerd_font = false   # true  = --nerd-font,    false = --no-nerd-font
 mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
@@ -676,7 +676,7 @@ on the right — the whole right-hand side reads as "what's going on with
 this file right now," while the left side (title and filename) stays put as
 plain identity. `⇅ git` is there from the moment the app opens, before
 you've even toggled anything. (It's the same plain `⇅` symbol either way,
-with or without `--no-nerd-font` — a couple of fancier icon attempts along
+with or without `--nerd-font` — a couple of fancier icon attempts along
 the way didn't render reliably on every terminal, so the word "git" carries
 the meaning now rather than the glyph.) The text after it says where the file stands:
 

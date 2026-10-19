@@ -192,7 +192,7 @@ impl AppState {
             pending_open_link: false,
             pending_copy_code: false,
             pending_number: 0,
-            icons: IconSet::nerd(),
+            icons: IconSet::unicode(),
             clipboard_primary: false,
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this

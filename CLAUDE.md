@@ -10,8 +10,8 @@ A TUI application for pilot-style Markdown checklists. Written in Rust. See DESI
 
 ```bash
 cargo build                                                        # compile
-cargo run -- <file.md>                                             # run (Nerd Font icons)
-cargo run -- --no-nerd-font <file.md>                              # run (plain Unicode icons)
+cargo run -- <file.md>                                             # run (plain Unicode icons)
+cargo run -- --nerd-font <file.md>                                 # run (Nerd Font icons)
 cargo test                                                         # all tests
 cargo test <test_name>                                             # single test
 cargo test -- --nocapture                                          # with debug output

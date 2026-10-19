@@ -49,7 +49,7 @@ fn settings_resolve_the_built_in_defaults_with_no_flags_and_no_config() {
     assert_eq!(
         settings_from(&[], config::Config::default()),
         Settings {
-            nerd_font: true,
+            nerd_font: false,
             mouse: true,
             primary: false,
             auto_copy: false,

@@ -37,10 +37,10 @@ pub struct Cli {
     /// already exist and must end in .md)
     #[arg(long, value_name = "PATH", conflicts_with = "file")]
     pub new: Option<PathBuf>,
-    /// Use Nerd Font glyphs, overriding `nerd_font = false` in the config
+    /// Use Nerd Font glyphs instead of plain Unicode symbols (config: nerd_font = true)
     #[arg(long, conflicts_with = "no_nerd_font")]
     pub nerd_font: bool,
-    /// Use plain Unicode symbols instead of Nerd Font glyphs (config: nerd_font = false)
+    /// Use plain Unicode symbols, overriding `nerd_font = true` in the config (the default)
     #[arg(long)]
     pub no_nerd_font: bool,
     /// Enable mouse support, overriding `mouse = false` in the config
@@ -100,7 +100,9 @@ pub struct Settings {
 impl Settings {
     pub fn resolve(cli: &Cli, config: &config::Config) -> Self {
         Settings {
-            nerd_font: resolve_flag(cli.nerd_font, cli.no_nerd_font, config.nerd_font, true),
+            // Plain Unicode renders on every terminal; Nerd Font glyphs only
+            // with a patched font, so they are the opt-in (#83).
+            nerd_font: resolve_flag(cli.nerd_font, cli.no_nerd_font, config.nerd_font, false),
             mouse: resolve_flag(cli.mouse, cli.no_mouse, config.mouse, true),
             primary: resolve_flag(cli.primary, cli.no_primary, config.primary, false),
             auto_copy: resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false),

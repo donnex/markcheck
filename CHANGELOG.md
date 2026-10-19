@@ -87,6 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- markcheck now uses plain Unicode icons by default. The Nerd Font icons it
+  used to start with need a patched font, and without one every task
+  marker showed as the same blank box, so done, started and not-started
+  tasks looked alike. If you have a Nerd Font and want its icons back, set
+  `nerd_font = true` in the config file or pass `--nerd-font`. (#83)
+
 - `Esc` no longer quits markcheck. As in vim, it cancels (search, the task
   picker, help, a confirmation or a number prompt); on the checklist and
   completion screens, where there is nothing to cancel, it now shows "Type q

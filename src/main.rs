@@ -149,8 +149,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut state = AppState::new(document);
     let settings = Settings::resolve(&cli, &config);
-    if !settings.nerd_font {
-        state.icons = IconSet::unicode();
+    if settings.nerd_font {
+        state.icons = IconSet::nerd();
     }
     state.clipboard_primary = settings.primary;
     state.auto_copy = settings.auto_copy;
