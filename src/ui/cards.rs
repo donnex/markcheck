@@ -273,7 +273,10 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("R", "reset all tasks (asks first)"),
             ("1-9", "jump to list N"),
             ("?", "toggle this help"),
-            ("q / Esc", "quit"),
+            (
+                "q / Esc",
+                "quit; during a git sync, wait for it (q again abandons)",
+            ),
         ],
     ),
     (

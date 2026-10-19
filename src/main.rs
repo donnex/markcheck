@@ -17,14 +17,16 @@ mod ui;
 mod watcher;
 mod writer;
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write as _};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use clap::Parser;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind, MouseButton, MouseEventKind,
+    Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -174,11 +176,18 @@ fn main() -> anyhow::Result<()> {
         .then(|| git_sync::GitSync::detect(&state.document.file_path));
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
+    // What no signal handler can catch (SIGKILL, the OOM killer, a power
+    // loss) still leaves these behind.
+    let leftovers = writer::sweep_interrupted_saves(&state.document.file_path)
+        + git_sync
+            .as_ref()
+            .map_or(0, git_sync::GitSync::sweep_interrupted_syncs);
     let warnings = [
         config::unknown_keys_warning(&unknown_keys),
         launch::startup_warning(read_only, hard_links, foreign_owner),
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
+        launch::leftovers_warning(leftovers),
     ];
     match launch::startup_message(created_new, &warnings) {
         Some((message, true)) => state.set_error(message),
@@ -196,6 +205,7 @@ fn main() -> anyhow::Result<()> {
         sync.request_catch_up_push();
     }
 
+    let stop = stop_on_signals().context("cannot install signal handlers")?;
     let mouse = settings.mouse;
     install_panic_hook();
     enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
@@ -209,15 +219,44 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(&mut terminal, &mut state, &mut reload, &mut git_sync, mouse);
+    let result = run(
+        &mut terminal,
+        &mut state,
+        &mut reload,
+        &mut git_sync,
+        mouse,
+        &stop,
+    );
     drop(guard);
     clipboard::release_system_clipboard();
     // Printed only once the alternate screen is gone, so it stays visible.
+    // Ignored on failure: after SIGHUP there may be no terminal left.
     if let Some(report) = result? {
-        eprintln!("{report}");
+        let _ = writeln!(io::stderr(), "{report}");
     }
     Ok(())
 }
+
+/// `SIGTERM`, `SIGHUP` (a closed terminal or dropped SSH session) and a
+/// `SIGINT` from `kill` set the returned flag, so `run` ends the way `q`
+/// does and git sync is waited for and cleaned up. A second `SIGTERM` or
+/// `SIGINT` exits at once, for when that wait is too long.
+fn stop_on_signals() -> io::Result<Arc<AtomicBool>> {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    use signal_hook::flag;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    for signal in [SIGTERM, SIGINT] {
+        flag::register_conditional_shutdown(signal, 1, Arc::clone(&stop))?;
+    }
+    for signal in [SIGTERM, SIGHUP, SIGINT] {
+        flag::register(signal, Arc::clone(&stop))?;
+    }
+    Ok(stop)
+}
+
+/// Shown while `q` waits for a sync still running.
+const WAITING_FOR_SYNC: &str = "Waiting for git sync… press q again to abandon";
 
 fn run<B: Backend>(
     terminal: &mut Terminal<B>,
@@ -225,6 +264,7 @@ fn run<B: Backend>(
     reload: &mut ReloadTrigger,
     git_sync: &mut Option<git_sync::GitSync>,
     mouse: bool,
+    stop: &AtomicBool,
 ) -> anyhow::Result<Option<String>>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
@@ -234,7 +274,18 @@ where
     let mut dirty = true;
     let mut label_due: Option<SystemTime> = None;
     let (opener_failures, opener_failure_rx) = std::sync::mpsc::channel();
+    // Set once `q` found a sync still running; the outcome it then waits for
+    // is the one reported after the TUI closes.
+    let mut quitting = false;
+    let mut last_outcome = None;
     loop {
+        // Nothing is drawn from here on: after SIGHUP the terminal is gone.
+        if stop.load(Ordering::Relaxed) {
+            return Ok(git_sync.as_mut().and_then(|sync| {
+                let last = wait_for_git_sync(sync, QUIT_WAIT).or(last_outcome);
+                finish_git_sync(sync, last)
+            }));
+        }
         dirty |= reload.check(state, Instant::now());
         while let Ok(message) = opener_failure_rx.try_recv() {
             state.set_error(message);
@@ -247,6 +298,9 @@ where
         if let Some(sync) = git_sync.as_mut() {
             if let Some(outcome) = sync.poll() {
                 state.apply_git_sync_outcome(&outcome);
+                if quitting {
+                    last_outcome = Some(outcome);
+                }
                 dirty = true;
             }
             // Not gated on the outcome above: a retry can come due on a
@@ -260,6 +314,9 @@ where
         {
             state.git_sync.busy = sync.is_busy();
             dirty = true;
+        }
+        if quitting && !state.git_sync.busy {
+            break;
         }
         let now = SystemTime::now();
         dirty |= state.expire_status(now);
@@ -280,6 +337,17 @@ where
             let event = event::read()?;
             dirty |= ui::event_needs_redraw(&event);
             match event {
+                // The checklist is done with: a key either abandons the sync or
+                // is answered with the prompt again, so no edit queues another.
+                Event::Key(key) if quitting && key.kind == KeyEventKind::Press => {
+                    if key.code == KeyCode::Char('q') {
+                        let sync = git_sync.as_mut().expect("quitting waits only on a sync");
+                        let last = abandon_git_sync(sync).or(last_outcome);
+                        return Ok(finish_git_sync(sync, last));
+                    }
+                    state.set_notice(WAITING_FOR_SYNC.to_string());
+                }
+                _ if quitting => {}
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     state.handle_key_with_mods(key.code, key.modifiers);
                 }
@@ -307,13 +375,19 @@ where
         )?;
         dirty |= drained.ran_any;
         if drained.quit {
-            break;
+            if git_sync.as_ref().is_some_and(git_sync::GitSync::is_busy) {
+                quitting = true;
+                state.set_notice(WAITING_FOR_SYNC.to_string());
+                dirty = true;
+            } else {
+                break;
+            }
         }
     }
 
-    // The last action may have queued a sync, which takes several git
-    // subprocesses; give it a bounded window to land before exiting.
-    Ok(git_sync.as_mut().and_then(wait_for_git_sync))
+    Ok(git_sync
+        .as_mut()
+        .and_then(|sync| finish_git_sync(sync, last_outcome)))
 }
 
 /// Carries out `AppState`'s effects against the real terminal, processes
@@ -352,13 +426,20 @@ where
     }
 }
 
+/// How long a signal lets a running sync finish before it is abandoned.
+const QUIT_WAIT: Duration = Duration::from_secs(5);
+/// How long an abandoned sync's worker gets to unwind through its cleanup
+/// after `SIGTERM`, and then after `SIGKILL`.
+const ABANDON_GRACE: Duration = Duration::from_secs(2);
+
 /// Polls `sync` until its in-flight (and any coalesced-behind-it) request
-/// settles, or `timeout` elapses — whichever comes first. Only meant to be
-/// called once, right before quitting. Returns the line to print after the
-/// TUI closes when that last sync didn't land cleanly.
-fn wait_for_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
-    const TIMEOUT: Duration = Duration::from_secs(5);
-    let deadline = Instant::now() + TIMEOUT;
+/// settles, or `timeout` elapses — whichever comes first. Returns the last
+/// outcome seen.
+fn wait_for_git_sync(
+    sync: &mut git_sync::GitSync,
+    timeout: Duration,
+) -> Option<git_sync::SyncOutcome> {
+    let deadline = Instant::now() + timeout;
     let mut last = None;
     while sync.is_busy() && Instant::now() < deadline {
         if let Some(outcome) = sync.poll() {
@@ -366,6 +447,32 @@ fn wait_for_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    last
+}
+
+/// Stops a running sync's git processes, then waits for the worker to remove
+/// its temporary index and scratch files. Returns the last outcome seen.
+fn abandon_git_sync(sync: &mut git_sync::GitSync) -> Option<git_sync::SyncOutcome> {
+    sync.abandon(false);
+    let mut last = wait_for_git_sync(sync, ABANDON_GRACE);
+    if sync.is_busy() {
+        sync.abandon(true);
+        last = wait_for_git_sync(sync, ABANDON_GRACE).or(last);
+    }
+    last
+}
+
+/// Abandons whatever is still running, then gives the line to print after
+/// the TUI closes when the last sync didn't land cleanly.
+fn finish_git_sync(
+    sync: &mut git_sync::GitSync,
+    last: Option<git_sync::SyncOutcome>,
+) -> Option<String> {
+    let last = if sync.is_busy() {
+        abandon_git_sync(sync).or(last)
+    } else {
+        last
+    };
     git_sync::exit_report(last.as_ref(), sync.is_busy())
 }
 

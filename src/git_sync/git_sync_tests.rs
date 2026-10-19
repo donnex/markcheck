@@ -601,3 +601,88 @@ fn exit_report_flags_a_sync_cut_off_by_the_exit_wait() {
         assert!(exit_report(last, true).is_some_and(|m| m.contains("still running")));
     }
 }
+
+#[test]
+fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
+    let work = init_repo_without_remote();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let git_dir = work.join(".git");
+    fs::write(git_dir.join(format!("markcheck-index-{dead}-1f")), "").unwrap();
+    fs::write(git_dir.join(format!("markcheck-index-{dead}-1f.lock")), "").unwrap();
+
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    assert_eq!(sync.sweep_interrupted_syncs(), 2);
+    assert_eq!(sync.sweep_interrupted_syncs(), 0);
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn abandon_stops_the_running_git_and_starts_no_more() {
+    let work = init_repo_without_remote();
+    let hooks = work.join(".git").join("hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let started = work.parent().unwrap().join("hook-started");
+    let hook = hooks.join("pre-commit");
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\n: > {}\nsleep {HOOK_RACE_SLEEP}\n",
+            shell_words::quote(started.to_str().unwrap())
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let file = work.join("tracked.md");
+    fs::write(&file, "- [x] one\n").unwrap();
+    let mut sync = GitSync::detect(&file).unwrap();
+    assert!(!sync.abandon(false), "nothing is running yet");
+    let mut sync = GitSync::detect(&file).unwrap();
+    sync.request(pending_sync("- [x] one\n", "Check"));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !started.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(started.exists(), "the hook never started");
+    assert!(sync.abandon(false), "the commit's git was running");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut outcome = None;
+    while outcome.is_none() && Instant::now() < deadline {
+        outcome = sync.poll();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        matches!(outcome, Some(SyncOutcome::Failed(_))),
+        "the abandoned sync ends instead of waiting out its hook: {outcome:?}"
+    );
+    let left: Vec<_> = fs::read_dir(work.join(".git"))
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("markcheck-index-")
+        })
+        .collect();
+    assert!(left.is_empty(), "the worker removed its temp index");
+
+    sync.request(pending_sync("- [ ] one\n", "Uncheck"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut outcome = None;
+    while outcome.is_none() && Instant::now() < deadline {
+        outcome = sync.poll();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        matches!(&outcome, Some(SyncOutcome::Failed(message)) if message.contains("abandoned")),
+        "no git may start after abandoning: {outcome:?}"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}

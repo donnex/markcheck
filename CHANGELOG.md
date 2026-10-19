@@ -141,6 +141,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Quitting, closing the terminal or stopping markcheck with `SIGTERM` while
+  git sync is running no longer leaves the sync half done. Before, markcheck
+  gave a running sync 5 seconds and then exited without stopping it. It left
+  a temporary index file inside the repository's `.git` folder, and the
+  `git commit` still running in the background could commit after
+  markcheck was gone, leaving `git status` showing the checklist as both
+  staged and modified. A signal ignored the sync altogether, and it could
+  leave a hidden temporary copy of the checklist beside it. Now `q` waits
+  for the sync and says so ("Waiting for git sync… press q again to
+  abandon"), a second `q` stops it and cleans up, and `SIGTERM`, `SIGHUP`
+  and `SIGINT` quit the normal way. Files left by a markcheck that was
+  killed outright are removed the next time it opens the checklist. (#5)
+
 - Git sync no longer draws password, passphrase or host-key prompts over
   the checklist screen. When a push needed credentials (an HTTPS remote
   with no credential helper, an SSH key without a running agent, an unknown

@@ -717,6 +717,14 @@ impl AppState {
         self.status_is_error = false;
     }
 
+    /// Sets a **sticky**, non-error status message for a state that lasts
+    /// until something else replaces it, such as waiting on git sync to quit.
+    pub fn set_notice(&mut self, msg: String) {
+        self.status_message = Some(msg);
+        self.status_expiry = None;
+        self.status_is_error = false;
+    }
+
     /// Sets a **sticky, error-colored** status message for failures and "your
     /// keypress did nothing" feedback. Persists until the next input.
     pub fn set_error(&mut self, msg: String) {

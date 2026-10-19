@@ -2,10 +2,12 @@
 //! scratch files, a session of its own with no controlling terminal, and a
 //! timeout that kills the whole process group.
 
+use std::cell::RefCell;
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Cap for local plumbing commands, which are normally instant.
@@ -18,6 +20,67 @@ pub(super) const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) const COMMIT_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a timed-out command gets after `SIGTERM` before `SIGKILL`.
 const KILL_GRACE: Duration = Duration::from_secs(1);
+/// The git children a [`super::GitSync`]'s workers have running, so quitting
+/// can stop them rather than leave them orphaned. A child is spawned, reaped
+/// and signalled only under this lock, so [`Children::abandon`] can never
+/// signal a process group whose leader was already reaped and its PID
+/// recycled, nor miss a child spawned while it runs.
+#[derive(Default)]
+pub(super) struct Children {
+    inner: Mutex<ChildrenInner>,
+}
+#[derive(Default)]
+struct ChildrenInner {
+    pids: Vec<u32>,
+    /// Set by `abandon`: no further child may start.
+    abandoned: bool,
+}
+thread_local! {
+    /// The registry `run_with_timeout` uses on this thread: a worker's
+    /// `GitSync`'s once [`track_children_on_this_thread`] ran, otherwise a
+    /// private one nothing abandons.
+    static CHILDREN: RefCell<Arc<Children>> = RefCell::new(Arc::default());
+}
+pub(super) fn track_children_on_this_thread(children: Arc<Children>) {
+    CHILDREN.with(|current| *current.borrow_mut() = children);
+}
+impl Children {
+    fn lock(&self) -> MutexGuard<'_, ChildrenInner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    fn spawn(&self, cmd: Command) -> io::Result<Child> {
+        let mut inner = self.lock();
+        if inner.abandoned {
+            return Err(io::Error::other("git sync was abandoned"));
+        }
+        let child = spawn_in_new_session(cmd)?;
+        inner.pids.push(child.id());
+        Ok(child)
+    }
+    fn try_wait(&self, child: &mut Child) -> io::Result<Option<ExitStatus>> {
+        let mut inner = self.lock();
+        let result = child.try_wait();
+        if !matches!(result, Ok(None)) {
+            inner.pids.retain(|&pid| pid != child.id());
+        }
+        result
+    }
+    /// Unregisters `child` before a blocking reap.
+    fn forget(&self, child: &Child) {
+        self.lock().pids.retain(|&pid| pid != child.id());
+    }
+    /// Stops every running child's process group with `signal` (`"-TERM"` or
+    /// `"-KILL"`) and refuses new ones from now on. Returns whether any child
+    /// was running.
+    pub(super) fn abandon(&self, signal: &str) -> bool {
+        let mut inner = self.lock();
+        inner.abandoned = true;
+        for &pid in &inner.pids {
+            signal_group(pid, signal);
+        }
+        !inner.pids.is_empty()
+    }
+}
 /// Scratch files for one run's stdio, removed on drop. Kept in the temp
 /// directory: anything written inside the repository could be swept into a
 /// commit by a hook.
@@ -94,14 +157,15 @@ fn run_with_optional_stdin(
     cmd.stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
 
-    let mut child = spawn_in_new_session(cmd)?;
+    let children = CHILDREN.with(|current| Arc::clone(&current.borrow()));
+    let mut child = children.spawn(cmd)?;
     let deadline = Instant::now() + timeout;
     let status = loop {
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = children.try_wait(&mut child)? {
             break status;
         }
         if Instant::now() >= deadline {
-            let message = if terminate_and_reap(&mut child, KILL_GRACE) {
+            let message = if terminate_and_reap(&children, &mut child, KILL_GRACE) {
                 format!(
                     "git command timed out after {timeout:?} and was force-killed; \
                      if git now reports that index.lock exists, remove .git/index.lock"
@@ -146,26 +210,27 @@ fn spawn_in_new_session(mut cmd: Command) -> io::Result<Child> {
 /// The group is only signalled while the child is unreaped, since a reaped
 /// child's PID, and so the group ID, can be recycled onto something unrelated.
 /// Returns whether the child outlived the grace period and had to be killed.
-fn terminate_and_reap(child: &mut Child, grace: Duration) -> bool {
-    signal_group(child, "-TERM");
+fn terminate_and_reap(children: &Children, child: &mut Child, grace: Duration) -> bool {
+    signal_group(child.id(), "-TERM");
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        if matches!(children.try_wait(child), Ok(Some(_))) {
             return false;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    signal_group(child, "-KILL");
+    signal_group(child.id(), "-KILL");
     let _ = child.kill();
+    children.forget(child);
     let _ = child.wait();
     true
 }
-fn signal_group(child: &Child, signal: &str) {
+fn signal_group(pid: u32, signal: &str) {
     // Nulled: `kill` complains on stderr if the group is gone, and
     // markcheck owns the terminal.
     let _ = Command::new("kill")
         .args([signal, "--"])
-        .arg(format!("-{}", child.id()))
+        .arg(format!("-{pid}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

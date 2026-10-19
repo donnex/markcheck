@@ -1,7 +1,8 @@
 use super::{
     GitSyncRequest, OPENER_FAILURE_WINDOW, editor_file_args, expand_tilde, git_sync_path_matches,
-    git_sync_request, git_sync_warning, no_browser_available, opener_failure_message,
-    resolve_editor, resolve_opener, startup_message, startup_warning, watch_warning,
+    git_sync_request, git_sync_warning, leftovers_warning, no_browser_available,
+    opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
+    watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -514,4 +515,17 @@ fn startup_warning_names_each_hazard() {
     );
     let both = startup_warning(false, Some(2), Some(1001)).unwrap();
     assert!(both.contains("2 hard links") && both.contains("; this file belongs to user 1001"));
+}
+
+#[test]
+fn leftovers_warning_counts_what_was_removed() {
+    assert_eq!(leftovers_warning(0), None);
+    assert_eq!(
+        leftovers_warning(1).as_deref(),
+        Some("removed 1 file left by an interrupted markcheck")
+    );
+    assert_eq!(
+        leftovers_warning(3).as_deref(),
+        Some("removed 3 files left by an interrupted markcheck")
+    );
 }

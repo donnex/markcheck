@@ -310,6 +310,19 @@ pub fn watch_warning(error: &str) -> String {
     )
 }
 
+/// The startup note for leftovers of an interrupted markcheck that were
+/// removed (see `writer::sweep_interrupted_saves`), so a vanished file is
+/// accounted for.
+pub fn leftovers_warning(removed: usize) -> Option<String> {
+    match removed {
+        0 => None,
+        1 => Some("removed 1 file left by an interrupted markcheck".to_string()),
+        n => Some(format!(
+            "removed {n} files left by an interrupted markcheck"
+        )),
+    }
+}
+
 /// Joins the startup messages into the one the status bar shows: sticky and
 /// error-colored if any of them is a warning, otherwise the ephemeral
 /// "Created new checklist" alone. Returns the text and whether it's an error.

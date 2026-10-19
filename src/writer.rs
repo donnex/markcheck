@@ -174,13 +174,64 @@ fn owner_is_gone(path: &Path) -> bool {
     else {
         return false;
     };
+    pid_is_gone(&pid)
+}
+
+/// Whether no process `pid` (decimal digits) exists, on positive evidence
+/// only. Never this process, whatever the evidence.
+fn pid_is_gone(pid: &str) -> bool {
     if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    if let Some(gone) = proc_reports_gone(&pid) {
+    if pid == std::process::id().to_string() {
+        return false;
+    }
+    if let Some(gone) = proc_reports_gone(pid) {
         return gone;
     }
-    ps_reports_gone(Command::new("ps"), &pid)
+    ps_reports_gone(Command::new("ps"), pid)
+}
+
+/// Removes the regular files in `dir` named `<prefix><pid>-<hex>…` (more
+/// `-<hex>` groups and a final `.lock` allowed) whose process is provably
+/// gone: what a markcheck killed mid-save or mid-sync leaves behind, which
+/// nothing else would ever remove. Returns how many were removed.
+pub(crate) fn remove_leftovers(dir: &Path, prefix: &str) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name();
+            let Some(rest) = name.to_str().and_then(|name| name.strip_prefix(prefix)) else {
+                return false;
+            };
+            let Some((pid, suffix)) = rest.split_once('-') else {
+                return false;
+            };
+            let suffix = suffix.strip_suffix(".lock").unwrap_or(suffix);
+            let well_formed = suffix
+                .split('-')
+                .all(|group| !group.is_empty() && group.bytes().all(|b| b.is_ascii_hexdigit()));
+            well_formed
+                && entry.file_type().is_ok_and(|kind| kind.is_file())
+                && pid_is_gone(pid)
+                && fs::remove_file(entry.path()).is_ok()
+        })
+        .count()
+}
+
+/// Removes the temp files a save (`.<name>.markcheck-tmp-…`) or `--new`
+/// (`.<name>.markcheck-new-…`) left beside `checklist` when markcheck died
+/// before renaming them into place. Returns how many were removed.
+pub fn sweep_interrupted_saves(checklist: &Path) -> usize {
+    let (Some(dir), Some(name)) = (checklist.parent(), checklist.file_name()) else {
+        return 0;
+    };
+    let name = name.to_string_lossy();
+    remove_leftovers(dir, &format!(".{name}.markcheck-tmp-"))
+        + remove_leftovers(dir, &format!(".{name}.markcheck-new-"))
 }
 
 /// Linux answers from `/proc`, with no external `ps` to be missing or to

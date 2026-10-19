@@ -13,7 +13,9 @@ pub(crate) use process::REDIRECTING_GIT_VARS;
 pub use shared::SyncOutcome;
 use shared::lock_hash;
 
-use process::{PLUMBING_TIMEOUT, git_command, run_with_timeout};
+use process::{
+    Children, PLUMBING_TIMEOUT, git_command, run_with_timeout, track_children_on_this_thread,
+};
 use push::{catch_up_push, retry_commit};
 use sync::{commit_message, run_sync};
 
@@ -101,6 +103,8 @@ pub struct GitSync {
     /// Hash of the latest request, read live by the worker so `run_sync` can
     /// tell a superseded request from an outside edit.
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
+    /// The git processes the workers have running, for `abandon`.
+    children: Arc<Children>,
 }
 
 /// Turns a panic into `Failed`: a worker that dies without sending leaves
@@ -173,6 +177,7 @@ impl GitSync {
             retry: None,
             retry_interval: PUSH_RETRY_INTERVAL,
             latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
+            children: Arc::default(),
         })
     }
 
@@ -193,7 +198,9 @@ impl GitSync {
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
         let latest_requested_hash = Arc::clone(&self.latest_requested_hash);
+        let children = Arc::clone(&self.children);
         std::thread::spawn(move || {
+            track_children_on_this_thread(children);
             let outcome = run_reporting_panics(|| {
                 let message = commit_message(&file_path, &sync.description);
                 run_sync(
@@ -213,7 +220,9 @@ impl GitSync {
         self.busy = true;
         let repo_dir = self.repo_dir.clone();
         let sender = self.sender.clone();
+        let children = Arc::clone(&self.children);
         std::thread::spawn(move || {
+            track_children_on_this_thread(children);
             // Every failure here is the retry's own.
             let outcome = match run_reporting_panics(|| retry_commit(&repo_dir, &commit)) {
                 SyncOutcome::Failed(msg) => SyncOutcome::RetryFailed(msg),
@@ -233,7 +242,9 @@ impl GitSync {
         let repo_dir = self.repo_dir.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
+        let children = Arc::clone(&self.children);
         std::thread::spawn(move || {
+            track_children_on_this_thread(children);
             let outcome = run_reporting_panics(|| catch_up_push(&repo_dir, &file_path));
             let _ = sender.send(outcome);
         });
@@ -309,6 +320,24 @@ impl GitSync {
     /// Drives the title bar's "syncing" state, and the wait when quitting.
     pub fn is_busy(&self) -> bool {
         self.busy
+    }
+
+    /// Removes the temporary indexes (`markcheck-index-…`) a markcheck killed
+    /// mid-sync left in the repository's git directory. Returns how many.
+    pub fn sweep_interrupted_syncs(&self) -> usize {
+        inspect::git_dir(&self.repo_dir).map_or(0, |git_dir| {
+            crate::writer::remove_leftovers(&git_dir, "markcheck-index-")
+        })
+    }
+
+    /// Gives up on the running sync, for a quit that won't wait for it: the
+    /// running git process group gets `SIGTERM`, or `SIGKILL` with `force`,
+    /// and no further git process starts, so the worker unwinds through its
+    /// own cleanup. Returns whether a git process was running.
+    pub fn abandon(&mut self, force: bool) -> bool {
+        self.pending = None;
+        self.retry = None;
+        self.children.abandon(if force { "-KILL" } else { "-TERM" })
     }
 }
 

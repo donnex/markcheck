@@ -1197,6 +1197,169 @@ fn git_sync_children_cannot_reach_markcheck_s_terminal() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// A repository whose `pre-commit` hook records its PID in `hook-pid`
+/// beside the work tree, then runs `body`, so a test can catch a sync
+/// mid-commit. Returns the checklist and the PID file.
+fn repo_with_a_slow_hook(hint: &str, body: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = unique_path(hint);
+    let work = root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+
+    let pid_file = root.join("hook-pid");
+    let hook = work.join(".git/hooks/pre-commit");
+    write_file(
+        &hook,
+        &format!(
+            "#!/bin/sh\necho $$ > '{}.tmp'\nmv '{0}.tmp' '{0}'\n{body}\n",
+            pid_file.display()
+        ),
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (root, path, pid_file)
+}
+
+fn git_sync_session(path: &Path) -> Session {
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--git-sync");
+    cmd.arg(path);
+    Session::spawn(cmd)
+}
+
+/// Waits for the hook to have written its PID, then returns it.
+fn wait_for_hook_pid(pid_file: &Path) -> String {
+    let deadline = Instant::now() + SCREEN_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Ok(pid) = std::fs::read_to_string(pid_file) {
+            return pid.trim().to_string();
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("the pre-commit hook never started");
+}
+
+/// Whether `pid` is still running, polled for a while first, since a killed
+/// hook's parent may take a moment to be reaped.
+fn still_running_after_a_while(pid: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
+        let alive = match stat {
+            Ok(stat) => !stat
+                .rsplit(')')
+                .next()
+                .unwrap_or("")
+                .trim_start()
+                .starts_with('Z'),
+            Err(_) => false,
+        };
+        if !alive {
+            return false;
+        }
+        if Instant::now() >= deadline {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn temp_indexes_left(work: &Path) -> Vec<String> {
+    std::fs::read_dir(work.join(".git"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("markcheck-index-"))
+        .collect()
+}
+
+#[test]
+fn quitting_during_a_sync_says_it_waits_and_quits_once_it_lands() {
+    let (root, path, pid_file) = repo_with_a_slow_hook("gitsync-quit-wait", "sleep 2");
+    let work = path.parent().unwrap().to_path_buf();
+
+    let mut session = git_sync_session(&path);
+    session.key(" ");
+    wait_for_hook_pid(&pid_file);
+    session.key("q");
+    session.wait_for_screen("Waiting for git sync");
+    let (ok, _) = session.finish();
+    assert!(ok, "binary should exit successfully once the sync lands");
+
+    let out = git(&work)
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "checklist.md: Check \"alpha\"",
+        "the waited-for sync must have committed"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_second_q_abandons_the_sync_and_leaves_nothing_behind() {
+    let (root, path, pid_file) = repo_with_a_slow_hook("gitsync-abandon", "sleep 30");
+    let work = path.parent().unwrap().to_path_buf();
+
+    let mut session = git_sync_session(&path);
+    session.key(" ");
+    let hook_pid = wait_for_hook_pid(&pid_file);
+    session.key("q");
+    session.wait_for_screen("press q again to abandon");
+    session.key("q");
+    let (ok, output) = session.finish_within(Duration::from_secs(60));
+    assert!(ok, "binary should exit successfully after abandoning");
+
+    assert!(
+        !still_running_after_a_while(&hook_pid),
+        "the hook must not outlive markcheck"
+    );
+    assert_eq!(temp_indexes_left(&work), Vec::<String>::new());
+    let tail = output.rsplit("\x1b[?1049l").next().unwrap_or_default();
+    assert!(
+        tail.contains("markcheck: git sync"),
+        "the abandoned sync is reported after the TUI closes:\n{tail}"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn sigterm_mid_sync_quits_cleanly_and_leaves_nothing_behind() {
+    let (root, path, pid_file) = repo_with_a_slow_hook("gitsync-sigterm", "sleep 30");
+    let work = path.parent().unwrap().to_path_buf();
+
+    let mut session = git_sync_session(&path);
+    session.key(" ");
+    let hook_pid = wait_for_hook_pid(&pid_file);
+    let markcheck_pid = session.child.process_id().unwrap();
+    let status = std::process::Command::new("kill")
+        .args(["-TERM", &markcheck_pid.to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let (ok, output) = session.finish_within(Duration::from_secs(60));
+    assert!(ok, "SIGTERM must take the normal quit path");
+
+    assert!(output.contains("\x1b[?1049l"), "the terminal is restored");
+    assert!(
+        !still_running_after_a_while(&hook_pid),
+        "the hook must not outlive markcheck"
+    );
+    assert_eq!(temp_indexes_left(&work), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes() {
     // The final toggle's sync runs during the exit wait, after the TUI's own

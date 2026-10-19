@@ -409,7 +409,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `R` | reset all tasks to not-done (asks first) |
 | `1`–`9` | jump to list N |
 | `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the `o`/`y` digit prompt, the list-complete screen). Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
-| `q` / `Esc` | quit |
+| `q` / `Esc` | quit; while git sync is running, wait for it (`q` again stops it) |
 
 Both digit shortcuts above (`1`–`9` list jump, `o` then `1`–`9` link open) only
 reach the first nine items — a document with a 10th `## H2` list, or a card
@@ -573,14 +573,20 @@ never freezes the app during normal use. Git sync can't answer a password,
 passphrase or host-key prompt in the terminal: a push or signed commit that
 needs one fails at once, with the reason in the status bar, so use a
 credential helper, `ssh-agent` or a graphical askpass/pinentry for a synced
-repository. Quitting right after a toggle or
-edit is the one exception: `markcheck` waits up to 5 seconds for that last
-sync to finish before exiting, so a quick `e` then `q` doesn't leave the
-change unsynced. If that last sync doesn't land cleanly — it fails, the
-commit is made but the push fails, or it's still running when the 5 seconds
-are up — `markcheck` prints one line on stderr after the screen closes
-saying so (e.g. `markcheck: git sync failed: ...`), so you don't walk away
-thinking the change was published. The exit status stays 0.
+repository. Quitting while a sync is still running is the one exception:
+`markcheck` stays open with `Waiting for git sync… press q again to
+abandon` and exits as soon as the sync finishes, so a quick `e` then `q`
+doesn't leave the change unsynced. Press `q` again to stop the sync
+instead: its `git` processes (hooks included) are stopped and cleaned up,
+not left running. Closing the terminal or sending `SIGTERM` quits the same
+way, waiting up to 5 seconds for the sync before stopping it. If that last
+sync doesn't land cleanly (it fails, the commit is made but the push fails,
+or it was stopped), `markcheck` prints one line on stderr after the screen
+closes saying so (e.g. `markcheck: git sync failed: ...`), so you don't walk
+away thinking the change was published. The exit status stays 0. If
+`markcheck` is ever killed outright, the next start removes the temporary
+files it left in the checklist's folder and the repository and says so in
+the status bar.
 
 Running plain `git push` yourself sends the whole current branch — so if
 the branch already has other local commits ahead of the remote that aren't

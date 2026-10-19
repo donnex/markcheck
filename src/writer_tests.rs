@@ -1060,3 +1060,70 @@ fn write_back_refuses_a_symlink_and_leaves_its_target_alone() {
     assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
     assert_eq!(fs::read_to_string(&target).unwrap(), "- [ ] private\n");
 }
+
+#[test]
+fn remove_leftovers_removes_only_a_dead_markcheck_s_files() {
+    let dir = crate::test_support::unique_temp_path("writer", "leftovers", None);
+    fs::create_dir(&dir).unwrap();
+    let dead = a_dead_pid();
+    let live = std::process::id();
+    let names = [
+        format!("markcheck-index-{dead}-1f"),
+        format!("markcheck-index-{dead}-2a.lock"),
+        format!("markcheck-index-{dead}-3b-4c"),
+        format!("markcheck-index-{live}-5d"),
+        "markcheck-index-1".to_string(),
+        format!("markcheck-index-{dead}-zz"),
+        format!("markcheck-index-{dead}-"),
+        format!("other-{dead}-1f"),
+    ];
+    for name in &names {
+        fs::write(dir.join(name), "").unwrap();
+    }
+    fs::create_dir(dir.join(format!("markcheck-index-{dead}-6e"))).unwrap();
+
+    assert_eq!(remove_leftovers(&dir, "markcheck-index-"), 3);
+
+    let mut left: Vec<String> = fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    let mut expected: Vec<String> = names[3..].to_vec();
+    expected.push(format!("markcheck-index-{dead}-6e"));
+    expected.sort();
+    assert_eq!(
+        left, expected,
+        "a live PID, a malformed name and a directory stay"
+    );
+    assert_eq!(
+        remove_leftovers(&dir.join("missing"), "markcheck-index-"),
+        0
+    );
+}
+
+#[test]
+fn sweep_interrupted_saves_removes_a_dead_save_s_temp_files_beside_the_checklist() {
+    let dir = crate::test_support::unique_temp_path("writer", "sweep", None);
+    fs::create_dir(&dir).unwrap();
+    let checklist = dir.join("runbook.md");
+    fs::write(&checklist, "- [ ] a\n").unwrap();
+    let dead = a_dead_pid();
+    for name in [
+        format!(".runbook.md.markcheck-tmp-{dead}-1f"),
+        format!(".runbook.md.markcheck-tmp-{dead}-1f-2e"),
+        format!(".runbook.md.markcheck-new-{dead}-3d"),
+        format!(".other.md.markcheck-tmp-{dead}-4c"),
+    ] {
+        fs::write(dir.join(name), "- [x] a\n").unwrap();
+    }
+
+    assert_eq!(sweep_interrupted_saves(&checklist), 3);
+    assert!(
+        dir.join(format!(".other.md.markcheck-tmp-{dead}-4c"))
+            .exists()
+    );
+    assert!(checklist.exists());
+    assert_eq!(sweep_interrupted_saves(Path::new("/")), 0);
+}
