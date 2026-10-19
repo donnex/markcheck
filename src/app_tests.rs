@@ -1022,7 +1022,10 @@ fn a_failed_or_empty_search_commit_never_auto_copies() {
             assert!(c.osc52.is_empty(), "{query:?}: nothing sent over OSC 52");
         });
         if query.is_empty() {
-            assert_eq!(state.status_message, None);
+            assert_eq!(
+                state.status_message.as_deref(),
+                Some("No previous search — press / to search")
+            );
         } else {
             assert_eq!(
                 state.status_message.as_deref(),
@@ -6227,4 +6230,62 @@ fn a_save_in_place_is_announced_once_and_outlives_the_toggle_status() {
     state.handle_key(KeyCode::Char(' '));
     assert_eq!(state.status_message.as_deref(), Some("Marked done"));
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
+fn an_empty_search_repeats_the_last_one_and_keeps_it_for_n() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task");
+    state.handle_key(KeyCode::Enter);
+    let first = (state.current_list_index, state.current_item_index);
+
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_key(KeyCode::Enter);
+    let second = (state.current_list_index, state.current_item_index);
+    assert!(
+        second > first,
+        "moved on to the next match: {first:?} -> {second:?}"
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Match ")),
+        "{:?}",
+        state.status_message
+    );
+    assert_eq!(state.search.last.as_deref(), Some("task"));
+
+    state.handle_key(KeyCode::Char('n'));
+    assert!((state.current_list_index, state.current_item_index) != second);
+}
+
+#[test]
+fn ctrl_u_and_ctrl_w_edit_the_search_query() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "task one  ");
+    state.handle_key_with_mods(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    assert_eq!(state.search.query, "task ");
+    state.handle_key_with_mods(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    assert_eq!(state.search.query, "");
+    type_str(&mut state, "abc");
+    state.handle_key_with_mods(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    assert_eq!(state.search.query, "");
+    assert_eq!(state.overlay, Some(Overlay::Search), "still searching");
+}
+
+#[test]
+fn ctrl_w_deletes_a_word_in_the_picker_and_ctrl_u_still_pages() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('T'));
+    type_str(&mut state, "task one");
+    state.handle_key_with_mods(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    assert_eq!(state.picker.query, "task ");
+    state.handle_key_with_mods(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    assert_eq!(
+        state.picker.query, "task ",
+        "Ctrl-U moves, it doesn't clear"
+    );
 }

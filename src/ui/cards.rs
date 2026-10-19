@@ -286,7 +286,10 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
         &[
             ("type", "edit the query; jumps to the next match"),
             ("Backspace", "delete the last character"),
+            ("Ctrl-W", "delete the last word"),
+            ("Ctrl-U", "clear the query"),
             ("Enter", "keep the match (then n / N cycle)"),
+            ("Enter, empty", "repeat the last search"),
             ("Esc", "cancel, back to where you were"),
         ],
     ),
@@ -295,6 +298,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
         &[
             ("type", "filter (letters, j and k included)"),
             ("Backspace", "delete the last filter character"),
+            ("Ctrl-W", "delete the last filter word"),
             ("↑ / ↓", "move the highlight"),
             ("Ctrl-P / Ctrl-N", "move the highlight up / down"),
             ("Ctrl-U / Ctrl-D", "move the highlight half a page"),

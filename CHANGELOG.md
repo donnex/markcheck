@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An empty `/` search followed by `Enter` now repeats the last search and
+  moves on to its next match, as in vim and `less`. Before, it forgot the
+  last search, so `n` and `N` stopped working until you typed it again.
+  In the search prompt, `Ctrl-W` now deletes the last word and `Ctrl-U`
+  clears the query; in the `T` task picker, `Ctrl-W` deletes the last word
+  of the filter. (#131)
+
 - markcheck now uses plain Unicode icons by default. The Nerd Font icons it
   used to start with need a patched font, and without one every task
   marker showed as the same blank box, so done, started and not-started

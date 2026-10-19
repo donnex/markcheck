@@ -341,12 +341,14 @@ impl AppState {
     /// search that found a match auto-copies: a failed or empty one leaves the
     /// cursor on the origin card and the clipboard untouched.
     fn commit_search(&mut self) {
-        let matches = self.find_matches(&self.search.query);
-        self.search.last = (!self.search.query.is_empty()).then(|| self.search.query.clone());
         self.overlay = None;
+        // As in vim and less, an empty `/` repeats the last search.
         if self.search.query.is_empty() {
+            self.search_cycle(true);
             return;
         }
+        let matches = self.find_matches(&self.search.query);
+        self.search.last = Some(self.search.query.clone());
         match self.search_target(&matches) {
             None => {
                 self.set_error(format!("No matches for \"{}\"", self.search.query));
@@ -2033,8 +2035,9 @@ impl AppState {
             (None, View::Checklist) => &['e', 'y', 'd', 'u', 'r'],
             (None, View::ListComplete | View::AllComplete) => &['r'],
             (Some(Overlay::Help), _) => &['e', 'y', 'd', 'u'],
-            (Some(Overlay::ListPicker), _) => &['p', 'n', 'd', 'u'],
-            (Some(Overlay::Search | Overlay::ConfirmReset | Overlay::ConfirmQuitReset), _) => &[],
+            (Some(Overlay::ListPicker), _) => &['p', 'n', 'd', 'u', 'w'],
+            (Some(Overlay::Search), _) => &['u', 'w'],
+            (Some(Overlay::ConfirmReset | Overlay::ConfirmQuitReset), _) => &[],
         };
         bound.contains(&c)
     }
@@ -2174,6 +2177,14 @@ impl AppState {
                 self.search.query.pop();
                 self.update_search();
             }
+            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.search.query.clear();
+                self.update_search();
+            }
+            KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+                delete_last_word(&mut self.search.query);
+                self.update_search();
+            }
             // Plain typed text edits the query (Shift for capitals is fine);
             // Ctrl-combos (e.g. Ctrl-H) are ignored rather than inserting
             // their base letter into the query.
@@ -2197,6 +2208,10 @@ impl AppState {
             // Half-page jumps, matching the card-body Ctrl-D/Ctrl-U.
             KeyCode::Char('d') if ctrl => self.picker_move(self.picker_half_page()),
             KeyCode::Char('u') if ctrl => self.picker_move(-self.picker_half_page()),
+            KeyCode::Char('w') if ctrl => {
+                delete_last_word(&mut self.picker.query);
+                self.picker.selection = 0;
+            }
             KeyCode::Backspace => {
                 self.picker.query.pop();
                 self.picker.selection = 0;
@@ -2424,6 +2439,15 @@ fn list_all_done(list: &List) -> bool {
 
 /// The verb naming a transition *into* `state`, used to build the git-sync
 /// commit message: `Check "Restart service"`, `Start "..."`,
+/// `Ctrl-W` in a prompt: drop trailing spaces, then the word before them,
+/// as in the shell and vim's command line.
+fn delete_last_word(query: &mut String) {
+    let kept = query
+        .trim_end()
+        .trim_end_matches(|c: char| !c.is_whitespace());
+    query.truncate(kept.len());
+}
+
 /// Space/Enter and the overview click toggle *done*: a done task reverts to
 /// not started, anything else (started included) completes.
 fn toggled_done(state: TaskState) -> TaskState {

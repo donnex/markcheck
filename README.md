@@ -776,8 +776,11 @@ the status bar (and a clear "no matches" when nothing hits — the cursor then
 goes back to where the search started, as in vim). Press `Enter`
 to keep the match — the status bar then reports your position (`Match 2/5`) as
 `n` / `N` cycle forward / backward through the rest, wrapping around (`Match 1/5 · wrapped to top`, as vim reports `search hit BOTTOM`) — or `Esc`
-to cancel and return to where you were. A search that matches nothing, or an
-empty one, never moves you and never triggers `--auto-copy`. Matching is
+to cancel and return to where you were. As in vim and `less`, an empty `/`
+then `Enter` repeats the last search, moving on to its next match (or says
+`No previous search`). In the prompt, `Ctrl-W` deletes the last word and
+`Ctrl-U` clears the query. A search that matches nothing never moves you and
+never triggers `--auto-copy`. Matching is
 **smart-case** (case-insensitive unless your query has an uppercase letter) and
 covers a task's title, its body text, *and* its commands — so you can find a
 step by the command it runs, not just its description.
@@ -790,7 +793,8 @@ of the single-card carousel. Type to filter (same smart-case matching, with a
 live `N items` / match count — and you can filter by a sub-section name to
 find the tasks under it), move the highlight with the arrows or
 `Ctrl-N`/`Ctrl-P` (and `Ctrl-D`/`Ctrl-U` for half-page jumps; letters go to
-the filter, so `j`/`k` type rather than move; the mouse wheel moves it too),
+the filter, so `j`/`k` type rather than move; the mouse wheel moves it too;
+`Ctrl-W` deletes the last word of the filter),
 `Enter` to jump to the highlighted task, `Esc` to close. With the mouse, click
 a row to highlight it and click it again to jump there.
 
