@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Prose under a heading is now shown. A paragraph, quote or code block written
+  under a heading before its first task (a "take a snapshot first" note, a
+  `> [!WARNING]` alert, the intro under the title) appears above that task's
+  card and in the overview; GitHub-style `[!WARNING]`, `[!CAUTION]` and
+  `[!IMPORTANT]` alerts are shown in the warning color. Before, everything
+  outside a task list was silently dropped, so a warning a reader of the
+  rendered file would see never reached someone working through it in
+  markcheck. Prose that still can't be placed, between tasks or after the
+  last one, is now counted at startup instead of vanishing without a word.
+  (#80)
+
 - `--clipboard auto|system|osc52`, and a matching `clipboard` setting in the
   config file, choose where `y` copies to. Over SSH, the default `auto` now
   also sends the copy through the terminal (OSC 52) as well as to the

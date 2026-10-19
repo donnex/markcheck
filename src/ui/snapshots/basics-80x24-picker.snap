@@ -7,22 +7,22 @@ expression: "screen(&mut state, 80, 24)"
 ╭ Go to task ──────────────────────── 12 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Prepare              │
 │ ☑ Confirm access to example-host  — Prepare  │  │   ▪ Do not run against pr… │
-│ ◐ Warm the build cache  — Prepare            │  │   ☑ Confirm access to exa… │
-│ ☐ Check out the release branch: …  — Prepare │  │   ◐ Warm the build cache   │
-│ ☐ Build the artifact  — Prepare              │  │   ☐ Check out the release… │
-│ ▪ Keep this runbook open while y…  — Prepare │  │   ☐ Build the artifact     │
-│ ☐ Check the health endpoint curl …  — Verify │  │   ▪ Keep this runbook ope… │
-│ ☐ Run the smoke tests  — Verify              │  │ • [2] Verify               │
-│ ☐ Tail the logs and watch for err…  — Verify │  │   ☐ Check the health endp… │
-│ ☑ Record the start time — an uppe…  — Verify │  │   ☐ Run the smoke tests    │
-│ ☑ 1. Confirm the change wi…  — Ordered steps │  │   ☐ Tail the logs and wat… │
-│ ◐ 2. Notify the on-call ch…  — Ordered steps │  │   ☑ Record the start time… │
-│ ☐ 3. Announce completion  — Ordered steps    │  │ • [3] Ordered steps        │
+│ ◐ Warm the build cache  — Prepare            │  │   A short checklist showi… │
+│ ☐ Check out the release branch: …  — Prepare │  │   ☑ Confirm access to exa… │
+│ ☐ Build the artifact  — Prepare              │  │   ◐ Warm the build cache   │
+│ ▪ Keep this runbook open while y…  — Prepare │  │   ☐ Check out the release… │
+│ ☐ Check the health endpoint curl …  — Verify │  │   ☐ Build the artifact     │
+│ ☐ Run the smoke tests  — Verify              │  │   ▪ Keep this runbook ope… │
+│ ☐ Tail the logs and watch for err…  — Verify │  │ • [2] Verify               │
+│ ☑ Record the start time — an uppe…  — Verify │  │   ▪ Warning: Run these on… │
+│ ☑ 1. Confirm the change wi…  — Ordered steps │  │   ☐ Check the health endp… │
+│ ◐ 2. Notify the on-call ch…  — Ordered steps │  │   ☐ Run the smoke tests    │
+│ ☐ 3. Announce completion  — Ordered steps    │  │   ☐ Tail the logs and wat… │
+│                                              │  │   ☑ Record the start time… │
+│                                              │  │ • [3] Ordered steps        │
+│                                              │  │   The three task states w… │
 │                                              │  │   ☑ 1. Confirm the change… │
 │                                              │  │   ◐ 2. Notify the on-call… │
 │                                              │  │   ☐ 3. Announce completion │
-│                                              │  │                            │
-│                                              │  │                            │
-│                                              │  │                            │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

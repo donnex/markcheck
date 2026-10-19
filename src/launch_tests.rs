@@ -2,7 +2,7 @@ use super::{
     CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, editor_file_args, expand_tilde,
     git_sync_path_matches, git_sync_request, git_sync_scope, git_sync_warning, leftovers_warning,
     no_browser_available, opener_failure_message, resolve_editor, resolve_opener, startup_message,
-    startup_warning, watch_warning,
+    startup_warning, unshown_warning, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -622,4 +622,27 @@ fn a_trailing_double_star_marks_an_entry_as_covering_nested_repositories() {
     );
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn unshown_warning_lists_what_is_not_shown() {
+    use crate::model::Unshown;
+    assert_eq!(unshown_warning(&Unshown::default()), None);
+    assert_eq!(
+        unshown_warning(&Unshown {
+            paragraphs: 1,
+            ..Unshown::default()
+        })
+        .as_deref(),
+        Some("1 paragraph outside task lists not shown")
+    );
+    assert_eq!(
+        unshown_warning(&Unshown {
+            paragraphs: 2,
+            quotes: 1,
+            code_blocks: 3,
+        })
+        .as_deref(),
+        Some("2 paragraphs, 1 quote and 3 code blocks outside task lists not shown")
+    );
 }

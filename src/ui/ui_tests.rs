@@ -348,6 +348,8 @@ fn state_with(lists: Vec<List>) -> AppState {
         title: Some("Doc".to_string()),
         has_default_list: false,
         lists,
+        preambles: Default::default(),
+        unshown: Default::default(),
         raw_lines: vec![],
     };
     let mut state = AppState::new(document);
@@ -3148,5 +3150,58 @@ fn split_width_keeps_both_texts_on_the_row() {
         split_width(30, 30, 5, 8),
         (0, 5),
         "floor capped at the total"
+    );
+}
+
+#[test]
+fn a_tasks_preamble_shows_above_its_card_with_an_alert_in_the_warning_color() {
+    use crate::model::{PreambleBlock, PreambleKind};
+    let mut state = state_with(vec![List {
+        title: "Deploy".to_string(),
+        banner: None,
+        items: vec![
+            checkbox(1, "first step", false),
+            checkbox(2, "second step", false),
+        ],
+    }]);
+    state.document.preambles.insert(
+        1,
+        vec![
+            PreambleBlock {
+                kind: PreambleKind::Paragraph,
+                text: "Take a snapshot first.".to_string(),
+            },
+            PreambleBlock {
+                kind: PreambleKind::Alert,
+                text: "Warning: no rollback after step 4.".to_string(),
+            },
+        ],
+    );
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(text.contains("Take a snapshot first."), "{text}");
+    assert!(text.contains("Warning: no rollback after step 4."));
+    let warning = state.palette.warning;
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|f| render(f, &mut state)).unwrap();
+    let in_warning: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .filter(|c| c.style().fg == Some(warning))
+        .map(|c| c.symbol())
+        .collect();
+    assert!(
+        in_warning.contains("Warning: no rollback"),
+        "the alert is in the warning color: {in_warning:?}"
+    );
+
+    // The overview keeps a row cut to its width; the full text is only above
+    // the first task's card.
+    state.current_item_index = 1;
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        !text.contains("Warning: no rollback after step 4."),
+        "only the first task's card carries it"
     );
 }

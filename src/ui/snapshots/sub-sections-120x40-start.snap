@@ -9,6 +9,7 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ❯ refresh-cache          ▓
                                                                                           │   ☐ build-tool sync --pro… ▓
                                                                                           │   ── Pre-flight checks ─── ▓
+                                                                                          │   Run these on the stagin… ▓
                                                                                           │   ☐ confirm the staging h… ▓
                                                                                           │   ◐ run verify-output and… ▓
                                                                                           │     ── Data safety ─────── ▓
@@ -17,28 +18,27 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ── Rollout ───────────── ▓
                                                                                           │   ☑ restart-service        ▓
                                                                                           │   ☐ check-status example-… ▓
-                                                                                          │   ▪ Watch the dashboards   ▓
-                                        • Deploy                                          │   ☐ confirm the error rat… ▓
-                                                                                          │   ☐ announce the rollout … ▓
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/29 ┓               │   ── Post-rollout ──────── ▓
-            ┃                                                             ┃────────────┐  │   ☐ tail the logs for one… ▓
-            ┃                                                             ┃uild-tool   │  │   ☐ verify-output --final  ▓
-            ┃                        refresh-cache                        ┃  sync      │  │   ── Extended verificati…  ▓
-            ┃                                                             ┃--profile   │  │     ── Line-by-line chec…  ▓
-            ┃                                                             ┃ default    │  │   ☐ verify service A resp… ▓
-            ┃                                                             ┃────────────┘  │   ☐ verify service B resp… ▓
-            ┗ ◉··●··●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service C resp… ▓
+                                        • Deploy                                          │   ▪ Watch the dashboards   ▓
+                                                                                          │   ☐ confirm the error rat… ▓
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/29 ┓               │   ☐ announce the rollout … ▓
+            ┃                                                             ┃────────────┐  │   ── Post-rollout ──────── ▓
+            ┃                                                             ┃uild-tool   │  │   ☐ tail the logs for one… ▓
+            ┃                        refresh-cache                        ┃  sync      │  │   ☐ verify-output --final  ▓
+            ┃                                                             ┃--profile   │  │   ── Extended verificati…  ▓
+            ┃                                                             ┃ default    │  │     ── Line-by-line chec…  ▓
+            ┃                                                             ┃────────────┘  │   ☐ verify service A resp… ▓
+            ┗ ◉··●··●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service B resp… ▓
+                                                                                          │   ☐ verify service C resp… ▓
                                                                                           │   ☐ confirm queue depth i… ▓
                                                                                           │   ☐ confirm cache hit rat… ▓
                                                                                           │   ☐ confirm error rate is… ▓
                                                                                           │   ☐ check disk usage on t… ▓
                                                                                           │   ☐ check disk usage on t… ▓
                                                                                           │   ☐ check memory headroom… ▓
-                                                                                          │   ☐ confirm scheduled job… ▓
-                                                                                          │   ☐ confirm overnight bac… ▓
+                                                                                          │   ☐ confirm scheduled job… │
+                                                                                          │   ☐ confirm overnight bac… │
                                                                                           │   ☐ confirm alerting is a… │
                                                                                           │   ☐ review the latest dep… │
-                                                                                          │   ☐ spot-check a sample r… │
-                                                                                          │   ☐ confirm metrics dashb… ▼
+                                                                                          │   ☐ spot-check a sample r… ▼
                                                                                           └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

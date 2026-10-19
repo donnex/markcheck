@@ -6,21 +6,21 @@ expression: "screen(&mut state, 80, 24)"
 ━━━━━━──────────────────────────────────────────────────────────────────────────
 ╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
 │                                              ▲  │ • [1] Rebuild              │
-│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ❯ Rebuild all packages   │
-│  gg / G             first / last task in the ▓  │   │ ☐ Fetch sources fetch… │
-│  } / {              next / previous sub-secti▓  │   │ ◐ Compile              │
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   │ │ ☐ Compile the core   │
-│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   │ │ ☐ Compile the plugi… │
-│  PageDn / PageUp    scroll card body one page│  │   │ ☐ Run the test suite   │
-│  mouse wheel        scroll an overflowing car│  │   ▪ Preparation notes:     │
-│  wheel in ? / T     scroll this help / move t│  │   │ ☐ Free up disk space   │
-│  space / Enter      toggle the task done, the│  │   │ ☐ Notify the team on … │
-│  s                  mark the task started / i│  │ • [2] Release              │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ Tag the release        │
-│  Tab                jump to the next unfinish│  │   ☐ Publish                │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   │ ☐ Upload the artifact  │
-│  /                  search tasks by text     │  │   │ ☐ Announce the release │
-│  n / N              next / previous search ma│  │                            │
+│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   Sub-lists under a task … │
+│  gg / G             first / last task in the ▓  │   ❯ Rebuild all packages   │
+│  } / {              next / previous sub-secti▓  │   │ ☐ Fetch sources fetch… │
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   │ ◐ Compile              │
+│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   │ │ ☐ Compile the core   │
+│  PageDn / PageUp    scroll card body one page│  │   │ │ ☐ Compile the plugi… │
+│  mouse wheel        scroll an overflowing car│  │   │ ☐ Run the test suite   │
+│  wheel in ? / T     scroll this help / move t│  │   ▪ Preparation notes:     │
+│  space / Enter      toggle the task done, the│  │   │ ☐ Free up disk space   │
+│  s                  mark the task started / i│  │   │ ☐ Notify the team on … │
+│  u / Ctrl-R         undo / redo the last chan│  │ • [2] Release              │
+│  Tab                jump to the next unfinish│  │   ☐ Tag the release        │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ Publish                │
+│  /                  search tasks by text     │  │   │ ☐ Upload the artifact  │
+│  n / N              next / previous search ma│  │   │ ☐ Announce the release │
 │  T                  go to task (filterable li│  │                            │
 │  click T picker row highlight it; click it ag│  │                            │
 │  click overview row toggle (icon) or jump to ▼  │                            │

@@ -5,11 +5,11 @@ expression: "screen(&mut state, 80, 24)"
  ≡ Standalone Checklist │ no-headings.md                                   ☑ 1/3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
 ╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
-│                                              ▲  │ ❯ First step: example-too… │
-│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │ ◐ Second step, in progress │
-│  gg / G             first / last task in the ▓  │ ☑ Third step, already done │
-│  } / {              next / previous sub-secti▓  │ ▪ A plain note with no ch… │
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │                            │
+│                                              ▲  │ A document with a title b… │
+│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │ ❯ First step: example-too… │
+│  gg / G             first / last task in the ▓  │ ◐ Second step, in progress │
+│  } / {              next / previous sub-secti▓  │ ☑ Third step, already done │
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │ ▪ A plain note with no ch… │
 │  Ctrl-D / Ctrl-U    scroll card body half a p│  │                            │
 │  PageDn / PageUp    scroll card body one page│  │                            │
 │  mouse wheel        scroll an overflowing car│  │                            │

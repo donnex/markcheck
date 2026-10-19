@@ -9,20 +9,20 @@ expression: "screen(&mut state, 80, 24)"
 │  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ❯ refresh-cache          ▓
 │  gg / G             first / last task in the ▓  │   ☐ build-tool sync --pro… ▓
 │  } / {              next / previous sub-secti▓  │   ── Pre-flight checks ─── ▓
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ☐ confirm the staging h… ▓
-│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ◐ run verify-output and… ▓
-│  PageDn / PageUp    scroll card body one page│  │     ── Data safety ─────── ▓
-│  mouse wheel        scroll an overflowing car│  │   ☐ take a snapshot: snap… ▓
-│  wheel in ? / T     scroll this help / move t│  │   ☐ confirm the snapshot … ▓
-│  space / Enter      toggle the task done, the│  │   ── Rollout ───────────── │
-│  s                  mark the task started / i│  │   ☑ restart-service        │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ check-status example-… │
-│  Tab                jump to the next unfinish│  │   ▪ Watch the dashboards   │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ confirm the error rat… │
-│  /                  search tasks by text     │  │   ☐ announce the rollout … │
-│  n / N              next / previous search ma│  │   ── Post-rollout ──────── │
-│  T                  go to task (filterable li│  │   ☐ tail the logs for one… │
-│  click T picker row highlight it; click it ag│  │   ☐ verify-output --final  │
-│  click overview row toggle (icon) or jump to ▼  │   ── Extended verificati…  ▼
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   Run these on the stagin… ▓
+│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ confirm the staging h… ▓
+│  PageDn / PageUp    scroll card body one page│  │   ◐ run verify-output and… ▓
+│  mouse wheel        scroll an overflowing car│  │     ── Data safety ─────── ▓
+│  wheel in ? / T     scroll this help / move t│  │   ☐ take a snapshot: snap… ▓
+│  space / Enter      toggle the task done, the│  │   ☐ confirm the snapshot … │
+│  s                  mark the task started / i│  │   ── Rollout ───────────── │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☑ restart-service        │
+│  Tab                jump to the next unfinish│  │   ☐ check-status example-… │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ▪ Watch the dashboards   │
+│  /                  search tasks by text     │  │   ☐ confirm the error rat… │
+│  n / N              next / previous search ma│  │   ☐ announce the rollout … │
+│  T                  go to task (filterable li│  │   ── Post-rollout ──────── │
+│  click T picker row highlight it; click it ag│  │   ☐ tail the logs for one… │
+│  click overview row toggle (icon) or jump to ▼  │   ☐ verify-output --final  ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

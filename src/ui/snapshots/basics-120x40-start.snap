@@ -7,23 +7,23 @@ expression: "screen(&mut state, width, height)"
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Prepare              │
                                                                                           │   ▪ Do not run against pr… │
+                                                                                          │   A short checklist showi… │
                                                                                           │   ☑ Confirm access to exa… │
                                                                                           │   ◐ Warm the build cache   │
                                                                                           │   ☐ Check out the release… │
                                                                                           │   ☐ Build the artifact     │
                                                                                           │   ▪ Keep this runbook ope… │
                                                                                           │ • [2] Verify               │
+                                                                                          │   ▪ Warning: Run these on… │
                                                                                           │   ☐ Check the health endp… │
                                                                                           │   ☐ Run the smoke tests    │
-                                                                                          │   ☐ Tail the logs and wat… │
-                                                                                          │   ☑ Record the start time… │
-                                        • Prepare                                         │ • [3] Ordered steps        │
-                             ▪ Do not run against production                              │   ☑ 1. Confirm the change… │
-                                                                                          │   ◐ 2. Notify the on-call… │
-            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓               │   ☐ 3. Announce completion │
-┌ ☑ ────────┃                                                             ┃────────────┐  │                            │
-│    Confirm┃                                                             ┃eck out the │  │                            │
-│   access t┃                    Warm the build cache                     ┃ release    │  │                            │
+                                        • Prepare                                         │   ☐ Tail the logs and wat… │
+                             ▪ Do not run against production                              │   ☑ Record the start time… │
+                                                                                          │ • [3] Ordered steps        │
+            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓               │   The three task states w… │
+┌ ☑ ────────┃                                                             ┃────────────┐  │   ☑ 1. Confirm the change… │
+│    Confirm┃                                                             ┃eck out the │  │   ◐ 2. Notify the on-call… │
+│   access t┃                    Warm the build cache                     ┃ release    │  │   ☐ 3. Announce completion │
 │ example-ho┃                                                             ┃ranch: git  │  │                            │
 │           ┃                                                             ┃checkout    │  │                            │
 └───────────┃                                                             ┃────────────┘  │                            │

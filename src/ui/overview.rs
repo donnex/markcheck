@@ -6,7 +6,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding
 
 use super::{fg, state_marker};
 use crate::model::{
-    AppState, IconSet, ItemKind, ItemLinks, OverviewTarget, Palette, SubHeading, TaskState,
+    AppState, IconSet, ItemKind, ItemLinks, OverviewTarget, Palette, PreambleKind, SubHeading,
+    TaskState,
 };
 
 /// Each item's depth-guide colors and selected-marker tint, keyed by its
@@ -257,6 +258,41 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 });
             }
             prev_section = &item.section;
+
+            // The task's preamble (#80): a non-selectable row per block,
+            // cut to the panel; the full text is above the card.
+            for block in state
+                .document
+                .preambles
+                .get(&item.line_number)
+                .into_iter()
+                .flatten()
+            {
+                let (prefix, style) = super::cards::preamble_style(block.kind, icons, palette);
+                // Dim, so prose can't be mistaken for a task row; an alert keeps
+                // its warning color.
+                let style = if block.kind == PreambleKind::Alert {
+                    style
+                } else {
+                    style.add_modifier(Modifier::DIM)
+                };
+                let first_line = block.text.lines().next().unwrap_or_default();
+                list_items.push(ListItem::new(Line::from(Span::styled(
+                    super::truncate(
+                        &format!(
+                            "{}{prefix}{first_line}",
+                            item_indent(item.depth, has_list_header)
+                        ),
+                        inner_width,
+                    ),
+                    style,
+                ))));
+                row_clicks.push(RowClick::None);
+                row_sticky.push(StickyContext {
+                    list_header,
+                    stack: active_stack.clone(),
+                });
+            }
 
             let is_current =
                 list_index == state.current_list_index && item_index == state.current_item_index;

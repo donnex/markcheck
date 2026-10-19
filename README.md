@@ -271,6 +271,8 @@ How each piece maps to the UI:
 | `- ## Heading` (a heading *inside* a list item, any level) | **Not structural** — read like a bold run: a leading one is the **card title** (so a heading-only bullet is a titled note card, or the list's banner when it's the first item), a later one is bold body text. It never starts a list or sub-section, or sets the document title. |
 | `> ## Heading` (a heading inside a blockquote) | **Ignored** — a quoted callout's heading never starts a list or sub-section, or sets the document title. |
 | `> - [ ]` (a task inside a blockquote) | A **non-interactive** display-only card — a quoted/illustrative example (e.g. from another runbook), never a live, toggleable task. |
+| a paragraph, quote or code block under a heading, **before its first task** | The section's **preamble**: shown above the card of the first task below it (and as dim rows in the overview, cut to one line each), so a "take a snapshot first" note is read where the work starts. A paragraph under the `# H1` goes to the document's first task; prose under a `## H2` and under the `### H3` that follows both go to the first task under the `### H3`. Up to six rows are shown above the card; a longer preamble ends in `…`. |
+| `> [!WARNING]` / `> [!CAUTION]` / `> [!IMPORTANT]` (a GitHub alert) in a preamble | Shown in the **warning color** behind the note icon, like the banner, with its label (`Warning: …`). Other quotes are shown behind a `│` bar. |
 
 Finer points:
 
@@ -378,10 +380,14 @@ Finer points:
   document title; use a `# H1` for that. A `---` ... `---` pair anywhere but
   the first line is ordinary Markdown (a horizontal rule, and possibly an
   `##`-style heading underline), exactly as in any other Markdown renderer.
-- **An indented code block outside a list item is ignored.** Inside a task or
-  note it is that item's command (above), but one standing on its own between
-  lists belongs to no card and is not shown. A fenced block right after a list
-  still attaches to its last item (above).
+- **Prose between tasks, or after the last one, is not shown.** A paragraph,
+  quote, table or code block outside any list item is shown only as a
+  preamble, under a heading and before its first task (above). One between
+  two tasks, after the last task, or under a heading with no tasks belongs to
+  no card, so `markcheck` says at startup how many it isn't showing (`2
+  paragraphs and 1 quote outside task lists not shown`). Tables are read as
+  ordinary paragraphs. A fenced block right after a list still attaches to
+  its last item (above).
 - **Files are read as UTF-8.** A leading byte-order mark (BOM), as some
   Windows editors write, is tolerated — the first heading still counts — and
   is left in place when the file is saved.

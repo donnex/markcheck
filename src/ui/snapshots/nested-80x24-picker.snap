@@ -6,21 +6,21 @@ expression: "screen(&mut state, 80, 24)"
 ━━━━━━──────────────────────────────────────────────────────────────────────────
 ╭ Go to task ──────────────────────── 13 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Rebuild              │
-│ ☐ Rebuild all packages  — Rebuild            │  │   ❯ Rebuild all packages   │
-│ ☐ Fetch sources fetch-sources --…  — Rebuild │  │   │ ☐ Fetch sources fetch… │
-│ ◐ Compile  — Rebuild                         │  │   │ ◐ Compile              │
-│ ☐ Compile the core  — Rebuild                │  │   │ │ ☐ Compile the core   │
-│ ☐ Compile the plugins  — Rebuild             │  │   │ │ ☐ Compile the plugi… │
-│ ☐ Run the test suite  — Rebuild              │  │   │ ☐ Run the test suite   │
-│ ▪ Preparation notes:  — Rebuild              │  │   ▪ Preparation notes:     │
-│ ☐ Free up disk space  — Rebuild              │  │   │ ☐ Free up disk space   │
-│ ☐ Notify the team on example.com  — Rebuild  │  │   │ ☐ Notify the team on … │
-│ ☐ Tag the release  — Release                 │  │ • [2] Release              │
-│ ☐ Publish  — Release                         │  │   ☐ Tag the release        │
-│ ☐ Upload the artifact  — Release             │  │   ☐ Publish                │
-│ ☐ Announce the release  — Release            │  │   │ ☐ Upload the artifact  │
+│ ☐ Rebuild all packages  — Rebuild            │  │   Sub-lists under a task … │
+│ ☐ Fetch sources fetch-sources --…  — Rebuild │  │   ❯ Rebuild all packages   │
+│ ◐ Compile  — Rebuild                         │  │   │ ☐ Fetch sources fetch… │
+│ ☐ Compile the core  — Rebuild                │  │   │ ◐ Compile              │
+│ ☐ Compile the plugins  — Rebuild             │  │   │ │ ☐ Compile the core   │
+│ ☐ Run the test suite  — Rebuild              │  │   │ │ ☐ Compile the plugi… │
+│ ▪ Preparation notes:  — Rebuild              │  │   │ ☐ Run the test suite   │
+│ ☐ Free up disk space  — Rebuild              │  │   ▪ Preparation notes:     │
+│ ☐ Notify the team on example.com  — Rebuild  │  │   │ ☐ Free up disk space   │
+│ ☐ Tag the release  — Release                 │  │   │ ☐ Notify the team on … │
+│ ☐ Publish  — Release                         │  │ • [2] Release              │
+│ ☐ Upload the artifact  — Release             │  │   ☐ Tag the release        │
+│ ☐ Announce the release  — Release            │  │   ☐ Publish                │
+│                                              │  │   │ ☐ Upload the artifact  │
 │                                              │  │   │ ☐ Announce the release │
-│                                              │  │                            │
 │                                              │  │                            │
 │                                              │  │                            │
 │                                              │  │                            │

@@ -6,7 +6,8 @@ use pulldown_cmark::utils::TextMergeWithOffset;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::model::{
-    BodySpan, Document, Item, ItemKind, LineNumber, List, SubHeading, TaskState, TextStyle,
+    BodySpan, Document, Item, ItemKind, LineNumber, List, PreambleBlock, PreambleKind, SubHeading,
+    TaskState, TextStyle, Unshown,
 };
 
 /// Splits `raw` into lines, keeping each line's own terminator, using
@@ -538,6 +539,29 @@ fn keeps_fence_attachment(event: &Event) -> bool {
     )
 }
 
+/// A quote opening with GitHub's `[!WARNING]`, `[!CAUTION]` or
+/// `[!IMPORTANT]` becomes an alert, its marker replaced by a label.
+fn as_alert(block: PreambleBlock) -> PreambleBlock {
+    for (marker, label) in [
+        ("[!WARNING]", "Warning"),
+        ("[!CAUTION]", "Caution"),
+        ("[!IMPORTANT]", "Important"),
+    ] {
+        if let Some(rest) = block.text.strip_prefix(marker) {
+            let rest = rest.trim_start();
+            return PreambleBlock {
+                kind: PreambleKind::Alert,
+                text: if rest.is_empty() {
+                    label.to_string()
+                } else {
+                    format!("{label}: {rest}")
+                },
+            };
+        }
+    }
+    block
+}
+
 fn strip_trailing_newline(content: String) -> String {
     content
         .strip_suffix('\n')
@@ -604,6 +628,22 @@ struct ParseState<'a> {
     /// One frame per open item; a stack so nested items don't clobber their
     /// parent's in-progress fields. The innermost open item is the top.
     item_stack: Vec<ItemBuilder>,
+
+    /// The paragraph or quote being read outside any list (#80).
+    prose: Option<PreambleBlock>,
+    /// Whether blocks read now are a preamble: after a heading (or the start
+    /// of the file) and before its first task. Anything else is unshown.
+    preamble_open: bool,
+    /// The level of the heading whose scope the reader is in (0 before any).
+    scope_level: u8,
+    /// Preamble blocks waiting for their task, each with the level of the
+    /// heading it was written under.
+    pending_preamble: Vec<(u8, PreambleBlock)>,
+    /// Preambles claimed by the task starting at a line, in the list open
+    /// then (`None` for the pre-heading default list); mapped onto the first
+    /// task actually kept there in `finish`.
+    preamble_claims: Vec<(Option<usize>, LineNumber, Vec<PreambleBlock>)>,
+    unshown: Unshown,
 }
 
 impl<'a> ParseState<'a> {
@@ -629,7 +669,76 @@ impl<'a> ParseState<'a> {
             attach_fence_to_last_item: false,
             code_block: None,
             item_stack: Vec::new(),
+            prose: None,
+            preamble_open: true,
+            scope_level: 0,
+            pending_preamble: Vec::new(),
+            preamble_claims: Vec::new(),
+            unshown: Unshown::default(),
         }
+    }
+
+    /// Outside any list, item and heading: where a preamble block is read.
+    fn at_top_level(&self) -> bool {
+        self.item_stack.is_empty() && self.list_depth == 0 && self.heading.is_none()
+    }
+
+    fn start_prose(&mut self, kind: PreambleKind) {
+        self.prose = Some(PreambleBlock {
+            kind,
+            text: String::new(),
+        });
+    }
+
+    fn finish_prose(&mut self) {
+        let Some(mut block) = self.prose.take() else {
+            return;
+        };
+        block.text = block.text.trim().to_string();
+        if block.text.is_empty() {
+            return;
+        }
+        if block.kind == PreambleKind::Quote {
+            block = as_alert(block);
+        }
+        self.add_block(block);
+    }
+
+    fn add_block(&mut self, block: PreambleBlock) {
+        if self.preamble_open {
+            self.pending_preamble.push((self.scope_level, block));
+        } else {
+            self.unshown.add(block.kind);
+        }
+    }
+
+    /// A heading closes the scope of any same-level or deeper heading before
+    /// it: prose left there without a task is unshown. A parent heading's
+    /// prose carries on to the first task below.
+    fn open_preamble_scope(&mut self, level: u8) {
+        let (kept, dropped): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_preamble)
+            .into_iter()
+            .partition(|(origin, _)| *origin < level);
+        for (_, block) in dropped {
+            self.unshown.add(block.kind);
+        }
+        self.pending_preamble = kept;
+        self.preamble_open = true;
+        self.scope_level = level;
+    }
+
+    /// The first task after a heading takes the preamble written above it.
+    fn claim_preamble(&mut self, line: LineNumber) {
+        self.preamble_open = false;
+        if self.pending_preamble.is_empty() {
+            return;
+        }
+        let blocks = std::mem::take(&mut self.pending_preamble)
+            .into_iter()
+            .map(|(_, block)| block)
+            .collect();
+        let list = self.lists.len().checked_sub(1);
+        self.preamble_claims.push((list, line, blocks));
     }
 
     fn handle(&mut self, event: Event, offset: usize) {
@@ -641,9 +750,17 @@ impl<'a> ParseState<'a> {
             Event::End(TagEnd::Heading(level)) => self.on_heading_end(level),
             Event::Start(Tag::List(_)) => self.on_list_start(),
             Event::End(TagEnd::List(_)) => self.on_list_end(),
-            Event::Start(Tag::BlockQuote(_)) => self.blockquote_depth += 1,
+            Event::Start(Tag::BlockQuote(_)) => {
+                if self.blockquote_depth == 0 && self.at_top_level() {
+                    self.start_prose(PreambleKind::Quote);
+                }
+                self.blockquote_depth += 1;
+            }
             Event::End(TagEnd::BlockQuote(_)) => {
                 self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                if self.blockquote_depth == 0 {
+                    self.finish_prose();
+                }
             }
             Event::Start(Tag::Item) => self.on_item_start(offset),
             Event::End(TagEnd::Item) => self.on_item_end(),
@@ -670,6 +787,15 @@ impl<'a> ParseState<'a> {
             Event::Text(text) => self.on_text(&text),
             Event::SoftBreak | Event::HardBreak => self.on_break(),
             Event::Code(text) => self.on_code(&text),
+            Event::Start(Tag::Paragraph) if self.at_top_level() => match &mut self.prose {
+                // A quote's next paragraph.
+                Some(quote) if !quote.text.is_empty() => quote.text.push('\n'),
+                Some(_) => {}
+                None => self.start_prose(PreambleKind::Paragraph),
+            },
+            Event::End(TagEnd::Paragraph) if self.at_top_level() && self.blockquote_depth == 0 => {
+                self.finish_prose();
+            }
             Event::Start(Tag::Paragraph)
             | Event::End(TagEnd::Paragraph)
             | Event::Html(_)
@@ -718,6 +844,7 @@ impl<'a> ParseState<'a> {
             return;
         }
         let text = text.trim();
+        self.open_preamble_scope(heading_level_number(level));
         match level {
             HeadingLevel::H2 => {
                 self.lists.push(List {
@@ -788,6 +915,9 @@ impl<'a> ParseState<'a> {
         // `list_depth` was already incremented by the enclosing Start(List),
         // so depth 0 = top-level.
         let line = self.line_counter.line_at(offset, self.source);
+        if self.item_stack.is_empty() {
+            self.claim_preamble(line);
+        }
         self.item_stack.push(ItemBuilder {
             line,
             depth: self.list_depth.saturating_sub(1),
@@ -845,6 +975,11 @@ impl<'a> ParseState<'a> {
             item.mark_boundary();
         } else if fenced && self.attach_fence_to_last_item {
             self.attach_trailing_fence(content);
+        } else if self.at_top_level() && !content.trim().is_empty() {
+            self.add_block(PreambleBlock {
+                kind: PreambleKind::Code,
+                text: content,
+            });
         }
     }
 
@@ -861,6 +996,10 @@ impl<'a> ParseState<'a> {
             buffer.push_str(text);
         } else if let Some((_, heading_text)) = &mut self.heading {
             heading_text.push_str(text);
+        } else if let Some(prose) = self.prose.as_mut().filter(|_| self.item_stack.is_empty()) {
+            if self.list_depth == 0 {
+                prose.text.push_str(text);
+            }
         } else {
             self.with_item(|item| item.push_text(text));
         }
@@ -874,6 +1013,10 @@ impl<'a> ParseState<'a> {
         }
         if let Some((_, heading_text)) = &mut self.heading {
             heading_text.push(' ');
+        } else if let Some(prose) = self.prose.as_mut().filter(|_| self.item_stack.is_empty()) {
+            if self.list_depth == 0 {
+                prose.text.push(' ');
+            }
         } else {
             self.with_item(ItemBuilder::push_break);
         }
@@ -882,17 +1025,42 @@ impl<'a> ParseState<'a> {
     fn on_code(&mut self, text: &str) {
         if let Some((_, heading_text)) = &mut self.heading {
             heading_text.push_str(text);
+        } else if let Some(prose) = self.prose.as_mut().filter(|_| self.item_stack.is_empty()) {
+            if self.list_depth == 0 {
+                prose.text.push_str(text);
+            }
         } else {
             self.with_item(|item| item.push_code(text));
         }
     }
 
-    fn finish(self, path: PathBuf, raw_lines: Vec<String>) -> Document {
+    fn finish(mut self, path: PathBuf, raw_lines: Vec<String>) -> Document {
         let has_checkbox = |items: &[Item]| {
             items
                 .iter()
                 .any(|item| matches!(item.kind, ItemKind::Checkbox(_)))
         };
+        // A claim goes to the first task kept at or after its line in its list:
+        // the claiming bullet may have become the banner, which is no task.
+        let mut preambles: std::collections::BTreeMap<LineNumber, Vec<PreambleBlock>> =
+            std::collections::BTreeMap::new();
+        for (list, line, blocks) in std::mem::take(&mut self.preamble_claims) {
+            let items = match list {
+                Some(index) => &self.lists[index].items,
+                None => &self.default_items,
+            };
+            match items.iter().find(|item| item.line_number >= line) {
+                Some(item) => preambles
+                    .entry(item.line_number)
+                    .or_default()
+                    .extend(blocks),
+                None => blocks.iter().for_each(|block| self.unshown.add(block.kind)),
+            }
+        }
+        for (_, block) in std::mem::take(&mut self.pending_preamble) {
+            self.unshown.add(block.kind);
+        }
+        let mut unshown = self.unshown;
         let mut lists = self.lists;
         let has_default_list = has_checkbox(&self.default_items);
         if has_default_list {
@@ -909,11 +1077,25 @@ impl<'a> ParseState<'a> {
         // had a list, whose lists had no checkbox syntax, or whose only
         // checkboxes are blockquoted examples (forced to display-only).
         lists.retain(|list| has_checkbox(&list.items));
+        let kept_lines: HashSet<LineNumber> = lists
+            .iter()
+            .flat_map(|list| &list.items)
+            .map(|item| item.line_number)
+            .collect();
+        preambles.retain(|line, blocks| {
+            let kept = kept_lines.contains(line);
+            if !kept {
+                blocks.iter().for_each(|block| unshown.add(block.kind));
+            }
+            kept
+        });
         Document {
             file_path: path,
             title: self.document_title,
             has_default_list,
             lists,
+            preambles,
+            unshown,
             raw_lines,
         }
     }

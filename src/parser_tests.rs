@@ -2054,3 +2054,102 @@ fn a_started_sub_task_hidden_by_its_parent_s_marker_is_still_found() {
         ]
     );
 }
+
+// --- Preambles: prose under a heading, before its first task (#80).
+
+fn preamble_of(document: &Document, line: usize) -> Vec<(PreambleKind, String)> {
+    document
+        .preambles
+        .get(&line)
+        .into_iter()
+        .flatten()
+        .map(|block| (block.kind, block.text.clone()))
+        .collect()
+}
+
+#[test]
+fn prose_under_a_heading_goes_to_the_first_task_below_it() {
+    let document = parse(
+        "# Title\n\nAn intro.\n\n## Deploy\n\nTake a snapshot first;\nrollback is impossible after step 4.\n\n- [ ] step one\n- [ ] step two\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 10),
+        vec![
+            (PreambleKind::Paragraph, "An intro.".to_string()),
+            (
+                PreambleKind::Paragraph,
+                "Take a snapshot first; rollback is impossible after step 4.".to_string()
+            ),
+        ]
+    );
+    assert!(document.unshown.is_empty());
+}
+
+#[test]
+fn a_github_alert_quote_becomes_a_labelled_alert() {
+    let document = parse(
+        "## Verify\n\n> [!WARNING]\n> Roll back on any failure.\n\n> [!CAUTION]\n\n> Just a quote.\n\n- [ ] check\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 10),
+        vec![
+            (
+                PreambleKind::Alert,
+                "Warning: Roll back on any failure.".to_string()
+            ),
+            (PreambleKind::Alert, "Caution".to_string()),
+            (PreambleKind::Quote, "Just a quote.".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_sub_section_keeps_its_parents_prose_and_adds_its_own() {
+    let document =
+        parse("## A\n\nAbout A.\n\n### Sub\n\nAbout Sub.\n\n```sh\nprep\n```\n\n- [ ] x\n");
+    assert_eq!(
+        preamble_of(&document, 13),
+        vec![
+            (PreambleKind::Paragraph, "About A.".to_string()),
+            (PreambleKind::Paragraph, "About Sub.".to_string()),
+            (PreambleKind::Code, "prep".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn prose_markcheck_cannot_place_is_counted_as_unshown() {
+    // Under a heading with no task, between tasks, and after the last one.
+    let document = parse(
+        "## Empty\n\nOrphan prose.\n\n## Real\n\n- [ ] a\n\nBetween tasks.\n\n> a quote\n\n- [ ] b\n\nAfter.\n\n```\ntrailing\n```\n",
+    );
+    assert!(document.preambles.is_empty());
+    assert_eq!(
+        document.unshown,
+        Unshown {
+            paragraphs: 3,
+            quotes: 1,
+            code_blocks: 1,
+        }
+    );
+}
+
+#[test]
+fn a_banner_bullet_passes_the_preamble_on_to_the_first_task() {
+    let document = parse("## A\n\nRead me.\n\n- **Careful**\n- [ ] task\n");
+    assert_eq!(document.lists[0].banner.as_deref(), Some("Careful"));
+    assert_eq!(
+        preamble_of(&document, 6),
+        vec![(PreambleKind::Paragraph, "Read me.".to_string())]
+    );
+}
+
+#[test]
+fn a_fence_right_after_a_list_still_belongs_to_its_last_task() {
+    let document = parse("## A\n\n- [ ] run it\n```\ncmd\n```\n");
+    assert_eq!(
+        document.lists[0].items[0].code_blocks,
+        vec!["cmd".to_string()]
+    );
+    assert!(document.unshown.is_empty());
+}

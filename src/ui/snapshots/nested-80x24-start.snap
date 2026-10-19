@@ -6,11 +6,12 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━──────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Rebuild              │
+                                                  │   Sub-lists under a task … │
                                                   │   ❯ Rebuild all packages   │
-                                                  │   │ ☐ Fetch sources fetch… │
-                                                  │   │ ◐ Compile              │
-                                                  │   │ │ ☐ Compile the core   │
-                    • Rebuild                     │   │ │ ☐ Compile the plugi… │
+                    • Rebuild                     │   │ ☐ Fetch sources fetch… │
+ Sub-lists under a task and under a plain note,   │   │ ◐ Compile              │
+at several depths. Each sub-item is its own card  │   │ │ ☐ Compile the core   │
+   and shows its parent chain as a breadcrumb.    │   │ │ ☐ Compile the plugi… │
                                                   │   │ ☐ Run the test suite   │
 ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/9 ┓  │   ▪ Preparation notes:     │
 ┃                                              ┃  │   │ ☐ Free up disk space   │
@@ -20,7 +21,6 @@ expression: "screen(&mut state, width, height)"
 ┃                                              ┃  │   ☐ Publish                │
 ┃                                              ┃  │   │ ☐ Upload the artifact  │
 ┗ ◉·●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   │ ☐ Announce the release │
-                                                  │                            │
                                                   │                            │
                                                   │                            │
                                                   │                            │

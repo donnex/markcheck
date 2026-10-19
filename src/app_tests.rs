@@ -142,6 +142,8 @@ fn document_with_missing_file(lists: Vec<List>) -> Document {
         title: None,
         has_default_list: false,
         lists,
+        preambles: Default::default(),
+        unshown: Default::default(),
         raw_lines,
     }
 }

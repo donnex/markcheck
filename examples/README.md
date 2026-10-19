@@ -7,7 +7,10 @@ renderer support. Open one with:
 markcheck examples/basics.md
 ```
 
-- **`basics.md`** — the three task states (`[ ]` / `[/]` / `[x]`), a list banner
+- **`basics.md`** — prose under a heading shown above the first task's card
+  (the intro paragraph under the `# H1` and the one under `## Ordered steps`),
+  a `> [!WARNING]` alert in the warning color under `## Verify`, the three task
+  states (`[ ]` / `[/]` / `[x]`), a list banner
   (leading bold-only bullet), a card title (a task's leading `**bold**`, also as a title-only task, which
   the side cards show by its title), inline
   and fenced commands, a plain-bullet note card, and the same three task states
@@ -55,7 +58,10 @@ markcheck examples/basics.md
   drop), and a following `## H2` that resets the sub-section context. Under
   `Rollout`, a heading inside a bullet (`- #### Watch the dashboards`) is just
   that card's title, and a quoted `> ### Caution` callout starts no group —
-  neither one is a sub-section. Each group
+  neither one is a sub-section (and, sitting after the last task, the callout
+  is one of the blocks markcheck reports at startup as not shown). The
+  paragraph under `### Pre-flight checks` is that group's preamble, shown
+  above its first task's card. Each group
   shows a `── divider` in the overview and a dim `Outer › Inner` breadcrumb
   above the card. The `Extended verification › Line-by-line checks` group is
   deliberately long: scroll into it in a short window to see the sticky overview

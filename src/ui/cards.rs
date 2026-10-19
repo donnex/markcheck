@@ -12,8 +12,8 @@ use super::{
     char_width, display_width, expand_tabs, fg, marker_color, split_at_width, state_marker,
 };
 use crate::model::{
-    AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, SubHeading, TaskState,
-    View,
+    AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, PreambleBlock,
+    PreambleKind, SubHeading, TaskState, View,
 };
 
 /// Prose that wraps to at most this many lines is centered; longer prose is
@@ -499,6 +499,12 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .as_ref()
         .map(|banner| banner_rows(banner, state.icons, current_card_width(area)))
         .unwrap_or_default();
+    // Prose written under the heading above this task, before it (#80).
+    let preamble = state
+        .current_item()
+        .and_then(|item| state.document.preambles.get(&item.line_number))
+        .map(|blocks| preamble_rows(blocks, state.icons, state.palette, current_card_width(area)))
+        .unwrap_or_default();
     // The current item's `### H3`+ sub-section path, shown as a dim breadcrumb
     // directly above the card so the single-card view still says which
     // sub-section you're in — the overview's divider isn't visible on narrow
@@ -508,8 +514,10 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .and_then(|item| section_breadcrumb(&item.section));
     // Title, banner and breadcrumb sit together, then one blank row before
     // the card.
-    let heading_rows =
-        (has_h2 as u16) + clamp_to_u16(banner_rows.len()) + (breadcrumb.is_some() as u16);
+    let heading_rows = (has_h2 as u16)
+        + clamp_to_u16(banner_rows.len())
+        + clamp_to_u16(preamble.len())
+        + (breadcrumb.is_some() as u16);
     let reserved = if heading_rows > 0 {
         heading_rows + 1
     } else {
@@ -547,6 +555,11 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
         }
         for row in &banner_rows {
             render_list_banner(frame, rows[i], row, state.palette);
+            i += 1;
+        }
+        for (row, style) in &preamble {
+            let line = Line::from(Span::styled(row.clone(), *style)).centered();
+            frame.render_widget(Paragraph::new(line), rows[i]);
             i += 1;
         }
         if let Some(crumb) = &breadcrumb {
@@ -657,6 +670,62 @@ fn render_list_heading(
 /// a warning, so it is never cut short.
 fn banner_rows(banner: &str, icons: IconSet, width: u16) -> Vec<String> {
     wrap_text(&format!("{} {banner}", icons.note), width)
+}
+
+/// How many rows a preamble may take above the card; more is cut with `…`,
+/// so prose can't push the card off a short terminal.
+const MAX_PREAMBLE_ROWS: usize = 6;
+
+/// A task's preamble wrapped to `width`, each row with its style: an alert
+/// in the warning color behind the note icon (like the banner), a quote
+/// behind a bar, code in the code color, plain prose as it is.
+fn preamble_rows(
+    blocks: &[PreambleBlock],
+    icons: IconSet,
+    palette: Palette,
+    width: u16,
+) -> Vec<(String, Style)> {
+    let mut rows: Vec<(String, Style)> = Vec::new();
+    for block in blocks {
+        let (prefix, style) = preamble_style(block.kind, icons, palette);
+        for line in block.text.lines() {
+            for row in wrap_text(&format!("{prefix}{line}"), width) {
+                rows.push((row, style));
+            }
+        }
+    }
+    if rows.len() > MAX_PREAMBLE_ROWS {
+        rows.truncate(MAX_PREAMBLE_ROWS);
+        if let Some((last, _)) = rows.last_mut() {
+            *last = super::truncate(&format!("{last}…"), (width as usize).max(1));
+            if !last.ends_with('…') {
+                last.push('…');
+            }
+        }
+    }
+    rows
+}
+
+/// A preamble block's row prefix and style, shared with the overview.
+pub(super) fn preamble_style(
+    kind: PreambleKind,
+    icons: IconSet,
+    palette: Palette,
+) -> (String, Style) {
+    match kind {
+        PreambleKind::Alert => (
+            format!("{} ", icons.note),
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
+        PreambleKind::Quote => (
+            "│ ".to_string(),
+            Style::default().add_modifier(Modifier::ITALIC),
+        ),
+        PreambleKind::Code => (String::new(), palette.code),
+        PreambleKind::Paragraph => (String::new(), Style::default()),
+    }
 }
 
 /// One wrapped row of a list's banner, shown below the list title as a

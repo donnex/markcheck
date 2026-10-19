@@ -5,11 +5,11 @@ expression: "screen(&mut state, width, height)"
  ≡ Standalone Checklist │ no-headings.md                                                                           ☑ 1/3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
+                                                                                          │ A document with a title b… │
                                                                                           │ ☐ First step: example-too… │
                                                                                           │ ◐ Second step, in progress │
                                                                                           │ ☑ Third step, already done │
                                                                                           │ ▪ A plain note with no ch… │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

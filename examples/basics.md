@@ -20,6 +20,9 @@ a note card.
 
 ## Verify
 
+> [!WARNING]
+> Run these only once the deploy has finished; a failed check means roll back.
+
 - [ ] Check the health endpoint `curl https://example.com/health`
 - [ ] **Run the smoke tests**
 - [ ] Tail the logs and watch for errors

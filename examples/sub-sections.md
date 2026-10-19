@@ -7,6 +7,8 @@
 
 ### Pre-flight checks
 
+Run these on the staging host before touching production.
+
 - [ ] confirm the staging host is idle
 - [/] run `verify-output` and wait for it to finish
 

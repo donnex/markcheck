@@ -6,6 +6,7 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Rebuild              │
+                                                                                          │   Sub-lists under a task … │
                                                                                           │   ☐ Rebuild all packages   │
                                                                                           │   │ ❯ Fetch sources fetch… │
                                                                                           │   │ ◐ Compile              │
@@ -17,10 +18,9 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   │ ☐ Notify the team on … │
                                                                                           │ • [2] Release              │
                                                                                           │   ☐ Tag the release        │
-                                                                                          │   ☐ Publish                │
-                                        • Rebuild                                         │   │ ☐ Upload the artifact  │
-                                                                                          │   │ ☐ Announce the release │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/9 ┓               │                            │
+                                        • Rebuild                                         │   ☐ Publish                │
+                                                                                          │   │ ☐ Upload the artifact  │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/9 ┓               │   │ ☐ Announce the release │
 ┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
 │           ┃                   Rebuild all packages ›                    ┃            │  │                            │
 │  Rebuild a┃                        Fetch sources                        ┃ Compile    │  │                            │

@@ -367,6 +367,31 @@ pub fn watch_warning(error: &str) -> String {
     )
 }
 
+/// The startup note for prose markcheck read but can't show (#80): what
+/// sits between tasks, after the last one, or under a heading with none.
+pub fn unshown_warning(unshown: &crate::model::Unshown) -> Option<String> {
+    if unshown.is_empty() {
+        return None;
+    }
+    let counted = |count: usize, one: &str, many: &str| {
+        (count > 0).then(|| format!("{count} {}", if count == 1 { one } else { many }))
+    };
+    let parts: Vec<String> = [
+        counted(unshown.paragraphs, "paragraph", "paragraphs"),
+        counted(unshown.quotes, "quote", "quotes"),
+        counted(unshown.code_blocks, "code block", "code blocks"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let listed = match parts.as_slice() {
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => unreachable!("not empty"),
+    };
+    Some(format!("{listed} outside task lists not shown"))
+}
+
 /// The startup note for leftovers of an interrupted markcheck that were
 /// removed (see `writer::sweep_interrupted_saves`), so a vanished file is
 /// accounted for.

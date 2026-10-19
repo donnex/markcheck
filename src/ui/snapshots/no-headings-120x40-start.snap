@@ -5,6 +5,7 @@ expression: "screen(&mut state, width, height)"
  ≡ Standalone Checklist │ no-headings.md                                                                           ☑ 1/3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
+                                                                                          │ A document with a title b… │
                                                                                           │ ❯ First step: example-too… │
                                                                                           │ ◐ Second step, in progress │
                                                                                           │ ☑ Third step, already done │
@@ -16,8 +17,9 @@ expression: "screen(&mut state, width, height)"
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │
-                                                                                          │                            │
-                                                                                          │                            │
+               A document with a title but no ## H2 headings — every task                 │                            │
+              lives in the single, title-less default section (so there are               │                            │
+                    no section tabs and no above-cards list heading).                     │                            │
                                                                                           │                            │
             ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/4 ┓               │                            │
             ┃                                                             ┃────────────┐  │                            │
@@ -27,8 +29,6 @@ expression: "screen(&mut state, width, height)"
             ┃                                                             ┃            │  │                            │
             ┃                                                             ┃────────────┘  │                            │
             ┗ ◉●●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
-                                                                                          │                            │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

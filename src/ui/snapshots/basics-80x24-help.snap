@@ -7,22 +7,22 @@ expression: "screen(&mut state, 80, 24)"
 ╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
 │                                              ▲  │ • [1] Prepare              │
 │  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ▪ Do not run against pr… │
-│  gg / G             first / last task in the ▓  │   ☑ Confirm access to exa… │
-│  } / {              next / previous sub-secti▓  │   ◐ Warm the build cache   │
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ☐ Check out the release… │
-│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ Build the artifact     │
-│  PageDn / PageUp    scroll card body one page│  │   ▪ Keep this runbook ope… │
-│  mouse wheel        scroll an overflowing car│  │ • [2] Verify               │
-│  wheel in ? / T     scroll this help / move t│  │   ☐ Check the health endp… │
-│  space / Enter      toggle the task done, the│  │   ☐ Run the smoke tests    │
-│  s                  mark the task started / i│  │   ☐ Tail the logs and wat… │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☑ Record the start time… │
-│  Tab                jump to the next unfinish│  │ • [3] Ordered steps        │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☑ 1. Confirm the change… │
-│  /                  search tasks by text     │  │   ◐ 2. Notify the on-call… │
-│  n / N              next / previous search ma│  │   ☐ 3. Announce completion │
-│  T                  go to task (filterable li│  │                            │
-│  click T picker row highlight it; click it ag│  │                            │
-│  click overview row toggle (icon) or jump to ▼  │                            │
+│  gg / G             first / last task in the ▓  │   A short checklist showi… │
+│  } / {              next / previous sub-secti▓  │   ☑ Confirm access to exa… │
+│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ◐ Warm the build cache   │
+│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ Check out the release… │
+│  PageDn / PageUp    scroll card body one page│  │   ☐ Build the artifact     │
+│  mouse wheel        scroll an overflowing car│  │   ▪ Keep this runbook ope… │
+│  wheel in ? / T     scroll this help / move t│  │ • [2] Verify               │
+│  space / Enter      toggle the task done, the│  │   ▪ Warning: Run these on… │
+│  s                  mark the task started / i│  │   ☐ Check the health endp… │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ Run the smoke tests    │
+│  Tab                jump to the next unfinish│  │   ☐ Tail the logs and wat… │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ☑ Record the start time… │
+│  /                  search tasks by text     │  │ • [3] Ordered steps        │
+│  n / N              next / previous search ma│  │   The three task states w… │
+│  T                  go to task (filterable li│  │   ☑ 1. Confirm the change… │
+│  click T picker row highlight it; click it ag│  │   ◐ 2. Notify the on-call… │
+│  click overview row toggle (icon) or jump to ▼  │   ☐ 3. Announce completion │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

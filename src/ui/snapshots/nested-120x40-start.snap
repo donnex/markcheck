@@ -6,6 +6,7 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Rebuild              │
+                                                                                          │   Sub-lists under a task … │
                                                                                           │   ❯ Rebuild all packages   │
                                                                                           │   │ ☐ Fetch sources fetch… │
                                                                                           │   │ ◐ Compile              │
@@ -15,10 +16,10 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ▪ Preparation notes:     │
                                                                                           │   │ ☐ Free up disk space   │
                                                                                           │   │ ☐ Notify the team on … │
-                                                                                          │ • [2] Release              │
-                                                                                          │   ☐ Tag the release        │
-                                                                                          │   ☐ Publish                │
-                                        • Rebuild                                         │   │ ☐ Upload the artifact  │
+                                        • Rebuild                                         │ • [2] Release              │
+                Sub-lists under a task and under a plain note, at several                 │   ☐ Tag the release        │
+               depths. Each sub-item is its own card and shows its parent                 │   ☐ Publish                │
+                                 chain as a breadcrumb.                                   │   │ ☐ Upload the artifact  │
                                                                                           │   │ ☐ Announce the release │
             ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/9 ┓               │                            │
             ┃                                                             ┃────────────┐  │                            │
@@ -28,7 +29,6 @@ expression: "screen(&mut state, width, height)"
             ┃                                                             ┃            │  │                            │
             ┃                                                             ┃────────────┘  │                            │
             ┗ ◉·●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

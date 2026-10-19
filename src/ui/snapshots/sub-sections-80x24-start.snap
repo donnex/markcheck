@@ -9,20 +9,20 @@ expression: "screen(&mut state, width, height)"
                                                   │   ❯ refresh-cache          ▓
                                                   │   ☐ build-tool sync --pro… ▓
                                                   │   ── Pre-flight checks ─── ▓
-                                                  │   ☐ confirm the staging h… ▓
-                    • Deploy                      │   ◐ run verify-output and… ▓
-                                                  │     ── Data safety ─────── ▓
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/29 ┓  │   ☐ take a snapshot: snap… ▓
-┃                                              ┃  │   ☐ confirm the snapshot … ▓
-┃                                              ┃  │   ── Rollout ───────────── │
-┃                 refresh-cache                ┃  │   ☑ restart-service        │
+                                                  │   Run these on the stagin… ▓
+                    • Deploy                      │   ☐ confirm the staging h… ▓
+                                                  │   ◐ run verify-output and… ▓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/29 ┓  │     ── Data safety ─────── ▓
+┃                                              ┃  │   ☐ take a snapshot: snap… ▓
+┃                                              ┃  │   ☐ confirm the snapshot … │
+┃                 refresh-cache                ┃  │   ── Rollout ───────────── │
+┃                                              ┃  │   ☑ restart-service        │
 ┃                                              ┃  │   ☐ check-status example-… │
 ┃                                              ┃  │   ▪ Watch the dashboards   │
-┃                                              ┃  │   ☐ confirm the error rat… │
-┗ ◉··●··●······················ ━━━━━━━━━━━━━━━┛  │   ☐ announce the rollout … │
+┗ ◉··●··●······················ ━━━━━━━━━━━━━━━┛  │   ☐ confirm the error rat… │
+                                                  │   ☐ announce the rollout … │
                                                   │   ── Post-rollout ──────── │
                                                   │   ☐ tail the logs for one… │
-                                                  │   ☐ verify-output --final  │
-                                                  │   ── Extended verificati…  ▼
+                                                  │   ☐ verify-output --final  ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

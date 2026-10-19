@@ -7,22 +7,22 @@ expression: "screen(&mut state, width, height)"
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Prepare              │
                                                   │   ▪ Do not run against pr… │
+                                                  │   A short checklist showi… │
                                                   │   ☑ Confirm access to exa… │
-                                                  │   ◐ Warm the build cache   │
-                    • Prepare                     │   ❯ Check out the release… │
-         ▪ Do not run against production          │   ☐ Build the artifact     │
-                                                  │   ▪ Keep this runbook ope… │
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓  │ • [2] Verify               │
+                    • Prepare                     │   ◐ Warm the build cache   │
+         ▪ Do not run against production          │   ❯ Check out the release… │
+                                                  │   ☐ Build the artifact     │
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓  │   ▪ Keep this runbook ope… │
+┃                                              ┃  │ • [2] Verify               │
+┃         Check out the release branch:        ┃  │   ▪ Warning: Run these on… │
 ┃                                              ┃  │   ☐ Check the health endp… │
-┃         Check out the release branch:        ┃  │   ☐ Run the smoke tests    │
+┃             git checkout release             ┃  │   ☐ Run the smoke tests    │
 ┃                                              ┃  │   ☐ Tail the logs and wat… │
-┃             git checkout release             ┃  │   ☑ Record the start time… │
-┃                                              ┃  │ • [3] Ordered steps        │
-┃                                              ┃  │   ☑ 1. Confirm the change… │
-┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ◐ 2. Notify the on-call… │
+┃                                              ┃  │   ☑ Record the start time… │
+┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │ • [3] Ordered steps        │
+                                                  │   The three task states w… │
+                                                  │   ☑ 1. Confirm the change… │
+                                                  │   ◐ 2. Notify the on-call… │
                                                   │   ☐ 3. Announce completion │
-                                                  │                            │
-                                                  │                            │
-                                                  │                            │
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

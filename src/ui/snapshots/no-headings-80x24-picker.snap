@@ -5,11 +5,11 @@ expression: "screen(&mut state, 80, 24)"
  ≡ Standalone Checklist │ no-headings.md                                   ☑ 1/3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
 ╭ Go to task ───────────────────────── 4 items ╮  ┌ Overview ──────────────────┐
-│ Filter:                                      │  │ ❯ First step: example-too… │
-│ ☐ First step: example-tool init              │  │ ◐ Second step, in progress │
-│ ◐ Second step, in progress                   │  │ ☑ Third step, already done │
-│ ☑ Third step, already done                   │  │ ▪ A plain note with no ch… │
-│ ▪ A plain note with no checkbox              │  │                            │
+│ Filter:                                      │  │ A document with a title b… │
+│ ☐ First step: example-tool init              │  │ ❯ First step: example-too… │
+│ ◐ Second step, in progress                   │  │ ◐ Second step, in progress │
+│ ☑ Third step, already done                   │  │ ☑ Third step, already done │
+│ ▪ A plain note with no checkbox              │  │ ▪ A plain note with no ch… │
 │                                              │  │                            │
 │                                              │  │                            │
 │                                              │  │                            │

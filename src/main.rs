@@ -198,6 +198,7 @@ fn main() -> anyhow::Result<()> {
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
         launch::leftovers_warning(leftovers),
+        launch::unshown_warning(&state.document.unshown),
     ];
     match launch::startup_message(created_new, &warnings) {
         Some((message, true)) => state.set_error(message),

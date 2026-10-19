@@ -7,6 +7,7 @@ expression: "screen(&mut state, width, height)"
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Reference            │
                                                                                           │   ▪ Read before proceedin… │
+                                                                                          │   Non-task content and th… │
                                                                                           │   ▪ A note with a command… │
                                                                                           │   ☐ A task with a single … │
                                                                                           │   ❯ Restart the primary a… │
@@ -16,29 +17,28 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ A task with a short o… │
                                                                                           │   ☐ A task with fenced li… │
                                                                                           │   ☐ A task with a tab-ind… │
-                                                                                          │   ☐ A task with two comma… │
-                                       • Reference                                        │   ☐ A task with a command… │
-             ▪ Read before proceeding: every step below assumes the service               │   ☐ Fetch curl -fsSL http… │
-                     has already been drained from the load balancer                      │   ☐ A task with emphasis,… │
-                                                                                          │   ☐ A task whose text run… │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/24 ┓               │   ☐ A task in wide (two-c… │
-┌ ☐ ────────┃ ▪ Restart the primary application service and confirm that  ┃────────────┐  │   ☐ Open the project runb… │
-│  A task wi┃                  every health check passes                  ┃ Restart    │  │   ☐ A task with a very lo… │
-│   a single┃                                                             ┃ample-servi │  │   ☐ A task with two links… │
-│    inline ┃  — a card title too long for one row wraps inside the card  ┃   ce       │  │   ☐ See also every servic… │
-│    command┃                    instead of being cut                     ┃            │  │   ☐ A task linking to a l… │
-└───────────┃                                                             ┃────────────┘  │   ☐ Check the dashboard a… │
-            ┗ ··◉····················· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ Mail the on-call owne… │
+                                       • Reference                                        │   ☐ A task with two comma… │
+             ▪ Read before proceeding: every step below assumes the service               │   ☐ A task with a command… │
+                     has already been drained from the load balancer                      │   ☐ Fetch curl -fsSL http… │
+                                                                                          │   ☐ A task with emphasis,… │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/24 ┓               │   ☐ A task whose text run… │
+┌ ☐ ────────┃ ▪ Restart the primary application service and confirm that  ┃────────────┐  │   ☐ A task in wide (two-c… │
+│  A task wi┃                  every health check passes                  ┃ Restart    │  │   ☐ Open the project runb… │
+│   a single┃                                                             ┃ample-servi │  │   ☐ A task with a very lo… │
+│    inline ┃  — a card title too long for one row wraps inside the card  ┃   ce       │  │   ☐ A task with two links… │
+│    command┃                    instead of being cut                     ┃            │  │   ☐ See also every servic… │
+└───────────┃                                                             ┃────────────┘  │   ☐ A task linking to a l… │
+            ┗ ··◉····················· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ Check the dashboard a… │
+                                                                                          │   ☐ Mail the on-call owne… │
                                                                                           │   ▪ A quoted example from… │
                                                                                           │   ▪ Neither does a quoted… │
                                                                                           │ • [2] Precondition with a  │
                                                                                           │   ▪ Export the environmen… │
                                                                                           │   ☐ Run the step that nee… │
                                                                                           │ • [3] Fence after a list   │
+                                                                                          │   A fenced block placed d… │
                                                                                           │   ☐ Confirm the release n… │
                                                                                           │   ☐ Run the smoke test — … │
-                                                                                          │                            │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

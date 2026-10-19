@@ -376,6 +376,48 @@ pub struct ItemLinks {
     pub info_state: Option<TaskState>,
 }
 
+/// One block of prose under a heading, before its first task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreambleBlock {
+    pub kind: PreambleKind,
+    /// Paragraphs of a quote are separated by `\n`.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreambleKind {
+    Paragraph,
+    Quote,
+    /// A `> [!WARNING]`, `[!CAUTION]` or `[!IMPORTANT]` quote, shown in the
+    /// warning color; `text` starts with the alert's label.
+    Alert,
+    Code,
+}
+
+/// Blocks outside any task list that markcheck doesn't show (prose between
+/// tasks, under a heading with no tasks, after the last task), counted for
+/// the startup report.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Unshown {
+    pub paragraphs: usize,
+    pub quotes: usize,
+    pub code_blocks: usize,
+}
+
+impl Unshown {
+    pub fn add(&mut self, kind: PreambleKind) {
+        match kind {
+            PreambleKind::Paragraph => self.paragraphs += 1,
+            PreambleKind::Quote | PreambleKind::Alert => self.quotes += 1,
+            PreambleKind::Code => self.code_blocks += 1,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Unshown::default()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Document {
     pub file_path: PathBuf,
@@ -387,6 +429,11 @@ pub struct Document {
     /// Used to suppress the above-cards list heading for it.
     pub has_default_list: bool,
     pub lists: Vec<List>,
+    /// Prose written under a heading before its first task, keyed by the
+    /// line of the task it belongs to, which shows it above its card (#80).
+    pub preambles: std::collections::BTreeMap<LineNumber, Vec<PreambleBlock>>,
+    /// What the file has outside task lists that markcheck can't show.
+    pub unshown: Unshown,
     /// The source file's lines, each including its own terminator, indexed by
     /// `Item::line_number`. `writer::write_back` edits one line and rejoins by
     /// concatenation, so mixed line endings round-trip exactly.
