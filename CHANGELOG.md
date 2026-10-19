@@ -995,6 +995,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Another user on the same machine can no longer stop you from saving a
+  checklist. markcheck's save lock lived in the shared temporary folder
+  under a name anyone could work out, so another user could create it in
+  advance and every tick would fail with "Another markcheck is saving this
+  file", or create it as a link to a named pipe and freeze markcheck on the
+  first tick. The lock now lives in a folder only you can use. (#1)
+
 - markcheck no longer reads or saves a checklist that was replaced, while
   it was open, by a symlink, a named pipe or another special file. Someone
   who could write to the checklist's folder could swap it for a link to one

@@ -30,9 +30,10 @@ pub(crate) enum LockOutcome {
 /// An advisory lock held across `AppState::commit_write`'s hash check and
 /// write, turning them into one compare-and-swap between instances.
 ///
-/// Kept in the temp directory, not beside the checklist, so a `git add -A`
-/// hook can't commit it; it therefore only serialises instances on one
-/// machine. A stale lock is recovered only when its owner is provably gone,
+/// Kept in a directory private to the user (see [`lock_dir`]), not beside
+/// the checklist, so a `git add -A` hook can't commit it and another user
+/// can't plant one; it therefore only serialises one user's instances on
+/// one machine. A stale lock is recovered only when its owner is provably gone,
 /// never by age, so a slow live holder is never displaced; a recycled PID
 /// blocks saving until the file is removed by hand.
 pub(crate) struct WriteLock {
@@ -47,12 +48,16 @@ impl WriteLock {
     /// its owner can be *shown* to be gone — see the type's doc comment for
     /// why elapsed time is no longer part of that decision.
     pub(crate) fn acquire(target: &Path) -> LockOutcome {
-        let path = lock_path(target);
+        let Some(path) = lock_path(target) else {
+            return LockOutcome::Unavailable;
+        };
         match Self::try_create(&path) {
             Ok(lock) => LockOutcome::Acquired(lock),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                if !owner_is_gone(&path) {
-                    return LockOutcome::Busy(path);
+                match read_lock_token(&path) {
+                    Err(err) if is_not_regular(&err) => return LockOutcome::Unavailable,
+                    Ok(token) if token_owner_is_gone(&token) => {}
+                    _ => return LockOutcome::Busy(path),
                 }
                 // The owner is gone. Clear it and make exactly one attempt to
                 // take over; a loser of that race sees `AlreadyExists` again
@@ -94,7 +99,7 @@ impl WriteLock {
 
     /// Whether the lock file still holds this guard's own token.
     fn still_ours(&self) -> bool {
-        fs::read_to_string(&self.path).is_ok_and(|held| held == self.token)
+        read_lock_token(&self.path).is_ok_and(|held| held == self.token)
     }
 }
 
@@ -157,24 +162,82 @@ fn current_uid() -> Option<u32> {
 /// every spelling of one file (symlink, `..`) shares a lock. Falls back to
 /// the given path when canonicalization fails; `write_back` then refuses
 /// the missing file.
-fn lock_path(target: &Path) -> PathBuf {
+/// `None` when there is no private directory to put it in.
+fn lock_path(target: &Path) -> Option<PathBuf> {
     let resolved = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
     let digest = crate::model::hash_bytes(resolved.as_os_str().as_encoded_bytes());
     let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    std::env::temp_dir().join(format!("markcheck-write-lock-{name}"))
+    Some(lock_dir()?.join(format!("markcheck-write-lock-{name}")))
 }
 
-/// Whether the lock's owner is demonstrably gone; anything short of proof
+/// Where this user's write locks live, so another user can neither plant a
+/// lock that blocks saving nor read one.
+fn lock_dir() -> Option<PathBuf> {
+    lock_dir_in(
+        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+        &std::env::temp_dir(),
+        current_uid()?,
+    )
+}
+
+/// `$XDG_RUNTIME_DIR` when it is private to `uid`, otherwise
+/// `<temp>/markcheck-<uid>`, created 0700. `None` when the directory that
+/// would be used isn't a real directory owned by `uid` and closed to
+/// everyone else, which a squatter in a shared temp directory could arrange.
+fn lock_dir_in(runtime_dir: Option<&std::ffi::OsStr>, temp: &Path, uid: u32) -> Option<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let private = |dir: &Path| {
+        use std::os::unix::fs::MetadataExt;
+        fs::symlink_metadata(dir)
+            .is_ok_and(|meta| meta.is_dir() && meta.uid() == uid && meta.mode() & 0o077 == 0)
+    };
+    if let Some(runtime_dir) = runtime_dir.map(Path::new)
+        && runtime_dir.is_absolute()
+        && private(runtime_dir)
+    {
+        return Some(runtime_dir.to_path_buf());
+    }
+    let dir = temp.join(format!("markcheck-{uid}"));
+    let _ = fs::DirBuilder::new().mode(0o700).create(&dir);
+    private(&dir).then_some(dir)
+}
+
+/// Opens `path` without following a symlink or blocking on a FIFO, and only
+/// once the open handle is a regular file.
+fn open_regular(path: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) if err.raw_os_error() == Some(libc::ELOOP) => return Err(refused("a symlink")),
+        Err(err) => return Err(err),
+    };
+    let file_type = file.metadata()?.file_type();
+    if !file_type.is_file() {
+        return Err(not_regular(file_type));
+    }
+    Ok(file)
+}
+
+/// A lock file's token, read through [`open_regular`] and capped well above
+/// a real token's length, so a planted file can't block or exhaust memory.
+fn read_lock_token(path: &Path) -> io::Result<String> {
+    use std::io::Read;
+    let mut token = String::new();
+    open_regular(path)?.take(256).read_to_string(&mut token)?;
+    Ok(token)
+}
+
+/// Whether a lock's owner is demonstrably gone; anything short of proof
 /// is `false`. Never `kill -0`, which can't tell a dead process from
 /// another user's.
-fn owner_is_gone(path: &Path) -> bool {
-    let Some(pid) = fs::read_to_string(path)
-        .ok()
-        .and_then(|token| token.split_whitespace().nth(1).map(str::to_string))
-    else {
-        return false;
-    };
-    pid_is_gone(&pid)
+fn token_owner_is_gone(token: &str) -> bool {
+    token.split_whitespace().nth(1).is_some_and(pid_is_gone)
 }
 
 /// Whether no process `pid` (decimal digits) exists, on positive evidence
@@ -337,25 +400,8 @@ pub fn is_not_regular(err: &io::Error) -> bool {
 /// startup can neither leak another file's contents nor hang the UI.
 pub fn read_checklist(path: &Path) -> io::Result<Vec<u8>> {
     use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = match fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(err) if err.raw_os_error() == Some(libc::ELOOP) => {
-            return Err(refused("a symlink"));
-        }
-        Err(err) => return Err(err),
-    };
-    let file_type = file.metadata()?.file_type();
-    if !file_type.is_file() {
-        return Err(not_regular(file_type));
-    }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    open_regular(path)?.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 

@@ -25,7 +25,7 @@ fn write_temp_file(contents: &str) -> PathBuf {
 
 /// Writes a lock file by hand claiming to be held by `pid`.
 fn plant_lock(target: &Path, pid: u32) -> PathBuf {
-    let path = lock_path(target);
+    let path = lock_path(target).unwrap();
     fs::write(&path, format!("markcheck {pid} deadbeef")).unwrap();
     path
 }
@@ -158,11 +158,11 @@ fn every_spelling_of_one_checklist_maps_to_the_same_lock() {
     let target = write_temp_file(EXAMPLE);
     let dir = target.parent().unwrap();
     let name = target.file_name().unwrap();
-    let expected = lock_path(&target);
+    let expected = lock_path(&target).unwrap();
 
     // A `.` component.
     assert_eq!(
-        lock_path(&dir.join(".").join(name)),
+        lock_path(&dir.join(".").join(name)).unwrap(),
         expected,
         "a `.` component must not create a second lock"
     );
@@ -171,7 +171,7 @@ fn every_spelling_of_one_checklist_maps_to_the_same_lock() {
     let round_trip = dir.join("sub").join("..").join(name);
     fs::create_dir_all(dir.join("sub")).unwrap();
     assert_eq!(
-        lock_path(&round_trip),
+        lock_path(&round_trip).unwrap(),
         expected,
         "a `..` component must not create a second lock"
     );
@@ -185,7 +185,7 @@ fn every_spelling_of_one_checklist_maps_to_the_same_lock() {
     ));
     std::os::unix::fs::symlink(&target, &link).unwrap();
     assert_eq!(
-        lock_path(&link),
+        lock_path(&link).unwrap(),
         expected,
         "a symlink to the checklist must share its lock"
     );
@@ -195,7 +195,7 @@ fn every_spelling_of_one_checklist_maps_to_the_same_lock() {
     // that returns one constant.
     let other = write_temp_file(EXAMPLE);
     assert_ne!(
-        lock_path(&other),
+        lock_path(&other).unwrap(),
         expected,
         "two genuinely different checklists must not share a lock"
     );
@@ -380,7 +380,7 @@ fn an_unreadable_owner_is_treated_as_alive() {
     // honours the lock. Silently permitting a second writer on an
     // unparseable lock is the failure this whole change is about.
     let path = write_temp_file(EXAMPLE);
-    let lock_file = lock_path(&path);
+    let lock_file = lock_path(&path).unwrap();
     fs::write(&lock_file, "not a token at all").unwrap();
 
     assert!(
@@ -395,7 +395,7 @@ fn an_unreadable_owner_is_treated_as_alive() {
 #[test]
 fn the_lock_file_is_removed_when_the_guard_drops() {
     let path = write_temp_file(EXAMPLE);
-    let lock_file = lock_path(&path);
+    let lock_file = lock_path(&path).unwrap();
 
     {
         let _held = WriteLock::acquire(&path);
@@ -411,7 +411,7 @@ fn dropping_a_guard_never_removes_a_lock_someone_else_now_holds() {
     // Recovery removes then re-creates, which is not atomic, so a guard
     // must never delete a file it no longer owns.
     let path = write_temp_file(EXAMPLE);
-    let lock_file = lock_path(&path);
+    let lock_file = lock_path(&path).unwrap();
 
     let mine = WriteLock::acquire(&path);
     assert!(matches!(mine, LockOutcome::Acquired(_)));
@@ -1126,4 +1126,99 @@ fn sweep_interrupted_saves_removes_a_dead_save_s_temp_files_beside_the_checklist
     );
     assert!(checklist.exists());
     assert_eq!(sweep_interrupted_saves(Path::new("/")), 0);
+}
+
+#[test]
+fn a_lock_planted_in_the_shared_temp_dir_no_longer_blocks_saving() {
+    // Where every user's locks used to live, with a PID that never dies.
+    let path = write_temp_file(EXAMPLE);
+    let name = lock_path(&path).unwrap().file_name().unwrap().to_owned();
+    let shared = std::env::temp_dir().join(name);
+    fs::write(&shared, "markcheck 1 deadbeef").unwrap();
+
+    assert!(matches!(
+        WriteLock::acquire(&path),
+        LockOutcome::Acquired(_)
+    ));
+
+    let _ = fs::remove_file(&shared);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn lock_dir_in_uses_only_a_directory_private_to_the_user() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let base = crate::test_support::unique_temp_path("writer", "lockdir", None);
+    fs::create_dir(&base).unwrap();
+    let uid = fs::metadata(&base).unwrap().uid();
+    let runtime = base.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    let temp = base.join("tmp");
+    fs::create_dir(&temp).unwrap();
+
+    assert_eq!(
+        lock_dir_in(Some(runtime.as_os_str()), &temp, uid),
+        Some(runtime.clone())
+    );
+
+    let fallback = temp.join(format!("markcheck-{uid}"));
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        lock_dir_in(Some(runtime.as_os_str()), &temp, uid),
+        Some(fallback.clone()),
+        "a runtime dir others can read is passed over"
+    );
+    assert_eq!(
+        fs::metadata(&fallback).unwrap().mode() & 0o777,
+        0o700,
+        "the fallback is created private"
+    );
+    assert_eq!(
+        lock_dir_in(Some(std::ffi::OsStr::new("relative")), &temp, uid),
+        Some(fallback.clone())
+    );
+    assert_eq!(lock_dir_in(None, &temp, uid + 1), None, "someone else's");
+
+    fs::set_permissions(&fallback, fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(lock_dir_in(None, &temp, uid), None, "opened to others");
+
+    fs::remove_dir(&fallback).unwrap();
+    std::os::unix::fs::symlink(&runtime, &fallback).unwrap();
+    assert_eq!(
+        lock_dir_in(None, &temp, uid),
+        None,
+        "a symlink squatting the name"
+    );
+}
+
+#[test]
+fn a_lock_that_is_a_symlink_to_a_fifo_neither_blocks_nor_is_honoured() {
+    let path = write_temp_file(EXAMPLE);
+    let lock_file = lock_path(&path).unwrap();
+    let fifo = temp_path();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::os::unix::fs::symlink(&fifo, &lock_file).unwrap();
+
+    assert!(matches!(
+        WriteLock::acquire(&path),
+        LockOutcome::Unavailable
+    ));
+
+    let _ = fs::remove_file(&lock_file);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn read_lock_token_reads_at_most_a_small_prefix() {
+    let path = temp_path();
+    fs::write(&path, "x".repeat(10_000)).unwrap();
+    assert_eq!(read_lock_token(&path).unwrap().len(), 256);
 }
