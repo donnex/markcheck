@@ -1141,6 +1141,63 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
 }
 
 #[test]
+fn git_sync_children_cannot_reach_markcheck_s_terminal() {
+    // A credential, host-key or pinentry prompt opens /dev/tty directly, so
+    // a hook doing the same stands in for all of them. Under the PTY the
+    // terminal exists; git sync's children must still be unable to open it.
+    let root = unique_path("gitsync-no-tty");
+    let work = root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+
+    let marker = root.join("tty-result");
+    let hook = work.join(".git/hooks/pre-commit");
+    write_file(
+        &hook,
+        &format!(
+            "#!/bin/sh\nif (: < /dev/tty) 2>/dev/null; then r=opened; else r=refused; fi\necho $r > '{}'\n",
+            marker.display()
+        ),
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let ok = drive_args(
+        &path,
+        &["--git-sync"],
+        &[],
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "binary should exit successfully with --git-sync");
+
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while !marker.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    let result = std::fs::read_to_string(&marker).unwrap_or_default();
+    assert_eq!(
+        result.trim(),
+        "refused",
+        "a git-sync child must have no controlling terminal"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes() {
     // The final toggle's sync runs during the exit wait, after the TUI's own
     // error line can no longer be seen, so its failure must reach stderr. The

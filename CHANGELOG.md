@@ -141,6 +141,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git sync no longer draws password, passphrase or host-key prompts over
+  the checklist screen. When a push needed credentials (an HTTPS remote
+  with no credential helper, an SSH key without a running agent, an unknown
+  host key, or a terminal-based signing prompt), the prompt text appeared
+  on top of the interface, nothing could answer it, and markcheck waited
+  60 seconds for it on every retry. Such a push or commit now fails at once
+  and the reason shows in the status bar. Graphical password prompts still
+  work. (#2)
+
 - `y` and `--auto-copy` now ignore inline code inside a task's bold title,
   which the card shows as plain title text rather than as a command. A title
   like **Restart `nginx`** used to count as a hidden command: a card with

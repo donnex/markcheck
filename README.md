@@ -566,7 +566,11 @@ same way as before stays quiet, so it doesn't replace whatever message you
 are reading, and the title bar keeps showing `not pushed` (see below). When
 a push finally lands, the status bar says `Git sync caught up: committed
 and pushed`. Since the sync runs on a background thread, a slow or offline `git push`
-never freezes the app during normal use. Quitting right after a toggle or
+never freezes the app during normal use. Git sync can't answer a password,
+passphrase or host-key prompt in the terminal: a push or signed commit that
+needs one fails at once, with the reason in the status bar, so use a
+credential helper, `ssh-agent` or a graphical askpass/pinentry for a synced
+repository. Quitting right after a toggle or
 edit is the one exception: `markcheck` waits up to 5 seconds for that last
 sync to finish before exiting, so a quick `e` then `q` doesn't leave the
 change unsynced. If that last sync doesn't land cleanly — it fails, the

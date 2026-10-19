@@ -1,5 +1,6 @@
 //! Running `git` as a subprocess: environment isolation, output captured to
-//! scratch files, and a timeout that kills the whole process group.
+//! scratch files, a session of its own with no controlling terminal, and a
+//! timeout that kills the whole process group.
 
 use std::fs;
 use std::io::{self, Write as _};
@@ -93,7 +94,7 @@ fn run_with_optional_stdin(
     cmd.stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
 
-    let mut child = spawn_in_own_process_group(cmd)?;
+    let mut child = spawn_in_new_session(cmd)?;
     let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -119,10 +120,25 @@ fn run_with_optional_stdin(
         stderr: fs::read(&stderr_path).unwrap_or_default(),
     })
 }
-/// Its own process group, so a timeout can kill git's descendants too.
-fn spawn_in_own_process_group(mut cmd: Command) -> io::Result<Child> {
+/// A new session, which is also a new process group, so a timeout can kill
+/// git's descendants too. With no controlling terminal, a prompt from git,
+/// ssh or gpg fails at once instead of writing over the TUI and then waiting
+/// for the timeout on input nobody can give.
+fn spawn_in_new_session(mut cmd: Command) -> io::Result<Child> {
     use std::os::unix::process::CommandExt;
-    cmd.process_group(0);
+    // SAFETY: runs in the forked child before exec, where only
+    // async-signal-safe calls are allowed; `setsid` is one and touches no
+    // memory shared with the parent.
+    unsafe {
+        cmd.pre_exec(|| {
+            // Fails only for a process group leader, which a freshly forked
+            // child never is, so this branch can't be reached in a test.
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     cmd.spawn()
 }
 /// `SIGTERM` first: git's signal handlers remove the lock files it holds in
@@ -173,7 +189,9 @@ pub(crate) const REDIRECTING_GIT_VARS: [&str; 8] = [
 /// cache, which would make the user's own git commands fail meanwhile.
 pub(super) fn git_command(repo_dir: &Path) -> Command {
     let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir).env("GIT_OPTIONAL_LOCKS", "0");
+    cmd.current_dir(repo_dir)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0");
     for var in REDIRECTING_GIT_VARS {
         cmd.env_remove(var);
     }

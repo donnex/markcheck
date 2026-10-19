@@ -249,6 +249,39 @@ fn git_command_disables_optional_locks() {
     );
 }
 #[test]
+fn git_command_turns_off_gits_own_terminal_prompt() {
+    let cmd = git_command(Path::new("."));
+    assert!(
+        cmd.get_envs()
+            .any(|(k, v)| k == "GIT_TERMINAL_PROMPT" && v == Some(std::ffi::OsStr::new("0"))),
+        "git must fail rather than ask for a username over the TUI"
+    );
+}
+#[test]
+fn a_command_runs_in_a_session_of_its_own() {
+    // Fields 5 and 6 of /proc/<pid>/stat are the process group and session.
+    if !Path::new("/proc/self/stat").exists() {
+        eprintln!("skipped: no /proc to read the session from");
+        return;
+    }
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "echo $$; cat /proc/$$/stat"]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).unwrap();
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    let pid = lines.next().unwrap();
+    let stat = lines.next().unwrap();
+    let after_name = &stat[stat.rfind(')').unwrap() + 2..];
+    let fields: Vec<&str> = after_name.split(' ').collect();
+    assert_eq!(fields[2], pid, "the child leads its process group");
+    assert_eq!(fields[3], pid, "the child leads a session of its own");
+    assert_ne!(
+        fields[3],
+        std::process::id().to_string(),
+        "the session is not markcheck's"
+    );
+}
+#[test]
 fn literal_pathspec_command_matches_literally_whatever_the_ambient_setting() {
     // Checked structurally: setting the variable on the process would race
     // other tests.
