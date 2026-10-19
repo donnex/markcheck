@@ -479,6 +479,15 @@ outright and reported as a write failure.
 Opening the file through a symlink writes through to the real target and
 keeps the link intact.
 
+A checklist in a folder you can't write to, but which is itself writable,
+is saved **in place** instead: the file is rewritten directly, since there
+is nowhere beside it to put the temp file. That keeps its inode, owner and
+permissions, but a crash in the middle of that save could leave it
+truncated, so the status bar says so the first time it happens in a
+session (`Saved in place: ...`). When a save fails, the message says why
+(`Write failed — change not saved to disk: the disk is full`, `no
+permission to write the file or its folder`, and so on).
+
 Hard links are the case worth calling out, because it changes what your
 files mean rather than just their metadata: if two names point at the same
 file, saving leaves the *other* name on the old content, and the two names

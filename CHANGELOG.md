@@ -174,6 +174,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A checklist in a folder you can't write to can now be saved. Every save
+  used to fail there, because the temporary file it writes first couldn't
+  be created, with only "Write failed — change not saved to disk" and no
+  reason. The file is now rewritten in place when it's writable itself
+  (the status bar says once that this save was less crash-safe), and a
+  failed save says why, such as "the disk is full" or "no permission to
+  write the file or its folder". Checklists with very long file names can
+  now be saved and created with `--new`, too. (#46)
+
 - Two git-synced checklists in one repository no longer block each
   other. If one checklist's commit was left unpushed (say, while offline),
   every toggle in the other failed with "this branch has unpushed commits

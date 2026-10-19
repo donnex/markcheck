@@ -944,6 +944,12 @@ pub struct AppState {
     /// isn't a regular file (not just transiently unreadable). Blocks all
     /// write operations until a regular file is back.
     pub file_gone: Option<FileGone>,
+    /// A warning about the last write, shown once the key or click that made
+    /// it has been handled, so the action's own status can't replace it.
+    pub write_notice: Option<String>,
+    /// Whether this session already said a save went in place (see
+    /// `writer::Saved::in_place`); said once, not on every toggle.
+    pub in_place_noted: bool,
     /// Incremental `/` search state — see [`SearchState`].
     pub search: SearchState,
     /// `T` go-to-task overlay state — see [`PickerState`].

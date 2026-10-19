@@ -6203,3 +6203,28 @@ fn esc_still_cancels_search_and_help_without_the_quit_hint() {
     assert_eq!(state.overlay, None);
     assert!(!state.quit_requested());
 }
+
+#[test]
+fn a_save_in_place_is_announced_once_and_outlives_the_toggle_status() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::test_support::unique_temp_path("app", "ro-dir", None);
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join("list.md");
+    fs::write(&path, "## S\n\n- [ ] one\n- [ ] two\n- [ ] three\n").unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+    if fs::write(dir.join("probe"), "").is_ok() {
+        eprintln!("skipped: the directory stays writable (running as root?)");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.handle_key(KeyCode::Char(' '));
+    assert!(fs::read_to_string(&path).unwrap().contains("- [x] one"));
+    let notice = state.status_message.clone().unwrap_or_default();
+    assert!(notice.starts_with("Saved in place"), "{notice}");
+
+    state.handle_key(KeyCode::Char(' '));
+    assert_eq!(state.status_message.as_deref(), Some("Marked done"));
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+}

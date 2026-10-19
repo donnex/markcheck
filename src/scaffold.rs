@@ -98,8 +98,8 @@ fn create_new_checklist_with(
 
     let contents = template(&full_path);
     let temp_path_base = canonical_parent.join(format!(
-        ".{}.markcheck-new-{}-{:x}",
-        file_name.to_string_lossy(),
+        "{}{}-{:x}",
+        crate::writer::new_temp_prefix(&file_name.to_string_lossy()),
         std::process::id(),
         crate::writer::random_suffix()
     ));

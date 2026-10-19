@@ -24,6 +24,8 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
 
 const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
+const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
+     so a crash mid-save could truncate the checklist";
 /// What Esc and Ctrl-C say on a screen with nothing to cancel.
 const QUIT_HINT: &str = "Type q to quit";
 const HIDDEN_CHARACTERS_MESSAGE: &str = "Not copied: command contains hidden control characters";
@@ -197,6 +199,8 @@ impl AppState {
             // to the terminal's detected capability at startup.
             palette: Palette::basic(),
             file_gone: None,
+            write_notice: None,
+            in_place_noted: false,
             search: SearchState::default(),
             picker: PickerState::default(),
             help: HelpState::default(),
@@ -925,6 +929,19 @@ impl AppState {
     /// picker a click selects a row (see `picker_click`). Clicks outside the
     /// card, or off the checklist, are ignored.
     pub fn handle_left_click(&mut self, col: u16, row: u16) {
+        self.dispatch_left_click(col, row);
+        self.show_write_notice();
+    }
+
+    /// Shows a pending [`AppState::write_notice`], after the action's own
+    /// status.
+    fn show_write_notice(&mut self) {
+        if let Some(notice) = self.write_notice.take() {
+            self.set_error(notice);
+        }
+    }
+
+    fn dispatch_left_click(&mut self, col: u16, row: u16) {
         self.clear_pending_chords();
 
         if self.overlay == Some(Overlay::ListPicker) {
@@ -1161,7 +1178,12 @@ impl AppState {
             .ok()
             .and_then(|bytes| String::from_utf8(bytes).ok());
         let content = match writer::write_back(&self.document) {
-            Ok(content) => content,
+            Ok(saved) => {
+                if saved.in_place && !std::mem::replace(&mut self.in_place_noted, true) {
+                    self.write_notice = Some(IN_PLACE_MESSAGE.to_string());
+                }
+                saved.contents
+            }
             Err(err) => {
                 self.apply_snapshot(pre_state);
                 if writer::is_not_regular(&err) {
@@ -1170,7 +1192,10 @@ impl AppState {
                 } else if writer::is_read_only(&self.document.file_path) {
                     self.set_error(READ_ONLY_MESSAGE.to_string());
                 } else {
-                    self.set_error(format!("{fail_msg}: {err}"));
+                    self.set_error(format!(
+                        "{fail_msg}: {}",
+                        writer::describe_write_error(&err)
+                    ));
                 }
                 return false;
             }
@@ -1913,6 +1938,11 @@ impl AppState {
     /// Top-level key dispatch: modal overlays first, then card scroll, then
     /// global keys, then the view's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        self.dispatch_key(code, modifiers);
+        self.show_write_notice();
+    }
+
+    fn dispatch_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         self.clear_status();
 
         // Ctrl-Z suspends from every screen, overlays and search input

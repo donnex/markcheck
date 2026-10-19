@@ -293,8 +293,7 @@ pub fn sweep_interrupted_saves(checklist: &Path) -> usize {
         return 0;
     };
     let name = name.to_string_lossy();
-    remove_leftovers(dir, &format!(".{name}.markcheck-tmp-"))
-        + remove_leftovers(dir, &format!(".{name}.markcheck-new-"))
+    remove_leftovers(dir, &save_temp_prefix(&name)) + remove_leftovers(dir, &new_temp_prefix(&name))
 }
 
 /// Linux answers from `/proc`, with no external `ps` to be missing or to
@@ -405,10 +404,35 @@ pub fn read_checklist(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Why a save failed, in plain words for the common causes.
+pub fn describe_write_error(err: &io::Error) -> String {
+    match err.kind() {
+        io::ErrorKind::PermissionDenied => {
+            "no permission to write the file or its folder".to_string()
+        }
+        io::ErrorKind::StorageFull => "the disk is full".to_string(),
+        io::ErrorKind::QuotaExceeded => "your disk quota is used up".to_string(),
+        io::ErrorKind::ReadOnlyFilesystem => "the disk is mounted read-only".to_string(),
+        io::ErrorKind::NotFound => "the file or its folder no longer exists".to_string(),
+        io::ErrorKind::InvalidFilename => "the file name is too long to save next to".to_string(),
+        _ => err.to_string(),
+    }
+}
+
 /// True when the file's own permission bits deny all writing (`chmod a-w`),
 /// which `write_back` honors by refusing to save. False when it can't be read.
 pub fn is_read_only(target: &Path) -> bool {
     fs::metadata(target).is_ok_and(|metadata| metadata.permissions().readonly())
+}
+
+/// What a successful [`write_back`] wrote, and how.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Saved {
+    pub contents: String,
+    /// Written over the file in place rather than renamed into place,
+    /// because no temp file could be created beside it (a directory the user
+    /// can't write to). A crash mid-write could then leave it truncated.
+    pub in_place: bool,
 }
 
 /// Writes to a temp file in the same directory, fsyncs it, and renames it
@@ -416,9 +440,10 @@ pub fn is_read_only(target: &Path) -> bool {
 /// parent directory is fsynced too on unix. Permission bits (but never
 /// setuid, setgid or sticky) and, where the user may set it, the group are
 /// kept; hard links and another user's ownership
-/// are not. A read-only file is refused untouched. Returns the content
-/// written.
-pub fn write_back(document: &Document) -> io::Result<String> {
+/// are not. A read-only file is refused untouched. When the directory
+/// refuses the temp file but the file itself is writable, it is written in
+/// place instead (`Saved::in_place`).
+pub fn write_back(document: &Document) -> io::Result<Saved> {
     let mut lines = document.raw_lines.clone();
     for list in &document.lists {
         for item in &list.items {
@@ -457,19 +482,78 @@ pub fn write_back(document: &Document) -> io::Result<String> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file path has no file name"))?
         .to_string_lossy();
     let temp_path_base = document.file_path.with_file_name(format!(
-        ".{file_name}.markcheck-tmp-{}-{:x}",
+        "{}{}-{:x}",
+        save_temp_prefix(&file_name),
         std::process::id(),
         random_suffix()
     ));
 
     // `write_temp` cleans up after its own failures.
-    let temp_path = write_temp(&temp_path_base, &contents, &source)?;
+    let temp_path = match write_temp(&temp_path_base, &contents, &source) {
+        Ok(path) => path,
+        Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+            // The original error is the one worth reporting if this fails too.
+            write_in_place(&document.file_path, &contents).map_err(|_| err)?;
+            return Ok(Saved {
+                contents,
+                in_place: true,
+            });
+        }
+        Err(err) => return Err(err),
+    };
     if let Err(err) = fs::rename(&temp_path, &document.file_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(err);
     }
     sync_parent_dir(&document.file_path);
-    Ok(contents)
+    Ok(Saved {
+        contents,
+        in_place: false,
+    })
+}
+
+/// Truncates and rewrites `path` through a handle that refuses a symlink and
+/// is checked to be a regular file, then fsyncs it.
+fn write_in_place(path: &Path, contents: &str) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let file_type = file.metadata()?.file_type();
+    if !file_type.is_file() {
+        return Err(not_regular(file_type));
+    }
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()
+}
+
+/// The checklist name as it appears in a temp file's name, cut to a bounded
+/// prefix: with the dot, the tag, a PID and two hex suffixes added, a long
+/// name would otherwise pass the usual 255-byte limit and the save fail.
+pub(crate) fn temp_name_stem(file_name: &str) -> &str {
+    const MAX_STEM_BYTES: usize = 160;
+    if file_name.len() <= MAX_STEM_BYTES {
+        return file_name;
+    }
+    let mut end = MAX_STEM_BYTES;
+    while !file_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &file_name[..end]
+}
+
+/// `.<name>.markcheck-tmp-`, which a save's temp file starts with.
+fn save_temp_prefix(file_name: &str) -> String {
+    format!(".{}.markcheck-tmp-", temp_name_stem(file_name))
+}
+
+/// `.<name>.markcheck-new-`, which `--new`'s temp file starts with.
+pub(crate) fn new_temp_prefix(file_name: &str) -> String {
+    format!(".{}.markcheck-new-", temp_name_stem(file_name))
 }
 
 /// Best-effort fsync of `path`'s parent directory so the rename survives a

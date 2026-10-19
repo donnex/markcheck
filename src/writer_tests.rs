@@ -1222,3 +1222,88 @@ fn read_lock_token_reads_at_most_a_small_prefix() {
     fs::write(&path, "x".repeat(10_000)).unwrap();
     assert_eq!(read_lock_token(&path).unwrap().len(), 256);
 }
+
+/// A directory the test can make read-only, or `None` when the user can
+/// write to it anyway (root), where the case can't be set up.
+fn read_only_dir_with(name: &str, contents: &str) -> Option<(PathBuf, PathBuf)> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::test_support::unique_temp_path("writer", "ro-dir", None);
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join(name);
+    fs::write(&path, contents).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+    if fs::write(dir.join("probe"), "").is_ok() {
+        eprintln!("skipped: the directory stays writable (running as root?)");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        return None;
+    }
+    Some((dir, path))
+}
+
+#[test]
+fn a_checklist_in_a_read_only_folder_is_saved_in_place() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some((dir, path)) = read_only_dir_with("list.md", "- [ ] a\n") else {
+        return;
+    };
+    let mut document = parse_document(path.clone()).unwrap();
+    document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+
+    let saved = write_back(&document).unwrap();
+
+    assert!(saved.in_place);
+    assert_eq!(saved.contents, "- [x] a\n");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "- [x] a\n");
+    assert_eq!(
+        fs::read_dir(&dir).unwrap().count(),
+        1,
+        "no temp file was left"
+    );
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
+fn a_very_long_checklist_name_can_still_be_saved() {
+    let dir = crate::test_support::unique_temp_path("writer", "long-name", None);
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join(format!("{}.md", "n".repeat(227)));
+    fs::write(&path, "- [ ] a\n").unwrap();
+    let mut document = parse_document(path.clone()).unwrap();
+    document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+
+    let saved = write_back(&document).unwrap();
+
+    assert!(!saved.in_place, "the temp-and-rename path still worked");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "- [x] a\n");
+}
+
+#[test]
+fn temp_name_stem_cuts_a_long_name_at_a_character_boundary() {
+    assert_eq!(temp_name_stem("short.md"), "short.md");
+    let long = "é".repeat(100);
+    let stem = temp_name_stem(&long);
+    assert!(stem.len() <= 160 && stem.len() >= 159, "{}", stem.len());
+    assert!(long.starts_with(stem));
+}
+
+#[test]
+fn describe_write_error_names_the_common_causes_plainly() {
+    use io::ErrorKind::*;
+    for (kind, expected) in [
+        (
+            PermissionDenied,
+            "no permission to write the file or its folder",
+        ),
+        (StorageFull, "the disk is full"),
+        (QuotaExceeded, "your disk quota is used up"),
+        (ReadOnlyFilesystem, "the disk is mounted read-only"),
+        (NotFound, "the file or its folder no longer exists"),
+        (InvalidFilename, "the file name is too long to save next to"),
+    ] {
+        assert_eq!(describe_write_error(&io::Error::from(kind)), expected);
+    }
+    assert_eq!(
+        describe_write_error(&io::Error::other("something odd")),
+        "something odd"
+    );
+}

@@ -224,3 +224,13 @@ fn create_new_checklist_errors_on_missing_parent_directory() {
 
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_very_long_name_can_be_created() {
+    let dir = unique_temp_dir();
+    let path = dir.join(format!("{}.md", "n".repeat(227)));
+    let created = create_new_checklist(&path).unwrap();
+    assert!(created.exists());
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no temp file left");
+    fs::remove_dir_all(&dir).ok();
+}
