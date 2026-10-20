@@ -26,6 +26,8 @@ const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
 const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
 const CRITICAL_PROMPT: &str =
     "Critical step — press Space again to check it, any other key leaves it open";
+const CRITICAL_CLICK_PROMPT: &str =
+    "Critical step — click its marker again to check it, any other click or key leaves it open";
 const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
      so a crash mid-save could truncate the checklist";
 /// What Esc and Ctrl-C say on a screen with nothing to cancel.
@@ -890,6 +892,7 @@ impl AppState {
     /// like `k`/`j` (crossing list edges); it scrolls the `?` help overlay
     /// and moves the `T` picker highlight.
     pub fn handle_scroll_up(&mut self) {
+        self.critical_armed = None;
         self.clear_pending_chords();
         match (self.overlay, self.view) {
             (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_up(),
@@ -901,6 +904,7 @@ impl AppState {
     }
 
     pub fn handle_scroll_down(&mut self) {
+        self.critical_armed = None;
         self.clear_pending_chords();
         match (self.overlay, self.view) {
             (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_down(),
@@ -916,6 +920,7 @@ impl AppState {
     /// characters are dropped); everywhere else it is ignored with a sticky
     /// error, so a stray paste never runs its characters as commands.
     pub fn handle_paste(&mut self, text: &str) {
+        self.critical_armed = None;
         self.clear_pending_chords();
         let line: String = text
             .trim_end()
@@ -1052,7 +1057,7 @@ impl AppState {
 
         let new_state = toggled_done(state);
         let position = (self.current_list_index, self.current_item_index);
-        if new_state == TaskState::Done && !self.confirm_critical(position) {
+        if new_state == TaskState::Done && !self.confirm_critical(position, CRITICAL_PROMPT) {
             return;
         }
         if !self.set_current_state(new_state) {
@@ -1085,7 +1090,9 @@ impl AppState {
             return;
         };
         let new_state = toggled_done(state);
-        if new_state == TaskState::Done && !self.confirm_critical((list_index, item_index)) {
+        if new_state == TaskState::Done
+            && !self.confirm_critical((list_index, item_index), CRITICAL_CLICK_PROMPT)
+        {
             return;
         }
         if !self.set_state(list_index, item_index, new_state) {
@@ -1130,8 +1137,9 @@ impl AppState {
 
     /// Checking a critical task takes a second, deliberate press (#95): the
     /// first arms it and says so, the second (on the same task) confirms.
+    /// `prompt` names the action that confirms, which is the one that armed it.
     /// Returns whether the check may go ahead now.
-    fn confirm_critical(&mut self, position: (usize, usize)) -> bool {
+    fn confirm_critical(&mut self, position: (usize, usize), prompt: &str) -> bool {
         if !self.document.is_critical(position.0, position.1) {
             return true;
         }
@@ -1140,7 +1148,7 @@ impl AppState {
             return true;
         }
         self.critical_armed = Some(position);
-        self.set_notice(CRITICAL_PROMPT.to_string());
+        self.set_notice(prompt.to_string());
         false
     }
 

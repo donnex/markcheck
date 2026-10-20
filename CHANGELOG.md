@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A critical step armed by clicking its marker in the overview now asks you to click it again, rather than to press `Space`. `Space` acts on the current card, not the clicked one, so following the old prompt checked a different task. Scrolling the mouse wheel or pasting now also leaves an armed critical step open; before, a wheel away and back hid the prompt but kept the step armed, so the next `Space` checked it in what looked like a single press. (#179)
 - Git sync now says at startup when your git is too old for it, instead of appearing to work. It needs git 2.22 or newer, not git 2.0 as the README claimed; with an older git, such as the 2.17 or 2.20 still found on long-lived servers, every push was refused with a wrong reason ("`git push` would not push this branch …") and markcheck's own earlier commits were never pushed, so commits piled up locally. Git sync now stays off with `Git sync off: git 2.22 or newer is needed (found 2.17.1)`. (#169)
 - Pressing your terminal's interrupt key while editing a checklist with `e` no longer ends markcheck. Emacs uses `C-g` as that key, and line editors such as `ed` use `Ctrl-C`; once markcheck quit as soon as the editor closed, and twice killed it straight away while the editor was still open, leaving the editor stranded with any unsaved work at risk. The key now goes only to the editor. (#146)
 

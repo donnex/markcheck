@@ -6612,10 +6612,59 @@ fn an_overview_click_on_a_critical_task_also_needs_a_second_click() {
             .unwrap()
             .contains("- [ ] **! Reboot")
     );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Critical step — click its marker again")),
+        "the prompt names the click that confirms, not Space: {:?}",
+        state.status_message
+    );
     state.toggle_item(0, 1);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("- [x] **! Reboot"), "{text}");
+    assert!(
+        text.contains("- [ ] a"),
+        "the cursor's task is untouched: {text}"
+    );
+}
+
+#[test]
+fn the_wheel_or_a_paste_leaves_an_armed_critical_task_open() {
+    let path = write_real_file(
+        "## S
+
+- [ ] **! Fail over**
+- [ ] next
+",
+    );
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.handle_key(KeyCode::Char(' '));
+    state.handle_scroll_down();
+    state.handle_scroll_up();
+    assert_eq!(state.critical_armed, None, "the wheel disarmed it");
+    state.handle_key(KeyCode::Char(' '));
     assert!(
         fs::read_to_string(&path)
             .unwrap()
-            .contains("- [x] **! Reboot")
+            .contains("- [ ] **! Fail"),
+        "this Space only armed it again"
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Critical step — press Space again"))
+    );
+
+    state.handle_paste("text");
+    assert_eq!(state.critical_armed, None, "the paste disarmed it");
+    state.handle_key(KeyCode::Char(' '));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Fail"),
+        "still open after the paste"
     );
 }
