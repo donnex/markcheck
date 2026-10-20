@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -1675,9 +1676,94 @@ fn soft_wrapped(block: &str, width: usize) -> impl Iterator<Item = (String, bool
     })
 }
 
-/// Greedy word wrap over styled tokens `(text, SpanStyle, glue)`, measured in display
-/// cells and hard-splitting overlong tokens. Same wrapping contract as
-/// `wrap_text` but emits styled `Line`s with code fragments in the `code` style.
+/// One word for `greedy_wrap`: its text, whether it abuts the previous word
+/// on the row with no separating space, and a caller tag carried onto every
+/// piece cut from it.
+struct WrapWord<'a, T> {
+    text: &'a str,
+    glue: bool,
+    tag: T,
+}
+
+/// A piece of a wrapped row: the single space between two words, or (part
+/// of) a word with its tag.
+enum WrapPiece<'a, T> {
+    Space,
+    Word(&'a str, T),
+}
+
+/// A wrapped row. `marked` is set on a row holding a piece hard-split off a
+/// word whose tag asked for a continuation marker; one cell is left free for
+/// it.
+struct WrapRow<'a, T> {
+    pieces: Vec<WrapPiece<'a, T>>,
+    marked: bool,
+}
+
+/// The one greedy word-wrapper behind `wrap_text`, `wrap_tokens` and
+/// `wrap_modal_lines`: words are measured in display cells and joined by a
+/// single space (none before a glued word), a row is flushed when the next
+/// word doesn't fit, and a word wider than the whole row is hard-split onto
+/// rows of its own. `marks(tag)` says whether such a split row keeps its last
+/// cell for a continuation marker. Rendering and `desired_card_height` both
+/// go through here, so their line counts agree.
+fn greedy_wrap<'a, T: Copy>(
+    words: impl IntoIterator<Item = WrapWord<'a, T>>,
+    width: usize,
+    marks: impl Fn(T) -> bool,
+) -> Vec<WrapRow<'a, T>> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut current = Vec::new();
+    let mut used = 0usize;
+    for WrapWord { text, glue, tag } in words {
+        let mut rest = text;
+        loop {
+            let sep = usize::from(!current.is_empty() && !glue);
+            let fit = width
+                .checked_sub(used + sep)
+                .and_then(|avail| width_within(rest, avail));
+            if let Some(w) = fit {
+                if sep == 1 {
+                    current.push(WrapPiece::Space);
+                }
+                current.push(WrapPiece::Word(rest, tag));
+                used += sep + w;
+                break;
+            }
+            if current.is_empty() {
+                let marked = marks(tag) && width >= 2;
+                let cut = split_at_width(rest, if marked { width - 1 } else { width });
+                rows.push(WrapRow {
+                    pieces: vec![WrapPiece::Word(&rest[..cut], tag)],
+                    marked,
+                });
+                rest = &rest[cut..];
+                if rest.is_empty() {
+                    break;
+                }
+            } else {
+                rows.push(WrapRow {
+                    pieces: std::mem::take(&mut current),
+                    marked: false,
+                });
+                used = 0;
+            }
+        }
+    }
+    if !current.is_empty() {
+        rows.push(WrapRow {
+            pieces: current,
+            marked: false,
+        });
+    }
+    rows
+}
+
+/// Greedy word wrap over styled tokens `(text, SpanStyle, glue)` through
+/// `greedy_wrap`, emitting styled `Line`s with code fragments in the `code`
+/// style; a hard-split code chip ends each continued row with `↩`, so the
+/// command doesn't read as several.
 /// Each line comes with, per span, the index of the code token it came from
 /// (`None` for prose and spacing), so click-to-copy can map a chip — or any
 /// fragment of a hard-split one — back to its full text.
@@ -1686,16 +1772,10 @@ fn wrap_tokens(
     width: usize,
     code: Style,
 ) -> Vec<(Line<'static>, Vec<Option<usize>>)> {
-    let width = width.max(1);
-    let mut lines: Vec<(Line<'static>, Vec<Option<usize>>)> = Vec::new();
-    let mut current: Vec<Span<'static>> = Vec::new();
-    let mut origins: Vec<Option<usize>> = Vec::new();
-    let mut cur_len = 0usize;
-
-    let span_for = |text: String, style: SpanStyle| {
+    let span_for = |text: &str, style: SpanStyle| {
         if style.code {
             // Inline code keeps its chip style.
-            return Span::styled(text, code);
+            return Span::styled(text.to_string(), code);
         }
         let mut modifier = Modifier::empty();
         if style.emphasis {
@@ -1713,67 +1793,55 @@ fn wrap_tokens(
         if style.url {
             modifier |= Modifier::DIM;
         }
-        Span::styled(text, Style::default().add_modifier(modifier))
+        Span::styled(text.to_string(), Style::default().add_modifier(modifier))
     };
 
-    for (index, (word, style, glue)) in tokens.iter().enumerate() {
-        let origin = style.code.then_some(index);
-        let shown = if style.code {
-            expand_tabs(word)
-        } else {
-            word.as_str().into()
-        };
-        let mut rest: &str = &shown;
-        // Glued tokens abut the previous one with no separating space (unless
-        // this is the first token on the line). Only the first physical piece
-        // of a hard-split token inherits the glue.
-        let glued = *glue;
-        loop {
-            let sep = usize::from(!current.is_empty() && !glued);
-            let fit = width
-                .checked_sub(cur_len + sep)
-                .and_then(|avail| width_within(rest, avail));
-            if let Some(word_len) = fit {
-                if sep == 1 {
-                    current.push(Span::raw(" "));
-                    origins.push(None);
-                }
-                current.push(span_for(rest.to_string(), *style));
-                origins.push(origin);
-                cur_len += sep + word_len;
-                break;
-            }
-            if current.is_empty() {
-                // Hard-split a token longer than the whole line. A split code
-                // chip ends each continued row with the `↩` marker, so the
-                // command doesn't read as several.
-                let marked = style.code && width >= 2;
-                let take = if marked { width - 1 } else { width };
-                let rest_start = split_at_width(rest, take);
-                let mut spans = vec![span_for(rest[..rest_start].to_string(), *style)];
-                if marked {
-                    spans.push(Span::styled(CONTINUATION, continuation_style(code)));
-                }
-                let row_origins = vec![origin; spans.len()];
-                lines.push((Line::from(spans), row_origins));
-                rest = &rest[rest_start..];
-                if rest.is_empty() {
-                    break;
-                }
+    let shown: Vec<Cow<'_, str>> = tokens
+        .iter()
+        .map(|(word, style, _)| {
+            if style.code {
+                expand_tabs(word)
             } else {
-                // Flush the current line and retry the word on a fresh one.
-                lines.push((
-                    Line::from(std::mem::take(&mut current)),
-                    std::mem::take(&mut origins),
-                ));
-                cur_len = 0;
+                Cow::Borrowed(word.as_str())
             }
-        }
-    }
-    if !current.is_empty() {
-        lines.push((Line::from(current), origins));
-    }
-    lines
+        })
+        .collect();
+    let words = tokens
+        .iter()
+        .zip(&shown)
+        .enumerate()
+        .map(|(index, ((_, style, glue), text))| WrapWord {
+            text,
+            glue: *glue,
+            tag: (index, *style),
+        });
+    greedy_wrap(words, width, |(_, style)| style.code)
+        .into_iter()
+        .map(|row| {
+            let mut spans = Vec::with_capacity(row.pieces.len() + 1);
+            let mut origins = Vec::with_capacity(row.pieces.len() + 1);
+            let mut last_origin = None;
+            for piece in row.pieces {
+                match piece {
+                    WrapPiece::Space => {
+                        spans.push(Span::raw(" "));
+                        origins.push(None);
+                    }
+                    WrapPiece::Word(text, (index, style)) => {
+                        let origin = style.code.then_some(index);
+                        spans.push(span_for(text, style));
+                        origins.push(origin);
+                        last_origin = origin;
+                    }
+                }
+            }
+            if row.marked {
+                spans.push(Span::styled(CONTINUATION, continuation_style(code)));
+                origins.push(last_origin);
+            }
+            (Line::from(spans), origins)
+        })
+        .collect()
 }
 
 /// The display width of `text` when it fits in `avail` cells, else `None`.
@@ -1815,53 +1883,36 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Greedy word wrap on display cells, hard-splitting overlong words. The
-/// renderer and `desired_card_height` both wrap through here, so line counts
-/// are exact for scroll clamping.
+/// Greedy word wrap of plain text on display cells through `greedy_wrap`,
+/// with whitespace runs collapsed to one space; always at least one row, an
+/// empty one for empty text.
 pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
-    let width = width.max(1) as usize;
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in text.split_whitespace() {
-        let mut word = word;
-        loop {
-            let used = display_width(&current) + usize::from(!current.is_empty());
-            if width
-                .checked_sub(used)
-                .and_then(|avail| width_within(word, avail))
-                .is_some()
-            {
-                if !current.is_empty() {
-                    current.push(' ');
-                }
-                current.push_str(word);
-                break;
-            }
-            if current.is_empty() {
-                // Hard-split a word longer than the line.
-                let rest_start = split_at_width(word, width);
-                lines.push(word[..rest_start].to_string());
-                word = &word[rest_start..];
-                if word.is_empty() {
-                    break;
-                }
-            } else {
-                lines.push(std::mem::take(&mut current));
-            }
-        }
-    }
-    if !current.is_empty() {
-        lines.push(current);
-    }
+    let words = text.split_whitespace().map(|text| WrapWord {
+        text,
+        glue: false,
+        tag: (),
+    });
+    let mut lines: Vec<String> = greedy_wrap(words, usize::from(width), |()| false)
+        .into_iter()
+        .map(|row| {
+            row.pieces
+                .into_iter()
+                .map(|piece| match piece {
+                    WrapPiece::Space => " ",
+                    WrapPiece::Word(text, ()) => text,
+                })
+                .collect()
+        })
+        .collect();
     if lines.is_empty() {
         lines.push(String::new());
     }
     lines
 }
 
-/// Word-wraps each line wider than `width` cells, keeping every word's span
-/// style; lines that fit are kept exactly as built.
+/// Word-wraps each line wider than `width` cells through `greedy_wrap`,
+/// keeping every word's span style and the line's own style; lines that fit
+/// are kept exactly as built.
 fn wrap_modal_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
     let width = usize::from(width.max(1));
     let mut out = Vec::new();
@@ -1870,40 +1921,24 @@ fn wrap_modal_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>>
             out.push(line);
             continue;
         }
-        let line_style = line.style;
-        let mut rows: Vec<Vec<Span<'static>>> = vec![Vec::new()];
-        let mut used = 0usize;
-        for span in &line.spans {
-            for word in span.content.split_whitespace() {
-                let mut rest = word;
-                while !rest.is_empty() {
-                    let sep = usize::from(used > 0);
-                    let w = display_width(rest);
-                    if used + sep + w <= width {
-                        let row = rows.last_mut().expect("rows is never empty");
-                        if sep == 1 {
-                            row.push(Span::raw(" "));
-                        }
-                        row.push(Span::styled(rest.to_string(), span.style));
-                        used += sep + w;
-                        break;
-                    }
-                    if used == 0 {
-                        let cut = split_at_width(rest, width);
-                        let row = rows.last_mut().expect("rows is never empty");
-                        row.push(Span::styled(rest[..cut].to_string(), span.style));
-                        rest = &rest[cut..];
-                    }
-                    rows.push(Vec::new());
-                    used = 0;
-                }
-            }
-        }
-        out.extend(
-            rows.into_iter()
-                .filter(|row| !row.is_empty())
-                .map(|row| Line::from(row).style(line_style)),
-        );
+        let words = line.spans.iter().flat_map(|span| {
+            span.content.split_whitespace().map(|text| WrapWord {
+                text,
+                glue: false,
+                tag: span.style,
+            })
+        });
+        out.extend(greedy_wrap(words, width, |_| false).into_iter().map(|row| {
+            let spans: Vec<Span<'static>> = row
+                .pieces
+                .into_iter()
+                .map(|piece| match piece {
+                    WrapPiece::Space => Span::raw(" "),
+                    WrapPiece::Word(text, style) => Span::styled(text.to_string(), style),
+                })
+                .collect();
+            Line::from(spans).style(line.style)
+        }));
     }
     out
 }
@@ -2048,7 +2083,7 @@ fn completion_rule() -> Line<'static> {
 }
 
 /// What a reset will change, e.g. `3 done, 1 started and 2 skipped tasks`.
-fn reset_scope(done: usize, started: usize, skipped: usize) -> String {
+fn reset_summary(done: usize, started: usize, skipped: usize) -> String {
     let parts: Vec<String> = [(done, "done"), (started, "started"), (skipped, "skipped")]
         .into_iter()
         .filter(|&(count, _)| count > 0)
@@ -2087,7 +2122,7 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(""),
         Line::from(format!(
             "This marks {} (of {total}) as not started",
-            reset_scope(done, started, skipped)
+            reset_summary(done, started, skipped)
         )),
         Line::from(format!("and rewrites {file_name}.")),
     ];

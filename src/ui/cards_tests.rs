@@ -1161,3 +1161,108 @@ fn a_huge_inline_command_lays_out_quickly_and_shares_its_text() {
         assert!(targets.iter().all(|t| Rc::ptr_eq(t, targets[0])));
     }
 }
+
+fn wrap_rows(words: &[(&str, bool)], width: usize, marks: bool) -> Vec<(String, bool)> {
+    let words = words.iter().map(|&(text, glue)| WrapWord {
+        text,
+        glue,
+        tag: (),
+    });
+    greedy_wrap(words, width, |()| marks)
+        .into_iter()
+        .map(|row| {
+            let text = row
+                .pieces
+                .iter()
+                .map(|piece| match piece {
+                    WrapPiece::Space => " ",
+                    WrapPiece::Word(text, ()) => text,
+                })
+                .collect();
+            (text, row.marked)
+        })
+        .collect()
+}
+
+#[test]
+fn greedy_wrap_joins_glued_words_without_a_space() {
+    assert_eq!(
+        wrap_rows(&[("ab", false), (",", true), ("cd", false)], 10, false),
+        vec![("ab, cd".to_string(), false)]
+    );
+}
+
+#[test]
+fn greedy_wrap_flushes_a_row_when_the_next_word_does_not_fit() {
+    assert_eq!(
+        wrap_rows(&[("abc", false), ("de", false)], 5, false),
+        vec![("abc".to_string(), false), ("de".to_string(), false)]
+    );
+}
+
+#[test]
+fn greedy_wrap_leaves_a_cell_for_the_marker_only_when_asked() {
+    assert_eq!(
+        wrap_rows(&[("abcdefgh", false)], 4, true),
+        vec![
+            ("abc".to_string(), true),
+            ("def".to_string(), true),
+            ("gh".to_string(), false)
+        ]
+    );
+    assert_eq!(
+        wrap_rows(&[("abcdefg", false)], 4, false),
+        vec![("abcd".to_string(), false), ("efg".to_string(), false)]
+    );
+    assert_eq!(
+        wrap_rows(&[("abc", false)], 1, true),
+        vec![
+            ("a".to_string(), false),
+            ("b".to_string(), false),
+            ("c".to_string(), false)
+        ]
+    );
+}
+
+#[test]
+fn greedy_wrap_of_no_words_has_no_rows() {
+    assert!(wrap_rows(&[], 10, false).is_empty());
+}
+
+#[test]
+fn wrap_modal_lines_keeps_fitting_lines_and_word_wraps_wide_ones() {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let lines = vec![
+        Line::from("a  b"),
+        Line::from(vec![Span::raw("one two "), Span::styled("three", bold)]),
+    ];
+    let wrapped = wrap_modal_lines(lines, 7);
+    let text: Vec<String> = wrapped.iter().map(ToString::to_string).collect();
+    assert_eq!(text, vec!["a  b", "one two", "three"]);
+    assert_eq!(wrapped[2].spans[0].style, bold);
+}
+
+#[test]
+fn wrap_modal_lines_hard_splits_a_word_wider_than_the_card() {
+    let wrapped = wrap_modal_lines(vec![Line::from("abcdefgh ij")], 3);
+    let text: Vec<String> = wrapped.iter().map(ToString::to_string).collect();
+    assert_eq!(text, vec!["abc", "def", "gh", "ij"]);
+}
+
+#[test]
+fn wrap_tokens_marks_a_split_chip_and_maps_every_piece_to_it() {
+    let chip = SpanStyle {
+        code: true,
+        ..Default::default()
+    };
+    let tokens = vec![
+        ("go".to_string(), SpanStyle::default(), false),
+        ("abcdefgh".to_string(), chip, false),
+    ];
+    let rows = wrap_tokens(&tokens, 4, Style::default());
+    let text: Vec<String> = rows.iter().map(|(line, _)| line.to_string()).collect();
+    assert_eq!(text, vec!["go", "abc↩", "def↩", "gh"]);
+    assert_eq!(rows[0].1, vec![None]);
+    assert_eq!(rows[1].1, vec![Some(1), Some(1)]);
+    assert_eq!(rows[3].1, vec![Some(1)]);
+}
