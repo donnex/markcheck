@@ -1,10 +1,10 @@
 ---
 source: src/ui/golden_tests.rs
-expression: "screen(&mut state, 80, 24)"
+expression: "screen(&mut state, width, 24)"
 ---
- ≡ Deployment Runbook │ basics.md                            ☑ 3/12 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────
-╭ Go to task ──────────────────────── 14 items ╮  ┌ Overview ──────────────────┐
+ ≡ Deployment Runbook │ basics.md                            ☑ 3/14 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────────────────
+╭ Go to task ──────────────────────── 16 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Prepare              ▲
 │ ☑ Confirm access to example-host  — Prepare  │  │   ▪ Do not run against pr… ▓
 │ ◐ Warm the build cache  — Prepare            │  │   A short checklist showi… ▓
@@ -18,11 +18,11 @@ expression: "screen(&mut state, 80, 24)"
 │ ☑ Record the start time — an uppe…  — Verify │  │   ☐ Check the health endp… ▓
 │ ⊘ Restart the replica — skipped (…  — Verify │  │   ☐ Run the smoke tests    ▓
 │ ☑ 1. Confirm the change wi…  — Ordered steps │  │   ☐ ! Switch traffic to t… ▓
-│ ◐ 2. Notify the on-call ch…  — Ordered steps │  │   ☐ Tail the logs and wat… ▓
-│ ☐ 3. Announce completion  — Ordered steps    │  │   ☑ Record the start time… ▓
-│                                              │  │   ⊘ Restart the replica —… ▓
-│                                              │  │ • [3] Ordered steps        │
+│ ◐ 2. Notify the on-call ch…  — Ordered steps │  │   ☐ Tail the logs and wat… │
+│ ☐ 3. Announce completion  — Ordered steps    │  │   ☑ Record the start time… │
+│ ☐ 1) Remove the old release  — Wrap-up       │  │   ⊘ Restart the replica —… │
+│ ☐ 2) Close the change window  — Wrap-up      │  │ • [3] Ordered steps        │
 │                                              │  │   Task states work the sa… │
-│                                              │  │   ☑ 1. Confirm the change… ▼
+│                                              │  │   ▪ Important: Announce c… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

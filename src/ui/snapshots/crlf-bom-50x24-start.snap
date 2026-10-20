@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Windows-saved checklist │ crlf-bom.md     ☑ 1/3
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────
+
+
+
+
+                      • Check
+   Saved with Windows line endings (CRLF) and a
+ leading byte-order mark, as some Windows editors
+ write: the heading above is still the title, and
+      toggling a task keeps both in the file.
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/3 ┓
+┃                                                ┃
+┃                                                ┃
+┃     Toggle this task, then reopen the file     ┃
+┃                                                ┃
+┃                                                ┃
+┃                                                ┃
+┗ ◉●● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

@@ -64,3 +64,18 @@ Run these on the staging host before touching production.
 
 - [ ] `refresh-cache`
 - [ ] notes page `workspace-notes.md`
+
+## Handover
+
+> Hand over to the next shift only once every group above is signed off.
+
+```sh
+handover-tool status --all
+```
+
+<!-- markdownlint-disable MD022 -->
+- ## Hand over in writing, never only by voice
+- [ ] write the handover note
+- ## Share the note
+- [ ] post the note in the team channel
+<!-- markdownlint-enable MD022 -->

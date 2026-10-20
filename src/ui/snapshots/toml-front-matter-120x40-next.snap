@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Monthly review │ toml-front-matter.md                                                                           ☑ 0/3
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ ☐ Check the certificate e… │
+                                                                                          │ ❯ Prune the old build art… │
+                                                                                          │ ☐ Update the on-call rota  │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                        • Review                                          │                            │
+                                                                                          │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓               │                            │
+┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
+│   Check th┃               Prune the old build artifacts:                ┃            │  │                            │
+│  certifica┃                                                             ┃pdate the   │  │                            │
+│ expiry dat┃              prune-artifacts --older-than 30d               ┃-call rota  │  │                            │
+│           ┃                                                             ┃            │  │                            │
+└───────────┃                                                             ┃────────────┘  │                            │
+            ┗ ·◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

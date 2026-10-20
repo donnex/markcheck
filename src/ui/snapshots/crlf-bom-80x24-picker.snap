@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, 24)"
+---
+ ≡ Windows-saved checklist │ crlf-bom.md                                   ☑ 1/3
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
+╭ Go to task ───────────────────────── 3 items ╮  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ Saved with Windows line e… │
+│ ☐ Toggle this task, then reopen the file     │  │ ❯ Toggle this task, then … │
+│ ◐ Confirm the line endings are still CRLF: … │  │ ◐ Confirm the line ending… │
+│ ☑ Confirm the byte-order mark is still there │  │ ☑ Confirm the byte-order … │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

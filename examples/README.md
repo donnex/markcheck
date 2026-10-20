@@ -17,8 +17,11 @@ markcheck examples/basics.md
   the side cards show by its title), inline
   and fenced commands, a plain-bullet note card, and task states
   again on an ordered (numbered) list, whose cards and overview rows show
-  each step's `1.` / `2.` / `3.` number, plus
-  an uppercase `[X]` that counts as done.
+  each step's `1.` / `2.` / `3.` number (and, under `## Wrap-up`, the `1)` /
+  `2)` delimiter, kept as written), plus
+  an uppercase `[X]` that counts as done. The `> [!IMPORTANT]` alert under
+  `## Ordered steps` and the `> [!CAUTION]` one under `## Wrap-up` show in the
+  warning color like the `[!WARNING]` one, each with its label.
 - **`nested.md`** — nested / sub-lists under both a task and a plain note,
   at several depths, with the color-coded depth guides in the overview and the
   matching color-coded parent-chain breadcrumb shown on sub-item cards.
@@ -51,6 +54,10 @@ markcheck examples/basics.md
   opened by typing both digits after `o` — an `https://` and a `mailto:` one that `o`
   opens, plus a `file://` one that `o` refuses as an unsupported scheme, a
   bare URL in the task text that `o` opens just the same,
+  a `www.example.com` bare URL that opens as `http://` and an
+  `<https://…>` autolink, inline HTML (`<kbd>Enter</kbd>` shows as `Enter`, and
+  `line one<br>line two` as `line one line two`), an HTML block under a task
+  that isn't shown,
   a fenced block placed directly after a list that attaches to the list's last
   card, and a no-checkbox section that gets dropped (its bullets are counted
   in the startup note of what isn't shown).
@@ -69,12 +76,22 @@ markcheck examples/basics.md
   above the card. The `Extended verification › Line-by-line checks` group is
   deliberately long: scroll into it in a short window to see the sticky overview
   header pin the full path, and use `}` / `{` to jump between groups.
+  Under `## Handover`, a plain quote (behind a `│` bar) and a fenced code
+  block are the list's preamble, shown above its first card; a heading-only
+  `- ## …` bullet as the list's first item is its banner, and a later one
+  (`- ## Share the note`) is a titled note card, not a sub-section.
 - **`quick-tasks.md`** — items before any heading (the title-less default
   section) and the filename-derived title ("Quick Tasks") shown when there is
   no `# H1`.
 - **`front-matter.md`** — a leading YAML front-matter block (as Obsidian,
   Hugo or Jekyll write it) that markcheck skips: no list is named after the
   metadata, and toggling a task leaves the block untouched in the file.
+- **`toml-front-matter.md`** — the same with a TOML `+++` block (as Hugo
+  writes it): its `title` key is not used, so the `# H1` is still the title.
+- **`crlf-bom.md`** — a file saved with Windows (CRLF) line endings and a
+  leading byte-order mark: the first heading is still the title, and toggling
+  a task keeps both the line endings and the mark. `.gitattributes` marks it
+  `-text` so git never converts its line endings.
 - **`phases.md`** — a runbook split into phases with `#` headings: the first
   `# H1` is the title (its tasks form the untitled first list), and each later
   `# Upgrade` / `# Rollback` starts a list of its own, the same as a `## H2`,

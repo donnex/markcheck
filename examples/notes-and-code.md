@@ -4,6 +4,8 @@
 
 <!-- markdownlint-disable MD034 -- one task deliberately uses a bare URL, to show it is a link too -->
 
+<!-- markdownlint-disable MD033 -- two tasks deliberately use inline HTML and an HTML block, to show they are dropped -->
+
 <!-- markdownlint-disable MD010 -- one fenced block is deliberately tab-indented, to show tabs render as indentation -->
 
 Non-task content and the ways code is handled.
@@ -106,6 +108,18 @@ Non-task content and the ways code is handled.
   even though it still renders like any other link
 - [ ] Check the dashboard at https://example.com/status. A bare URL is a link
   too, as on GitHub, so `o` opens it; the trailing full stop is left out
+- [ ] Check the mirror at www.example.com/mirror, a `www.` bare URL that `o`
+  opens as `http://`, and the uptime page <https://example.com/uptime>, an
+  autolink in angle brackets — both are links like any other
+- [ ] Press <kbd>Enter</kbd> at the prompt — inline HTML tags are dropped but
+  the text between them is kept, and a dropped tag still counts as a space:
+  line one<br>line two
+- [ ] A task with an HTML block under it — the block is not shown on the card:
+
+  <div class="note">
+  This HTML block is dropped from the card.
+  </div>
+
 - [ ] Mail the [on-call owner](mailto:oncall@example.com) with `o` — `mailto:`
   is a safe scheme, so this one opens in your mail client
 

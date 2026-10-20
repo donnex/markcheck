@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Runbook │ basics.md                            ☑ 3/12 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────
+ ≡ Deployment Runbook │ basics.md                            ☑ 3/14 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Prepare              ▲
                                                   │   ▪ Do not run against pr… ▓
@@ -18,11 +18,11 @@ expression: "screen(&mut state, width, height)"
 ┃             Warm the build cache             ┃  │   ☐ Check the health endp… ▓
 ┃                                              ┃  │   ☐ Run the smoke tests    ▓
 ┃                                              ┃  │   ☐ ! Switch traffic to t… ▓
-┃                                              ┃  │   ☐ Tail the logs and wat… ▓
-┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☑ Record the start time… ▓
-                                                  │   ⊘ Restart the replica —… ▓
+┃                                              ┃  │   ☐ Tail the logs and wat… │
+┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☑ Record the start time… │
+                                                  │   ⊘ Restart the replica —… │
                                                   │ • [3] Ordered steps        │
                                                   │   Task states work the sa… │
-                                                  │   ☑ 1. Confirm the change… ▼
+                                                  │   ▪ Important: Announce c… ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

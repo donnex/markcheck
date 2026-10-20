@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/12 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────
+ ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/14 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Prepare              │
                                                                                           │   ▪ Do not run against pr… │
@@ -23,14 +23,14 @@ expression: "screen(&mut state, width, height)"
             ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │   ⊘ Restart the replica —… │
 ┌ ◐ ────────┃                                                             ┃────────────┐  │ • [3] Ordered steps        │
 │           ┃                Check out the release branch:                ┃Build the   │  │   Task states work the sa… │
-│   Warm the┃                                                             ┃artifact    │  │   ☑ 1. Confirm the change… │
-│  build cac┃                    git checkout release                     ┃            │  │   ◐ 2. Notify the on-call… │
-│           ┃                                                             ┃ompile and  │  │   ☐ 3. Announce completion │
-└───────────┃                                                             ┃────────────┘  │                            │
-            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
-                                                                                          │                            │
-                                                                                          │                            │
-                                                                                          │                            │
+│   Warm the┃                                                             ┃artifact    │  │   ▪ Important: Announce c… │
+│  build cac┃                    git checkout release                     ┃            │  │   ☑ 1. Confirm the change… │
+│           ┃                                                             ┃ompile and  │  │   ◐ 2. Notify the on-call… │
+└───────────┃                                                             ┃────────────┘  │   ☐ 3. Announce completion │
+            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │ • [4] Wrap-up              │
+                                                                                          │   ▪ Caution: Keep the old… │
+                                                                                          │   ☐ 1) Remove the old rel… │
+                                                                                          │   ☐ 2) Close the change w… │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

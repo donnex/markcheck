@@ -15,6 +15,7 @@ markcheck/
 ├── about.toml, about.hbs, deny.toml   # license allow-lists (cargo-about, cargo-deny)
 ├── .cargo/mutants.toml # cargo-mutants scope and exclusions for the guard mutation tests
 ├── examples/           # sample checklists covering every Markdown feature; golden-test fixtures
+├── .gitattributes      # keeps examples/crlf-bom.md's CRLF line endings out of git's normalisation
 ├── tests/              # cli.rs (binary, non-interactive), pty.rs (binary under a PTY), common/
 └── src/
     ├── main.rs          # Wiring only: terminal setup, signals, event loop, effect host, startup messages

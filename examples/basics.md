@@ -38,6 +38,17 @@ a note card.
 Task states work the same on an ordered (numbered) list as on a
 plain bulleted one, and each card and overview row shows the step's number.
 
+> [!IMPORTANT]
+> Announce completion only after the change window has closed.
+
 1. [x] Confirm the change window is open
 2. [/] Notify the on-call channel
 3. [ ] Announce completion
+
+## Wrap-up
+
+> [!CAUTION]
+> Keep the old release running until every step below is done.
+
+1) [ ] Remove the old release
+2) [ ] Close the change window

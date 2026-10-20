@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/12 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────
+ ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/14 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Prepare              │
                                                                                           │   ▪ Do not run against pr… │
@@ -23,14 +23,14 @@ expression: "screen(&mut state, width, height)"
             ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓               │   ⊘ Restart the replica —… │
 ┌ ☑ ────────┃                                                             ┃────────────┐  │ • [3] Ordered steps        │
 │    Confirm┃                                                             ┃eck out the │  │   Task states work the sa… │
-│   access t┃                    Warm the build cache                     ┃ release    │  │   ☑ 1. Confirm the change… │
-│ example-ho┃                                                             ┃ranch: git  │  │   ◐ 2. Notify the on-call… │
-│           ┃                                                             ┃checkout    │  │   ☐ 3. Announce completion │
-└───────────┃                                                             ┃────────────┘  │                            │
-            ┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
-                                                                                          │                            │
-                                                                                          │                            │
-                                                                                          │                            │
+│   access t┃                    Warm the build cache                     ┃ release    │  │   ▪ Important: Announce c… │
+│ example-ho┃                                                             ┃ranch: git  │  │   ☑ 1. Confirm the change… │
+│           ┃                                                             ┃checkout    │  │   ◐ 2. Notify the on-call… │
+└───────────┃                                                             ┃────────────┘  │   ☐ 3. Announce completion │
+            ┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │ • [4] Wrap-up              │
+                                                                                          │   ▪ Caution: Keep the old… │
+                                                                                          │   ☐ 1) Remove the old rel… │
+                                                                                          │   ☐ 2) Close the change w… │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

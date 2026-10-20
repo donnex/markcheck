@@ -99,6 +99,102 @@ fn example_reference_list_keeps_its_banner_and_copyable_note() {
     );
 }
 
+fn example_document(file: &str) -> Document {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join(file);
+    parse_document(path).expect("example parses")
+}
+
+fn example_list<'a>(document: &'a Document, title: &str) -> &'a List {
+    document
+        .lists
+        .iter()
+        .find(|list| list.title == title)
+        .unwrap_or_else(|| panic!("example must have a {title:?} list"))
+}
+
+fn preamble_kinds_before(document: &Document, item: &Item) -> Vec<PreambleKind> {
+    document
+        .preambles
+        .get(&item.line_number)
+        .map(|blocks| blocks.iter().map(|block| block.kind).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn examples_cover_inline_html_and_every_bare_link_form() {
+    let kbd = example_item("notes-and-code.md", "Press Enter at the prompt");
+    assert!(kbd.display_text.contains("line one line two"));
+    assert!(!kbd.display_text.contains('<'));
+    let block = example_item("notes-and-code.md", "A task with an HTML block");
+    assert!(!block.display_text.contains("dropped from the card"));
+    let mirror = example_item("notes-and-code.md", "Check the mirror");
+    assert_eq!(
+        mirror.link_urls(),
+        [
+            "http://www.example.com/mirror",
+            "https://example.com/uptime"
+        ]
+    );
+}
+
+#[test]
+fn examples_cover_every_alert_and_the_paren_delimiter() {
+    let document = example_document("basics.md");
+    let wrap_up = example_list(&document, "Wrap-up");
+    assert_eq!(wrap_up.items[1].ordinal.as_deref(), Some("2)"));
+    let alerts: Vec<&str> = document
+        .preambles
+        .values()
+        .flatten()
+        .filter(|block| block.kind == PreambleKind::Alert)
+        .map(|block| block.text.as_str())
+        .collect();
+    for label in ["Warning", "Important", "Caution"] {
+        assert!(
+            alerts.iter().any(|text| text.starts_with(label)),
+            "basics.md must show a {label} alert: {alerts:?}"
+        );
+    }
+}
+
+#[test]
+fn example_handover_has_a_heading_banner_and_a_quote_and_code_preamble() {
+    let document = example_document("sub-sections.md");
+    let handover = example_list(&document, "Handover");
+    assert_eq!(
+        handover.banner.as_deref(),
+        Some("Hand over in writing, never only by voice")
+    );
+    let share = &handover.items[1];
+    assert_eq!(share.header.as_deref(), Some("Share the note"));
+    assert_eq!(share.kind, ItemKind::DisplayOnly);
+    assert_eq!(
+        preamble_kinds_before(&document, &handover.items[0]),
+        [PreambleKind::Quote, PreambleKind::Code]
+    );
+}
+
+#[test]
+fn example_toml_front_matter_is_skipped() {
+    let document = example_document("toml-front-matter.md");
+    assert_eq!(document.title.as_deref(), Some("Monthly review"));
+    let titles: Vec<&str> = document.lists.iter().map(|l| l.title.as_str()).collect();
+    assert_eq!(titles, ["Review"]);
+}
+
+#[test]
+fn example_crlf_bom_file_keeps_its_line_endings_and_title() {
+    let raw = fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/crlf-bom.md"))
+        .expect("readable example");
+    assert!(raw.starts_with("\u{FEFF}".as_bytes()));
+    assert!(raw.windows(2).filter(|w| w == b"\r\n").count() > 5);
+    assert!(!raw.windows(2).any(|w| w[1] == b'\n' && w[0] != b'\r'));
+    let document = example_document("crlf-bom.md");
+    assert_eq!(document.title.as_deref(), Some("Windows-saved checklist"));
+}
+
 #[test]
 fn dropped_notes_list_does_not_supply_the_banner() {
     let document = parse("## A\n\n- **Notes only**\n- some note\n\n* [ ] task\n");

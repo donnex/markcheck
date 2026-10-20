@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Deployment Runbook │ basics.md                            ☑ 3/12 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────
+ ≡ Deployment Runbook │ basics.md                            ☑ 3/14 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────────────────
 ╭ Keybindings ─────────────────────────────────────────────────────────────────╮
 │                                                                              ▲
 │  h j k l  ← → ↑ ↓   prev / next task (crosses lists)                         ▓

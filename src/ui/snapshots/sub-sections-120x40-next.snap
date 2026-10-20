@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Release checklist │ sub-sections.md                                                                            ☑ 1/30
-━━━━━━━━────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ≡ Release checklist │ sub-sections.md                                                                            ☑ 1/32
+━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Deploy               ▲
                                                                                           │   ☐ refresh-cache          ▓
@@ -31,10 +31,10 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ verify service C resp… ▓
                                                                                           │   ☐ confirm queue depth i… ▓
                                                                                           │   ☐ confirm cache hit rat… ▓
-                                                                                          │   ☐ confirm error rate is… ▓
-                                                                                          │   ☐ check disk usage on t… ▓
-                                                                                          │   ☐ check disk usage on t… ▓
-                                                                                          │   ☐ check memory headroom… ▓
+                                                                                          │   ☐ confirm error rate is… │
+                                                                                          │   ☐ check disk usage on t… │
+                                                                                          │   ☐ check disk usage on t… │
+                                                                                          │   ☐ check memory headroom… │
                                                                                           │   ☐ confirm scheduled job… │
                                                                                           │   ☐ confirm overnight bac… │
                                                                                           │   ☐ confirm alerting is a… │

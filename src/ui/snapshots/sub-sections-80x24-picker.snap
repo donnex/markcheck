@@ -1,10 +1,10 @@
 ---
 source: src/ui/golden_tests.rs
-expression: "screen(&mut state, 80, 24)"
+expression: "screen(&mut state, width, 24)"
 ---
- ≡ Release checklist │ sub-sections.md                                    ☑ 1/30
+ ≡ Release checklist │ sub-sections.md                                    ☑ 1/32
 ━━━━────────────────────────────────────────────────────────────────────────────
-╭ Go to task ──────────────────────── 31 items ╮  ┌ Overview ──────────────────┐
+╭ Go to task ──────────────────────── 34 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Deploy               ▲
 │ ☐ refresh-cache  — Deploy                    │  │   ❯ refresh-cache          ▓
 │ ☐ build-tool sync --profile defau…  — Deploy │  │   ☐ build-tool sync --pro… ▓
@@ -13,7 +13,7 @@ expression: "screen(&mut state, 80, 24)"
 │ ☐ take a snapshot: sna…  — Deploy › Pre-fli… │  │   ☐ confirm the staging h… ▓
 │ ☐ confirm the snapshot…  — Deploy › Pre-fli… │  │   ◐ run verify-output and… ▓
 │ ☑ restart-service  — Deploy › Rollout        │  │     ── Data safety ─────── ▓
-│ ☐ check-status example-…  — Deploy › Rollout │  │   ☐ take a snapshot: snap… ▓
+│ ☐ check-status example-…  — Deploy › Rollout │  │   ☐ take a snapshot: snap… │
 │ ▪ Watch the dashboards  — Deploy › Rollout   │  │   ☐ confirm the snapshot … │
 │ ☐ confirm the error rat…  — Deploy › Rollout │  │   ── Rollout ───────────── │
 │ ☐ announce the rollout …  — Deploy › Rollout │  │   ☑ restart-service        │

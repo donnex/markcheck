@@ -2,9 +2,9 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Deployment Ru… │ basics.md  ☑ 3/12 (+1 skipped)
- [1] Prepare   [2] Verify   [3] Ordered steps
-━━━━━━━━━━━━━━━━━━━━──────────────────────────────
+ ≡ Deployment Ru… │ basics.md  ☑ 3/14 (+1 skipped)
+ [1] Pre…   [2] Ver…   [3] Ordered…   [4] Wra…
+━━━━━━━━━━━━━━━━━─────────────────────────────────
 ╭ Keybindings ───────────────────────────────────╮
 │                                                ▲
 │  h j k l  ← → ↑ ↓   prev / next task (crosses  ▓

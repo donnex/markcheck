@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Notes, Banners, an… │ notes-and-code.md  ☑ 0/24
+ ≡ Notes, Banners, an… │ notes-and-code.md  ☑ 0/27
  [1] Ref…   [2] Precondition …   [3] Fence af…
 ──────────────────────────────────────────────────
 ╭ Keybindings ───────────────────────────────────╮
