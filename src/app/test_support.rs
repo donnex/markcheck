@@ -15,6 +15,14 @@ pub(super) use crate::test_support::{RecordingHost, shown};
 /// Peeks at and takes the effects a test cares about, the way the main loop
 /// would drain them.
 impl AppState {
+    pub(super) fn disk_content_diverged(&self) -> bool {
+        self.content_diverged(
+            crate::writer::read_checklist(&self.document.file_path)
+                .ok()
+                .as_deref(),
+        )
+    }
+
     pub(super) fn quit_requested(&self) -> bool {
         self.effects.contains(&Effect::Quit)
     }

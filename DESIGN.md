@@ -210,8 +210,8 @@ Called synchronously on every write; the file is never observed half-written.
 **`commit_write`, the one write path.** Every mutating action ends here:
 
 1. Take the `WriteLock` (below). `Busy` rolls back with `Another markcheck is saving this file — change not saved, please retry (if this persists, remove <lock path>)`.
-2. `disk_content_diverged()`: re-hash the file (`read_checklist`) and compare with `file_content_hash`. A mismatch means another writer changed it since we last looked; roll back, `force_reload()` (a reload bypassing the mtime/size short-circuit) and show `File changed on disk — reloaded; change not saved, please retry`.
-3. Read the pre-write content (for git sync's staged-target guard, and as `git_sync.unsynced_base` when none is held), then `write_back`. On failure roll back (`apply_snapshot`, so memory never diverges from disk) and show why (see Write-Back). A refused non-regular path sets `FileGone::NotRegular`.
+2. Read the file once (`read_checklist`) and `content_diverged()`: hash those bytes and compare with `file_content_hash`. A mismatch means another writer changed it since we last looked; roll back, `force_reload()` (a reload bypassing the mtime/size short-circuit) and show `File changed on disk — reloaded; change not saved, please retry`.
+3. Keep the same bytes as the pre-write content (for git sync's staged-target guard, and as `git_sync.unsynced_base` when none is held), never a second read, so it is the revision the check matched; then `write_back`. On failure roll back (`apply_snapshot`, so memory never diverges from disk) and show why (see Write-Back). A refused non-regular path sets `FileGone::NotRegular`.
 4. On success refresh `file_mtime`/`file_size` (the self-write filter), `file_content_hash` from the content written, and `last_update_at`; note an in-place save once (`write_notice`, shown after the action's own status); queue `Effect::GitSync` with the change description.
 
 The fingerprint is always taken from the document's own bytes (`writer::document_contents`), never from a second read, so it can't describe a different revision than the one in memory.

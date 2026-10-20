@@ -1292,3 +1292,16 @@ fn toggles_carry_the_content_before_the_first_unsynced_change_as_their_base() {
     assert_eq!(second.base, expected, "a refused sync keeps the base");
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn content_diverged_compares_the_bytes_in_hand_and_fails_open_without_them() {
+    let (state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
+
+    assert!(!state.content_diverged(Some(WRITE_PATH_MARKDOWN.as_bytes())));
+    assert!(state.content_diverged(Some(b"## Other\n\n- [ ] changed\n")));
+    assert!(
+        !state.content_diverged(None),
+        "an unreadable file fails open; write_back reports it"
+    );
+    fs::remove_file(&path).ok();
+}

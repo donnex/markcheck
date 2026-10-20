@@ -2,7 +2,6 @@
 //! skipping, critical-step confirmation, the guarded write, and git-sync
 //! reporting.
 
-use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::effect::Effect;
@@ -24,15 +23,6 @@ pub(super) const CRITICAL_PAUSE: Duration = Duration::from_millis(500);
 
 pub(super) const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
      so a crash mid-save could truncate the checklist";
-
-/// Hash of `path`'s current on-disk bytes, or `None` if it can't be read.
-/// The pre-write content check, made a compare-and-swap between instances
-/// by `writer::WriteLock`.
-pub(super) fn current_content_hash(path: &Path) -> Option<[u8; 32]> {
-    writer::read_checklist(path)
-        .ok()
-        .map(|bytes| hash_bytes(&bytes))
-}
 
 /// Space/Enter and the overview click toggle *done*: a done task reverts to
 /// not started, anything else (started included) completes.
@@ -316,7 +306,8 @@ impl AppState {
             }
         };
 
-        if self.disk_content_diverged() {
+        let on_disk = writer::read_checklist(&self.document.file_path).ok();
+        if self.content_diverged(on_disk.as_deref()) {
             self.apply_snapshot(pre_state);
             self.force_reload();
             self.set_error(
@@ -325,10 +316,9 @@ impl AppState {
             return false;
         }
         // The pre-write content for git-sync's staged-target guard, which compares
-        // in git's terms so clean filters apply.
-        let previous_content = writer::read_checklist(&self.document.file_path)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok());
+        // in git's terms so clean filters apply. The bytes just checked, so it is
+        // the revision the check matched.
+        let previous_content = on_disk.and_then(|bytes| String::from_utf8(bytes).ok());
         let content = match writer::write_back(&self.document) {
             Ok(saved) => {
                 if saved.in_place && !std::mem::replace(&mut self.in_place_noted, true) {
@@ -377,14 +367,12 @@ impl AppState {
         true
     }
 
-    /// True when the file's on-disk content no longer matches
+    /// True when `on_disk`, the file's bytes as just read, no longer match
     /// `file_content_hash`, i.e. someone else changed it since we last saw it.
-    /// Fails open when the file can't be read; `write_back` reports that.
-    pub(super) fn disk_content_diverged(&self) -> bool {
-        match current_content_hash(&self.document.file_path) {
-            Some(hash) => Some(hash) != self.file_content_hash,
-            None => false,
-        }
+    /// Fails open when the file couldn't be read (`None`); `write_back` reports
+    /// that.
+    pub(super) fn content_diverged(&self, on_disk: Option<&[u8]>) -> bool {
+        on_disk.is_some_and(|bytes| Some(hash_bytes(bytes)) != self.file_content_hash)
     }
 
     /// Queues `sync`, replacing one not yet handed to the worker: only the
