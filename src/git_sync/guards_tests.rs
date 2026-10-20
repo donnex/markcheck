@@ -624,3 +624,98 @@ fn unresolved_conflicts_and_a_detached_head_are_named() {
     );
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
+
+#[test]
+fn the_range_walk_ignores_config_that_would_hide_a_path() {
+    let work = init_repo_without_remote();
+    for (key, value) in [
+        ("diff.renames", "true"),
+        ("log.showRoot", "false"),
+        ("color.ui", "always"),
+    ] {
+        run(&work, &["config", key, value]);
+    }
+    let root = current_head(&work).unwrap();
+    assert_eq!(
+        range_has_unrelated_commits(&work, None, &root, "other.md"),
+        Ok(true),
+        "the root commit's own paths must be listed"
+    );
+
+    fs::write(work.join("notes.txt"), "- [ ] same\n").unwrap();
+    run(&work, &["add", "notes.txt"]);
+    run(&work, &["commit", "-q", "-m", "notes"]);
+    let base = current_head(&work).unwrap();
+    run(&work, &["mv", "notes.txt", "renamed.md"]);
+    run(&work, &["commit", "-q", "-m", "rename into a checklist"]);
+    let tip = current_head(&work).unwrap();
+    assert_eq!(
+        range_has_unrelated_commits(&work, Some(&base), &tip, "renamed.md"),
+        Ok(true),
+        "a rename must list the path it came from"
+    );
+
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_path_named_like_a_commit_is_not_read_as_one() {
+    let (work, _remote) = init_repo_with_remote();
+    fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "checklist"]);
+    let sha_name = current_head(&work).unwrap();
+    fs::write(work.join(&sha_name), "x\n").unwrap();
+    run(&work, &["add", "--", &sha_name]);
+    run(&work, &["commit", "-q", "-m", "hex-named file"]);
+    let tip = current_head(&work).unwrap();
+
+    assert!(matches!(
+        unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOrThisChecklist),
+        Ok(UnpushedHistory::Blocked(blocking))
+            if blocking.subject == "hex-named file" && blocking.sha == tip
+    ));
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_log_listing_is_split_into_commits_without_guessing() {
+    let listing = b"\0aaaa\0\0markcheck\n\0own\0\n\nodd.md\0bbbb\0\
+\0cccc\0aaaa\0\0empty\0\
+\0dddd\0aaaa cccc\0\0merge\0";
+    let commits = parse_range_commits(listing).unwrap();
+    let summary: Vec<_> = commits
+        .iter()
+        .map(|c| (c.sha.as_str(), c.is_merge, c.paths.clone(), c.own_trailer))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (
+                "aaaa",
+                false,
+                vec![b"\nodd.md".to_vec(), b"bbbb".to_vec()],
+                true
+            ),
+            ("cccc", false, vec![], false),
+            ("dddd", true, vec![], false),
+        ]
+    );
+    assert_eq!(commits[2].subject, "merge");
+    assert!(parse_range_commits(b"").unwrap().is_empty());
+}
+
+#[test]
+fn an_unexpected_log_listing_is_an_error() {
+    for listing in [
+        &b"stray\0"[..],
+        b"\0aaaa\0\0",
+        b"\0not-hex\0\0\0subject\0",
+        b"\0\0\0\0subject\0",
+    ] {
+        assert!(
+            parse_range_commits(listing).is_err(),
+            "{:?}",
+            String::from_utf8_lossy(listing)
+        );
+    }
+}

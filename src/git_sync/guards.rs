@@ -6,9 +6,7 @@ use std::path::Path;
 use super::inspect::{
     blob_sha_for, current_branch_ref, git_dir, index_blob, parse_first_parent, resolve_upstream,
 };
-use super::process::{
-    PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout, run_with_timeout_and_stdin,
-};
+use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout};
 use super::shared::SyncOutcome;
 
 /// The trailer every commit markcheck makes carries, so a later sync can
@@ -64,94 +62,128 @@ pub(super) fn unpushed_history(
     let Some(upstream) = resolve_upstream(repo_root)? else {
         return Ok(UnpushedHistory::NoUpstream);
     };
-    let range = format!("{upstream}..{tip}");
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-list", "--reverse", "--parents", &range]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git rev-list failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git rev-list", &output));
-    }
-    let listing = String::from_utf8_lossy(&output.stdout);
-    let mut commits = 0;
+    let commits = range_commits(repo_root, &format!("{upstream}..{tip}"))?;
     // Oldest first, so a refusal names the commit that has waited longest.
-    for line in listing.lines() {
-        let mut tokens = line.split_whitespace();
-        let Some(sha) = tokens.next() else { continue };
-        commits += 1;
-        let is_merge = tokens.count() > 1;
-        if is_merge || !publishable(repo_root, sha, relpath, rule)? {
-            return Ok(UnpushedHistory::Blocked(Blocking {
-                sha: sha.to_string(),
-                subject: commit_subject(repo_root, sha)?,
-            }));
-        }
-    }
-    Ok(UnpushedHistory::Safe(commits))
-}
-/// Whether one non-merge commit may be published under `rule`.
-fn publishable(
-    repo_root: &Path,
-    sha: &str,
-    relpath: &str,
-    rule: Publishable,
-) -> Result<bool, String> {
-    let paths = commit_paths(repo_root, sha)?;
-    let own = matches!(paths.as_slice(), [path] if is_checklist_path(path))
-        && carries_own_trailer(repo_root, sha)?;
-    let this_checklist = paths
+    match commits
         .iter()
-        .all(|path| path.as_slice() == relpath.as_bytes());
-    Ok(own || (rule == Publishable::OwnOrThisChecklist && this_checklist))
+        .find(|commit| !publishable(commit, relpath, rule))
+    {
+        Some(commit) => Ok(UnpushedHistory::Blocked(Blocking {
+            sha: commit.sha.clone(),
+            subject: commit.subject.clone(),
+        })),
+        None => Ok(UnpushedHistory::Safe(commits.len())),
+    }
 }
-fn is_checklist_path(path: &[u8]) -> bool {
-    path.len() > 3 && path[path.len() - 3..].eq_ignore_ascii_case(b".md")
+/// What the guards need to know about one commit of a range.
+#[derive(Debug)]
+struct RangeCommit {
+    sha: String,
+    is_merge: bool,
+    /// Empty for a merge, which is never diffed.
+    paths: Vec<Vec<u8>>,
+    own_trailer: bool,
+    subject: String,
 }
-/// The paths one commit changed. `--no-commit-id` makes every field a path.
-fn commit_paths(repo_root: &Path, sha: &str) -> Result<Vec<Vec<u8>>, String> {
+/// Every commit in `range`, oldest first, from one `git log`. The format
+/// opens each commit with an empty field, which no path can be, so a path
+/// can never be misread as the next commit. Options a user's config could
+/// otherwise flip (renames, the root diff, colour, signatures, submodule
+/// hiding, the output encoding) are pinned.
+fn range_commits(repo_root: &Path, range: &str) -> Result<Vec<RangeCommit>, String> {
+    let format = format!(
+        "--format=%x00%H%x00%P%x00%(trailers:key={OWN_TRAILER_KEY},valueonly,unfold)%x00%s"
+    );
     let mut cmd = git_command(repo_root);
     cmd.args([
-        "diff-tree",
+        "log",
+        "--reverse",
         "--root",
-        "--no-commit-id",
+        "--no-renames",
+        "--no-color",
+        "--no-show-signature",
+        "--ignore-submodules=none",
+        "--encoding=UTF-8",
         "--name-only",
-        "-r",
         "-z",
-        sha,
+        &format,
+        range,
+        "--",
     ]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git diff-tree failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git diff-tree", &output));
-    }
-    Ok(output
-        .stdout
-        .split(|&b| b == 0)
-        .filter(|path| !path.is_empty())
-        .map(<[u8]>::to_vec)
-        .collect())
-}
-pub(super) fn carries_own_trailer(repo_root: &Path, sha: &str) -> Result<bool, String> {
-    let format = format!("--format=%(trailers:key={OWN_TRAILER_KEY},valueonly,separator=%x00)");
-    let output = commit_log(repo_root, sha, &format)?;
-    Ok(output
-        .split('\0')
-        .any(|value| value.trim() == OWN_TRAILER_VALUE))
-}
-fn commit_subject(repo_root: &Path, sha: &str) -> Result<String, String> {
-    Ok(commit_log(repo_root, sha, "--format=%s")?
-        .trim()
-        .to_string())
-}
-fn commit_log(repo_root: &Path, sha: &str, format: &str) -> Result<String, String> {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["log", "-1", format, sha]);
     let output =
         run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git log failed: {err}"))?;
     if !output.status.success() {
         return Err(command_error("git log", &output));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    parse_range_commits(&output.stdout)
+}
+fn parse_range_commits(stdout: &[u8]) -> Result<Vec<RangeCommit>, String> {
+    let unreadable = || "could not read git log's list of commits".to_string();
+    let mut fields = stdout.split(|&b| b == 0).peekable();
+    let mut commits = Vec::new();
+    while let Some(marker) = fields.next() {
+        if !marker.is_empty() {
+            return Err(unreadable());
+        }
+        let Some(sha) = fields.next() else {
+            break;
+        };
+        let (Some(parents), Some(trailers), Some(subject)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            return Err(unreadable());
+        };
+        if sha.is_empty() || !sha.iter().all(u8::is_ascii_hexdigit) {
+            return Err(unreadable());
+        }
+        let mut paths = Vec::new();
+        while let Some(path) = fields.next_if(|field| !field.is_empty()) {
+            let path = match (paths.is_empty(), path) {
+                (true, [b'\n', rest @ ..]) => rest,
+                _ => path,
+            };
+            paths.push(path.to_vec());
+        }
+        commits.push(RangeCommit {
+            sha: String::from_utf8_lossy(sha).into_owned(),
+            is_merge: parents.split(|&b| b == b' ').count() > 1,
+            paths,
+            own_trailer: String::from_utf8_lossy(trailers)
+                .lines()
+                .any(|value| value.trim() == OWN_TRAILER_VALUE),
+            subject: String::from_utf8_lossy(subject).trim().to_string(),
+        });
+    }
+    Ok(commits)
+}
+/// Whether one commit may be published under `rule`. A merge never may.
+fn publishable(commit: &RangeCommit, relpath: &str, rule: Publishable) -> bool {
+    if commit.is_merge {
+        return false;
+    }
+    let own =
+        matches!(commit.paths.as_slice(), [path] if is_checklist_path(path)) && commit.own_trailer;
+    let this_checklist = commit
+        .paths
+        .iter()
+        .all(|path| path.as_slice() == relpath.as_bytes());
+    own || (rule == Publishable::OwnOrThisChecklist && this_checklist)
+}
+fn is_checklist_path(path: &[u8]) -> bool {
+    path.len() > 3 && path[path.len() - 3..].eq_ignore_ascii_case(b".md")
+}
+pub(super) fn carries_own_trailer(repo_root: &Path, sha: &str) -> Result<bool, String> {
+    let format = format!("--format=%(trailers:key={OWN_TRAILER_KEY},valueonly,separator=%x00)");
+    let mut cmd = git_command(repo_root);
+    cmd.args(["log", "-1", &format, sha]);
+    let output =
+        run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git log failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error("git log", &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .any(|value| value.trim() == OWN_TRAILER_VALUE))
 }
 /// Refuses on an unpublishable commit and on an unanswerable check alike.
 pub(super) fn unpushed_history_blocks(
@@ -186,50 +218,13 @@ pub(super) fn range_has_unrelated_commits(
         Some(base) => format!("{base}..{tip}"),
         None => tip.to_string(),
     };
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-list", "--parents", &range]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git rev-list failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git rev-list", &output));
-    }
-    // A merge short-circuits before any diff is needed.
-    let listing = String::from_utf8_lossy(&output.stdout);
-    let mut shas = String::new();
-    for line in listing.lines() {
-        let mut tokens = line.split_whitespace();
-        let Some(sha) = tokens.next() else { continue };
-        if tokens.count() > 1 {
-            return Ok(true);
-        }
-        shas.push_str(sha);
-        shas.push('\n');
-    }
-    if shas.is_empty() {
-        return Ok(false);
-    }
-
-    // One `diff-tree --stdin` for the whole range. `--no-commit-id` makes every
-    // field a path, so a file named like a 40-hex SHA can't be misread.
-    let mut diff_cmd = git_command(repo_root);
-    diff_cmd.args([
-        "diff-tree",
-        "--root",
-        "--no-commit-id",
-        "--name-only",
-        "-r",
-        "-z",
-        "--stdin",
-    ]);
-    let diff_output = run_with_timeout_and_stdin(diff_cmd, PLUMBING_TIMEOUT, &shas)
-        .map_err(|err| format!("git diff-tree failed: {err}"))?;
-    if !diff_output.status.success() {
-        return Err(command_error("git diff-tree", &diff_output));
-    }
-    Ok(diff_output
-        .stdout
-        .split(|&b| b == 0)
-        .any(|path| !path.is_empty() && path != relpath.as_bytes()))
+    Ok(range_commits(repo_root, &range)?.iter().any(|commit| {
+        commit.is_merge
+            || commit
+                .paths
+                .iter()
+                .any(|path| path.as_slice() != relpath.as_bytes())
+    }))
 }
 pub(super) const OUTSIDE_CHANGES_REFUSAL: &str = "the checklist has changes markcheck didn't make, so nothing was published; \
      commit them yourself, then toggle again";
