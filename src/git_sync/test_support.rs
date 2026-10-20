@@ -27,71 +27,92 @@ pub(super) fn git_stdout(dir: &Path, args: &[&str]) -> String {
         .expect("git command failed to run");
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
+/// What [`init_repo`] sets up: `file` committed with one open task in a
+/// repository under its own unique root, plus what the fixture adds.
+pub(super) struct RepoFixture<'a> {
+    pub(super) hint: &'a str,
+    pub(super) file: &'a str,
+    /// A bare `origin` beside the work tree, with `main` pushed to it.
+    pub(super) remote: bool,
+    /// A branch checked out and pushed after `main`.
+    pub(super) branch: Option<&'a str>,
+    /// `core.autocrlf=input`, with the task committed CRLF-terminated.
+    pub(super) autocrlf: bool,
+}
+impl Default for RepoFixture<'_> {
+    fn default() -> Self {
+        RepoFixture {
+            hint: "repo",
+            file: "tracked.md",
+            remote: false,
+            branch: None,
+            autocrlf: false,
+        }
+    }
+}
+/// The work tree and, when asked for, its bare remote, both under one
+/// unique root.
+pub(super) fn init_repo(fixture: RepoFixture) -> (PathBuf, Option<PathBuf>) {
+    let root = unique_dir(fixture.hint);
+    let work = root.join("work");
+    fs::create_dir_all(&work).unwrap();
+    run(&work, &["init", "-q", "-b", "main"]);
+    run(&work, &["config", "user.email", "test@example.com"]);
+    run(&work, &["config", "user.name", "test"]);
+    let line_end = if fixture.autocrlf {
+        run(&work, &["config", "core.autocrlf", "input"]);
+        "\r\n"
+    } else {
+        "\n"
+    };
+    fs::write(work.join(fixture.file), format!("- [ ] one{line_end}")).unwrap();
+    run(&work, &["add", "--", fixture.file]);
+    run(&work, &["commit", "-q", "-m", "init"]);
+    let remote = fixture.remote.then(|| {
+        let remote = root.join("remote.git");
+        fs::create_dir_all(&remote).unwrap();
+        run(&remote, &["init", "--bare", "-q", "-b", "main"]);
+        run(
+            &work,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        run(&work, &["push", "-q", "-u", "origin", "main"]);
+        remote
+    });
+    if let Some(branch) = fixture.branch {
+        run(&work, &["checkout", "-q", "-b", branch]);
+        run(&work, &["push", "-q", "-u", "origin", branch]);
+    }
+    (work, remote)
+}
+fn init_repo_with(fixture: RepoFixture) -> (PathBuf, PathBuf) {
+    let (work, remote) = init_repo(RepoFixture {
+        remote: true,
+        ..fixture
+    });
+    (work, remote.unwrap())
+}
 /// The checklist on a topic branch: a bare remote refuses to delete its
 /// current branch (`main`), which would hide a refspec mistake. Returns
 /// `(work, remote, branch)`.
 pub(super) fn init_repo_with_remote_on_a_topic_branch() -> (PathBuf, PathBuf, String) {
-    let root = unique_dir("repo-topic-branch");
-    let remote = root.join("remote.git");
-    let work = root.join("work");
-    fs::create_dir_all(&remote).unwrap();
-    fs::create_dir_all(&work).unwrap();
-    run(&remote, &["init", "--bare", "-q", "-b", "main"]);
-    run(&work, &["init", "-q", "-b", "main"]);
-    run(&work, &["config", "user.email", "test@example.com"]);
-    run(&work, &["config", "user.name", "test"]);
-    fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
-    run(&work, &["add", "tracked.md"]);
-    run(&work, &["commit", "-q", "-m", "init"]);
-    run(
-        &work,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    );
-    run(&work, &["push", "-q", "-u", "origin", "main"]);
-    run(&work, &["checkout", "-q", "-b", "topic"]);
-    run(&work, &["push", "-q", "-u", "origin", "topic"]);
+    let (work, remote) = init_repo_with(RepoFixture {
+        hint: "repo-topic-branch",
+        branch: Some("topic"),
+        ..RepoFixture::default()
+    });
     (work, remote, "topic".to_string())
 }
 /// A repo with one committed `tracked.md` and a bare `origin` upstream.
 pub(super) fn init_repo_with_remote() -> (PathBuf, PathBuf) {
-    let root = unique_dir("repo");
-    let remote = root.join("remote.git");
-    let work = root.join("work");
-    fs::create_dir_all(&remote).unwrap();
-    fs::create_dir_all(&work).unwrap();
-    run(&remote, &["init", "--bare", "-q", "-b", "main"]);
-    run(&work, &["init", "-q", "-b", "main"]);
-    run(&work, &["config", "user.email", "test@example.com"]);
-    run(&work, &["config", "user.name", "test"]);
-    fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
-    run(&work, &["add", "tracked.md"]);
-    run(&work, &["commit", "-q", "-m", "init"]);
-    run(
-        &work,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    );
-    run(&work, &["push", "-q", "-u", "origin", "main"]);
-    (work, remote)
+    init_repo_with(RepoFixture::default())
 }
 pub(super) fn init_repo_with_remote_named(file_name: &str) -> (PathBuf, PathBuf) {
-    let root = unique_dir("repo-named");
-    let remote = root.join("remote.git");
-    let work = root.join("work");
-    fs::create_dir_all(&remote).unwrap();
-    fs::create_dir_all(&work).unwrap();
-    run(&remote, &["init", "--bare", "-q", "-b", "main"]);
-    run(&work, &["init", "-q", "-b", "main"]);
-    run(&work, &["config", "user.email", "test@example.com"]);
-    run(&work, &["config", "user.name", "test"]);
-    fs::write(work.join(file_name), "- [ ] one\n").unwrap();
-    run(&work, &["add", "--", file_name]);
-    run(&work, &["commit", "-q", "-m", "init"]);
-    run(
-        &work,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    );
-    run(&work, &["push", "-q", "-u", "origin", "main"]);
-    (work, remote)
+    init_repo_with(RepoFixture {
+        hint: "repo-named",
+        file: file_name,
+        ..RepoFixture::default()
+    })
 }
 /// Stage 0 of the real index for `relpath`.
 pub(super) fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
@@ -100,30 +121,20 @@ pub(super) fn staged_bytes(repo_root: &Path, relpath: &str) -> Option<Vec<u8>> {
     let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
     output.status.success().then_some(output.stdout)
 }
-/// Nested under its own unique root, so a test removing `work.parent()`
-/// never wipes the shared temp directory.
 pub(super) fn init_repo_without_remote() -> PathBuf {
-    let work = unique_dir("repo-no-remote").join("work");
-    fs::create_dir_all(&work).unwrap();
-    run(&work, &["init", "-q", "-b", "main"]);
-    run(&work, &["config", "user.email", "test@example.com"]);
-    run(&work, &["config", "user.name", "test"]);
-    fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
-    run(&work, &["add", "tracked.md"]);
-    run(&work, &["commit", "-q", "-m", "init"]);
-    work
+    init_repo(RepoFixture {
+        hint: "repo-no-remote",
+        ..RepoFixture::default()
+    })
+    .0
 }
 pub(super) fn init_repo_with_crlf_filter() -> PathBuf {
-    let work = unique_dir("repo-autocrlf").join("work");
-    fs::create_dir_all(&work).unwrap();
-    run(&work, &["init", "-q", "-b", "main"]);
-    run(&work, &["config", "user.email", "test@example.com"]);
-    run(&work, &["config", "user.name", "test"]);
-    run(&work, &["config", "core.autocrlf", "input"]);
-    fs::write(work.join("tracked.md"), "- [ ] one\r\n").unwrap();
-    run(&work, &["add", "tracked.md"]);
-    run(&work, &["commit", "-q", "-m", "init"]);
-    work
+    init_repo(RepoFixture {
+        hint: "repo-autocrlf",
+        autocrlf: true,
+        ..RepoFixture::default()
+    })
+    .0
 }
 /// A `latest_requested_hash` where this call's `content` is the only
 /// request.

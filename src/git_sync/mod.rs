@@ -8,8 +8,6 @@ mod sync;
 #[cfg(test)]
 mod test_support;
 
-#[cfg(test)]
-pub(crate) use process::REDIRECTING_GIT_VARS;
 pub use shared::SyncOutcome;
 use shared::lock_hash;
 
@@ -441,6 +439,21 @@ impl GitSync {
             self.spawn_if_due(Instant::now());
         }
         outcome
+    }
+
+    /// Polls until no sync is running, the requests a finishing one starts
+    /// included, or `timeout` passes, and returns every outcome seen in
+    /// order; [`GitSync::is_busy`] afterwards says whether it gave up.
+    pub fn wait_for_outcomes(&mut self, timeout: Duration) -> Vec<SyncOutcome> {
+        let deadline = Instant::now() + timeout;
+        let mut outcomes = Vec::new();
+        while self.busy && Instant::now() < deadline {
+            outcomes.extend(self.poll());
+            if self.busy {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        outcomes
     }
 
     /// The single writer of `self.retry`, as a total `match` so a new

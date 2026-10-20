@@ -78,10 +78,37 @@ fn run_with_timeout_kills_a_process_writing_enough_output_to_fill_a_pipe() {
         started.elapsed()
     );
 }
-/// A descendant outliving the direct child must not leak threads.
+/// Set in the child process [`a_lingering_descendant_costs_nothing`] reruns
+/// itself in.
+#[cfg(target_os = "linux")]
+const THREAD_COUNT_CHILD: &str = "MARKCHECK_TEST_THREAD_COUNT_CHILD";
+
+/// A descendant outliving the direct child must not leak threads. Counted
+/// in a child test process running nothing else, since the rest of the
+/// suite's threads come and go in this one.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_lingering_descendant_costs_nothing() {
+    if std::env::var_os(THREAD_COUNT_CHILD).is_none() {
+        let module = module_path!().split_once("::").unwrap().1;
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                &format!("{module}::a_lingering_descendant_costs_nothing"),
+                "--test-threads=1",
+            ])
+            .env(THREAD_COUNT_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "the child run failed:\n{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
     let threads = || {
         std::fs::read_dir("/proc/self/task")
             .map(|d| d.count())
@@ -97,22 +124,32 @@ fn a_lingering_descendant_costs_nothing() {
     std::thread::sleep(Duration::from_millis(300));
     let baseline = threads();
 
+    let mut lingering = Vec::new();
     for _ in 0..20 {
         let mut cmd = Command::new("sh");
-        cmd.args(["-c", "sleep 30 & exit 0"]);
+        cmd.args(["-c", "sleep 30 & echo $!; exit 0"]);
         let result = run_with_timeout(cmd, Duration::from_millis(500));
-        assert!(result.is_ok(), "the direct child exits successfully");
+        let output = result.expect("the direct child exits successfully");
+        lingering.extend(
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<libc::pid_t>(),
+        );
     }
 
-    // A tolerance because tests run in parallel; a leak of two threads per
-    // call would still sit ~40 above baseline.
     let after = threads();
-    let grown = after.saturating_sub(baseline);
+    for pid in &lingering {
+        // SAFETY: `kill` only sends a signal to a `sleep` this test started.
+        unsafe {
+            libc::kill(*pid, libc::SIGKILL);
+        }
+    }
+    assert_eq!(lingering.len(), 20, "every `sleep` reported its PID");
     assert!(
-        grown < 10,
+        after <= baseline + 2,
         "20 calls whose descendants are all still holding the inherited \
              descriptors must not cost threads: baseline {baseline}, now \
-             {after} (+{grown}); the piped design leaked about 40 here"
+             {after}; the piped design leaked about 40 here"
     );
 }
 #[test]
@@ -180,8 +217,6 @@ fn a_successful_command_does_not_kill_a_descendant_it_no_longer_owns() {
         marker.exists(),
         "a descendant of a successful command must not be killed"
     );
-
-    fs::remove_dir_all(&dir).ok();
 }
 #[test]
 fn a_timed_out_command_gets_sigterm_before_sigkill() {
@@ -382,8 +417,6 @@ fn git_invocations_ignore_an_ambient_git_environment() {
             "{var} is the user's to set and must be left alone"
         );
     }
-
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]

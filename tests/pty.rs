@@ -55,22 +55,57 @@ fn write_file(path: &PathBuf, contents: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
-/// Polls `path`'s content every 20ms until `pred` matches it, up to 2s —
-/// mirroring `watcher.rs`'s own `wait_until` test helper. Waiting for
-/// the actual on-disk condition instead of guessing a fixed delay means the
-/// test only ever waits as long as it truly needs to, and isn't a fixed
-/// guess that could be too short under CI load.
-fn wait_for_file(path: &Path, mut pred: impl FnMut(&str) -> bool) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && pred(&contents)
-        {
-            return true;
+/// How long any condition a test waits for is given to hold: the screen,
+/// a file, a hook's marker or the remote's log. Generous, since a wait that
+/// succeeds returns as soon as it does and only a failing test waits it out
+/// on a loaded runner.
+const WAIT_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Polls `check` every 20ms until it yields a value, or `None` once
+/// `timeout` passes. The one wait loop every other wait here is built on.
+fn poll_within<T>(timeout: Duration, mut check: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = check() {
+            return Some(value);
+        }
+        if Instant::now() >= deadline {
+            return None;
         }
         thread::sleep(Duration::from_millis(20));
     }
-    false
+}
+
+/// Polls `check` up to [`WAIT_TIMEOUT`], failing the test with `what` once
+/// it passes.
+fn poll_until<T>(what: &str, check: impl FnMut() -> Option<T>) -> T {
+    poll_within(WAIT_TIMEOUT, check)
+        .unwrap_or_else(|| panic!("timed out after {WAIT_TIMEOUT:?} waiting for {what}"))
+}
+
+/// Waits for `path`'s content to match `pred`.
+fn wait_for_file(path: &Path, what: &str, mut pred: impl FnMut(&str) -> bool) {
+    poll_until(what, || {
+        std::fs::read_to_string(path)
+            .ok()
+            .filter(|contents| pred(contents))
+    });
+}
+
+/// The bare remote's newest commit subject, once `done` accepts it or
+/// [`WAIT_TIMEOUT`] passes. The quit path's wait for a final sync is
+/// bounded, so on a loaded runner the push can land after the binary exits.
+fn remote_subject(remote: &Path, done: impl Fn(&str) -> bool) -> String {
+    let mut subject = String::new();
+    poll_within(WAIT_TIMEOUT, || {
+        let out = git(remote)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        done(&subject).then_some(())
+    });
+    subject
 }
 
 /// One step of a scripted interaction: either a keypress, or a wait for a
@@ -98,9 +133,6 @@ enum Step {
 /// Alt-chord. Pacing input only: nothing waits on it to have taken effect.
 const KEY_PACING_MS: u64 = 80;
 
-/// How long anything drawn is given to appear, starting with the first frame.
-const SCREEN_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// How long the binary is given to exit once the script is done. Generous
 /// next to `main.rs`'s own 5s wait for a final git sync, but bounded: a
 /// binary that never quits fails the test instead of hanging CI.
@@ -120,7 +152,7 @@ fn markcheck_command() -> CommandBuilder {
 fn isolate(cmd: &mut CommandBuilder) {
     cmd.env_remove("DISPLAY");
     cmd.env_remove("WAYLAND_DISPLAY");
-    for var in common::AMBIENT_GIT_VARS {
+    for var in common::ambient_git_vars() {
         cmd.env_remove(var);
     }
     for (key, value) in common::isolated_env("pty") {
@@ -132,11 +164,15 @@ fn isolate(cmd: &mut CommandBuilder) {
 fn git(dir: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
     cmd.current_dir(dir);
-    for var in common::AMBIENT_GIT_VARS {
+    for var in common::ambient_git_vars() {
         cmd.env_remove(var);
     }
     cmd.envs(common::isolated_env("pty"));
     cmd
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 const ROWS: u16 = 30;
@@ -150,10 +186,6 @@ const COLS: u16 = 100;
 /// `\r`/`\n`, cursor positioning, screen/line erasure, and entering or
 /// leaving the alternate screen (both treated as a clear). Every other
 /// escape sequence is skipped.
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 fn render_screen(raw: &str) -> String {
     let (rows, cols) = (usize::from(ROWS), usize::from(COLS));
     let mut grid = vec![vec![' '; cols]; rows];
@@ -278,9 +310,7 @@ impl Session {
             drained,
             _guard: guard,
         };
-        session.wait_until(SCREEN_TIMEOUT, "the first frame", |raw| {
-            raw.contains("\x1b[?1049h")
-        });
+        session.wait_until("the first frame", |raw| raw.contains("\x1b[?1049h"));
         session
     }
 
@@ -289,18 +319,13 @@ impl Session {
     }
 
     /// Polls the raw output until `pred` holds, panicking with the output's
-    /// tail once `timeout` passes.
-    fn wait_until(&self, timeout: Duration, what: &str, mut pred: impl FnMut(&str) -> bool) {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let raw = self.raw_output();
-            if pred(&raw) {
-                return;
-            }
-            if Instant::now() >= deadline {
-                panic!("timed out waiting for {what}; screen was:\n{}", tail(&raw));
-            }
-            thread::sleep(Duration::from_millis(20));
+    /// tail once [`WAIT_TIMEOUT`] passes.
+    fn wait_until(&self, what: &str, mut pred: impl FnMut(&str) -> bool) {
+        if poll_within(WAIT_TIMEOUT, || pred(&self.raw_output()).then_some(())).is_none() {
+            panic!(
+                "timed out waiting for {what}; screen was:\n{}",
+                tail(&self.raw_output())
+            );
         }
     }
 
@@ -308,17 +333,17 @@ impl Session {
     /// whitespace, row breaks included, compare as one space: a long status
     /// message wraps by words, and where depends on the temp path it names.
     fn wait_for_screen(&self, needle: &str) {
-        let deadline = Instant::now() + SCREEN_TIMEOUT;
         let wanted = collapse_whitespace(needle);
-        loop {
-            let screen = render_screen(&self.raw_output());
-            if collapse_whitespace(&screen).contains(&wanted) {
-                return;
-            }
-            if Instant::now() >= deadline {
-                panic!("timed out waiting for {needle:?} on screen; screen was:\n{screen}");
-            }
-            thread::sleep(Duration::from_millis(20));
+        let on_screen = || {
+            collapse_whitespace(&render_screen(&self.raw_output()))
+                .contains(&wanted)
+                .then_some(())
+        };
+        if poll_within(WAIT_TIMEOUT, on_screen).is_none() {
+            panic!(
+                "timed out waiting for {needle:?} on screen; screen was:\n{}",
+                render_screen(&self.raw_output())
+            );
         }
     }
 
@@ -337,10 +362,7 @@ impl Session {
             match step {
                 Step::Key(k) => self.key(k),
                 Step::WaitForFile(pred) => {
-                    assert!(
-                        wait_for_file(md_path, pred),
-                        "timed out waiting for the expected file content"
-                    );
+                    wait_for_file(md_path, "the expected file content", pred);
                 }
                 Step::WaitForScreen(needle) => self.wait_for_screen(needle),
                 Step::ExternalWrite(contents) => {
@@ -366,19 +388,12 @@ impl Session {
 
     fn finish_within(mut self, timeout: Duration) -> (bool, String) {
         self.writer = None;
-        let deadline = Instant::now() + timeout;
-        let status = loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = self.child.kill();
-                panic!(
-                    "the binary did not exit within {timeout:?}; screen was:\n{}",
-                    tail(&self.raw_output())
-                );
-            }
-            thread::sleep(Duration::from_millis(20));
+        let Some(status) = poll_within(timeout, || self.child.try_wait().unwrap()) else {
+            let _ = self.child.kill();
+            panic!(
+                "the binary did not exit within {timeout:?}; screen was:\n{}",
+                tail(&self.raw_output())
+            );
         };
         self.master = None;
         // The drain ends at EOF once nothing holds the terminal open, which
@@ -497,8 +512,6 @@ fn a_main_thread_panic_prints_its_message_on_the_restored_screen() {
         output[left..].contains("Please report this at"),
         "the report pointer is missing:\n{output}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -523,8 +536,6 @@ fn toggle_then_quit_persists_and_exits_clean() {
         contents.contains("[x] `alpha`"),
         "first item toggled: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -554,8 +565,6 @@ fn undo_then_redo_persist_to_the_file() {
         contents.contains("[x] `alpha`"),
         "redo re-applies the toggle: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -595,7 +604,6 @@ fn editor_flow_reloads_after_edit() {
         "editor's append is present: {contents:?}"
     );
 
-    std::fs::remove_file(&path).ok();
     std::fs::remove_file(&editor).ok();
 }
 
@@ -634,7 +642,6 @@ fn interrupts_sent_while_the_editor_runs_reach_only_the_editor() {
         "markcheck should outlive the editor's interrupts and quit on q"
     );
 
-    std::fs::remove_file(&path).ok();
     std::fs::remove_file(&editor).ok();
 }
 
@@ -661,8 +668,6 @@ fn editor_spawn_failure_does_not_crash_or_change_the_file() {
         contents, "## Work\n\n- [ ] `alpha`\n",
         "file untouched — the missing editor never ran: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -698,7 +703,6 @@ fn editor_non_zero_exit_does_not_crash_or_change_the_file() {
         "file untouched — the editor exited before writing anything: {contents:?}"
     );
 
-    std::fs::remove_file(&path).ok();
     std::fs::remove_file(&editor).ok();
 }
 
@@ -726,8 +730,6 @@ fn reset_flow_clears_all_done() {
         contents.contains("[ ] `alpha`"),
         "items still present: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -753,8 +755,6 @@ fn advance_across_lists_exits_clean() {
         ],
     );
     assert!(ok, "binary should exit successfully");
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -786,8 +786,6 @@ fn live_reload_picks_up_an_external_edit() {
         contents.contains("[x] `beta`") && contents.contains("[ ] `alpha`"),
         "reload picked up beta and G landed on it, not the stale alpha: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -822,8 +820,6 @@ fn file_deletion_blocks_writes_then_reloads_when_restored() {
         contents.contains("[x] `beta`") && contents.contains("[ ] `alpha`"),
         "restored file was reloaded and the toggle landed on the new item: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -864,9 +860,6 @@ fn opens_through_a_symlink_writes_through_to_the_target() {
         contents.contains("[x] `alpha`"),
         "the write went through to the real target: {contents:?}"
     );
-
-    std::fs::remove_file(&link).ok();
-    std::fs::remove_file(&target).ok();
 }
 
 #[test]
@@ -876,8 +869,6 @@ fn no_mouse_flag_starts_and_exits_cleanly() {
 
     let ok = drive_args(&path, &["--no-mouse"], &[], &[Step::Key("q")]);
     assert!(ok, "binary should exit successfully with --no-mouse");
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -908,8 +899,6 @@ fn mouse_wheel_and_click_do_not_crash() {
         ],
     );
     assert!(ok, "binary should exit successfully after mouse input");
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -927,8 +916,6 @@ fn bracketed_paste_on_the_checklist_does_not_run_its_characters() {
     );
     assert!(ok, "binary should exit successfully after a paste");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -954,8 +941,6 @@ fn start_key_persists_started_marker() {
         contents.contains("[/] `alpha`"),
         "first task marked started: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -990,8 +975,6 @@ fn startup_selects_first_undone_item() {
         contents.contains("[x] `beta`"),
         "beta toggled — cursor started on the first undone item: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -1009,8 +992,6 @@ fn quit_when_all_done_prompts_reset_then_resets() {
         !contents.contains("[x]"),
         "quit-reset reset all tasks: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 /// The OSC 52 clipboard write for `alpha`, which is what an auto-copy of the
@@ -1063,8 +1044,6 @@ fn auto_copy_flag_copies_the_card_navigated_onto() {
         "--auto-copy did not copy `alpha`; output tail:\n{}",
         tail(&output)
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -1079,8 +1058,6 @@ fn navigation_copies_nothing_without_auto_copy() {
         "navigation copied without auto-copy enabled:\n{}",
         tail(&output)
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -1113,9 +1090,6 @@ fn config_file_sets_auto_copy_default_without_the_flag() {
         "the config's auto_copy did not copy `alpha`; output tail:\n{}",
         tail(&output)
     );
-
-    std::fs::remove_file(&path).ok();
-    std::fs::remove_dir_all(&xdg_config_home).ok();
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
@@ -1165,25 +1139,8 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
     );
     assert!(ok, "binary should exit successfully with --git-sync");
 
-    // The commit+push happens on a background thread that can outlive the
-    // child process (detached, not joined on quit), so poll the
-    // bare remote rather than assuming it's already landed.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let mut subject = String::new();
-    while Instant::now() < deadline {
-        let out = git(&remote)
-            .args(["log", "-1", "--format=%s"])
-            .output()
-            .unwrap();
-        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if subject != "init" {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    let subject = remote_subject(&remote, |s| s != "init");
     assert_eq!(subject, "checklist.md: Check \"alpha\"");
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1241,24 +1198,19 @@ fn git_sync_children_cannot_reach_markcheck_s_terminal() {
     );
     assert!(ok, "binary should exit successfully with --git-sync");
 
-    let deadline = Instant::now() + Duration::from_secs(90);
-    while !marker.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(50));
-    }
-    let result = std::fs::read_to_string(&marker).unwrap_or_default();
+    wait_for_file(&marker, "the hook's terminal check", |s| s.ends_with('\n'));
+    let result = std::fs::read_to_string(&marker).unwrap();
     assert_eq!(
         result.trim(),
         "refused",
         "a git-sync child must not reach markcheck's terminal"
     );
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// A repository whose `pre-commit` hook records its PID in `hook-pid`
 /// beside the work tree, then runs `body`, so a test can catch a sync
 /// mid-commit. Returns the checklist and the PID file.
-fn repo_with_a_slow_hook(hint: &str, body: &str) -> (PathBuf, PathBuf, PathBuf) {
+fn repo_with_a_slow_hook(hint: &str, body: &str) -> (PathBuf, PathBuf) {
     let root = unique_path(hint);
     let work = root.join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -1283,7 +1235,7 @@ fn repo_with_a_slow_hook(hint: &str, body: &str) -> (PathBuf, PathBuf, PathBuf) 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    (root, path, pid_file)
+    (path, pid_file)
 }
 
 fn git_sync_session(path: &Path) -> Session {
@@ -1297,21 +1249,17 @@ fn git_sync_session(path: &Path) -> Session {
 
 /// Waits for the hook to have written its PID, then returns it.
 fn wait_for_hook_pid(pid_file: &Path) -> String {
-    let deadline = Instant::now() + SCREEN_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Ok(pid) = std::fs::read_to_string(pid_file) {
-            return pid.trim().to_string();
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    panic!("the pre-commit hook never started");
+    poll_until("the pre-commit hook to start", || {
+        std::fs::read_to_string(pid_file).ok()
+    })
+    .trim()
+    .to_string()
 }
 
 /// Whether `pid` is still running, polled for a while first, since a killed
 /// hook's parent may take a moment to be reaped.
 fn still_running_after_a_while(pid: &str) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let gone = || {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
         let alive = match stat {
             Ok(stat) => !stat
@@ -1322,14 +1270,9 @@ fn still_running_after_a_while(pid: &str) -> bool {
                 .starts_with('Z'),
             Err(_) => false,
         };
-        if !alive {
-            return false;
-        }
-        if Instant::now() >= deadline {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+        (!alive).then_some(())
+    };
+    poll_within(Duration::from_secs(30), gone).is_none()
 }
 
 fn temp_indexes_left(work: &Path) -> Vec<String> {
@@ -1343,7 +1286,7 @@ fn temp_indexes_left(work: &Path) -> Vec<String> {
 
 #[test]
 fn quitting_during_a_sync_says_it_waits_and_quits_once_it_lands() {
-    let (root, path, pid_file) = repo_with_a_slow_hook("gitsync-quit-wait", "sleep 2");
+    let (path, pid_file) = repo_with_a_slow_hook("gitsync-quit-wait", "sleep 2");
     let work = path.parent().unwrap().to_path_buf();
 
     let mut session = git_sync_session(&path);
@@ -1363,12 +1306,11 @@ fn quitting_during_a_sync_says_it_waits_and_quits_once_it_lands() {
         "checklist.md: Check \"alpha\"",
         "the waited-for sync must have committed"
     );
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn a_second_q_abandons_the_sync_and_leaves_nothing_behind() {
-    let (root, path, pid_file) = repo_with_a_slow_hook("gitsync-abandon", "sleep 30");
+    let (path, pid_file) = repo_with_a_slow_hook("gitsync-abandon", "sleep 30");
     let work = path.parent().unwrap().to_path_buf();
 
     let mut session = git_sync_session(&path);
@@ -1390,12 +1332,11 @@ fn a_second_q_abandons_the_sync_and_leaves_nothing_behind() {
         tail.contains("markcheck: git sync"),
         "the abandoned sync is reported after the TUI closes:\n{tail}"
     );
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn sigterm_mid_sync_quits_cleanly_and_leaves_nothing_behind() {
-    let (root, path, pid_file) = repo_with_a_slow_hook("gitsync-sigterm", "sleep 30");
+    let (path, pid_file) = repo_with_a_slow_hook("gitsync-sigterm", "sleep 30");
     let work = path.parent().unwrap().to_path_buf();
 
     let mut session = git_sync_session(&path);
@@ -1416,14 +1357,13 @@ fn sigterm_mid_sync_quits_cleanly_and_leaves_nothing_behind() {
         "the hook must not outlive markcheck"
     );
     assert_eq!(temp_indexes_left(&work), Vec::<String>::new());
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn a_burst_of_toggles_waits_then_becomes_one_commit_on_quit() {
     // The default quiet period holds the sync; the title bar says so, and
     // quitting sends it at once as one commit.
-    let (root, path, _pid_file) = repo_with_a_slow_hook("gitsync-batch", "true");
+    let (path, _pid_file) = repo_with_a_slow_hook("gitsync-batch", "true");
     let work = path.parent().unwrap().to_path_buf();
 
     let mut cmd = markcheck_command();
@@ -1451,7 +1391,6 @@ fn a_burst_of_toggles_waits_then_becomes_one_commit_on_quit() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1501,8 +1440,6 @@ fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes()
         tail.contains("markcheck: git sync failed:") && tail.contains("not committed"),
         "the failure must be printed after the TUI closes; output after it was:\n{tail}"
     );
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1568,8 +1505,6 @@ fn git_sync_does_not_commit_uncommitted_changes_just_because_the_file_was_opened
         edited,
         "the uncommitted edit stays exactly as the user left it"
     );
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1619,25 +1554,11 @@ fn git_sync_paths_config_auto_activates_without_the_flag() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let mut subject = String::new();
-    while Instant::now() < deadline {
-        let out = git(&remote)
-            .args(["log", "-1", "--format=%s"])
-            .output()
-            .unwrap();
-        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if subject != "init" {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    let subject = remote_subject(&remote, |s| s != "init");
     assert_eq!(
         subject, "checklist.md: Check \"alpha\"",
         "git_sync_paths must auto-activate the sync with no --git-sync flag"
     );
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// A repository nested inside `notes/` that arrived from elsewhere: its
@@ -1739,7 +1660,6 @@ fn a_plain_git_sync_paths_entry_never_runs_git_in_a_nested_repository() {
         !committed.exists(),
         "no commit may run in the nested repository"
     );
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1764,7 +1684,6 @@ fn a_double_star_git_sync_paths_entry_covers_a_nested_repository() {
         committed.exists(),
         "the opted-in nested repository is synced"
     );
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1818,25 +1737,11 @@ fn git_sync_paths_config_matches_through_a_symlinked_prefix() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let mut subject = String::new();
-    while Instant::now() < deadline {
-        let out = git(&remote)
-            .args(["log", "-1", "--format=%s"])
-            .output()
-            .unwrap();
-        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if subject != "init" {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    let subject = remote_subject(&remote, |s| s != "init");
     assert_eq!(
         subject, "checklist.md: Check \"alpha\"",
         "a symlinked git_sync_paths prefix must still auto-activate the sync"
     );
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -1892,19 +1797,7 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
     );
     assert!(ok, "binary should exit successfully");
 
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let mut subject = String::new();
-    while Instant::now() < deadline {
-        let out = git(&remote)
-            .args(["log", "-1", "--format=%s"])
-            .output()
-            .unwrap();
-        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if subject != "init" {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    let subject = remote_subject(&remote, |s| s != "init");
     // Only the editor's file name goes into the message, never its directory.
     let program = editor.file_name().unwrap().to_str().unwrap();
     let expected = format!("checklist.md: Edited in {program}");
@@ -1913,7 +1806,6 @@ fn git_sync_commits_an_editor_edit_without_a_further_toggle() {
         "the editor edit must be committed and pushed with no toggle at all"
     );
 
-    std::fs::remove_dir_all(&root).ok();
     std::fs::remove_file(&editor).ok();
 }
 
@@ -1977,7 +1869,6 @@ fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it
         "a no-op save must not produce any commit: {log:?}"
     );
 
-    std::fs::remove_dir_all(&root).ok();
     std::fs::remove_file(&editor).ok();
 }
 
@@ -2018,8 +1909,6 @@ fn git_sync_reports_when_the_file_is_untracked() {
         String::from_utf8_lossy(&status_out.stdout).contains("?? checklist.md"),
         "the file must still never be added"
     );
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// `--git-sync` on a file outside any repository used to leave git-sync off
@@ -2042,8 +1931,6 @@ fn git_sync_flag_outside_a_repo_says_why_it_is_off() {
         ],
     );
     assert!(ok, "binary should exit successfully");
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// A `~/...` entry is expanded against `$HOME`, as a shell would, and one
@@ -2082,8 +1969,6 @@ fn git_sync_paths_expands_tilde_and_reports_a_missing_entry() {
         ],
     );
     assert!(ok, "binary should exit successfully");
-
-    std::fs::remove_dir_all(&home).ok();
 }
 
 #[test]
@@ -2160,19 +2045,7 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
 
     // Wait out a real PUSH_RETRY_INTERVAL for retry_push_if_due to fire on
     // its own — the actual behavior under test, not simulated.
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let mut subject = String::new();
-    while Instant::now() < deadline {
-        let out = git(&remote)
-            .args(["log", "-1", "--format=%s"])
-            .output()
-            .unwrap();
-        subject = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if subject == "checklist.md: Check \"alpha\"" {
-            break;
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
+    let subject = remote_subject(&remote, |s| s == "checklist.md: Check \"alpha\"");
     assert_eq!(
         subject, "checklist.md: Check \"alpha\"",
         "the automatic retry must land the push without any further user input"
@@ -2181,8 +2054,6 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     session.key("q");
     let (ok, _) = session.finish();
     assert!(ok, "binary should exit successfully");
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -2219,8 +2090,6 @@ fn search_jumps_to_task_then_toggles_it() {
         contents.contains("[ ] `alpha`") && contents.contains("[ ] `beta`"),
         "other tasks untouched: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -2256,8 +2125,6 @@ fn list_picker_jumps_to_filtered_task_then_toggles_it() {
         contents.contains("[ ] `alpha`") && contents.contains("[ ] `beta`"),
         "other tasks untouched: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -2289,19 +2156,14 @@ fn open_link_spawns_the_configured_browser() {
     // The opener is detached from the TUI's own lifetime, so its write to
     // `recorded` can land after the binary has already exited — poll for it
     // rather than guessing how long that takes.
-    assert!(
-        wait_for_file(&recorded, |s| !s.is_empty()),
-        "timed out waiting for the detached opener to record the URL"
-    );
+    wait_for_file(&recorded, "the detached opener to record the URL", |s| {
+        !s.is_empty()
+    });
     let got = std::fs::read_to_string(&recorded).unwrap_or_default();
     assert_eq!(
         got, "https://example.com/rb",
         "browser received the link URL"
     );
-
-    std::fs::remove_file(&md).ok();
-    std::fs::remove_file(&browser).ok();
-    std::fs::remove_file(&recorded).ok();
 }
 
 #[test]
@@ -2338,16 +2200,11 @@ fn open_link_tries_each_browser_in_a_colon_list_with_url_placeholder() {
     );
     assert!(ok, "binary should exit successfully");
 
-    assert!(
-        wait_for_file(&recorded, |s| !s.is_empty()),
-        "timed out waiting for the second opener to record the URL"
-    );
+    wait_for_file(&recorded, "the second opener to record the URL", |s| {
+        !s.is_empty()
+    });
     let got = std::fs::read_to_string(&recorded).unwrap_or_default();
     assert_eq!(got, "2|--tab https://example.com/rb");
-
-    std::fs::remove_file(&md).ok();
-    std::fs::remove_file(&browser).ok();
-    std::fs::remove_file(&recorded).ok();
 }
 
 #[test]
@@ -2375,9 +2232,6 @@ fn open_link_reports_an_opener_that_exits_with_an_error() {
         ok,
         "the failed opener is reported, then the binary exits cleanly"
     );
-
-    std::fs::remove_file(&md).ok();
-    std::fs::remove_file(&browser).ok();
 }
 
 #[test]
@@ -2399,8 +2253,6 @@ fn open_link_without_a_browser_or_display_copies_the_link_instead() {
         ok,
         "the link is copied with a message, then the binary exits"
     );
-
-    std::fs::remove_file(&md).ok();
 }
 
 #[test]
@@ -2424,8 +2276,6 @@ fn new_flag_creates_starter_checklist_and_opens_it() {
         contents.matches("- [ ]").count() == 2,
         "starter file has two blank tasks: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 /// External review of `5c51d81`: writing a hard-linked checklist silently
@@ -2454,7 +2304,6 @@ fn a_hard_linked_checklist_warns_the_user_at_startup() {
     );
 
     std::fs::remove_file(&alias).ok();
-    std::fs::remove_file(&path).ok();
 }
 
 /// The counterpart that stops the test above from passing for the wrong
@@ -2474,8 +2323,6 @@ fn an_ordinary_checklist_is_not_warned_about() {
         !screen.contains("hard links"),
         "a single-linked file must not be warned about; screen was:\n{screen}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 /// Ctrl-Z under a job-control shell: markcheck must stop (not exit), hand the
@@ -2528,8 +2375,6 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
         contents.contains("[x] `alpha`") && contents.contains("`gamma`"),
         "toggle after resume keeps the shell's edit: {contents:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -2575,7 +2420,7 @@ fn the_terminal_title_shows_progress_and_the_exit_line_says_where_it_stopped() {
     cmd.arg(&path);
     let mut session = Session::spawn(cmd);
     session.key(" ");
-    session.wait_until(SCREEN_TIMEOUT, "the updated title", |raw| {
+    session.wait_until("the updated title", |raw| {
         raw.contains("\x1b]0;Night shift · 1/2 — markcheck\x07")
     });
     session.key("q");
@@ -2634,17 +2479,16 @@ fn the_terminal_title_is_handed_over_to_the_editor_and_set_again_after() {
     cmd.env("EDITOR", editor.to_str().unwrap());
     cmd.arg(&path);
     let mut session = Session::spawn(cmd);
-    session.wait_until(SCREEN_TIMEOUT, "the title", |raw| {
+    session.wait_until("the title", |raw| {
         raw.contains("\x1b]0;Night shift · 0/1 — markcheck\x07")
     });
     session.key("e");
-    session.wait_until(SCREEN_TIMEOUT, "the title set again", |raw| {
+    session.wait_until("the title set again", |raw| {
         title_restored_around(raw, "EDITOR-TITLE", "Night shift · 0/1 — markcheck")
     });
     session.key("q");
     assert!(session.finish().0);
 
-    std::fs::remove_file(&path).ok();
     std::fs::remove_file(&editor).ok();
 }
 
@@ -2659,17 +2503,15 @@ fn the_terminal_title_is_handed_back_on_ctrl_z_and_set_again_on_fg() {
     cmd.arg(&path);
     isolate(&mut cmd);
     let mut session = Session::spawn(cmd);
-    session.wait_until(SCREEN_TIMEOUT, "the title", |raw| {
+    session.wait_until("the title", |raw| {
         raw.contains("\x1b]0;Night shift · 0/1 — markcheck\x07")
     });
     session.key("\x1a");
-    session.wait_until(SCREEN_TIMEOUT, "the title set again", |raw| {
+    session.wait_until("the title set again", |raw| {
         title_restored_around(raw, "SUSPENDED-IN-SHELL", "Night shift · 0/1 — markcheck")
     });
     session.key("q");
     assert!(session.finish().0);
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -2683,7 +2525,7 @@ fn checklist_text_cannot_inject_escapes_through_the_title_or_exit_line() {
     cmd.arg(&path);
     let mut session = Session::spawn(cmd);
     session.key(" ");
-    session.wait_until(SCREEN_TIMEOUT, "the updated title", |raw| {
+    session.wait_until("the updated title", |raw| {
         raw.contains("\x1b]0;Run]52;c;ZWNobw==book · 1/2 — markcheck\x07")
     });
     session.key("k");

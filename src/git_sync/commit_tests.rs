@@ -46,8 +46,6 @@ fn commit_via_temp_index_refuses_when_head_moved_since_parent_was_read() {
             .starts_with("markcheck-index-")
     });
     assert!(!leftover, "temp index file was not cleaned up");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn commit_via_temp_index_refuses_when_repo_becomes_blocked_after_the_head_check() {
@@ -78,8 +76,6 @@ fn commit_via_temp_index_refuses_when_repo_becomes_blocked_after_the_head_check(
             .starts_with("markcheck-index-")
     });
     assert!(!leftover, "temp index file was not cleaned up");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn stage_into_temp_index_reports_failure_for_an_invalid_mode() {
@@ -88,7 +84,6 @@ fn stage_into_temp_index_reports_failure_for_an_invalid_mode() {
     let temp_index = work.join(".git").join("scratch-test-index");
     assert!(stage_into_temp_index(&work, &temp_index, "not-a-mode", &blob, "tracked.md").is_err());
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn populate_temp_index_reports_failure_for_an_unresolvable_parent() {
@@ -96,7 +91,6 @@ fn populate_temp_index_reports_failure_for_an_unresolvable_parent() {
     let temp_index = work.join(".git").join("scratch-test-index");
     assert!(populate_temp_index(&work, &temp_index, "not-a-commit-id").is_err());
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn commit_temp_index_reports_failure_for_a_tree_unchanged_from_head() {
@@ -118,7 +112,6 @@ fn commit_temp_index_reports_failure_for_a_tree_unchanged_from_head() {
         .is_err()
     );
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn commit_temp_index_reconciles_when_a_post_commit_hook_outlives_the_timeout() {
@@ -160,7 +153,6 @@ fn commit_temp_index_reconciles_when_a_post_commit_hook_outlives_the_timeout() {
     );
 
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_failing_pre_commit_hook_is_reported_by_its_last_line() {
@@ -199,7 +191,6 @@ fn a_failing_pre_commit_hook_is_reported_by_its_last_line() {
     assert_eq!(current_head(&work), Some(parent));
 
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn commit_temp_index_still_fails_when_the_commit_never_lands() {
@@ -236,7 +227,6 @@ fn commit_temp_index_still_fails_when_the_commit_never_lands() {
     );
 
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_timed_out_commit_signals_its_hook_with_sigterm_first() {
@@ -304,7 +294,6 @@ fn sigterm_attempt(timeout: Duration) -> bool {
     }
 
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
     counted
 }
 #[test]
@@ -370,7 +359,6 @@ fn commit_temp_index_does_not_adopt_an_unrelated_commit_after_a_timeout() {
     );
 
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn commit_temp_index_does_not_adopt_a_commit_that_landed_on_top_of_its_own() {
@@ -431,7 +419,6 @@ fn commit_temp_index_does_not_adopt_a_commit_that_landed_on_top_of_its_own() {
     );
 
     let _ = fs::remove_file(&temp_index);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 fn install_hook(work: &Path, name: &str, script: &str) {
@@ -476,8 +463,6 @@ fn a_post_commit_hook_committing_on_top_is_never_rewound() {
         "hook follow-up\ntracked.md: Check \"one\"\ninit",
         "the hook's commit must stay on the branch, on top of markcheck's"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_commit_hook_removing_markchecks_commit_leaves_the_branch_alone() {
@@ -498,8 +483,6 @@ fn a_commit_hook_removing_markchecks_commit_leaves_the_branch_alone() {
     let err = result.expect_err("a commit that is gone can't be adopted");
     assert!(err.contains("could not be found on the branch"), "{err}");
     assert_eq!(current_head(&work), Some(parent));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_root_commit_is_found_by_its_lineage() {
@@ -514,8 +497,6 @@ fn a_root_commit_is_found_by_its_lineage() {
 
     assert_eq!(result.ok(), current_head(&dir));
     assert_eq!(git_stdout(&dir, &["log", "--format=%s"]), "first");
-
-    fs::remove_dir_all(&dir).ok();
 }
 #[test]
 fn align_real_index_entry_leaves_a_newer_staged_version_alone() {
@@ -537,8 +518,6 @@ fn align_real_index_entry_leaves_a_newer_staged_version_alone() {
         Some(user_staged),
         "the user's staged version must survive untouched"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn align_real_index_entry_still_realigns_its_own_untouched_entry() {
@@ -553,6 +532,4 @@ fn align_real_index_entry_still_realigns_its_own_untouched_entry() {
         Some(committed),
         "an untouched entry is still advanced to the committed blob"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }

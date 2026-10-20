@@ -14,7 +14,7 @@ fn unique_path(hint: &str) -> std::path::PathBuf {
 /// The binary under test, isolated per [`common::isolated_env`].
 fn markcheck() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_markcheck"));
-    for var in common::AMBIENT_GIT_VARS {
+    for var in common::ambient_git_vars() {
         cmd.env_remove(var);
     }
     cmd.envs(common::isolated_env("cli"));
@@ -72,8 +72,6 @@ fn empty_checklist_file_exits_cleanly_with_a_message() {
         stderr.contains("- [ ] step"),
         "says what syntax is expected: {stderr:?}"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 /// Runs markcheck on `path` (with stdout piped, so not a terminal) and
@@ -98,8 +96,6 @@ fn non_utf8_file_reports_the_file_and_the_encoding_fix() {
     assert!(stderr.contains("cannot read"), "{stderr:?}");
     assert!(stderr.contains("not valid UTF-8"), "{stderr:?}");
     assert!(stderr.contains("iconv"), "names the fix: {stderr:?}");
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -129,8 +125,6 @@ fn non_tty_stdout_reports_that_a_terminal_is_needed() {
         "# Runbook\n\n- [ ] step\n",
         "file left untouched"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -229,8 +223,6 @@ fn new_with_existing_path_reports_a_clear_error_and_exits_nonzero() {
         "already here",
         "the existing file must not be overwritten"
     );
-
-    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -264,9 +256,6 @@ fn malformed_config_file_reports_a_clear_error_and_exits_nonzero() {
         stderr.contains("invalid config file"),
         "clear error context shown: {stderr:?}"
     );
-
-    std::fs::remove_file(&md_path).ok();
-    std::fs::remove_dir_all(&xdg_config_home).ok();
 }
 
 /// Runs markcheck on a one-task checklist with `config` as its default
@@ -290,8 +279,6 @@ fn stderr_with_config(hint: &str, config: &str, flags: &[&str]) -> String {
         .output()
         .unwrap();
 
-    std::fs::remove_file(&md_path).ok();
-    std::fs::remove_dir_all(&xdg_config_home).ok();
     assert!(!output.status.success());
     String::from_utf8_lossy(&output.stderr).into_owned()
 }

@@ -33,8 +33,6 @@ fn push_if_head_unchanged_refuses_to_push_a_commit_that_landed_after_verificatio
         "init",
         "neither the markcheck commit nor the concurrent one must reach the remote"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn push_if_head_unchanged_pushes_normally_when_nothing_raced_it() {
@@ -57,8 +55,6 @@ fn push_if_head_unchanged_pushes_normally_when_nothing_raced_it() {
         "{}",
         String::from_utf8_lossy(&remote_log.stdout)
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_branch_tracking_a_local_branch_is_committed_but_never_pushed() {
@@ -87,8 +83,6 @@ fn a_branch_tracking_a_local_branch_is_committed_but_never_pushed() {
         "the tracked local branch must not move"
     );
     assert!(still_on_branch(&work, &commit));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn push_refuses_an_empty_commit_instead_of_deleting_the_remote_branch() {
@@ -111,8 +105,6 @@ fn push_refuses_an_empty_commit_instead_of_deleting_the_remote_branch() {
         branches.lines().any(|b| b == branch),
         "the remote branch must still exist: {branches:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 /// A deletion between the remote check and the push must not recreate the
 /// branch.
@@ -143,8 +135,6 @@ fn a_branch_deleted_between_the_check_and_the_push_is_not_recreated() {
         "the branch must still be absent — the lease is what makes the \
              earlier existence check hold rather than merely have been true"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 /// The same window, but the branch moves instead of vanishing.
@@ -188,8 +178,6 @@ fn a_branch_that_moves_between_the_check_and_the_push_is_not_clobbered() {
         after, commit,
         "the commit that raced in must still be the branch tip"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 /// The lease must never license a non-fast-forward.
@@ -227,8 +215,6 @@ fn a_commit_not_based_on_the_remote_tip_is_refused_rather_than_forced() {
         ahead,
         "the remote tip must be untouched"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 /// `ls-remote` matches ref tails, so a branch named
@@ -264,8 +250,6 @@ fn a_branch_whose_name_ends_in_the_upstream_ref_does_not_block_the_push() {
         decoy,
         "the look-alike branch must be untouched"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -295,8 +279,6 @@ fn push_never_sends_more_than_the_explicitly_targeted_commit() {
         "must never publish anything beyond the targeted commit: {subjects}"
     );
     assert!(subjects.contains("older commit"), "{subjects}");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn retry_commit_abandons_silently_when_head_has_moved_on() {
@@ -323,8 +305,6 @@ fn retry_commit_abandons_silently_when_head_has_moved_on() {
         "- [x] one\n- [x] two\n",
         "no stale commit was rebuilt on top"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn retry_commit_pushes_when_head_still_matches() {
@@ -343,8 +323,6 @@ fn retry_commit_pushes_when_head_still_matches() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] one\n");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
@@ -369,8 +347,6 @@ fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
         validated,
         "catch-up must publish only the tip it validated"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -404,8 +380,6 @@ fn catch_up_push_never_commits_uncommitted_working_tree_changes() {
         edited,
         "the uncommitted edit stays exactly as the user left it"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_pushes_a_local_only_commit_without_committing_a_dirty_tree() {
@@ -441,8 +415,6 @@ fn catch_up_push_pushes_a_local_only_commit_without_committing_a_dirty_tree() {
         "and no second commit was created for the dirty tree"
     );
     assert_eq!(fs::read_to_string(&file).unwrap(), dirty);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_is_a_no_op_when_everything_is_already_pushed() {
@@ -453,8 +425,6 @@ fn catch_up_push_is_a_no_op_when_everything_is_already_pushed() {
         SyncOutcome::Skipped
     );
     assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_stays_silent_when_no_upstream_is_configured() {
@@ -464,8 +434,6 @@ fn catch_up_push_stays_silent_when_no_upstream_is_configured() {
         catch_up_push(&work, &work.join("tracked.md")),
         SyncOutcome::Skipped
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_refuses_when_unrelated_commits_are_unpushed() {
@@ -486,8 +454,6 @@ fn catch_up_push_refuses_when_unrelated_commits_are_unpushed() {
         "init",
         "the unrelated commit must not be published"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_reports_an_untracked_checklist() {
@@ -502,8 +468,6 @@ fn catch_up_push_reports_an_untracked_checklist() {
         catch_up_push(&work, &untracked),
         SyncOutcome::SkippedUntracked
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_reports_an_untracked_checklist_on_a_fully_pushed_branch() {
@@ -515,8 +479,6 @@ fn catch_up_push_reports_an_untracked_checklist_on_a_fully_pushed_branch() {
         catch_up_push(&work, &untracked),
         SyncOutcome::SkippedUntracked
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_is_quiet_about_an_index_lookup_error_with_nothing_to_push() {
@@ -527,8 +489,6 @@ fn catch_up_push_is_quiet_about_an_index_lookup_error_with_nothing_to_push() {
     run(&work, &["push", "-q"]);
 
     assert_eq!(catch_up_push(&work, &work), SyncOutcome::Skipped);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_fails_on_an_index_lookup_error_with_commits_to_push() {
@@ -543,8 +503,6 @@ fn catch_up_push_fails_on_an_index_lookup_error_with_commits_to_push() {
         matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("more than one tracked file")),
         "{outcome:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_refuses_while_the_repository_is_mid_merge() {
@@ -560,8 +518,6 @@ fn catch_up_push_refuses_while_the_repository_is_mid_merge() {
         matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("a merge is in progress")),
         "{outcome:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 fn second_bare_repo(work: &Path, name: &str) -> PathBuf {
@@ -608,8 +564,6 @@ fn a_branch_whose_upstream_has_another_name_is_not_pushed_to_that_upstream() {
         ),
         ""
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 /// Where `git push` itself would publish to the differently named
 /// upstream, so does the sync.
@@ -622,8 +576,6 @@ fn a_differently_named_upstream_is_pushed_when_push_default_is_upstream() {
 
     assert_eq!(push(&work, &commit), SyncOutcome::Synced);
     assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), commit);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 fn assert_never_pushed_to_the_fetch_remote(config: &[&str]) {
     let (work, remote) = init_repo_with_remote();
@@ -647,8 +599,6 @@ fn assert_never_pushed_to_the_fetch_remote(config: &[&str]) {
         "{config:?}: nothing may reach the fetch remote"
     );
     assert_ne!(git_stdout(&fork, &["rev-parse", "main"]), commit);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_push_default_remote_keeps_the_sync_off_the_fetch_remote() {
@@ -693,8 +643,6 @@ fn a_push_url_is_checked_and_pushed_instead_of_the_fetch_url() {
     assert_eq!(push(&work, &commit), SyncOutcome::Synced);
     assert_eq!(git_stdout(&push_repo, &["rev-parse", "main"]), commit);
     assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), fetch_tip);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -714,7 +662,6 @@ fn catch_up_push_leaves_a_hand_made_checklist_commit_alone() {
         "{outcome:?}"
     );
     assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn catch_up_push_counts_every_earlier_markcheck_commit_it_pushes() {
@@ -736,5 +683,4 @@ fn catch_up_push_counts_every_earlier_markcheck_commit_it_pushes() {
         git_stdout(&remote, &["log", "--format=%s", "main"]),
         "toggle\ntoggle\ninit"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }

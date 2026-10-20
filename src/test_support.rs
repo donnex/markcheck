@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::git_sync::REDIRECTING_GIT_VARS;
+use crate::git_test_support::{NO_GLOBAL_GIT_CONFIG, ambient_git_vars};
 
 pub use crate::temp_test_support::unique_temp_path;
 
@@ -23,13 +23,10 @@ thread_local! {
 /// system config (signing, `core.hooksPath`, templates), and an empty `HOME`
 /// and `XDG_CONFIG_HOME` so no global ignore or attributes file applies.
 pub fn isolate_git(cmd: &mut Command) {
-    for var in REDIRECTING_GIT_VARS {
+    for var in ambient_git_vars() {
         cmd.env_remove(var);
     }
-    cmd.env_remove("GIT_CONFIG_PARAMETERS")
-        .env_remove("GIT_CONFIG_COUNT")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1");
+    cmd.envs(NO_GLOBAL_GIT_CONFIG);
     GIT_HOME.with(|home| {
         cmd.env("HOME", home).env("XDG_CONFIG_HOME", home);
     });
@@ -61,13 +58,15 @@ mod tests {
             .get_envs()
             .map(|(k, v)| (k.to_string_lossy().into_owned(), v.is_some()))
             .collect();
-        for var in REDIRECTING_GIT_VARS
-            .iter()
-            .chain(&["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"])
-        {
+        for var in ambient_git_vars() {
             assert!(envs.contains(&(var.to_string(), false)), "{var} kept");
         }
-        for var in ["GIT_CONFIG_NOSYSTEM", "HOME", "XDG_CONFIG_HOME"] {
+        for var in [
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+            "HOME",
+            "XDG_CONFIG_HOME",
+        ] {
             assert!(envs.contains(&(var.to_string(), true)), "{var} not set");
         }
         let home = GIT_HOME.with(Clone::clone);

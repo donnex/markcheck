@@ -50,8 +50,6 @@ fn a_branch_deleted_on_the_remote_is_not_recreated_by_a_sync() {
         git_stdout(&work, &["log", "--format=%s", "-1", "main"]).contains("Check"),
         "the commit itself must have been made locally"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_a_non_utf8_file_name_without_committing() {
@@ -86,8 +84,6 @@ fn run_sync_refuses_a_non_utf8_file_name_without_committing() {
         "{outcome:?}"
     );
     assert_eq!(git_stdout(&work, &["rev-parse", "HEAD"]), before);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_reports_an_untracked_file_without_adding_it() {
@@ -113,8 +109,6 @@ fn run_sync_reports_an_untracked_file_without_adding_it() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&status.stdout).contains("?? untracked.md"));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_skips_when_tracked_file_is_unchanged() {
@@ -131,7 +125,6 @@ fn run_sync_skips_when_tracked_file_is_unchanged() {
         ),
         SyncOutcome::Skipped
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_commits_and_pushes_a_tracked_change() {
@@ -162,8 +155,6 @@ fn run_sync_commits_and_pushes_a_tracked_change() {
         String::from_utf8_lossy(&log.stdout).trim(),
         "tracked.md: Check \"one\""
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_leaves_the_real_index_matching_head_after_a_commit() {
@@ -197,8 +188,6 @@ fn run_sync_leaves_the_real_index_matching_head_after_a_commit() {
         "real index must match HEAD and the working tree after a commit: {:?}",
         String::from_utf8_lossy(&status.stdout)
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_reports_failure_when_push_has_no_remote() {
@@ -215,8 +204,6 @@ fn run_sync_reports_failure_when_push_has_no_remote() {
         Publish::Everything,
     );
     assert!(matches!(outcome, SyncOutcome::CommittedNotPushed { .. }));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_commits_and_pushes_on_a_non_default_branch() {
@@ -250,8 +237,6 @@ fn run_sync_commits_and_pushes_on_a_non_default_branch() {
         "- [x] one\n",
         "the topic branch must carry the change, not be deleted or left behind"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_never_publishes_unrelated_work_when_no_upstream_is_configured() {
@@ -312,8 +297,6 @@ fn run_sync_never_publishes_unrelated_work_when_no_upstream_is_configured() {
         "the unrelated commit must never reach the remote: {:?}",
         String::from_utf8_lossy(&branches.stdout)
     );
-
-    fs::remove_dir_all(&root).ok();
 }
 #[test]
 fn run_sync_refuses_to_commit_content_that_went_stale_before_the_worker_ran() {
@@ -353,8 +336,6 @@ fn run_sync_refuses_to_commit_content_that_went_stale_before_the_worker_ran() {
         fs::read_to_string(&file_path).unwrap(),
         "- [x] A\n- [x] B\n"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_to_recommit_a_file_deleted_after_the_request_was_queued() {
@@ -390,8 +371,6 @@ fn run_sync_refuses_to_recommit_a_file_deleted_after_the_request_was_queued() {
         "the deleted file must not be resurrected in a commit"
     );
     assert!(!file_path.exists(), "the deletion must be left alone");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_recovers_on_the_next_request_after_a_stale_refusal() {
@@ -432,8 +411,6 @@ fn run_sync_recovers_on_the_next_request_after_a_stale_refusal() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] A\n- [x] B\n");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_never_includes_an_unrelated_staged_file() {
@@ -478,8 +455,6 @@ fn run_sync_never_includes_an_unrelated_staged_file() {
         !String::from_utf8_lossy(&index.stdout).is_empty(),
         "secret.env must remain staged in the real index"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
@@ -548,8 +523,6 @@ fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
             .starts_with("markcheck-index-")
     });
     assert!(!leftover, "temp index file was not cleaned up");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_undoes_a_hook_violated_root_commit_by_deleting_the_branch_ref() {
@@ -600,8 +573,6 @@ fn run_sync_undoes_a_hook_violated_root_commit_by_deleting_the_branch_ref() {
         Some("refs/heads/main"),
         "HEAD must still symbolically resolve to the branch, just with no commit on it yet"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_during_an_unresolved_merge_conflict() {
@@ -643,8 +614,6 @@ fn run_sync_refuses_during_an_unresolved_merge_conflict() {
         contents.contains("<<<<<<<"),
         "conflict markers must still be present, untouched: {contents:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_later_request_commits_the_concurrent_change_separately() {
@@ -698,8 +667,6 @@ fn a_later_request_commits_the_concurrent_change_separately() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] A\n- [x] B\n");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_skips_when_expected_content_already_matches_head_and_upstream() {
@@ -722,8 +689,6 @@ fn run_sync_skips_when_expected_content_already_matches_head_and_upstream() {
         ),
         SyncOutcome::Skipped
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 /// Under an eol filter the committed blob is LF while the request's text is
 /// CRLF, so only a filtered comparison can see they are the same content.
@@ -754,8 +719,6 @@ fn run_sync_recognises_already_committed_content_under_an_eol_filter() {
         SyncOutcome::Skipped
     );
     assert_eq!(current_head(&work), head_before);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_retries_the_push_when_expected_content_matches_head_but_is_unpushed() {
@@ -780,8 +743,6 @@ fn run_sync_retries_the_push_when_expected_content_matches_head_but_is_unpushed(
         matches!(outcome, SyncOutcome::CommittedNotPushed { .. }),
         "must attempt (and report failure of) the push, not silently skip: {outcome:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_when_branch_has_unrelated_unpushed_commits() {
@@ -820,8 +781,6 @@ fn run_sync_refuses_when_branch_has_unrelated_unpushed_commits() {
         "- [x] one\n",
         "the on-disk edit itself is untouched, just not synced yet"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commits() {
@@ -872,8 +831,6 @@ fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commit
         !subjects.contains("unrelated local commit"),
         "the unrelated commit must never reach the remote: {subjects}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_when_an_unrelated_commit_is_reverted_before_the_checklist_commit() {
@@ -914,8 +871,6 @@ fn run_sync_refuses_when_an_unrelated_commit_is_reverted_before_the_checklist_co
         head_before,
         "no checklist commit should have been created on top"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_refuses_when_a_merge_commit_is_in_the_unpushed_range() {
@@ -950,8 +905,6 @@ fn run_sync_refuses_when_a_merge_commit_is_in_the_unpushed_range() {
         "a merge commit in range must refuse, even a clean one: {outcome:?}"
     );
     assert_eq!(current_head(&work).unwrap(), head_before);
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
@@ -992,8 +945,6 @@ fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
         fs::read_to_string(&file_path).unwrap(),
         "- [x] one\n- [x] two\n"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
@@ -1039,8 +990,6 @@ fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&show.stdout), "- [x] one\n");
-
-    fs::remove_dir_all(&root).ok();
 }
 #[test]
 fn run_sync_handles_filenames_with_spaces_dashes_colons_and_unicode() {
@@ -1083,8 +1032,6 @@ fn run_sync_handles_filenames_with_spaces_dashes_colons_and_unicode() {
             "- [x] one\n",
             "file name: {file_name:?}"
         );
-
-        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 }
 #[test]
@@ -1120,8 +1067,6 @@ fn run_sync_commits_a_checklist_whose_name_has_glob_characters_as_itself() {
         git_stdout(&remote, &["show", "main:notes1.md"]),
         "unrelated"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_commits_a_glob_named_checklist_as_itself_under_ambient_icase_pathspecs() {
@@ -1266,8 +1211,6 @@ fn an_untracked_checklist_is_reported_even_when_git_status_stays_silent() {
             SyncOutcome::SkippedUntracked,
             "{label}: an untracked checklist must still be reported"
         );
-
-        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 }
 // --- Check-then-race-then-use interleavings ---
@@ -1307,8 +1250,6 @@ fn an_unrelated_commit_landing_after_validation_is_not_published_by_the_fast_pat
         validated,
         "the remote must hold exactly the validated tip, not the commit that raced in"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_commit_landing_before_ours_is_detected_rather_than_built_on_stale_state() {
@@ -1351,8 +1292,6 @@ fn a_commit_landing_before_ours_is_detected_rather_than_built_on_stale_state() {
         unrelated,
         "HEAD must be the concurrent commit, not rewound past it"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_version_staged_during_the_sync_survives_index_alignment() {
@@ -1389,8 +1328,6 @@ fn a_version_staged_during_the_sync_survives_index_alignment() {
         Some(&b"- [ ] staged mid-sync\n"[..]),
         "a version staged during the sync must not be overwritten by the realignment"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 // --- Two concurrent syncs in one repository ---
 
@@ -1455,8 +1392,6 @@ fn a_second_sync_committing_mid_flight_cannot_revert_the_first() {
         "a.md: Check \"a\"",
         "and must still be the branch tip"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_configured_but_unresolvable_upstream_does_not_bypass_the_unrelated_guard() {
@@ -1517,8 +1452,6 @@ fn a_configured_but_unresolvable_upstream_does_not_bypass_the_unrelated_guard() 
         "",
         "the unrelated commit must not have reached the remote"
     );
-
-    fs::remove_dir_all(&root).ok();
 }
 // --- Randomised operation sequences ---
 
@@ -1615,8 +1548,6 @@ fn randomised_sequences_never_lose_a_commit_markcheck_did_not_make() {
                 );
             }
         }
-
-        fs::remove_dir_all(work.parent().unwrap()).ok();
     }
 }
 // --- Hostile repository shapes ---
@@ -1650,8 +1581,6 @@ fn run_sync_works_when_the_checklist_lives_in_a_subdirectory() {
         expected.trim_end(),
         "the nested path must be committed at its repo-root-relative location"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_works_inside_a_linked_worktree() {
@@ -1696,8 +1625,6 @@ fn run_sync_works_inside_a_linked_worktree() {
         git_stdout(&remote, &["show", "wt:tracked.md"]),
         expected.trim_end()
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn detect_and_sync_cope_with_a_shallow_clone() {
@@ -1742,8 +1669,6 @@ fn detect_and_sync_cope_with_a_shallow_clone() {
         SyncOutcome::Synced,
         "a shallow clone must still sync: {outcome:?}"
     );
-
-    fs::remove_dir_all(origin.parent().unwrap()).ok();
 }
 // --- Staged-target guard ---
 
@@ -1790,8 +1715,6 @@ fn run_sync_refuses_when_a_staged_checklist_version_would_be_dropped() {
         "no commit may be built"
     );
     assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn run_sync_proceeds_when_the_staged_checklist_matches_the_working_tree() {
@@ -1831,8 +1754,6 @@ fn run_sync_proceeds_when_the_staged_checklist_matches_the_working_tree() {
         other_staged,
         "an unrelated staged file is still untouched"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -1892,7 +1813,6 @@ fn a_second_checklist_syncs_past_the_first_one_s_stranded_commit() {
         SyncOutcome::Skipped,
         "opening b.md afterwards reports nothing"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -1948,7 +1868,6 @@ fn run_sync_refuses_to_publish_an_uncommitted_edit_under_a_toggle() {
     assert_eq!(git_stdout(&work, &["log", "--format=%s", "main"]), "init");
     assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
     assert_eq!(fs::read_to_string(&file).unwrap(), expected);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -1972,7 +1891,6 @@ fn run_sync_publishes_a_toggle_on_the_committed_content() {
         git_stdout(&remote, &["show", "main:tracked.md"]),
         "- [x] one"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -1996,5 +1914,4 @@ fn run_sync_refuses_a_toggle_whose_base_could_not_be_read() {
         "{outcome:?}"
     );
     assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }

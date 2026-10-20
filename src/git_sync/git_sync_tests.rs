@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 fn detect_finds_a_repo() {
     let work = init_repo_without_remote();
     assert!(GitSync::detect(&work.join("tracked.md")).is_ok());
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -30,8 +29,6 @@ fn a_poisoned_latest_hash_does_not_take_down_the_main_thread() {
         *lock_hash(&sync.latest_requested_hash),
         hash_bytes(b"- [x] one\n")
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -42,7 +39,6 @@ fn detect_says_why_outside_a_repo() {
         GitSync::detect(&dir.join("file.md")).err().as_deref(),
         Some("the file is not in a git repository")
     );
-    fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -55,7 +51,6 @@ fn detect_says_why_inside_the_git_directory() {
             .as_deref(),
         Some("the file is not in a git work tree")
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -120,20 +115,7 @@ fn repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits(
     sync.request(pending_sync("- [x] one\n- [x] two\n- [x] three\n", "third"));
     assert!(sync.busy, "still mid-flight on the first attempt");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcomes = Vec::new();
-    loop {
-        if let Some(outcome) = sync.poll() {
-            outcomes.push(outcome);
-        }
-        if !sync.busy && !outcomes.is_empty() {
-            break;
-        }
-        if Instant::now() >= deadline {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let outcomes = settle(&mut sync);
 
     // "second" is always overwritten by "third" before it runs.
     assert!(
@@ -182,9 +164,6 @@ fn repeated_requests_against_an_unreachable_remote_never_deadlock_or_lose_edits(
         remote_subjects.contains("tracked.md: first"),
         "catch-up push carries every commit made while offline: {remote_subjects}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
-    fs::remove_dir_all(remote.parent().unwrap()).ok();
 }
 
 #[test]
@@ -193,7 +172,6 @@ fn retry_push_if_due_noops_when_nothing_is_pending() {
     let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
     sync.retry_push_if_due(Instant::now());
     assert!(!sync.busy, "nothing pending, nothing to retry");
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -207,7 +185,6 @@ fn retry_push_if_due_noops_before_the_backoff_interval_elapses() {
     sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL - Duration::from_millis(1));
 
     assert!(!sync.busy, "backoff interval hasn't elapsed yet");
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -221,7 +198,6 @@ fn retry_push_if_due_noops_while_busy() {
     sync.retry_push_if_due(Instant::now());
 
     assert!(sync.busy);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -246,21 +222,14 @@ fn retry_push_if_due_retries_once_the_backoff_interval_elapses() {
         "the backoff interval elapsed, a retry should have spawned"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcome = None;
-    while Instant::now() < deadline {
-        if let Some(o) = sync.poll() {
-            outcome = Some(o);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let outcomes = settle(&mut sync);
     assert!(
-        matches!(outcome, Some(SyncOutcome::CommittedNotPushed { .. })),
-        "still no remote to push to, so this retry fails the same way: {outcome:?}"
+        matches!(
+            outcomes.as_slice(),
+            [SyncOutcome::CommittedNotPushed { .. }]
+        ),
+        "still no remote to push to, so this retry fails the same way: {outcomes:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -288,16 +257,7 @@ fn retry_push_if_due_clears_the_retry_when_head_has_moved_on() {
         "the backoff interval elapsed, a retry should have spawned"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcome = None;
-    while Instant::now() < deadline {
-        if let Some(o) = sync.poll() {
-            outcome = Some(o);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(outcome, Some(SyncOutcome::RetryAbandoned), "{outcome:?}");
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::RetryAbandoned]);
     assert!(
         sync.retry.is_none(),
         "the stale retry must be cleared, not left armed forever"
@@ -305,8 +265,6 @@ fn retry_push_if_due_clears_the_retry_when_head_has_moved_on() {
 
     sync.retry_push_if_due(last_attempt + PUSH_RETRY_INTERVAL * 2);
     assert!(!sync.busy, "nothing left to retry");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -355,8 +313,6 @@ fn apply_outcome_covers_every_variant_s_effect_on_the_retry_state() {
         let (_, at) = sync.retry.clone().expect("left armed");
         assert_eq!(at, old, "{outcome:?} must leave an unrelated retry alone");
     }
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -395,8 +351,6 @@ fn repeated_push_failures_grow_the_retry_interval_up_to_a_cap() {
     sync.apply_outcome(&not_pushed("a-newer-commit"));
     sync.apply_outcome(&SyncOutcome::Synced);
     assert_eq!(sync.retry_interval, PUSH_RETRY_INTERVAL, "a push resets it");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -420,8 +374,6 @@ fn an_unrelated_content_failure_does_not_starve_an_armed_retry() {
     sync.apply_outcome(&SyncOutcome::RetryFailed("retry blew up".to_string()));
     let (_, at) = sync.retry.clone().expect("still armed");
     assert!(at > due, "a failed retry restarts its own backoff");
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -449,8 +401,6 @@ fn a_failed_retry_does_not_fire_again_on_the_very_next_frame() {
         sync.retry.is_some(),
         "the commit is still unpushed, so the retry stays armed for later"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -461,18 +411,7 @@ fn request_and_poll_roundtrip_reports_synced() {
     let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
     sync.request(pending_sync("- [x] one\n", "Check \"one\""));
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut result = None;
-    while Instant::now() < deadline {
-        if let Some(outcome) = sync.poll() {
-            result = Some(outcome);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(result, Some(SyncOutcome::Synced));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
 }
 
 #[test]
@@ -491,16 +430,10 @@ fn a_request_while_busy_is_coalesced_and_runs_after() {
         Some(vec!["second".to_string()])
     );
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcomes = Vec::new();
-    while Instant::now() < deadline && outcomes.len() < 2 {
-        if let Some(outcome) = sync.poll() {
-            outcomes.push(outcome);
-        } else {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-    assert_eq!(outcomes, vec![SyncOutcome::Synced, SyncOutcome::Skipped]);
+    assert_eq!(
+        settle(&mut sync),
+        vec![SyncOutcome::Synced, SyncOutcome::Skipped]
+    );
 
     let log = crate::test_support::git()
         .current_dir(&remote)
@@ -511,8 +444,6 @@ fn a_request_while_busy_is_coalesced_and_runs_after() {
         String::from_utf8_lossy(&log.stdout).trim(),
         "tracked.md: first"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -529,8 +460,6 @@ fn an_unverifiable_commit_scope_says_the_commit_was_left_behind() {
         err.contains(&bogus) && err.contains("left on the branch"),
         "the message must name the commit and say it survived: {err}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -632,7 +561,6 @@ fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
     let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
     assert_eq!(sync.sweep_interrupted_syncs(), 2);
     assert_eq!(sync.sweep_interrupted_syncs(), 0);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -666,17 +594,17 @@ fn abandon_stops_the_running_git_and_starts_no_more() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(started.exists(), "the hook never started");
+    assert_eq!(sync.wait_for_outcomes(Duration::from_millis(100)), vec![]);
+    assert!(
+        sync.is_busy(),
+        "the wait gives up while the hook still runs"
+    );
     assert!(sync.abandon(false), "the commit's git was running");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcome = None;
-    while outcome.is_none() && Instant::now() < deadline {
-        outcome = sync.poll();
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let outcomes = settle(&mut sync);
     assert!(
-        matches!(outcome, Some(SyncOutcome::Failed(_))),
-        "the abandoned sync ends instead of waiting out its hook: {outcome:?}"
+        matches!(outcomes.as_slice(), [SyncOutcome::Failed(_)]),
+        "the abandoned sync ends instead of waiting out its hook: {outcomes:?}"
     );
     let left: Vec<_> = fs::read_dir(work.join(".git"))
         .unwrap()
@@ -696,7 +624,6 @@ fn abandon_stops_the_running_git_and_starts_no_more() {
         err.to_string().contains("abandoned"),
         "no git may start after abandoning: {err}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -718,18 +645,11 @@ fn a_checklist_in_a_subdirectory_syncs_from_the_repository_root() {
     );
     fs::write(&file, "- [x] one\n").unwrap();
     sync.request(pending_sync("- [x] one\n", "Check \"one\""));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcome = None;
-    while outcome.is_none() && Instant::now() < deadline {
-        outcome = sync.poll();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(outcome, Some(SyncOutcome::Synced));
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
     assert_eq!(
         git_stdout(&remote, &["show", "HEAD:docs/list.md"]),
         "- [x] one"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -753,19 +673,12 @@ fn requests_inside_the_quiet_period_become_one_commit() {
     sync.tick(Instant::now() + Duration::from_secs(61));
     assert!(sync.is_busy());
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcome = None;
-    while outcome.is_none() && Instant::now() < deadline {
-        outcome = sync.poll();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(outcome, Some(SyncOutcome::Synced));
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
     assert_eq!(
         git_stdout(&remote, &["log", "-1", "--format=%B", "main"]),
         "tracked.md: 2 changes\n\n- Check \"one\"\n- Start \"one\"\n\nSynced-by: markcheck"
     );
     assert_eq!(git_stdout(&remote, &["rev-list", "--count", "main"]), "2");
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -781,11 +694,7 @@ fn a_delay_too_long_to_schedule_waits_for_the_flush() {
     assert!(sync.is_waiting() && !sync.is_busy(), "never due on its own");
     sync.flush();
     assert!(sync.is_busy(), "the flush still sends it");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while sync.poll().is_none() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    fs::remove_dir_all(work.parent().unwrap()).ok();
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
 }
 
 #[test]
@@ -800,25 +709,18 @@ fn an_immediate_request_or_a_flush_skips_the_quiet_period() {
     edited.immediate = true;
     sync.request(edited);
     assert!(sync.is_busy(), "an editor's edit doesn't wait");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while sync.poll().is_none() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
 
     fs::write(&file, "- [ ] one\n").unwrap();
     sync.request(pending_sync("- [ ] one\n", "Uncheck \"one\""));
     assert!(sync.is_waiting());
     sync.flush();
     assert!(sync.is_busy(), "quitting flushes the waiting change");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while sync.poll().is_none() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
     assert_eq!(
         git_stdout(&work, &["log", "-1", "--format=%s"]),
         "tracked.md: Uncheck \"one\""
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -875,14 +777,16 @@ fn own_toggle(content: &str, epoch: u64, base: &str) -> PendingSync {
     }
 }
 
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Every outcome until the worker is idle, failing the test with what was
+/// seen if it is still busy after [`SETTLE_TIMEOUT`].
 fn settle(sync: &mut GitSync) -> Vec<SyncOutcome> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut outcomes = Vec::new();
-    while (sync.busy || sync.queued.is_some()) && Instant::now() < deadline {
-        outcomes.extend(sync.poll());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(!sync.busy, "the sync never finished");
+    let outcomes = sync.wait_for_outcomes(SETTLE_TIMEOUT);
+    assert!(
+        !sync.busy,
+        "sync still busy after {SETTLE_TIMEOUT:?}; outcomes so far: {outcomes:?}"
+    );
     outcomes
 }
 
@@ -919,7 +823,6 @@ fn toggling_again_after_a_refused_sync_syncs_markcheck_s_own_changes() {
         git_stdout(&remote, &["show", "main:tracked.md"]),
         "- [x] one\n- [x] two"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -942,7 +845,6 @@ fn a_toggle_queued_behind_a_landing_sync_is_checked_against_what_landed() {
         git_stdout(&remote, &["show", "main:tracked.md"]),
         "- [x] one\n- [x] two"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -967,7 +869,6 @@ fn a_toggle_after_an_outside_reload_does_not_publish_the_outside_edit() {
         git_stdout(&remote, &["show", "main:tracked.md"]),
         "- [x] one"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -999,5 +900,4 @@ fn a_toggle_after_a_saved_edit_that_failed_to_sync_publishes_the_edit() {
         git_stdout(&remote, &["show", "main:tracked.md"]),
         toggled.trim_end()
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }

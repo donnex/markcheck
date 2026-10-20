@@ -37,8 +37,6 @@ fn a_matching_staged_checklist_is_not_refused_under_a_content_filter() {
         staged_target_would_be_lost(&work, "tracked.md", head_blob.as_deref(), Some(loaded)),
         "a staged snapshot the working tree does not have must still refuse"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn verify_commit_scope_checks_the_captured_commit_not_whatever_head_is_now() {
@@ -62,8 +60,6 @@ fn verify_commit_scope_checks_the_captured_commit_not_whatever_head_is_now() {
         Some(concurrent_commit),
         "must never touch the concurrent commit sitting on top"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn verify_commit_scope_names_the_stray_commit_when_the_undo_itself_fails() {
@@ -98,8 +94,6 @@ fn verify_commit_scope_names_the_stray_commit_when_the_undo_itself_fails() {
         Some(concurrent_commit),
         "nothing may be rewound when the undo refuses"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn undo_commit_refuses_to_rewind_a_commit_that_landed_after_the_one_being_undone() {
@@ -126,8 +120,6 @@ fn undo_commit_refuses_to_rewind_a_commit_that_landed_after_the_one_being_undone
         Some(concurrent_commit),
         "the concurrent commit must not be rewound"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn undo_commit_refuses_to_delete_a_root_commit_that_already_has_a_child() {
@@ -158,8 +150,6 @@ fn undo_commit_refuses_to_delete_a_root_commit_that_already_has_a_child() {
         Some(concurrent_commit),
         "the branch ref must not be deleted out from under the concurrent commit"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn range_has_unrelated_commits_reads_a_whole_batched_range_correctly() {
@@ -200,8 +190,6 @@ fn range_has_unrelated_commits_reads_a_whole_batched_range_correctly() {
         Ok(false),
         "an empty range has nothing to diff"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn verify_commit_scope_catches_a_revert_cancelled_unrelated_change() {
@@ -241,14 +229,11 @@ fn verify_commit_scope_catches_a_revert_cancelled_unrelated_change() {
         parent,
         "the commits markcheck did not create are deliberately left in place"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_is_none_for_a_clean_repo() {
     let work = init_repo_without_remote();
     assert_eq!(repo_sync_blocked(&work), None);
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_detects_a_merge_in_progress() {
@@ -259,7 +244,6 @@ fn repo_sync_blocked_detects_a_merge_in_progress() {
         reason.as_ref().is_some_and(|r| r.contains("merge")),
         "{reason:?}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_detects_a_rebase_in_progress() {
@@ -270,7 +254,6 @@ fn repo_sync_blocked_detects_a_rebase_in_progress() {
         reason.as_ref().is_some_and(|r| r.contains("rebase")),
         "{reason:?}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_detects_detached_head() {
@@ -282,7 +265,6 @@ fn repo_sync_blocked_detects_detached_head() {
         reason.as_ref().is_some_and(|r| r.contains("detached")),
         "{reason:?}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_detects_a_real_merge_conflict() {
@@ -299,7 +281,6 @@ fn repo_sync_blocked_detects_a_real_merge_conflict() {
         .output();
 
     assert!(repo_sync_blocked(&work).is_some());
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_detects_unmerged_entries_without_a_merge_marker() {
@@ -336,7 +317,6 @@ fn repo_sync_blocked_detects_unmerged_entries_without_a_merge_marker() {
         reason.as_ref().is_some_and(|r| r.contains("conflict")),
         "{reason:?}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_detects_a_multi_commit_cherry_pick_after_a_plain_commit() {
@@ -351,7 +331,6 @@ fn repo_sync_blocked_detects_a_multi_commit_cherry_pick_after_a_plain_commit() {
             .is_some_and(|r| r.contains("cherry-pick or revert is in progress")),
         "{reason:?}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn repo_sync_blocked_refuses_when_the_git_dir_cannot_be_found() {
@@ -364,7 +343,6 @@ fn repo_sync_blocked_refuses_when_the_git_dir_cannot_be_found() {
             .is_some_and(|r| r.contains("could not locate the repository's git directory")),
         "{reason:?}"
     );
-    fs::remove_dir_all(&dir).ok();
 }
 #[test]
 fn repo_sync_blocked_refuses_when_the_conflict_check_fails() {
@@ -377,7 +355,6 @@ fn repo_sync_blocked_refuses_when_the_conflict_check_fails() {
             .is_some_and(|r| r.contains("could not check for unresolved merge conflicts")),
         "{reason:?}"
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn undo_commit_rewinds_one_commit_and_keeps_the_branch() {
@@ -394,8 +371,6 @@ fn undo_commit_rewinds_one_commit_and_keeps_the_branch() {
         current_branch_ref(&work).is_some(),
         "the branch ref must still exist, not be deleted"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_tipless_branch_has_no_unrelated_unpushed_commits() {
@@ -404,7 +379,6 @@ fn a_tipless_branch_has_no_unrelated_unpushed_commits() {
         unpushed_history(&work, None, "x.md", Publishable::OwnOrThisChecklist),
         Ok(UnpushedHistory::Safe(0))
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn staged_target_guard_fails_closed_without_a_pre_write_hash() {
@@ -423,8 +397,6 @@ fn staged_target_guard_fails_closed_without_a_pre_write_hash() {
         None,
         None
     ));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -447,8 +419,6 @@ fn an_unanswerable_history_check_refuses_instead_of_permitting_a_push() {
         matches!(&refusal, Some(SyncOutcome::Failed(msg)) if msg.contains("could not check")),
         "the caller must refuse to publish: {refusal:?}"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -487,8 +457,6 @@ fn a_head_that_moves_after_the_tip_is_captured_cannot_broaden_the_push() {
         unpushed_history(&work, Some(&moved), "tracked.md", Publishable::OwnOrThisChecklist),
         Ok(UnpushedHistory::Blocked(blocking)) if blocking.subject == "unrelated"
     ));
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_branch_without_an_upstream_is_not_a_verification_failure() {
@@ -506,8 +474,6 @@ fn a_branch_without_an_upstream_is_not_a_verification_failure() {
         Ok(UnpushedHistory::NoUpstream)
     );
     assert!(unpushed_history_blocks(&work, Some(&tip), "tracked.md").is_none());
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 #[test]
 fn a_configured_but_unfetched_upstream_still_counts_as_no_upstream() {
@@ -536,8 +502,6 @@ fn a_configured_but_unfetched_upstream_still_counts_as_no_upstream() {
         ),
         Ok(UnpushedHistory::NoUpstream)
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -575,7 +539,6 @@ fn an_unpushed_merge_is_never_published() {
         unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOrThisChecklist),
         Ok(UnpushedHistory::Blocked(blocking)) if blocking.subject == "merge"
     ));
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -592,7 +555,6 @@ fn a_markcheck_commit_to_a_non_markdown_file_is_not_its_own() {
         unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOnly),
         Ok(UnpushedHistory::Blocked(_))
     ));
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -622,7 +584,6 @@ fn unresolved_conflicts_and_a_detached_head_are_named() {
         "{:?}",
         repo_sync_blocked(&work)
     );
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -654,8 +615,6 @@ fn the_range_walk_ignores_config_that_would_hide_a_path() {
         Ok(true),
         "a rename must list the path it came from"
     );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]
@@ -674,7 +633,6 @@ fn a_path_named_like_a_commit_is_not_read_as_one() {
         Ok(UnpushedHistory::Blocked(blocking))
             if blocking.subject == "hex-named file" && blocking.sha == tip
     ));
-    fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
 #[test]

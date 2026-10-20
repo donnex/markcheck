@@ -7,6 +7,8 @@ mod clipboard;
 mod config;
 mod effect;
 mod git_sync;
+#[cfg(test)]
+mod git_test_support;
 mod launch;
 mod model;
 mod parser;
@@ -476,7 +478,7 @@ where
         if signals.stopped() {
             return Ok(git_sync.as_mut().and_then(|sync| {
                 sync.flush();
-                let last = wait_for_git_sync(sync, QUIT_WAIT).or(last_outcome);
+                let last = sync.wait_for_outcomes(QUIT_WAIT).pop().or(last_outcome);
                 finish_git_sync(sync, last)
             }));
         }
@@ -643,32 +645,14 @@ const QUIT_WAIT: Duration = Duration::from_secs(5);
 /// after `SIGTERM`, and then after `SIGKILL`.
 const ABANDON_GRACE: Duration = Duration::from_secs(2);
 
-/// Polls `sync` until its in-flight (and any coalesced-behind-it) request
-/// settles, or `timeout` elapses — whichever comes first. Returns the last
-/// outcome seen.
-fn wait_for_git_sync(
-    sync: &mut git_sync::GitSync,
-    timeout: Duration,
-) -> Option<git_sync::SyncOutcome> {
-    let deadline = Instant::now() + timeout;
-    let mut last = None;
-    while sync.is_busy() && Instant::now() < deadline {
-        if let Some(outcome) = sync.poll() {
-            last = Some(outcome);
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    last
-}
-
 /// Stops a running sync's git processes, then waits for the worker to remove
 /// its temporary index and scratch files. Returns the last outcome seen.
 fn abandon_git_sync(sync: &mut git_sync::GitSync) -> Option<git_sync::SyncOutcome> {
     sync.abandon(false);
-    let mut last = wait_for_git_sync(sync, ABANDON_GRACE);
+    let mut last = sync.wait_for_outcomes(ABANDON_GRACE).pop();
     if sync.is_busy() {
         sync.abandon(true);
-        last = wait_for_git_sync(sync, ABANDON_GRACE).or(last);
+        last = sync.wait_for_outcomes(ABANDON_GRACE).pop().or(last);
     }
     last
 }
