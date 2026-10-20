@@ -492,40 +492,30 @@ fn desired_card_height(item: &Item, area: Rect, code: Style) -> u16 {
 }
 
 fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    // The `## H2` title above the cards, except for the synthesized default
-    // list, and a leading bold-only bullet as a banner.
-    let has_h2 = !(state.current_list_index == 0 && state.document.has_default_list);
-    // The banner wraps to the card width so a long warning is shown in full;
-    // each wrapped row takes its own heading row.
-    let banner_rows = state
-        .current_list()
-        .banner
-        .as_ref()
-        .map(|banner| banner_rows(banner, state.icons, current_card_width(area)))
-        .unwrap_or_default();
-    // Prose written under the heading above this task, before it (#80).
-    let preamble = state
-        .current_item()
-        .and_then(|item| state.document.preambles.get(&item.line_number))
-        .map(|blocks| preamble_rows(blocks, state.icons, state.palette, current_card_width(area)))
-        .unwrap_or_default();
-    // The current item's `### H3`+ sub-section path, shown as a dim breadcrumb
-    // directly above the card so the single-card view still says which
-    // sub-section you're in — the overview's divider isn't visible on narrow
-    // terminals.
-    let breadcrumb = state
-        .current_item()
-        .and_then(|item| section_breadcrumb(&item.section));
-    // Title, banner and breadcrumb sit together, then one blank row before
-    // the card.
-    let heading_rows = (has_h2 as u16)
-        + clamp_to_u16(banner_rows.len())
-        + clamp_to_u16(preamble.len())
-        + (breadcrumb.is_some() as u16);
-    let reserved = if heading_rows > 0 {
-        heading_rows + 1
-    } else {
-        0
+    let width = current_card_width(area);
+    let mut heading = Heading {
+        // The `## H2` title above the cards, except for the synthesized
+        // default list.
+        title: !(state.current_list_index == 0 && state.document.has_default_list),
+        // A leading bold-only bullet, wrapped to the card width.
+        banner: state
+            .current_list()
+            .banner
+            .as_ref()
+            .map(|banner| banner_rows(banner, state.icons, width))
+            .unwrap_or_default(),
+        // Prose written under the heading above this task, before it (#80).
+        preamble: state
+            .current_item()
+            .and_then(|item| state.document.preambles.get(&item.line_number))
+            .map(|blocks| preamble_rows(blocks, state.icons, state.palette, width))
+            .unwrap_or_default(),
+        // The `### H3`+ sub-section path, so the single-card view still says
+        // which sub-section you're in on narrow terminals.
+        breadcrumb: state
+            .current_item()
+            .and_then(|item| section_breadcrumb(&item.section)),
+        gap: true,
     };
 
     let content_h = if let Some(item) = state.current_item() {
@@ -533,48 +523,40 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
     } else {
         MIN_CARD_HEIGHT.min(area.height)
     };
+    let card_h = fit_heading(&mut heading, area.height, content_h, width);
+    let reserved = heading.rows();
 
-    // Center the heading rows and the card *together* as a single block
-    // so the heading stays tied to the card instead of floating at the top of
-    // the area with the card centered below it. When there isn't room for
-    // both, fall back to just centering the card (heading dropped, as before).
-    let row = if reserved > 0 && area.height > content_h + reserved {
-        let [block] = Layout::vertical([Constraint::Length(reserved + content_h)])
-            .flex(Flex::Center)
-            .areas(area);
-        let [top, card] =
-            Layout::vertical([Constraint::Length(reserved), Constraint::Length(content_h)])
-                .areas(block);
-        let rows = Layout::vertical(vec![Constraint::Length(1); reserved as usize]).split(top);
-        let mut i = 0;
-        if has_h2 {
-            render_list_heading(
-                frame,
-                rows[i],
-                &state.current_list().title,
-                state.icons,
-                state.palette,
-            );
-            i += 1;
-        }
-        for row in &banner_rows {
-            render_list_banner(frame, rows[i], row, state.palette);
-            i += 1;
-        }
-        for (row, style) in &preamble {
-            let line = Line::from(Span::styled(row.clone(), *style)).centered();
-            frame.render_widget(Paragraph::new(line), rows[i]);
-            i += 1;
-        }
-        if let Some(crumb) = &breadcrumb {
-            render_section_breadcrumb(frame, rows[i], crumb, current_card_width(area));
-        }
-        // The final reserved row (`rows[reserved - 1]`) is left blank: the
-        // one-line gap above the card that mirrors the gap below it.
-        card
-    } else {
-        card_row(area, content_h)
-    };
+    // The heading rows and the card are centered together as one block, so
+    // the heading stays tied to the card.
+    let [block] = Layout::vertical([Constraint::Length(reserved + card_h)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [top, row] =
+        Layout::vertical([Constraint::Length(reserved), Constraint::Length(card_h)]).areas(block);
+    let rows = Layout::vertical(vec![Constraint::Length(1); reserved as usize]).split(top);
+    let mut i = 0;
+    if heading.title {
+        render_list_heading(
+            frame,
+            rows[i],
+            &state.current_list().title,
+            state.icons,
+            state.palette,
+        );
+        i += 1;
+    }
+    for banner in &heading.banner {
+        render_list_banner(frame, rows[i], banner, state.palette);
+        i += 1;
+    }
+    for preamble in &heading.preamble {
+        let line = Line::from(Span::styled(preamble.text.clone(), preamble.style)).centered();
+        frame.render_widget(Paragraph::new(line), rows[i]);
+        i += 1;
+    }
+    if let Some(crumb) = &heading.breadcrumb {
+        render_section_breadcrumb(frame, rows[i], crumb, width);
+    }
 
     // `row` is a vertical slice of `area`, so it is always as wide as `area`.
     if area.width < NARROW_THRESHOLD {
@@ -688,26 +670,107 @@ fn preamble_rows(
     icons: IconSet,
     palette: Palette,
     width: u16,
-) -> Vec<(String, Style)> {
-    let mut rows: Vec<(String, Style)> = Vec::new();
+) -> Vec<PreambleRow> {
+    let mut rows: Vec<PreambleRow> = Vec::new();
     for block in blocks {
         let (prefix, style) = preamble_style(block.kind, icons, palette);
         for line in block.text.lines() {
-            for row in wrap_text(&format!("{prefix}{line}"), width) {
-                rows.push((row, style));
+            for text in wrap_text(&format!("{prefix}{line}"), width) {
+                rows.push(PreambleRow {
+                    text,
+                    style,
+                    alert: block.kind == PreambleKind::Alert,
+                });
             }
         }
     }
     if rows.len() > MAX_PREAMBLE_ROWS {
         rows.truncate(MAX_PREAMBLE_ROWS);
-        if let Some((last, _)) = rows.last_mut() {
-            *last = super::truncate(&format!("{last}…"), (width as usize).max(1));
-            if !last.ends_with('…') {
-                last.push('…');
-            }
+        if let Some(last) = rows.last_mut() {
+            mark_cut(&mut last.text, width);
         }
     }
     rows
+}
+
+/// Ends `row` in `…`, cut to `width`, to show that rows after it were
+/// left out.
+fn mark_cut(row: &mut String, width: u16) {
+    *row = super::truncate(&format!("{row}…"), (width as usize).max(1));
+    if !row.ends_with('…') {
+        row.push('…');
+    }
+}
+
+/// One wrapped row of a task's preamble.
+struct PreambleRow {
+    text: String,
+    style: Style,
+    alert: bool,
+}
+
+/// The rows drawn above the card, top to bottom: the list title, the
+/// banner, the preamble, the sub-section breadcrumb, then a blank gap.
+struct Heading {
+    title: bool,
+    banner: Vec<String>,
+    preamble: Vec<PreambleRow>,
+    breadcrumb: Option<String>,
+    gap: bool,
+}
+
+impl Heading {
+    fn content_rows(&self) -> usize {
+        usize::from(self.title)
+            + self.banner.len()
+            + self.preamble.len()
+            + usize::from(self.breadcrumb.is_some())
+    }
+
+    fn rows(&self) -> u16 {
+        let content = self.content_rows();
+        clamp_to_u16(content + usize::from(self.gap && content > 0))
+    }
+}
+
+/// The card's height once the heading has its room, trimming the heading
+/// when even the shortest card leaves too little: the card shrinks (its body
+/// scrolls) down to `MIN_CARD_HEIGHT` first, then the gap, the breadcrumb and
+/// the list title go, then preamble rows from the end, prose before alerts,
+/// and the banner last, the last row kept ending in `…`.
+fn fit_heading(heading: &mut Heading, area_h: u16, content_h: u16, width: u16) -> u16 {
+    let floor = content_h.min(MIN_CARD_HEIGHT);
+    let card_h = content_h.min(area_h.saturating_sub(heading.rows()));
+    if card_h >= floor {
+        return card_h;
+    }
+    let budget = area_h.saturating_sub(floor);
+    let mut preamble_cut = false;
+    let mut banner_cut = false;
+    while heading.rows() > budget {
+        if heading.gap {
+            heading.gap = false;
+        } else if heading.breadcrumb.is_some() {
+            heading.breadcrumb = None;
+        } else if heading.title {
+            heading.title = false;
+        } else if let Some(i) = heading.preamble.iter().rposition(|row| !row.alert) {
+            heading.preamble.remove(i);
+            preamble_cut = true;
+        } else if heading.preamble.pop().is_some() {
+            preamble_cut = true;
+        } else {
+            heading.banner.pop();
+            banner_cut = true;
+        }
+    }
+    if preamble_cut && let Some(last) = heading.preamble.last_mut() {
+        mark_cut(&mut last.text, width);
+    }
+    if banner_cut && let Some(last) = heading.banner.last_mut() {
+        mark_cut(last, width);
+    }
+    floor
 }
 
 /// A preamble block's row prefix and style, shared with the overview.

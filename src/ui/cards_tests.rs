@@ -1030,3 +1030,67 @@ fn body_layout_prose_rows_carry_no_code() {
         "prose-only body has no code rows: {code_rows:?}"
     );
 }
+
+fn heading_rows(texts: &[(&str, bool)]) -> Heading {
+    Heading {
+        title: true,
+        banner: vec!["banner one".to_string(), "banner two".to_string()],
+        preamble: texts
+            .iter()
+            .map(|(text, alert)| PreambleRow {
+                text: text.to_string(),
+                style: Style::default(),
+                alert: *alert,
+            })
+            .collect(),
+        breadcrumb: Some("Section".to_string()),
+        gap: true,
+    }
+}
+
+#[test]
+fn fit_heading_shrinks_the_card_before_dropping_any_heading_row() {
+    let mut heading = heading_rows(&[("prose", false)]);
+    assert_eq!(fit_heading(&mut heading, 20, 18, 40), 14);
+    assert_eq!(heading.rows(), 6, "everything kept");
+    let mut heading = heading_rows(&[("prose", false)]);
+    assert_eq!(fit_heading(&mut heading, 40, 10, 40), 10, "room to spare");
+}
+
+#[test]
+fn fit_heading_drops_the_gap_breadcrumb_title_then_prose_before_alerts() {
+    let full = [("alert", true), ("prose", false), ("more prose", false)];
+    let mut heading = heading_rows(&full);
+    assert_eq!(fit_heading(&mut heading, 14, 12, 40), MIN_CARD_HEIGHT);
+    assert!(!heading.gap && heading.breadcrumb.is_none());
+    assert!(heading.title, "the title stays while there is room");
+    assert_eq!(heading.rows(), 6);
+    assert!(heading.preamble[2].text.ends_with("more prose"));
+
+    let mut heading = heading_rows(&full);
+    fit_heading(&mut heading, 12, 12, 40);
+    assert!(!heading.title);
+    let texts: Vec<&str> = heading.preamble.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(texts, ["alert", "prose…"], "the last prose row went first");
+
+    let mut heading = heading_rows(&full);
+    fit_heading(&mut heading, 11, 12, 40);
+    let texts: Vec<&str> = heading.preamble.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(texts, ["alert…"], "alerts outlast prose");
+    assert_eq!(heading.banner.len(), 2);
+}
+
+#[test]
+fn fit_heading_cuts_the_banner_last() {
+    let mut heading = heading_rows(&[("alert", true)]);
+    fit_heading(&mut heading, 9, 12, 40);
+    assert!(heading.preamble.is_empty());
+    assert_eq!(heading.banner, ["banner one…"]);
+    let mut heading = heading_rows(&[("alert", true)]);
+    assert_eq!(fit_heading(&mut heading, 5, 5, 40), 5);
+    assert_eq!(
+        heading.rows(),
+        0,
+        "a terminal shorter than a card keeps only the card"
+    );
+}

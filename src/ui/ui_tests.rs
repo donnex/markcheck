@@ -3241,3 +3241,74 @@ fn a_critical_task_is_labelled_on_its_card_and_marked_in_the_overview() {
         "the overview row: {text}"
     );
 }
+
+#[test]
+fn a_tall_card_shrinks_so_the_heading_and_its_warning_stay_on_screen() {
+    use crate::model::{PreambleBlock, PreambleKind};
+    let mut first = checkbox(1, "Drop the old tables", false);
+    first.code_blocks = vec![(1..=30).map(|n| format!("step {n}\n")).collect()];
+    first.section = vec![sub(3, "Cleanup")];
+    let mut state = state_with(vec![List {
+        title: "Migrate".to_string(),
+        banner: Some("Take a backup first.".to_string()),
+        items: vec![first, checkbox(2, "Verify", false)],
+    }]);
+    state.document.preambles.insert(
+        1,
+        vec![
+            PreambleBlock {
+                kind: PreambleKind::Alert,
+                text: format!(
+                    "Warning: this step drops data. {}",
+                    "Never run it against production. ".repeat(5)
+                ),
+            },
+            PreambleBlock {
+                kind: PreambleKind::Paragraph,
+                text: "Read the plan.".to_string(),
+            },
+        ],
+    );
+    let text = buffer_text(&mut state, 80, 24);
+    for expected in [
+        "Migrate",
+        "Take a backup first.",
+        "Warning: this step drops data.",
+        "Read the plan.",
+        "Cleanup",
+        "Drop the old tables",
+    ] {
+        assert!(text.contains(expected), "{expected:?} on screen: {text}");
+    }
+}
+
+#[test]
+fn a_very_short_terminal_keeps_the_banner_and_alert_over_the_title() {
+    use crate::model::{PreambleBlock, PreambleKind};
+    let mut first = checkbox(1, "Drop the old tables", false);
+    first.section = vec![sub(3, "Cleanup")];
+    let mut state = state_with(vec![List {
+        title: "Migrate".to_string(),
+        banner: Some("Take a backup first.".to_string()),
+        items: vec![first, checkbox(2, "Verify", false)],
+    }]);
+    state.document.preambles.insert(
+        1,
+        vec![
+            PreambleBlock {
+                kind: PreambleKind::Alert,
+                text: "Warning: drops data.".to_string(),
+            },
+            PreambleBlock {
+                kind: PreambleKind::Paragraph,
+                text: "Read the plan.".to_string(),
+            },
+        ],
+    );
+    let text = buffer_text(&mut state, 50, 13);
+    assert!(text.contains("Take a backup first."), "{text}");
+    assert!(text.contains("Warning: drops data."), "{text}");
+    assert!(text.contains("Drop the old tables"), "{text}");
+    assert!(!text.contains("Read the plan."), "{text}");
+    assert!(!text.contains("Cleanup"), "{text}");
+}
