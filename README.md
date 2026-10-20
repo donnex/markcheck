@@ -778,7 +778,9 @@ A red state stays until a later sync commits and pushes successfully,
 whatever keys you press in the meantime — the status bar's detailed message
 clears on the next key, but the title bar keeps the warning. It also
 replaces any earlier `Synced … ago`, so an old success never shows beside
-a newer failure. It's fully hidden — no icon, no text, no gap — when git-sync
+a newer failure. The section stays at every terminal width; on one
+narrower than 80 columns only the `Synced … ago` text is left out, so a
+red state is never hidden by a small window. It's fully hidden — no icon, no text, no gap — when git-sync
 wasn't requested or the file isn't in a repo.
 
 `--git-sync` only activates when the file's directory is confirmed to be

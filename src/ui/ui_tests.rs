@@ -1180,6 +1180,34 @@ fn git_sync_failure_shows_unsynced_in_error_color_over_an_older_success() {
 }
 
 #[test]
+fn git_sync_failure_stays_in_title_bar_on_a_narrow_terminal() {
+    let mut state = sample_state();
+    state.git_sync.active = true;
+    state.git_sync.problem = Some("not pushed");
+    let row = title_row(&mut state, 60, 20);
+    assert!(row.contains("git · not pushed"), "{row:?}");
+    assert!(row.trim_end().ends_with("1/3"), "{row:?}");
+    let row = title_row(&mut state, 40, 20);
+    assert!(row.contains("git · not pushed"), "{row:?}");
+}
+
+#[test]
+fn git_sync_narrow_title_bar_drops_only_the_synced_time() {
+    let mut state = sample_state();
+    state.git_sync.active = true;
+    state.git_sync.last_at = Some(SystemTime::now());
+    let row = title_row(&mut state, 60, 20);
+    assert!(
+        row.contains(&format!("{} git", IconSet::unicode().sync)),
+        "{row:?}"
+    );
+    assert!(!row.contains("Synced"), "{row:?}");
+    state.git_sync.waiting = true;
+    let row = title_row(&mut state, 60, 20);
+    assert!(row.contains("git · pending"), "{row:?}");
+}
+
+#[test]
 fn git_sync_failure_outranks_a_running_retry() {
     let mut state = sample_state();
     state.git_sync.active = true;

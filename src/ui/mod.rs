@@ -173,11 +173,14 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let update_label = update_label(state.last_update_at, now)
         .filter(|_| area.width >= UPDATE_LABEL_MIN_WIDTH)
         .map(|label| format!("{} {label}", state.icons.update));
-    // `{icon} git` shows for the whole session while git-sync is active; the
-    // "Synced Ns ago" text follows only while recent. The literal "git" is
-    // there because the icon alone didn't read as git.
-    let sync_section = (state.git_sync.active && area.width >= UPDATE_LABEL_MIN_WIDTH)
-        .then(|| sync_section(state, now));
+    // `{icon} git` shows at every width for the whole session while git-sync
+    // is active, so a failure can't scroll away on a narrow terminal; only the
+    // "Synced Ns ago" text is width-gated, like the update tag. The literal
+    // "git" is there because the icon alone didn't read as git.
+    let sync_section = state
+        .git_sync
+        .active
+        .then(|| sync_section(state, now, area.width >= UPDATE_LABEL_MIN_WIDTH));
     // Color roles from the palette — accent title, dim filename,
     // done/started progress counter.
     let icons = state.icons;
@@ -501,7 +504,7 @@ fn update_label(last_update_at: Option<SystemTime>, now: SystemTime) -> Option<S
 /// The title bar's git-sync section and its style, in order of precedence:
 /// unsynced (error-colored, until a later sync lands), syncing, recently
 /// synced, or just the bare indicator.
-fn sync_section(state: &AppState, now: SystemTime) -> (String, Style) {
+fn sync_section(state: &AppState, now: SystemTime, show_synced: bool) -> (String, Style) {
     let prefix = format!("{} git", state.icons.sync);
     let palette = &state.palette;
     if let Some(problem) = state.git_sync.problem {
@@ -531,7 +534,7 @@ fn sync_section(state: &AppState, now: SystemTime) -> (String, Style) {
     let healthy = Style::default()
         .fg(palette.done)
         .add_modifier(Modifier::DIM);
-    match sync_label(state.git_sync.last_at, now) {
+    match sync_label(state.git_sync.last_at, now).filter(|_| show_synced) {
         Some(label) => (format!("{prefix} · {label}"), healthy),
         None => (prefix, healthy),
     }
