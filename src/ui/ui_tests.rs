@@ -1704,7 +1704,7 @@ fn render_records_code_region_for_click_to_copy() {
             .layout
             .code_regions
             .iter()
-            .any(|(_, t)| t == "kubectl apply"),
+            .any(|(_, t)| &**t == "kubectl apply"),
         "code region recorded for the fenced block: {:?}",
         state.layout.code_regions
     );
@@ -3311,4 +3311,48 @@ fn a_very_short_terminal_keeps_the_banner_and_alert_over_the_title() {
     assert!(text.contains("Drop the old tables"), "{text}");
     assert!(!text.contains("Read the plan."), "{text}");
     assert!(!text.contains("Cleanup"), "{text}");
+}
+
+#[test]
+fn a_card_with_a_huge_fenced_block_renders_quickly() {
+    let block = (0..20_000)
+        .map(|i| format!("echo line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let item = Item {
+        ordinal: None,
+        line_number: 1,
+        depth: 0,
+        section: vec![],
+        display_text: "deploy".to_string(),
+        body: vec![crate::model::BodySpan::Text("deploy".to_string())],
+        header: None,
+        code_spans: vec![],
+        code_blocks: vec![block.clone()],
+        kind: ItemKind::Checkbox(TaskState::NotStarted),
+    };
+    let mut state = state_with(vec![List {
+        title: "Deploy".to_string(),
+        banner: None,
+        items: vec![item],
+    }]);
+    let start = std::time::Instant::now();
+    let text = buffer_text(&mut state, 120, 40);
+    let elapsed = start.elapsed();
+    assert!(text.contains("echo line 0"), "{text}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "a 20,000-line block took {elapsed:?} to render"
+    );
+    assert!(!state.layout.code_regions.is_empty());
+    let first = &state.layout.code_regions[0].1;
+    assert_eq!(&**first, block.as_str());
+    assert!(
+        state
+            .layout
+            .code_regions
+            .iter()
+            .all(|(_, t)| std::rc::Rc::ptr_eq(t, first)),
+        "visible rows share one copy of the block"
+    );
 }

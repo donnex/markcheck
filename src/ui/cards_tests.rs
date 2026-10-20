@@ -828,7 +828,7 @@ fn hard_split_trailing_command_marks_its_continued_rows() {
     assert_eq!(joined.trim(), cmd, "no character lost to the marker");
     for &r in &chip {
         assert!(
-            rows[r].iter().all(|(_, t)| t == cmd),
+            rows[r].iter().all(|(_, t)| &**t == cmd),
             "every row copies the command"
         );
     }
@@ -838,7 +838,7 @@ fn hard_split_trailing_command_marks_its_continued_rows() {
 // line, the copy targets on it (index-aligned with the lines).
 
 fn copy_texts(rows: &[Vec<CopyTarget>]) -> Vec<&str> {
-    rows.iter().flatten().map(|(_, t)| t.as_str()).collect()
+    rows.iter().flatten().map(|(_, t)| &**t).collect()
 }
 
 /// The text copied by a click at `col` on body row `row`, if any.
@@ -846,7 +846,7 @@ fn copy_at(rows: &[Vec<CopyTarget>], row: usize, col: u16) -> Option<&str> {
     rows[row]
         .iter()
         .find(|(cols, _)| cols.contains(&col))
-        .map(|(_, t)| t.as_str())
+        .map(|(_, t)| &**t)
 }
 
 #[test]
@@ -956,7 +956,7 @@ fn body_layout_maps_every_row_of_a_hard_split_chip_to_the_full_command() {
     );
     for r in chip_rows {
         for (cols, text) in &rows[r] {
-            assert_eq!(text, cmd, "row {r} copies the whole command");
+            assert_eq!(&**text, cmd, "row {r} copies the whole command");
             assert!(cols.end <= 30, "target stays inside the body");
         }
     }
@@ -1093,4 +1093,71 @@ fn fit_heading_cuts_the_banner_last() {
         0,
         "a terminal shorter than a card keeps only the card"
     );
+}
+
+#[test]
+fn body_layout_rows_of_one_command_share_its_text() {
+    let block = (0..200)
+        .map(|i| format!("echo line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let long_cmd = "x".repeat(400);
+    let item = body_item(
+        vec![
+            BodySpan::Text("run".to_string()),
+            BodySpan::Code(long_cmd.clone()),
+        ],
+        vec![&block],
+        &format!("run {long_cmd}"),
+    );
+    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let targets: Vec<&Rc<str>> = code_rows.iter().flatten().map(|(_, t)| t).collect();
+    let block_rows: Vec<&Rc<str>> = targets.iter().copied().filter(|t| ***t == *block).collect();
+    let cmd_rows: Vec<&Rc<str>> = targets
+        .iter()
+        .copied()
+        .filter(|t| ***t == *long_cmd)
+        .collect();
+    assert!(block_rows.len() >= 200, "every block row is a target");
+    assert!(
+        cmd_rows.len() > 1,
+        "the long command wraps onto several rows"
+    );
+    assert!(block_rows.iter().all(|t| Rc::ptr_eq(t, block_rows[0])));
+    assert!(cmd_rows.iter().all(|t| Rc::ptr_eq(t, cmd_rows[0])));
+}
+#[test]
+fn a_huge_inline_command_lays_out_quickly_and_shares_its_text() {
+    let cmd = "y".repeat(200_000);
+    let area = Rect::new(0, 0, 120, 40);
+    for body in [
+        vec![BodySpan::Text("run".into()), BodySpan::Code(cmd.clone())],
+        vec![
+            BodySpan::Code(cmd.clone()),
+            BodySpan::Text("then check".into()),
+        ],
+    ] {
+        let item = body_item(body, vec![], "run");
+        let start = std::time::Instant::now();
+        let height = desired_card_height(&item, area, code_bg(Color::Magenta));
+        let (lines, code_rows) = body_layout(&item, 80, code_bg(Color::Magenta));
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "a 200 KB command took {elapsed:?} to lay out"
+        );
+        assert_eq!(
+            height,
+            area.height * 3 / 5,
+            "the card clamps to the max height"
+        );
+        assert!(lines.len() > 2_000, "the command wraps onto many rows");
+        let targets: Vec<&Rc<str>> = code_rows.iter().flatten().map(|(_, t)| t).collect();
+        assert!(
+            targets.len() > 2_000,
+            "every row of the command is a target"
+        );
+        assert_eq!(&**targets[0], cmd.as_str());
+        assert!(targets.iter().all(|t| Rc::ptr_eq(t, targets[0])));
+    }
 }

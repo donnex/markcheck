@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -1013,7 +1014,7 @@ impl AppState {
             .code_regions
             .iter()
             .find(|(rect, _)| rect.contains((col, row).into()))
-            .map(|(_, text)| text.clone())
+            .map(|(_, text)| Rc::clone(text))
         {
             self.copy_specific(&text);
             return;

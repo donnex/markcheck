@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{Instant, SystemTime};
 
 use ratatui::layout::Rect;
@@ -1184,8 +1185,8 @@ pub struct ViewLayout {
     /// The current card's area, for click-to-copy. `None` off the checklist.
     pub card_rect: Option<Rect>,
     /// One `(row, code text)` per copy target on the current card, so a
-    /// click copies exactly that command.
-    pub code_regions: Vec<(Rect, String)>,
+    /// click copies exactly that command. Rows of one command share its text.
+    pub code_regions: Vec<(Rect, Rc<str>)>,
     /// One `(row, target)` per clickable overview row. Empty while the
     /// overview is hidden, so stale rows can't be hit.
     pub overview_rows: Vec<(Rect, OverviewTarget)>,

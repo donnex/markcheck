@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::rc::Rc;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
@@ -1180,7 +1181,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
                     cols.end - cols.start,
                     1,
                 ),
-                text.clone(),
+                Rc::clone(text),
             ));
         }
     }
@@ -1432,21 +1433,22 @@ fn body_lines(item: &Item, width: u16, code: Style) -> Vec<Line<'static>> {
 
 /// One click-to-copy target on a body row: the columns it covers, measured
 /// from the card body's left edge, and the full text a click there copies.
-type CopyTarget = (Range<u16>, String);
+/// The text is shared, so every row of one command points at a single copy.
+type CopyTarget = (Range<u16>, Rc<str>);
 
 /// A target covering a whole body row, for rows that are entirely one command.
-fn full_row(width: usize, text: &str) -> Vec<CopyTarget> {
-    vec![(0..clamp_to_u16(width), text.to_string())]
+fn full_row(width: usize, text: &Rc<str>) -> Vec<CopyTarget> {
+    vec![(0..clamp_to_u16(width), Rc::clone(text))]
 }
 
 /// The inline-code chips on one wrapped prose row as copy targets. Each chip
-/// maps to its token's full, unsplit text, so every fragment of a hard-split
-/// chip copies the whole command. The column offset mirrors how `Paragraph`
-/// places a centered line.
+/// maps to its token's full, unsplit text (`chips`, indexed like the tokens),
+/// so every fragment of a hard-split chip copies the whole command. The
+/// column offset mirrors how `Paragraph` places a centered line.
 fn chip_targets(
     line: &Line,
     origins: &[Option<usize>],
-    tokens: &[Token],
+    chips: &[Option<Rc<str>>],
     width: usize,
     centered: bool,
 ) -> Vec<CopyTarget> {
@@ -1458,11 +1460,11 @@ fn chip_targets(
     let mut targets = Vec::new();
     for (span, origin) in line.spans.iter().zip(origins) {
         let w = span.width();
-        if let Some(text) = origin.map(|i| tokens[i].0.trim()).filter(|t| !t.is_empty()) {
+        if let Some(text) = origin.and_then(|i| chips[i].as_ref()) {
             let start = clamp_to_u16(x.min(width));
             let end = clamp_to_u16((x + w).min(width));
             if start < end {
-                targets.push((start..end, text.to_string()));
+                targets.push((start..end, Rc::clone(text)));
             }
         }
         x += w;
@@ -1495,8 +1497,15 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut code_rows: Vec<Vec<CopyTarget>> = Vec::new();
 
+    let chips: Vec<Option<Rc<str>>> = tokens
+        .iter()
+        .map(|(text, style, _)| {
+            let text = text.trim();
+            (style.code && !text.is_empty()).then(|| Rc::from(text))
+        })
+        .collect();
     for (line, origins) in prose {
-        code_rows.push(chip_targets(&line, &origins, &tokens, width, center_prose));
+        code_rows.push(chip_targets(&line, &origins, &chips, width, center_prose));
         lines.push(align(line));
     }
 
@@ -1514,6 +1523,7 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
         };
         let mut trailing = vec![(format!(" {cmd} "), chip, false)];
         trailing.extend(number.map(|n| marker_token(n, true)));
+        let cmd: Rc<str> = Rc::from(cmd);
         for (line, _) in wrap_tokens(&trailing, width, code) {
             lines.push(align(line));
             code_rows.push(full_row(width, &cmd));
@@ -1528,9 +1538,10 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
             lines.push(Line::from(""));
             code_rows.push(Vec::new());
         }
+        let text: Rc<str> = Rc::from(block.as_str());
         for line in code_block_lines(block, width, code, block_number(item, k)) {
             lines.push(line);
-            code_rows.push(full_row(width, block));
+            code_rows.push(full_row(width, &text));
         }
     }
 
@@ -1692,8 +1703,10 @@ fn wrap_tokens(
         let glued = *glue;
         loop {
             let sep = usize::from(!current.is_empty() && !glued);
-            let word_len = display_width(rest);
-            if cur_len + sep + word_len <= width {
+            let fit = width
+                .checked_sub(cur_len + sep)
+                .and_then(|avail| width_within(rest, avail));
+            if let Some(word_len) = fit {
                 if sep == 1 {
                     current.push(Span::raw(" "));
                     origins.push(None);
@@ -1736,6 +1749,17 @@ fn wrap_tokens(
     lines
 }
 
+/// The display width of `text` when it fits in `avail` cells, else `None`.
+/// Scans no further than the first `avail` cells, so a word far longer than
+/// the line costs one row's worth of work per row it is split onto.
+fn width_within(text: &str, avail: usize) -> Option<usize> {
+    if split_at_width(text, avail) < text.len() {
+        return None;
+    }
+    let width = display_width(text);
+    (width <= avail).then_some(width)
+}
+
 /// Hard-wraps a single line to `width` **display cells** (no word breaking),
 /// used for fenced code where original layout matters.
 fn hard_wrap(text: &str, width: usize) -> Vec<String> {
@@ -1775,9 +1799,12 @@ pub(super) fn wrap_text(text: &str, width: u16) -> Vec<String> {
     for word in text.split_whitespace() {
         let mut word = word;
         loop {
-            let fits =
-                display_width(&current) + display_width(word) + usize::from(!current.is_empty());
-            if fits <= width {
+            let used = display_width(&current) + usize::from(!current.is_empty());
+            if width
+                .checked_sub(used)
+                .and_then(|avail| width_within(word, avail))
+                .is_some()
+            {
                 if !current.is_empty() {
                     current.push(' ');
                 }

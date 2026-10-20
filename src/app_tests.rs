@@ -3263,7 +3263,7 @@ fn click_on_code_region_copies_that_specific_row() {
     document.lists[0].items[0].code_blocks = vec!["a".to_string(), "b".to_string()];
     let mut state = AppState::new(document);
     state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
-    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), "b".to_string())];
+    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), "b".into())];
 
     // On the region: the specific path, never the ambiguous hint.
     state.handle_left_click(15, 7);
@@ -5707,7 +5707,7 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
 
     let mut state = AppState::new(two_list_document());
     state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
-    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.clone())];
+    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.as_str().into())];
     state.handle_left_click(15, 7);
     state.settle();
     assert_eq!(state.status_message.as_deref(), expected);
