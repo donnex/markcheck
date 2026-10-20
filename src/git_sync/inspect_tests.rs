@@ -99,39 +99,6 @@ fn hash_object_reports_failure_outside_a_git_repo() {
     fs::remove_dir_all(&dir).ok();
 }
 #[test]
-fn descends_directly_from_matches_only_a_direct_child() {
-    let work = init_repo_without_remote();
-    let root = current_head(&work).unwrap();
-    fs::write(work.join("other.md"), "second\n").unwrap();
-    run(&work, &["add", "other.md"]);
-    run(&work, &["commit", "-q", "-m", "second"]);
-    let second = current_head(&work).unwrap();
-    fs::write(work.join("third.md"), "third\n").unwrap();
-    run(&work, &["add", "third.md"]);
-    run(&work, &["commit", "-q", "-m", "third"]);
-    let third = current_head(&work).unwrap();
-
-    assert!(descends_directly_from(&work, &second, &Some(root.clone())));
-    assert!(
-        !descends_directly_from(&work, &third, &Some(root.clone())),
-        "a grandchild is not a direct child"
-    );
-    assert!(
-        descends_directly_from(&work, &root, &None),
-        "a root commit has no parents, matching parent: None"
-    );
-    assert!(
-        !descends_directly_from(&work, &second, &None),
-        "a commit with a parent must not match the root-commit case"
-    );
-    assert!(
-        !descends_directly_from(&work, "not-a-commit", &Some(root)),
-        "fails closed when git can't answer"
-    );
-
-    fs::remove_dir_all(work.parent().unwrap()).ok();
-}
-#[test]
 fn git_dir_resolves_to_an_absolute_path() {
     let work = init_repo_without_remote();
     let dir = git_dir(&work).unwrap();

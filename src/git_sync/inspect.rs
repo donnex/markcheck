@@ -213,31 +213,6 @@ pub(super) fn index_entry(
 pub(super) fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
     git_stdout_line(repo_root, &["rev-parse", &format!("{commit}:{relpath}")])
 }
-/// Exactly one parent equal to `parent`, or a root commit when `parent` is
-/// `None`. Fails closed.
-pub(super) fn descends_directly_from(
-    repo_root: &Path,
-    commit: &str,
-    parent: &Option<String>,
-) -> bool {
-    let mut cmd = git_command(repo_root);
-    cmd.args(["rev-list", "--parents", "-n", "1", commit]);
-    let Ok(output) = run_with_timeout(cmd, PLUMBING_TIMEOUT) else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(line) = stdout.lines().next() else {
-        return false;
-    };
-    let parents: Vec<&str> = line.split_whitespace().skip(1).collect();
-    match parent {
-        Some(expected) => parents == [expected.as_str()],
-        None => parents.is_empty(),
-    }
-}
 pub(super) fn hash_object(
     repo_root: &Path,
     relpath: &str,

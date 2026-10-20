@@ -131,7 +131,7 @@ fn commit_paths(repo_root: &Path, sha: &str) -> Result<Vec<Vec<u8>>, String> {
         .map(<[u8]>::to_vec)
         .collect())
 }
-fn carries_own_trailer(repo_root: &Path, sha: &str) -> Result<bool, String> {
+pub(super) fn carries_own_trailer(repo_root: &Path, sha: &str) -> Result<bool, String> {
     let format = format!("--format=%(trailers:key={OWN_TRAILER_KEY},valueonly,separator=%x00)");
     let output = commit_log(repo_root, sha, &format)?;
     Ok(output

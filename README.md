@@ -827,6 +827,13 @@ other than the checklist, so the commit was undone` rather than letting the extr
 files through (let alone pushing them). The hook itself still runs
 normally either way; only the resulting commit's scope is enforced.
 
+A `post-commit` hook that makes a follow-up commit of its own (regenerating
+a file, say), or a commit you make in another terminal at the same moment,
+is never mistaken for markcheck's: both commits stay on the branch,
+nothing is undone, and the status bar shows `Git sync failed: another commit
+landed on top of markcheck's commit abc1234; both were left on the branch
+and not pushed — check them before pushing`.
+
 ### Search
 
 `/` starts an incremental search: as you type, the cursor jumps to the next

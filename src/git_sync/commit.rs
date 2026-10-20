@@ -6,8 +6,10 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use super::guards::{OWN_COMMIT_TRAILER, repo_sync_blocked, verify_commit_scope};
-use super::inspect::{blob_at, current_head, descends_directly_from, git_dir, index_blob};
+use super::guards::{
+    OWN_COMMIT_TRAILER, carries_own_trailer, repo_sync_blocked, verify_commit_scope,
+};
+use super::inspect::{blob_at, current_head, git_dir, index_blob};
 use super::process::{
     COMMIT_TIMEOUT, PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout,
 };
@@ -125,11 +127,12 @@ fn align_real_index_entry(
 /// Returns the new commit's SHA, captured once for `verify_commit_scope` and
 /// `undo_commit`.
 ///
-/// On a timeout, a `post-commit` hook may still be running after the commit
-/// became durable, so the commit is adopted if the new `HEAD` holds `blob`
-/// at `relpath` and its only parent is `parent`. Both checks are needed: a
-/// concurrent commit on `parent` fails the first, one on top of ours the
-/// second. Anything else is reported as a failure, never rewound.
+/// `HEAD` after `git commit` is not trusted to be that commit: a
+/// `post-commit` hook, or the user in another terminal, can commit on top of
+/// it first, and a timed-out `git commit` may or may not have landed. The
+/// commit is found by lineage instead (`own_commit_since`) and returned only
+/// while it is still `HEAD`. With something on top, nothing is undone or
+/// pushed: rewinding would take the other commit off the branch.
 fn commit_temp_index(
     repo_root: &Path,
     temp_index: &Path,
@@ -142,23 +145,71 @@ fn commit_temp_index(
     let mut cmd = git_command(repo_root);
     cmd.env("GIT_INDEX_FILE", temp_index)
         .args(["commit", "-m", message, "-m", OWN_COMMIT_TRAILER]);
-    match run_with_timeout(cmd, timeout) {
-        Ok(output) if output.status.success() => current_head(repo_root)
-            .ok_or_else(|| "could not read the repository's state after committing".to_string()),
-        Ok(output) => Err(command_error("git commit", &output)),
-        Err(err) if err.kind() == io::ErrorKind::TimedOut => match current_head(repo_root) {
-            Some(head)
-                if Some(&head) != parent.as_ref()
-                    && blob_at(repo_root, &head, relpath).as_deref() == Some(blob)
-                    && descends_directly_from(repo_root, &head, parent) =>
-            {
-                Ok(head)
-            }
-            _ => Err(format!("git commit failed: {err}")),
-        },
-        Err(err) => Err(format!("git commit failed: {err}")),
+    let timed_out = match run_with_timeout(cmd, timeout) {
+        Ok(output) if output.status.success() => None,
+        Ok(output) => return Err(command_error("git commit", &output)),
+        Err(err) if err.kind() == io::ErrorKind::TimedOut => Some(err),
+        Err(err) => return Err(format!("git commit failed: {err}")),
+    };
+    let head = current_head(repo_root);
+    let own = head
+        .as_deref()
+        .and_then(|head| own_commit_since(repo_root, parent, head, relpath, blob));
+    match (head, own, timed_out) {
+        (Some(head), Some(own), _) if head == own => Ok(head),
+        (Some(_), Some(own), _) => {
+            let short: String = own.chars().take(7).collect();
+            Err(format!(
+                "another commit landed on top of markcheck's commit {short}; \
+                 both were left on the branch and not pushed — check them before pushing"
+            ))
+        }
+        (_, _, Some(err)) => Err(format!("git commit failed: {err}")),
+        _ => Err(
+            "git commit finished, but markcheck's commit could not be found on the branch; \
+             the branch was left as it is — check it before pushing"
+                .to_string(),
+        ),
     }
 }
+/// The oldest commit on `head`'s first-parent chain since `parent` that
+/// holds `blob` at `relpath` and carries markcheck's trailer. A commit made
+/// on top of markcheck's comes later on the chain; one that landed between
+/// the parent check and `git commit` lacks the blob or the trailer.
+fn own_commit_since(
+    repo_root: &Path,
+    parent: &Option<String>,
+    head: &str,
+    relpath: &str,
+    blob: &str,
+) -> Option<String> {
+    let range = match parent {
+        Some(parent) => format!("{parent}..{head}"),
+        None => head.to_string(),
+    };
+    let mut cmd = git_command(repo_root);
+    cmd.args([
+        "rev-list",
+        "--first-parent",
+        "--reverse",
+        &format!("--max-count={OWN_COMMIT_SEARCH_LIMIT}"),
+        &range,
+    ]);
+    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find(|sha| {
+            blob_at(repo_root, sha, relpath).as_deref() == Some(blob)
+                && carries_own_trailer(repo_root, sha).unwrap_or(false)
+        })
+        .map(str::to_string)
+}
+/// Bounds the lineage search; markcheck's commit is normally the first or
+/// second entry.
+const OWN_COMMIT_SEARCH_LIMIT: usize = 64;
 
 #[cfg(test)]
 #[path = "commit_tests.rs"]

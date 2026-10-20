@@ -416,17 +416,14 @@ fn commit_temp_index_does_not_adopt_a_commit_that_landed_on_top_of_its_own() {
     assert!(
         result
             .as_ref()
-            .is_err_and(|e| e.contains("git commit failed")),
+            .is_err_and(|e| e.contains("landed on top of markcheck's commit")),
         "must not adopt the commit that landed on top of ours: {result:?}"
     );
-    let log = crate::test_support::git()
-        .current_dir(&work)
-        .args(["log", "--format=%s"])
-        .output()
-        .unwrap();
-    let subjects = String::from_utf8_lossy(&log.stdout);
-    assert!(subjects.contains("unrelated commit on top"), "{subjects}");
-    assert!(subjects.contains("ours, then raced"), "{subjects}");
+    assert_eq!(
+        git_stdout(&work, &["log", "--format=%s"]),
+        "unrelated commit on top\nours, then raced\ninit",
+        "both commits must stay on the branch"
+    );
     assert_eq!(
         blob_at(&work, "HEAD", "tracked.md").as_deref(),
         Some(blob.as_str()),
@@ -437,6 +434,89 @@ fn commit_temp_index_does_not_adopt_a_commit_that_landed_on_top_of_its_own() {
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
 
+fn install_hook(work: &Path, name: &str, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let hooks_dir = work.join(".git").join("hooks");
+    fs::create_dir_all(&hooks_dir).unwrap();
+    let hook_path = hooks_dir.join(name);
+    fs::write(&hook_path, format!("#!/bin/sh\n{script}")).unwrap();
+    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+#[test]
+fn a_post_commit_hook_committing_on_top_is_never_rewound() {
+    // The hook finishes in time, so only the lineage check tells its commit
+    // from markcheck's; trusting `HEAD` undid the hook's commit instead.
+    let work = init_repo_without_remote();
+    let parent = current_head(&work).unwrap();
+    install_hook(
+        &work,
+        "post-commit",
+        "env -u GIT_INDEX_FILE git read-tree HEAD\n\
+         echo generated > other.md\n\
+         env -u GIT_INDEX_FILE git add other.md\n\
+         env -u GIT_INDEX_FILE git commit -q --no-verify -m 'hook follow-up'\n",
+    );
+    let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
+
+    let result = commit_via_temp_index(
+        &work,
+        &Some(parent.clone()),
+        "100644",
+        &blob,
+        "tracked.md",
+        "tracked.md: Check \"one\"",
+    );
+
+    let err = result.expect_err("a commit on top of markcheck's must not be adopted");
+    assert!(err.contains("landed on top of markcheck's commit"), "{err}");
+    assert!(!err.contains("undone"), "nothing was undone: {err}");
+    assert_eq!(
+        git_stdout(&work, &["log", "--format=%s"]),
+        "hook follow-up\ntracked.md: Check \"one\"\ninit",
+        "the hook's commit must stay on the branch, on top of markcheck's"
+    );
+
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+#[test]
+fn a_commit_hook_removing_markchecks_commit_leaves_the_branch_alone() {
+    let work = init_repo_without_remote();
+    let parent = current_head(&work).unwrap();
+    install_hook(&work, "post-commit", "git update-ref HEAD HEAD~1\n");
+    let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
+
+    let result = commit_via_temp_index(
+        &work,
+        &Some(parent.clone()),
+        "100644",
+        &blob,
+        "tracked.md",
+        "tracked.md: Check \"one\"",
+    );
+
+    let err = result.expect_err("a commit that is gone can't be adopted");
+    assert!(err.contains("could not be found on the branch"), "{err}");
+    assert_eq!(current_head(&work), Some(parent));
+
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+#[test]
+fn a_root_commit_is_found_by_its_lineage() {
+    let dir = unique_dir("root-commit-lineage");
+    fs::create_dir_all(&dir).unwrap();
+    run(&dir, &["init", "-q", "-b", "main"]);
+    run(&dir, &["config", "user.email", "test@example.com"]);
+    run(&dir, &["config", "user.name", "test"]);
+    let blob = hash_object(&dir, "tracked.md", "- [x] one\n").unwrap();
+
+    let result = commit_via_temp_index(&dir, &None, "100644", &blob, "tracked.md", "first");
+
+    assert_eq!(result.ok(), current_head(&dir));
+    assert_eq!(git_stdout(&dir, &["log", "--format=%s"]), "first");
+
+    fs::remove_dir_all(&dir).ok();
+}
 #[test]
 fn align_real_index_entry_leaves_a_newer_staged_version_alone() {
     // The user stages a newer version while the sync is in flight.
