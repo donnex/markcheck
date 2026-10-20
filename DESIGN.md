@@ -118,7 +118,7 @@ markcheck recognizes five kinds of "header," each a title on a container. This v
 
 | Level | Markdown | What it is | Code | User-facing |
 | ------- | ---------- | ----------- | ------ | ------------- |
-| **Document header** | `# H1` | the whole file's title | `Document.title` | shown as the title in the title bar |
+| **Document header** | `# H1` | the whole file's title | `Document.title` | shown as the title in the title bar; a later `# H1` is a list header (#250) |
 | **List header** | `## H2` | a list's title | `List.title` | "list"; shown above the cards + in the overview |
 | **Sub-section header** | `### H3`–`###### H6` | a labeled group of items *within* an H2 list | `Item.section` (a `Vec<SubHeading>`) | overview `── divider`; dim ` › `-joined breadcrumb above the card |
 | **Card header** | leading `**bold**` on a task | a task card's title | `Item.header` | "card title"; shown inside the card (info icon, blue) |
@@ -140,7 +140,7 @@ The H2-level container is called **`List`** everywhere: identifiers (`lists`, `c
 
 **The event walk.** `parse_source` drives a `ParseState`, whose `handle` dispatches each event family to one method (`on_heading_start`/`end`, `on_list_start`/`end`, `on_item_start`/`end`, `on_task_marker`, `on_code_block_end`, `on_text`/`on_break`/`on_code`); per-item text, styling and links accumulate on an `ItemBuilder` frame, kept on a stack so nested items don't clobber their parent.
 
-- **Headings outside items and quotes** are structural. `## H2` starts a new `List`; the first non-empty `# H1` sets `Document.title`; `###`–`######` with text update the sub-section stack (pop entries at the same or deeper level, push). H1 and H2 clear the stack. Every structural heading also gets a GitHub-style anchor in `Document::anchors` (see Open link) and opens a preamble scope.
+- **Headings outside items and quotes** are structural. `## H2` starts a new `List`; the first non-empty `# H1` sets `Document.title`, and any `# H1` except one that comes before every task with no title set yet also starts a `List` like an H2 (`start_list`), so a file written in `#`-level phases doesn't pour every later phase into the last `##` list (#250); `###`–`######` with text update the sub-section stack (pop entries at the same or deeper level, push). H1 and H2 clear the stack. Every structural heading also gets a GitHub-style anchor in `Document::anchors` (see Open link) and opens a preamble scope.
 - **A heading inside an item** (`- ## Rollback`, or in its later paragraphs) is read as a bold run: a leading one is the card title (and so can be the banner), a later one bold body text. **A heading in a quote outside any item** is discarded. Neither opens a list, sets the title or touches the stack: a heading item that opened a `List` would take the rest of the enclosing list's items with it, emptying (and dropping) the real one.
 - **An item** records its line from its first non-blank byte (pulldown starts a tab-indented nested item's range at the newline before it), its `depth`, its ordered-list marker, and a snapshot of the sub-section stack. The first top-level item after a heading claims the pending preamble.
 - **A task marker** makes the item a checkbox (state from the marker, or the recorded `[/]`/`[-]`) and sets `list_had_checkbox_syntax`, independently of the item's final kind, so a quoted example beside live tasks keeps its Markdown list. An item opened inside a blockquote is forced to `DisplayOnly` at its end whatever its marker: a quoted checkbox is an example, not a live task.

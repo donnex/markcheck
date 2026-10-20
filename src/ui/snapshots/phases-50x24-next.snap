@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Upgrade │ phases.md               ☑ 0/9
+ [1] (Defa…   [2] Upgr…   [3] Hea…   [4] Roll…
+──────────────────────────────────────────────────
+
+
+
+
+
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/2 ┓
+┃                                                ┃
+┃                Take a snapshot:                ┃
+┃                                                ┃
+┃        snapshot-tool create example-host       ┃
+┃                                                ┃
+┃                                                ┃
+┗ ·◉ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

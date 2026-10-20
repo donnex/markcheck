@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Upgrade │ phases.md                                                                                     ☑ 0/9
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] (Default)            │
+                                                                                          │   A runbook split into ph… │
+                                                                                          │   ☐ Announce the maintena… │
+                                                                                          │   ❯ Take a snapshot: snap… │
+                                                                                          │ • [2] Upgrade              │
+                                                                                          │   ☐ Stop the service: ser… │
+                                                                                          │   ☐ Install the new relea… │
+                                                                                          │   ☐ Start the service: se… │
+                                                                                          │ • [3] Health               │
+                                                                                          │   ☐ Check the health endp… │
+                                                                                          │   ☐ Watch the error rate … │
+                                                                                          │ • [4] Rollback             │
+                                                                                          │   ▪ Only if the checks ab… │
+                                                                                          │   ☐ Restore the snapshot   │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/2 ┓               │   ☐ Start the old release  │
+┌ ☐ ────────┃                                                             ┃               │                            │
+│ Announce t┃                      Take a snapshot:                       ┃               │                            │
+│  maintenan┃                                                             ┃               │                            │
+│    window ┃              snapshot-tool create example-host              ┃               │                            │
+│           ┃                                                             ┃               │                            │
+└───────────┃                                                             ┃               │                            │
+            ┗ ·◉ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

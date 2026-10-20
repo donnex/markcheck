@@ -858,6 +858,21 @@ impl<'a> ParseState<'a> {
         }
     }
 
+    /// A `## H2`, or a `# H1` other than the document title, starts a list.
+    fn start_list(&mut self, title: &str) {
+        self.lists.push(List {
+            title: title.to_string(),
+            banner: None,
+            items: Vec::new(),
+        });
+        self.seen_first_top_item = false;
+        self.section_stack.clear();
+    }
+
+    fn has_any_item(&self) -> bool {
+        !self.default_items.is_empty() || self.lists.iter().any(|list| !list.items.is_empty())
+    }
+
     /// A heading inside a list item (`- ## Rollback`) is read like a bold
     /// run: a leading one becomes the card title, a later one bold body text.
     fn on_heading_start(&mut self, level: HeadingLevel, offset: usize) {
@@ -887,20 +902,17 @@ impl<'a> ParseState<'a> {
         self.open_preamble_scope(heading_level_number(level));
         self.add_anchor(text);
         match level {
-            HeadingLevel::H2 => {
-                self.lists.push(List {
-                    title: text.to_string(),
-                    banner: None,
-                    items: Vec::new(),
-                });
-                self.seen_first_top_item = false;
-                self.section_stack.clear();
-            }
+            HeadingLevel::H2 => self.start_list(text),
             HeadingLevel::H1 => {
+                let titles_document = self.document_title.is_none() && !self.has_any_item();
                 if self.document_title.is_none() && !text.is_empty() {
                     self.document_title = Some(text.to_string());
                 }
-                self.section_stack.clear();
+                if titles_document {
+                    self.section_stack.clear();
+                } else {
+                    self.start_list(text);
+                }
             }
             _ if !text.is_empty() => {
                 let level = heading_level_number(level);

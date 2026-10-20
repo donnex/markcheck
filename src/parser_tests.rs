@@ -64,6 +64,19 @@ fn examples_cover_fence_after_list_and_uppercase_done() {
 }
 
 #[test]
+fn example_phases_get_one_list_each() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/phases.md");
+    let document = parse_document(path).expect("example parses");
+    assert_eq!(document.title.as_deref(), Some("Service Upgrade"));
+    let titles: Vec<&str> = document.lists.iter().map(|l| l.title.as_str()).collect();
+    assert_eq!(titles, ["(Default)", "Upgrade", "Health", "Rollback"]);
+    assert_eq!(
+        document.lists[3].banner.as_deref(),
+        Some("Only if the checks above failed")
+    );
+}
+
+#[test]
 fn example_reference_list_keeps_its_banner_and_copyable_note() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/notes-and-code.md");
     let document = parse_document(path).expect("example parses");
@@ -267,11 +280,11 @@ fn sub_section_resets_at_the_next_h2() {
 
 #[test]
 fn h1_clears_any_sub_section() {
-    // An H1 (document title) is top-level and clears the sub-section stack.
-    let list = &parse("## S\n\n### Sub\n\n- [ ] a\n\n# Title\n\n- [ ] b\n").lists[0];
+    let document = parse("# Title\n\n### Sub\n\n- [ ] a\n\n# Next\n\n- [ ] b\n");
+    assert_eq!(sections(&document.lists[0]), vec![vec![(3, "Sub")]]);
     assert_eq!(
-        sections(list),
-        vec![vec![(3, "Sub")], vec![]],
+        sections(&document.lists[1]),
+        vec![vec![]],
         "the item after the H1 has no sub-section"
     );
 }
@@ -873,6 +886,79 @@ fn first_h1_becomes_document_title() {
 fn first_of_multiple_h1s_wins() {
     let document = parse("# First\n\n# Second\n\n## S\n\n- [ ] `a`\n");
     assert_eq!(document.title.as_deref(), Some("First"));
+}
+
+fn list_summary(document: &Document) -> Vec<(&str, Vec<&str>)> {
+    document
+        .lists
+        .iter()
+        .map(|list| {
+            let texts = list.items.iter().map(|i| i.display_text.as_str()).collect();
+            (list.title.as_str(), texts)
+        })
+        .collect()
+}
+
+#[test]
+fn later_h1_starts_its_own_list() {
+    let source = "\
+# Day one
+
+- [ ] Pack the bag
+
+# Day two
+
+## Morning
+
+- [ ] Coffee
+
+# Day three
+
+- [ ] Fly home
+";
+    let document = parse(source);
+    assert_eq!(document.title.as_deref(), Some("Day one"));
+    assert!(document.has_default_list);
+    assert_eq!(
+        list_summary(&document),
+        [
+            ("(Default)", vec!["Pack the bag"]),
+            ("Morning", vec!["Coffee"]),
+            ("Day three", vec!["Fly home"]),
+        ]
+    );
+}
+
+#[test]
+fn h1s_alone_split_the_file_into_lists() {
+    let source = "# Upgrade\n\n- [ ] a\n\n# Verify\n\n- [ ] b\n\n# Rollback\n\n- [ ] c\n";
+    let document = parse(source);
+    assert_eq!(document.title.as_deref(), Some("Upgrade"));
+    assert_eq!(
+        list_summary(&document),
+        [
+            ("(Default)", vec!["a"]),
+            ("Verify", vec!["b"]),
+            ("Rollback", vec!["c"]),
+        ]
+    );
+}
+
+#[test]
+fn h1_after_tasks_is_the_title_and_starts_a_list() {
+    let document = parse("- [ ] a\n\n# Release\n\n- [ ] b\n");
+    assert_eq!(document.title.as_deref(), Some("Release"));
+    assert_eq!(
+        list_summary(&document),
+        [("(Default)", vec!["a"]), ("Release", vec!["b"])]
+    );
+}
+
+#[test]
+fn later_h1_resets_the_banner_slot() {
+    let document = parse("# T\n\n- [ ] a\n\n# Phase\n\n- **Careful**\n- [ ] b\n");
+    assert_eq!(document.lists[1].title, "Phase");
+    assert_eq!(document.lists[1].banner.as_deref(), Some("Careful"));
 }
 
 #[test]

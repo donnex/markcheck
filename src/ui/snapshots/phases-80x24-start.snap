@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Upgrade │ phases.md                                             ☑ 0/9
+────────────────────────────────────────────────────────────────────────────────
+                                                  ┌ Overview ──────────────────┐
+                                                  │ • [1] (Default)            │
+                                                  │   A runbook split into ph… │
+                                                  │   ❯ Announce the maintena… │
+ A runbook split into phases with # headings, as  │   ☐ Take a snapshot: snap… │
+   a word processor's "Heading 1" exports. The    │ • [2] Upgrade              │
+first # H1 is the title; each later one starts a  │   ☐ Stop the service: ser… │
+      list of its own, the same as a ## H2.       │   ☐ Install the new relea… │
+                                                  │   ☐ Start the service: se… │
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/2 ┓  │ • [3] Health               │
+┃                                              ┃  │   ☐ Check the health endp… │
+┃                                              ┃  │   ☐ Watch the error rate … │
+┃        Announce the maintenance window       ┃  │ • [4] Rollback             │
+┃                                              ┃  │   ▪ Only if the checks ab… │
+┃                                              ┃  │   ☐ Restore the snapshot   │
+┃                                              ┃  │   ☐ Start the old release  │
+┗ ◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

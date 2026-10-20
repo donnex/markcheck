@@ -74,6 +74,12 @@ markcheck examples/basics.md
 - **`front-matter.md`** — a leading YAML front-matter block (as Obsidian,
   Hugo or Jekyll write it) that markcheck skips: no list is named after the
   metadata, and toggling a task leaves the block untouched in the file.
+- **`phases.md`** — a runbook split into phases with `#` headings: the first
+  `# H1` is the title (its tasks form the untitled first list), and each later
+  `# Upgrade` / `# Rollback` starts a list of its own, the same as a `## H2`,
+  so the rollback steps aren't counted as part of the upgrade. `# Verify` has
+  only a `## Health` list under it, which is the list shown; the `# Rollback`
+  list has a banner.
 - **`no-headings.md`** — a titled document with **no `## H2` at all**: the whole
   checklist is the single default section (no tabs, no above-cards heading).
 

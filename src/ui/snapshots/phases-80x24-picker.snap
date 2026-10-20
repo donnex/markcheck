@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ ≡ Service Upgrade │ phases.md                                             ☑ 0/9
+────────────────────────────────────────────────────────────────────────────────
+╭ Go to task ───────────────────────── 9 items ╮  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ • [1] (Default)            │
+│ ☐ Announce the maintenance win…  — (Default) │  │   A runbook split into ph… │
+│ ☐ Take a snapshot: snapshot-to…  — (Default) │  │   ❯ Announce the maintena… │
+│ ☐ Stop the service: service-ctl …  — Upgrade │  │   ☐ Take a snapshot: snap… │
+│ ☐ Install the new release  — Upgrade         │  │ • [2] Upgrade              │
+│ ☐ Start the service: service-ctl…  — Upgrade │  │   ☐ Stop the service: ser… │
+│ ☐ Check the health endpoint  — Health        │  │   ☐ Install the new relea… │
+│ ☐ Watch the error rate for ten mi…  — Health │  │   ☐ Start the service: se… │
+│ ☐ Restore the snapshot  — Rollback           │  │ • [3] Health               │
+│ ☐ Start the old release  — Rollback          │  │   ☐ Check the health endp… │
+│                                              │  │   ☐ Watch the error rate … │
+│                                              │  │ • [4] Rollback             │
+│                                              │  │   ▪ Only if the checks ab… │
+│                                              │  │   ☐ Restore the snapshot   │
+│                                              │  │   ☐ Start the old release  │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Upgrade │ phases.md                                                                                     ☑ 0/9
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ • [1] (Default)            │
+                                                                                          │   A runbook split into ph… │
+                                                                                          │   ❯ Announce the maintena… │
+                                                                                          │   ☐ Take a snapshot: snap… │
+                                                                                          │ • [2] Upgrade              │
+                                                                                          │   ☐ Stop the service: ser… │
+                                                                                          │   ☐ Install the new relea… │
+                                                                                          │   ☐ Start the service: se… │
+                                                                                          │ • [3] Health               │
+                                                                                          │   ☐ Check the health endp… │
+                                                                                          │   ☐ Watch the error rate … │
+                                                                                          │ • [4] Rollback             │
+                 A runbook split into phases with # headings, as a word                   │   ▪ Only if the checks ab… │
+              processor's "Heading 1" exports. The first # H1 is the title;               │   ☐ Restore the snapshot   │
+              each later one starts a list of its own, the same as a ## H2.               │   ☐ Start the old release  │
+                                                                                          │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/2 ┓               │                            │
+            ┃                                                             ┃────────────┐  │                            │
+            ┃                                                             ┃ Take a     │  │                            │
+            ┃               Announce the maintenance window               ┃snapshot:   │  │                            │
+            ┃                                                             ┃apshot-tool │  │                            │
+            ┃                                                             ┃ create     │  │                            │
+            ┃                                                             ┃────────────┘  │                            │
+            ┗ ◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

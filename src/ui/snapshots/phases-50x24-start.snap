@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Upgrade │ phases.md               ☑ 0/9
+ [1] (Defa…   [2] Upgr…   [3] Hea…   [4] Roll…
+──────────────────────────────────────────────────
+
+
+
+
+ A runbook split into phases with # headings, as a
+ word processor's "Heading 1" exports. The first #
+ H1 is the title; each later one starts a list of
+           its own, the same as a ## H2.
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/2 ┓
+┃                                                ┃
+┃                                                ┃
+┃         Announce the maintenance window        ┃
+┃                                                ┃
+┃                                                ┃
+┃                                                ┃
+┗ ◉· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help
