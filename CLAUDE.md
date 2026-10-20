@@ -25,7 +25,7 @@ PTY integration tests (`tests/pty.rs`) require the binary to be built first — 
 
 ## Architecture
 
-Data flows one way: `parser.rs` reads a Markdown file into `Document` (via `pulldown-cmark`), `app.rs` holds `AppState` which wraps the `Document` and owns all navigation/toggle logic, `ui/` renders `AppState` each frame, and `writer.rs` atomically writes checkbox state back to the file on every toggle. `git_sync/` is a module directory split by concern in one dependency direction (process -> inspect -> guards -> commit/push -> sync); see DESIGN.md's Git Sync section.
+Data flows one way: `parser.rs` reads a Markdown file into `Document` (via `pulldown-cmark`), `app/` holds `AppState` which wraps the `Document` and owns all navigation/toggle logic (split by concern: navigation, search, write, reload, reset, history, copy, links, keys), `ui/` renders `AppState` each frame, and `writer.rs` atomically writes checkbox state back to the file on every toggle. `git_sync/` is a module directory split by concern in one dependency direction (process -> inspect -> guards -> commit/push -> sync); see DESIGN.md's Git Sync section.
 
 Key non-obvious design points:
 
@@ -42,7 +42,7 @@ Key non-obvious design points:
 
 ## README Markdown reference
 
-- `README.md` must contain a section documenting **all special Markdown handling** — every piece of syntax the app treats specially, how it renders, and the support level (e.g. `# H1` document title, `## H2` list/section, a leading bold-only first item = list banner, a task's leading bold = card title, `[ ]`/`[/]`/`[x]` task states, inline/fenced code and the trailing-command layout, plain-bullet note cards, and what is *not* supported or degrades, such as an indented code block outside any list item being dropped). It's the user-facing counterpart to `DESIGN.md`.
+- `README.md` must contain a section documenting **all special Markdown handling** — every piece of syntax the app treats specially, how it renders, and the support level (e.g. the first `# H1` as document title and a later `# H1` as a list, `## H2` list/section, a leading bold-only first item = list banner, a task's leading bold = card title, `[ ]`/`[/]`/`[-]`/`[x]` task states, inline/fenced code and the trailing-command layout, plain-bullet note cards, and what is *not* supported or degrades, such as a list with no checkboxes being skipped). It's the user-facing counterpart to `DESIGN.md`.
 - Whenever you change how Markdown is **parsed** or how items/cards are **rendered** (new or changed special syntax, a new card element, changed display of an existing one), update this README section in the **same** piece of work — the same rule as keeping `DESIGN.md` in sync. Don't let it drift from the actual behavior.
 
 ## Example files
