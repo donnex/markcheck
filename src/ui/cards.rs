@@ -332,42 +332,68 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
     ),
 ];
 
+/// The `?` overlay's key column, indent included: wide enough for the
+/// longest key label ("Shift-H / Shift-L") so descriptions always clear it.
+const HELP_KEY_COLUMN: u16 = 21;
+/// The narrowest a `?` description is wrapped to, so a tiny terminal
+/// clips the overlay instead of stacking one word per row.
+const HELP_MIN_DESC_WIDTH: u16 = 10;
+
 /// The `?` keybinding cheatsheet overlay, built from [`HELP_SECTIONS`].
+/// A description too long for its column wraps onto rows indented under it.
 /// Scrolls when it doesn't fit a short terminal; any non-scroll key
 /// dismisses it.
 fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let palette = state.palette;
-    let key = |k: &str, desc: &str| {
-        Line::from(vec![
-            Span::styled(
-                // Wide enough for the longest key label ("Shift-H / Shift-L")
-                // so the description column always clears it.
-                format!("  {k:<19}"),
-                Style::default()
-                    .fg(palette.current)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(desc.to_string()),
-        ])
-    };
+    let inner_w = area.width.saturating_sub(2);
+    let desc_w = inner_w
+        .saturating_sub(HELP_KEY_COLUMN)
+        .max(HELP_MIN_DESC_WIDTH);
+    let key_style = Style::default()
+        .fg(palette.current)
+        .add_modifier(Modifier::BOLD);
     let mut lines = vec![Line::from("")];
     for (title, rows) in HELP_SECTIONS {
         if !title.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!(" {title}"),
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
+            lines.extend(
+                wrap_text(title, inner_w.saturating_sub(1))
+                    .into_iter()
+                    .map(|row| {
+                        Line::from(Span::styled(
+                            format!(" {row}"),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ))
+                    }),
+            );
         }
-        lines.extend(rows.iter().map(|(k, desc)| key(k, desc)));
+        for (k, desc) in rows.iter() {
+            for (i, part) in wrap_text(desc, desc_w).into_iter().enumerate() {
+                let key_cell = if i == 0 { *k } else { "" };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {key_cell:<width$}", width = HELP_KEY_COLUMN as usize - 2),
+                        key_style,
+                    ),
+                    Span::raw(part),
+                ]));
+            }
+        }
     }
     lines.push(Line::from(""));
-    lines.push(
-        Line::from(Span::styled(
+    lines.extend(
+        wrap_text(
             "j k ↑ ↓ · Ctrl-E/Y/D/U · PageUp/Dn scroll   ·   any other key closes",
-            Style::default().add_modifier(Modifier::DIM),
-        ))
-        .centered(),
+            inner_w,
+        )
+        .into_iter()
+        .map(|row| {
+            Line::from(Span::styled(
+                row,
+                Style::default().add_modifier(Modifier::DIM),
+            ))
+            .centered()
+        }),
     );
 
     // Size the overlay to its content (plus borders), centered; on a short

@@ -1442,6 +1442,69 @@ fn help_overlay_has_a_section_per_mode_and_names_every_scroll_key() {
     );
 }
 
+fn help_words(state: &mut AppState, width: u16, height: u16) -> Vec<String> {
+    buffer_rows(state, width, height)
+        .iter()
+        .flat_map(|row| {
+            row.replace(['│', '▲', '▼', '▓'], " ")
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+#[test]
+fn help_overlay_wraps_every_description_instead_of_clipping_it() {
+    for width in [50, 80] {
+        let mut state = sample_state();
+        state.overlay = Some(Overlay::Help);
+        let words = help_words(&mut state, width, 200);
+        let expected: Vec<String> = HELP_SECTIONS
+            .iter()
+            .flat_map(|(title, rows)| {
+                std::iter::once(*title)
+                    .chain(rows.iter().flat_map(|(k, desc)| [*k, *desc]))
+                    .flat_map(str::split_whitespace)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut rest = words.iter();
+        for word in &expected {
+            assert!(
+                rest.any(|w| w == word),
+                "{word:?} shown whole and in order at width {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn help_overlay_takes_the_overview_column() {
+    let mut state = sample_state();
+    assert!(buffer_text(&mut state, 80, 24).contains("Overview"));
+    state.overlay = Some(Overlay::Help);
+    let text = buffer_text(&mut state, 80, 24);
+    assert!(text.contains("Keybindings"), "help shown");
+    assert!(!text.contains("Overview"), "overview not drawn beside help");
+    assert!(state.layout.overview_rows.is_empty(), "no stale click rows");
+}
+
+#[test]
+fn help_scroll_reaches_the_last_wrapped_row() {
+    let mut state = sample_state();
+    state.handle_key(KeyCode::Char('?'));
+    buffer_text(&mut state, 50, 24);
+    state.help.scroll = state.layout.help_max_scroll;
+    let text = buffer_text(&mut state, 50, 24);
+    assert!(
+        text.contains("cancel (so does any"),
+        "last help row reachable by scrolling"
+    );
+    assert!(text.contains("other key closes"), "footer reachable");
+}
+
 #[test]
 fn status_bar_shows_trimmed_legend() {
     // The always-on legend is trimmed to essentials; the rarely

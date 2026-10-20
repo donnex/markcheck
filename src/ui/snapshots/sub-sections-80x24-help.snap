@@ -1,28 +1,28 @@
 ---
 source: src/ui/golden_tests.rs
-expression: "screen(&mut state, 80, 24)"
+expression: "screen(&mut state, width, 24)"
 ---
  ≡ Release checklist │ sub-sections.md                                    ☑ 1/30
 ━━━━────────────────────────────────────────────────────────────────────────────
-╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
-│                                              ▲  │ • [1] Deploy               ▲
-│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ❯ refresh-cache          ▓
-│  gg / G             first / last task in the ▓  │   ☐ build-tool sync --pro… ▓
-│  } / {              next / previous sub-secti▓  │   ── Pre-flight checks ─── ▓
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   Run these on the stagin… ▓
-│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ confirm the staging h… ▓
-│  PageDn / PageUp    scroll card body one page│  │   ◐ run verify-output and… ▓
-│  mouse wheel        scroll an overflowing car│  │     ── Data safety ─────── ▓
-│  wheel in ? / T     scroll this help / move t│  │   ☐ take a snapshot: snap… ▓
-│  space / Enter      toggle the task done, the│  │   ☐ confirm the snapshot … │
-│  s                  mark the task started / i│  │   ── Rollout ───────────── │
-│  -                  skip the task (doesn't ap│  │   ☑ restart-service        │
-│  critical step      space or - twice, pausing│  │   ☐ check-status example-… │
-│  u / Ctrl-R         undo / redo the last chan│  │   ▪ Watch the dashboards   │
-│  Ctrl-O             go back after o followed │  │   ☐ confirm the error rat… │
-│  Tab                jump to the next unfinish│  │   ☐ announce the rollout … │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ── Post-rollout ──────── │
-│  /                  search tasks by text     │  │   ☐ tail the logs for one… │
-│  n / N              next / previous search ma▼  │   ☐ verify-output --final  ▼
-╰──────────────────────────────────────────────╯  └────────────────────────────┘
+╭ Keybindings ─────────────────────────────────────────────────────────────────╮
+│                                                                              ▲
+│  h j k l  ← → ↑ ↓   prev / next task (crosses lists)                         ▓
+│  gg / G             first / last task in the document                        ▓
+│  } / {              next / previous sub-section                              ▓
+│  Ctrl-E / Ctrl-Y    scroll card body one line                                ▓
+│  Ctrl-D / Ctrl-U    scroll card body half a page                             │
+│  PageDn / PageUp    scroll card body one page                                │
+│  mouse wheel        scroll an overflowing card, else prev/next task          │
+│  wheel in ? / T     scroll this help / move the T highlight                  │
+│  space / Enter      toggle the task done, then next open task                │
+│  s                  mark the task started / in progress                      │
+│  -                  skip the task (doesn't apply this run), or unskip        │
+│  critical step      space or - twice, pausing between                        │
+│  u / Ctrl-R         undo / redo the last change                              │
+│  Ctrl-O             go back after o followed a #section link                 │
+│  Tab                jump to the next unfinished task                         │
+│  Shift-H / Shift-L  previous / next unfinished list                          │
+│  /                  search tasks by text                                     │
+│  n / N              next / previous search match                             ▼
+╰──────────────────────────────────────────────────────────────────────────────╯
 j/k ↑↓: scroll  ·  any other key: close help

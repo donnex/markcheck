@@ -14,7 +14,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use crate::model::{AppState, IconSet, ItemKind, Palette, TaskState};
+use crate::model::{AppState, IconSet, ItemKind, Overlay, Palette, TaskState};
 
 /// The scrollbar thumb glyph: a soft shaded block (`▓`) rather than the chunky
 /// default full block, with `▲`/`▼` end arrows and the box border showing
@@ -111,7 +111,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     }
     render_progress_bar(frame, progress_area, state);
 
-    if overview_shown {
+    if overview_shown && state.overlay != Some(Overlay::Help) {
         // A fixed-width gap sits between the cards and the overview so the
         // "next" side card doesn't butt up against the list.
         let [cards_area, _gap, overview_area] = Layout::horizontal([

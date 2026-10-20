@@ -65,10 +65,13 @@ fn every_example_matches_its_golden_screens() {
                     screen(&mut state, width, height)
                 );
             }
-            for (key, step) in [('T', "picker"), ('?', "help")] {
+            for (key, step, width) in [('T', "picker", 80), ('?', "help", 50), ('?', "help", 80)] {
                 let mut state = open(&name);
                 state.handle_key(KeyCode::Char(key));
-                insta::assert_snapshot!(format!("{stem}-80x24-{step}"), screen(&mut state, 80, 24));
+                insta::assert_snapshot!(
+                    format!("{stem}-{width}x24-{step}"),
+                    screen(&mut state, width, 24)
+                );
             }
         }
     });

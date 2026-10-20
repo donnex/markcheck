@@ -1,28 +1,28 @@
 ---
 source: src/ui/golden_tests.rs
-expression: "screen(&mut state, 80, 24)"
+expression: "screen(&mut state, width, 24)"
 ---
  ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/24
 ────────────────────────────────────────────────────────────────────────────────
-╭ Keybindings ─────────────────────────────────╮  ┌ Overview ──────────────────┐
-│                                              ▲  │ • [1] Reference            ▲
-│  h j k l  ← → ↑ ↓   prev / next task (crosses▓  │   ▪ Read before proceedin… ▓
-│  gg / G             first / last task in the ▓  │   Non-task content and th… ▓
-│  } / {              next / previous sub-secti▓  │   ▪ A note with a command… ▓
-│  Ctrl-E / Ctrl-Y    scroll card body one line▓  │   ❯ A task with a single … ▓
-│  Ctrl-D / Ctrl-U    scroll card body half a p│  │   ☐ Restart the primary a… ▓
-│  PageDn / PageUp    scroll card body one page│  │   ☐ Restart example-servi… ▓
-│  mouse wheel        scroll an overflowing car│  │   ☐ A task with a fenced … ▓
-│  wheel in ? / T     scroll this help / move t│  │   ☐ A task with an indent… ▓
-│  space / Enter      toggle the task done, the│  │   ☐ A task with a short o… ▓
-│  s                  mark the task started / i│  │   ☐ A task with fenced li… ▓
-│  -                  skip the task (doesn't ap│  │   ☐ A task with a tab-ind… │
-│  critical step      space or - twice, pausing│  │   ☐ A task with two comma… │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ A task with a command… │
-│  Ctrl-O             go back after o followed │  │   ☐ Fetch curl -fsSL http… │
-│  Tab                jump to the next unfinish│  │   ☐ A task with emphasis,… │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ A task whose text run… │
-│  /                  search tasks by text     │  │   ☐ A task in wide (two-c… │
-│  n / N              next / previous search ma▼  │   ☐ Open the project runb… ▼
-╰──────────────────────────────────────────────╯  └────────────────────────────┘
+╭ Keybindings ─────────────────────────────────────────────────────────────────╮
+│                                                                              ▲
+│  h j k l  ← → ↑ ↓   prev / next task (crosses lists)                         ▓
+│  gg / G             first / last task in the document                        ▓
+│  } / {              next / previous sub-section                              ▓
+│  Ctrl-E / Ctrl-Y    scroll card body one line                                ▓
+│  Ctrl-D / Ctrl-U    scroll card body half a page                             │
+│  PageDn / PageUp    scroll card body one page                                │
+│  mouse wheel        scroll an overflowing card, else prev/next task          │
+│  wheel in ? / T     scroll this help / move the T highlight                  │
+│  space / Enter      toggle the task done, then next open task                │
+│  s                  mark the task started / in progress                      │
+│  -                  skip the task (doesn't apply this run), or unskip        │
+│  critical step      space or - twice, pausing between                        │
+│  u / Ctrl-R         undo / redo the last change                              │
+│  Ctrl-O             go back after o followed a #section link                 │
+│  Tab                jump to the next unfinished task                         │
+│  Shift-H / Shift-L  previous / next unfinished list                          │
+│  /                  search tasks by text                                     │
+│  n / N              next / previous search match                             ▼
+╰──────────────────────────────────────────────────────────────────────────────╯
 j/k ↑↓: scroll  ·  any other key: close help
