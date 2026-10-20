@@ -62,11 +62,38 @@ impl Drop for TerminalGuard {
 }
 
 fn restore_terminal(mouse: bool) {
-    let _ = disable_raw_mode();
+    let _ = leave_tui(mouse);
+}
+
+/// Hands the terminal back in its normal state. Every step is tried even if
+/// an earlier one fails; the first failure is returned.
+fn leave_tui(mouse: bool) -> io::Result<()> {
+    let raw = disable_raw_mode();
+    let mouse = if mouse {
+        execute!(io::stdout(), DisableMouseCapture)
+    } else {
+        Ok(())
+    };
+    let screen = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+    raw.and(mouse).and(screen)
+}
+
+/// Takes the terminal back after `leave_tui` and repaints the whole frame.
+fn enter_tui<B: Backend>(terminal: &mut Terminal<B>, mouse: bool) -> anyhow::Result<()>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
+        .context("cannot set up the terminal (markcheck is interactive)")?;
     if mouse {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        execute!(io::stdout(), EnableMouseCapture)?;
     }
-    let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+    // Force a full repaint by resizing: `Terminal::clear` queries the cursor,
+    // which hangs on terminals that don't answer.
+    let size = terminal.size()?;
+    terminal.resize(Rect::new(0, 0, size.width, size.height))?;
+    Ok(())
 }
 
 /// Restores the terminal before the default hook prints, so a main-thread
@@ -264,7 +291,7 @@ fn main() -> anyhow::Result<()> {
         sync.request_catch_up_push();
     }
 
-    let stop = stop_on_signals().context("cannot install signal handlers")?;
+    let mut signals = StopSignals::install().context("cannot install signal handlers")?;
     let mouse = settings.mouse;
     install_panic_hook();
     enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
@@ -292,7 +319,7 @@ fn main() -> anyhow::Result<()> {
         &mut reload,
         &mut git_sync,
         mouse,
-        &stop,
+        &mut signals,
         show_title,
     );
     drop(guard);
@@ -309,21 +336,63 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// `SIGTERM`, `SIGHUP` (a closed terminal or dropped SSH session) and a
-/// `SIGINT` from `kill` set the returned flag, so `run` ends the way `q`
-/// does and git sync is waited for and cleaned up. A second `SIGTERM` or
-/// `SIGINT` exits at once, for when that wait is too long.
-fn stop_on_signals() -> io::Result<Arc<AtomicBool>> {
-    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
-    use signal_hook::flag;
+/// `SIGINT` from `kill` set `stop`, so `run` ends the way `q` does and git
+/// sync is waited for and cleaned up. A second `SIGTERM` or `SIGINT` exits
+/// at once, for when that wait is too long.
+struct StopSignals {
+    stop: Arc<AtomicBool>,
+    interrupt: [signal_hook::SigId; 2],
+}
 
-    let stop = Arc::new(AtomicBool::new(false));
-    for signal in [SIGTERM, SIGINT] {
-        flag::register_conditional_shutdown(signal, 1, Arc::clone(&stop))?;
+impl StopSignals {
+    fn install() -> io::Result<Self> {
+        use signal_hook::consts::{SIGHUP, SIGTERM};
+        use signal_hook::flag;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        flag::register_conditional_shutdown(SIGTERM, 1, Arc::clone(&stop))?;
+        for signal in [SIGTERM, SIGHUP] {
+            flag::register(signal, Arc::clone(&stop))?;
+        }
+        let interrupt = Self::register_interrupt(&stop)?;
+        Ok(Self { stop, interrupt })
     }
-    for signal in [SIGTERM, SIGHUP, SIGINT] {
-        flag::register(signal, Arc::clone(&stop))?;
+
+    fn register_interrupt(stop: &Arc<AtomicBool>) -> io::Result<[signal_hook::SigId; 2]> {
+        use signal_hook::consts::SIGINT;
+        use signal_hook::flag;
+
+        Ok([
+            flag::register_conditional_shutdown(SIGINT, 1, Arc::clone(stop))?,
+            flag::register(SIGINT, Arc::clone(stop))?,
+        ])
     }
-    Ok(stop)
+
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
+    }
+
+    /// Runs `child` with `SIGINT` caught and dropped. Without raw mode the
+    /// terminal sends its interrupt key (`Ctrl-C`, or `C-g` under Emacs) to
+    /// the whole foreground process group, markcheck included, though it is
+    /// meant for the editor. Caught rather than ignored, so the child still
+    /// starts with the default action.
+    fn ignoring_interrupts<T>(&mut self, child: impl FnOnce() -> T) -> io::Result<T> {
+        use signal_hook::consts::SIGINT;
+        use signal_hook::low_level::unregister;
+
+        let dropped = signal_hook::flag::register(SIGINT, Arc::new(AtomicBool::new(false)))?;
+        for id in self.interrupt {
+            unregister(id);
+        }
+        let result = child();
+        let restored = Self::register_interrupt(&self.stop);
+        if let Ok(interrupt) = restored {
+            self.interrupt = interrupt;
+            unregister(dropped);
+        }
+        restored.map(|_| result)
+    }
 }
 
 /// Shown while `q` waits for a sync still running.
@@ -335,7 +404,7 @@ fn run<B: Backend>(
     reload: &mut ReloadTrigger,
     git_sync: &mut Option<git_sync::GitSync>,
     mouse: bool,
-    stop: &AtomicBool,
+    signals: &mut StopSignals,
     show_title: bool,
 ) -> anyhow::Result<Option<String>>
 where
@@ -354,7 +423,7 @@ where
     let mut shown_title = String::new();
     loop {
         // Nothing is drawn from here on: after SIGHUP the terminal is gone.
-        if stop.load(Ordering::Relaxed) {
+        if signals.stopped() {
             return Ok(git_sync.as_mut().and_then(|sync| {
                 sync.flush();
                 let last = wait_for_git_sync(sync, QUIT_WAIT).or(last_outcome);
@@ -453,6 +522,7 @@ where
                 terminal,
                 git_sync,
                 mouse,
+                signals,
                 opener_failures: &opener_failures,
             },
         )?;
@@ -483,6 +553,7 @@ struct TerminalHost<'a, B: Backend> {
     terminal: &'a mut Terminal<B>,
     git_sync: &'a mut Option<git_sync::GitSync>,
     mouse: bool,
+    signals: &'a mut StopSignals,
     opener_failures: &'a std::sync::mpsc::Sender<String>,
 }
 
@@ -495,7 +566,7 @@ where
         state: &mut AppState,
         line: Option<model::LineNumber>,
     ) -> anyhow::Result<()> {
-        open_in_editor(self.terminal, state, line, self.mouse)
+        open_in_editor(self.terminal, state, line, self.mouse, self.signals)
     }
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
@@ -625,17 +696,14 @@ fn open_in_editor<B: Backend>(
     state: &mut AppState,
     line: Option<model::LineNumber>,
     mouse: bool,
+    signals: &mut StopSignals,
 ) -> anyhow::Result<()>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
     use std::process::Command;
 
-    disable_raw_mode()?;
-    if mouse {
-        execute!(io::stdout(), DisableMouseCapture)?;
-    }
-    execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen)?;
+    leave_tui(mouse)?;
 
     let (program, args, warning) = launch::resolve_editor(
         std::env::var("VISUAL").ok().as_deref(),
@@ -649,20 +717,12 @@ where
         line,
     ));
     let started = std::time::Instant::now();
-    let status = command.status();
+    let status = signals.ignoring_interrupts(|| command.status());
     let elapsed = started.elapsed();
 
     // Restore the terminal regardless of how the editor fared.
-    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
-        .context("cannot set up the terminal (markcheck is interactive)")?;
-    if mouse {
-        execute!(io::stdout(), EnableMouseCapture)?;
-    }
-    // Force a full repaint by resizing: `Terminal::clear` queries the cursor,
-    // which hangs on terminals that don't answer.
-    let size = terminal.size()?;
-    terminal.resize(Rect::new(0, 0, size.width, size.height))?;
+    enter_tui(terminal, mouse)?;
+    let status = status.context("cannot restore the SIGINT handler")?;
 
     state.finish_editor(&program, warning, status, elapsed);
     Ok(())
@@ -680,23 +740,9 @@ fn suspend_to_shell<B: Backend>(
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
-    disable_raw_mode()?;
-    if mouse {
-        execute!(io::stdout(), DisableMouseCapture)?;
-    }
-    execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen)?;
-
+    leave_tui(mouse)?;
     let outcome = stop_self();
-
-    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
-        .context("cannot set up the terminal (markcheck is interactive)")?;
-    if mouse {
-        execute!(io::stdout(), EnableMouseCapture)?;
-    }
-    // Same full repaint as after the editor: see `open_in_editor`.
-    let size = terminal.size()?;
-    terminal.resize(Rect::new(0, 0, size.width, size.height))?;
+    enter_tui(terminal, mouse)?;
 
     state.finish_suspend(outcome);
     Ok(())

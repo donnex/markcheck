@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Pressing your terminal's interrupt key while editing a checklist with `e` no longer ends markcheck. Emacs uses `C-g` as that key, and line editors such as `ed` use `Ctrl-C`; once markcheck quit as soon as the editor closed, and twice killed it straight away while the editor was still open, leaving the editor stranded with any unsaved work at risk. The key now goes only to the editor. (#146)
+
 ### Security
 
 - A checklist can no longer send escape sequences to your terminal through its title, a task's label or its file name. These were written to the terminal title, the line printed on quit and git-sync's messages without being cleaned, so a crafted checklist could, for example, silently replace your clipboard with a command of its choosing the next time you ticked a task or quit. Control characters are now dropped from all of them, and from git-sync commit messages. (#145)

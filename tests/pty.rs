@@ -600,6 +600,45 @@ fn editor_flow_reloads_after_edit() {
 }
 
 #[test]
+fn interrupts_sent_while_the_editor_runs_reach_only_the_editor() {
+    let path = unique_path("editorinterrupt");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+
+    // Fake $EDITOR: sends SIGINT twice to its whole process group, as the
+    // terminal does for Emacs's `C-g` or a line editor's `Ctrl-C`, survives
+    // them itself, then appends a task.
+    let editor = unique_path("fakeeditorint").with_extension("sh");
+    write_file(
+        &editor,
+        "#!/bin/sh\ntrap '' INT\nkill -INT 0\nkill -INT 0\nprintf -- '- [ ] `beta`\\n' >> \"$1\"\n",
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).unwrap();
+    }
+
+    let ok = drive(
+        &path,
+        &[("EDITOR", editor.to_str().unwrap())],
+        &[
+            Step::Key("e"),
+            Step::WaitForFile(|s| s.contains("`beta`")),
+            Step::WaitForScreen("beta"),
+            Step::Key("q"),
+        ],
+    );
+    assert!(
+        ok,
+        "markcheck should outlive the editor's interrupts and quit on q"
+    );
+
+    std::fs::remove_file(&path).ok();
+    std::fs::remove_file(&editor).ok();
+}
+
+#[test]
 fn editor_spawn_failure_does_not_crash_or_change_the_file() {
     // $EDITOR pointing at a nonexistent binary must surface a clear error
     // (`main.rs`'s `Err(err)` branch) rather than crashing or hanging
