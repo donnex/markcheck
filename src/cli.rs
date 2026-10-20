@@ -90,8 +90,12 @@ pub struct Cli {
     pub no_git_sync: bool,
     /// Wait until SECONDS pass with no further change before git sync commits,
     /// so a burst of toggles becomes one commit; 0 commits every change at once
-    /// (default: 10; config: git_sync_delay)
-    #[arg(long, value_name = "SECONDS")]
+    /// (default: 10, at most 86400, a day; config: git_sync_delay)
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        value_parser = clap::value_parser!(u64).range(..=config::MAX_GIT_SYNC_DELAY)
+    )]
     pub git_sync_delay: Option<u64>,
     /// Read the config from PATH instead of the default location (PATH must exist)
     #[arg(long, value_name = "PATH", conflicts_with = "no_config")]

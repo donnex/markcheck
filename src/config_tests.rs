@@ -248,3 +248,23 @@ fn unreadable_config_path_is_an_error_naming_the_file() {
     fs::remove_dir_all(&path).unwrap();
     assert!(error.contains("cannot read config file"), "{error}");
 }
+
+#[test]
+fn load_config_rejects_a_git_sync_delay_over_a_day() {
+    let path = unique_temp_path();
+    fs::write(&path, format!("git_sync_delay = {MAX_GIT_SYNC_DELAY}\n")).unwrap();
+    assert_eq!(
+        load_config(&path).unwrap().config.git_sync_delay,
+        Some(MAX_GIT_SYNC_DELAY)
+    );
+
+    fs::write(&path, "git_sync_delay = 9223372036854775807\n").unwrap();
+    let error = format!("{:#}", load_config(&path).unwrap_err());
+    assert!(error.contains("invalid config file"), "{error}");
+    assert!(
+        error.contains("git_sync_delay must be at most 86400 seconds"),
+        "{error}"
+    );
+
+    fs::remove_file(&path).ok();
+}

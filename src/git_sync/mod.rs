@@ -129,7 +129,8 @@ pub struct GitSync {
 struct Queued {
     sync: PendingSync,
     descriptions: Vec<String>,
-    due: Instant,
+    /// `None` when the delay is too long to add to now: due only on a flush.
+    due: Option<Instant>,
 }
 
 /// Turns a panic into `Failed`: a worker that dies without sending leaves
@@ -265,9 +266,9 @@ impl GitSync {
         *lock_hash(&self.latest_requested_hash) = sync.content_hash;
         let now = Instant::now();
         let due = if sync.immediate {
-            now
+            Some(now)
         } else {
-            now + self.delay
+            now.checked_add(self.delay)
         };
         self.queued = Some(match self.queued.take() {
             // The earliest pre-write content is what the batch replaces.
@@ -293,7 +294,7 @@ impl GitSync {
     pub fn flush(&mut self) {
         let now = Instant::now();
         if let Some(queued) = &mut self.queued {
-            queued.due = now;
+            queued.due = Some(now);
         }
         self.spawn_if_due(now);
     }
@@ -312,7 +313,12 @@ impl GitSync {
     }
 
     fn spawn_if_due(&mut self, now: Instant) {
-        if self.busy || !self.queued.as_ref().is_some_and(|queued| queued.due <= now) {
+        if self.busy
+            || !self
+                .queued
+                .as_ref()
+                .is_some_and(|queued| queued.due.is_some_and(|due| due <= now))
+        {
             return;
         }
         if let Some(queued) = self.queued.take() {

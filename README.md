@@ -182,7 +182,7 @@ clipboard = "auto"  # = --clipboard: "auto", "system" or "osc52"
 terminal_title = true  # show the checklist and its progress in the terminal title
 exit_summary = true    # print where the run stopped after quitting
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths (end with /** to include nested repositories)
-git_sync_delay = 10 # = --git-sync-delay: seconds without a change before git sync commits; 0 = at once
+git_sync_delay = 10 # = --git-sync-delay: seconds without a change before git sync commits; 0 = at once, at most 86400 (a day)
 ```
 
 No config file is not an error — `markcheck` just uses the built-in
@@ -608,7 +608,8 @@ seconds pass without another change (the title bar shows `⇅ git · pending`
 meanwhile), so a burst of ticks becomes one commit and a tick you undo
 straight away is never published at all. Set `git_sync_delay` in the config
 file or pass `--git-sync-delay SECONDS` to change the wait, or `0` to
-commit every change at once. A single change is committed as
+commit every change at once; the wait can be at most 86400 seconds (a day),
+and a longer one is refused at startup. A single change is committed as
 `checklist.md: Check "Restart service"`; several are committed as
 `checklist.md: 3 changes`, listing each in the commit body. Changes are
 never lost: quitting sends a waiting change straight away, and changes made

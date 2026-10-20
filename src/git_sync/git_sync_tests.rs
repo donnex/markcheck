@@ -769,6 +769,26 @@ fn requests_inside_the_quiet_period_become_one_commit() {
 }
 
 #[test]
+fn a_delay_too_long_to_schedule_waits_for_the_flush() {
+    let (work, _remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let mut sync = GitSync::detect(&file).unwrap();
+    sync.set_delay(Duration::MAX);
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(pending_sync("- [x] one\n", "Check \"one\""));
+    sync.tick(Instant::now() + Duration::from_secs(86_400 * 365));
+    assert!(sync.is_waiting() && !sync.is_busy(), "never due on its own");
+    sync.flush();
+    assert!(sync.is_busy(), "the flush still sends it");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while sync.poll().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
 fn an_immediate_request_or_a_flush_skips_the_quiet_period() {
     let (work, _remote) = init_repo_with_remote();
     let file = work.join("tracked.md");

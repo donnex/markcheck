@@ -32,6 +32,11 @@ pub struct Config {
     pub exit_summary: Option<bool>,
 }
 
+/// The longest `git_sync_delay` accepted, in seconds: a day. Anything
+/// longer is a typo or a stand-in for "only on quit", which the quit's own
+/// sync already covers.
+pub const MAX_GIT_SYNC_DELAY: u64 = 86_400;
+
 /// Every key `Config` reads; anything else in the file is reported as
 /// unknown.
 const KNOWN_KEYS: &[&str] = &[
@@ -128,6 +133,14 @@ pub fn load_config(path: &Path) -> anyhow::Result<Loaded> {
     };
     let table: toml::Table = toml::from_str(&contents).with_context(invalid)?;
     let config: Config = toml::from_str(&contents).with_context(invalid)?;
+    if let Some(delay) = config.git_sync_delay
+        && delay > MAX_GIT_SYNC_DELAY
+    {
+        return Err(anyhow::anyhow!(
+            "git_sync_delay must be at most {MAX_GIT_SYNC_DELAY} seconds (a day), not {delay}"
+        ))
+        .with_context(invalid);
+    }
     let mut unknown_keys: Vec<String> = table
         .keys()
         .filter(|key| !KNOWN_KEYS.contains(&key.as_str()))

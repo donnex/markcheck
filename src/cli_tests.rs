@@ -226,6 +226,24 @@ fn git_sync_delay_takes_the_flag_then_the_config_then_ten_seconds() {
         git_sync_delay(&parse(&["--git-sync-delay", "0"]), &config),
         Duration::ZERO
     );
+    assert_eq!(
+        git_sync_delay(&parse(&["--git-sync-delay", "86400"]), &config),
+        Duration::from_secs(86_400)
+    );
+}
+
+#[test]
+fn git_sync_delay_over_a_day_is_rejected() {
+    for value in ["86401", "18446744073709551615"] {
+        let Err(error) =
+            Cli::try_parse_from(["markcheck", "checklist.md", "--git-sync-delay", value])
+        else {
+            panic!("{value} must be rejected");
+        };
+        let error = error.to_string();
+        assert!(error.contains("--git-sync-delay"), "{value}: {error}");
+        assert!(error.contains("0..=86400"), "{value}: {error}");
+    }
 }
 
 #[test]

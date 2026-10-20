@@ -306,6 +306,20 @@ fn unknown_config_key_does_not_stop_startup() {
 }
 
 #[test]
+fn an_out_of_range_git_sync_delay_is_a_clear_error() {
+    let stderr = stderr_with_config("cfg-delay", "git_sync_delay = 9223372036854775807\n", &[]);
+    assert!(
+        stderr.contains("git_sync_delay must be at most 86400 seconds"),
+        "{stderr:?}"
+    );
+    assert!(!stderr.contains("crashed"), "{stderr:?}");
+
+    let stderr = stderr_with_config("cfg-delay-flag", "", &["--git-sync-delay=99999999"]);
+    assert!(stderr.contains("--git-sync-delay"), "{stderr:?}");
+    assert!(stderr.contains("0..=86400"), "{stderr:?}");
+}
+
+#[test]
 fn no_config_bypasses_a_malformed_config_file() {
     let broken = "this is not valid toml =====";
     let stderr = stderr_with_config("cfg-bypass", broken, &[]);
