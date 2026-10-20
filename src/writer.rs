@@ -202,11 +202,7 @@ impl SessionMarker {
         let mut others = Vec::new();
         for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = entry.file_name();
-            let Some(pid) = name
-                .to_str()
-                .and_then(|name| name.strip_prefix(&prefix))
-                .filter(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
-            else {
+            let Some(pid) = name.to_str().and_then(|name| name.strip_prefix(&prefix)) else {
                 continue;
             };
             if pid == std::process::id().to_string() {
@@ -325,6 +321,7 @@ fn pid_is_gone(pid: &str) -> bool {
     if pid == std::process::id().to_string() {
         return false;
     }
+    #[cfg(target_os = "linux")]
     if let Some(gone) = proc_reports_gone(pid) {
         return gone;
     }
@@ -379,11 +376,6 @@ pub fn sweep_interrupted_saves(checklist: &Path) -> usize {
 fn proc_reports_gone(pid: &str) -> Option<bool> {
     let proc = Path::new("/proc");
     proc.join("self").exists().then(|| !proc.join(pid).exists())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn proc_reports_gone(_pid: &str) -> Option<bool> {
-    None
 }
 
 /// Runs `ps` (given as a `Command` so a test can stand one in) with

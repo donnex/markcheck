@@ -556,26 +556,11 @@ entry names the shape, what it cost, and what to grep for.
 
 ### Verifying the guards
 
-The safety guards in `git_sync/guards.rs` and `writer.rs` are the code most likely
-to rot silently: they only run on paths that normal use never reaches, so a
-guard that stopped working would not show up in ordinary testing. Class 11
-above is what that rot looks like from the test side.
+The safety guards in `git_sync/guards.rs` and `writer.rs` are the code most likely to rot silently: they run only on paths ordinary use never reaches, so a guard that stopped working wouldn't show in normal testing. Class 11 above is what that rot looks like from the test side.
 
-The check is mutation testing, and it needs no tooling beyond a script that
-edits one function, runs `cargo test`, and restores the file. Disable a guard
-so it permits everything — `verify_commit_scope` returning `Ok(())`,
-`unpushed_history_blocks` returning `None`, `git_command` skipping its
-`env_remove` loop, `token_owner_is_gone` returning `true` — and the suite *must*
-fail. A mutant that survives is a guard nothing actually pins, which is the
-same as not having the guard at all.
+The check is mutation testing with [`cargo-mutants`](https://mutants.rs/), configured in `.cargo/mutants.toml`: `cargo mutants` mutates every function in those two files (a comparison flipped, a guard made always-true, a body replaced by a default) and reruns the unit tests (`--bins`) for each. **Every mutant not excluded must be caught.** The exclusions are listed in the config with the reason each can't be caught: mutants that produce identical behaviour (`^` for `|` on flags that share no bits), effects no test can observe (a directory fsync), and branches reached only by a race between two instances. `.github/workflows/mutants.yml` runs it weekly and on demand, since it reruns the suite once per mutant (about an hour), and keeps the report. Run it after changing a guard, and prefer it to a coverage number: coverage proves a line ran, a surviving mutant proves nothing checked what it did.
 
-Ten such mutations were run in the fourth pass, covering every git-sync guard
-and every `WriteLock` invariant, including subtle ones that model real
-regressions rather than wholesale deletion (reverting `parse_first_parent` to
-the ambiguity that let an unreadable listing read as a root commit and delete
-the branch). All ten were caught, by 2–8 tests each. Re-run this after
-changing a guard, and prefer it to a coverage number: coverage proves a line
-executed, a surviving mutant proves nothing was checking what it did.
+The first complete run (2026-10-20) tested 214 mutants: 199 caught and 13 unviable (they don't compile). The other two were fixed rather than excluded. One was a filter in `SessionMarker::register` that `pid_is_gone` already covered, so it was removed. The other was a FIFO test that hung instead of failing, so it now runs under a deadline (`within_seconds`) and a regression into a blocking open fails it.
 
 ---
 

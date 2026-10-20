@@ -1,0 +1,44 @@
+name: Mutants
+
+# Mutation tests for the safety guards in src/git_sync/guards.rs and
+# src/writer.rs (#129), configured by .cargo/mutants.toml. Every mutant
+# must be caught: one that survives is a guard no test pins. It reruns the
+# unit tests once per mutant, so it runs weekly and on demand rather than on
+# every push. Actions are pinned to full commit SHAs, as in check.yml.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-mutants@27.1.0
+
+      - name: cargo mutants
+        run: cargo mutants --jobs 2 --timeout 300
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants.out
+          path: mutants.out

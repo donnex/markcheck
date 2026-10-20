@@ -539,3 +539,88 @@ fn a_configured_but_unfetched_upstream_still_counts_as_no_upstream() {
 
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
+
+#[test]
+fn only_a_markdown_path_counts_as_a_checklist() {
+    assert!(is_checklist_path(b"runbook.md"));
+    assert!(is_checklist_path(b"docs/Runbook.MD"));
+    assert!(
+        !is_checklist_path(b".md"),
+        "a bare extension is no file name"
+    );
+    assert!(!is_checklist_path(b"notes.txt"));
+    assert!(!is_checklist_path(b"md"));
+}
+
+#[test]
+fn an_unpushed_merge_is_never_published() {
+    let (work, _remote) = init_repo_with_remote();
+    run(&work, &["checkout", "-q", "-b", "side"]);
+    fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+    run(
+        &work,
+        &["commit", "-q", "-am", "side", "-m", OWN_COMMIT_TRAILER],
+    );
+    run(&work, &["checkout", "-q", "main"]);
+    fs::write(work.join("other.md"), "- [ ] two\n").unwrap();
+    run(&work, &["add", "other.md"]);
+    run(
+        &work,
+        &["commit", "-q", "-m", "main side", "-m", OWN_COMMIT_TRAILER],
+    );
+    run(&work, &["merge", "-q", "--no-edit", "side", "-m", "merge"]);
+    let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+
+    assert!(matches!(
+        unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOrThisChecklist),
+        Ok(UnpushedHistory::Blocked(blocking)) if blocking.subject == "merge"
+    ));
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_markcheck_commit_to_a_non_markdown_file_is_not_its_own() {
+    let (work, _remote) = init_repo_with_remote();
+    fs::write(work.join("notes.txt"), "x\n").unwrap();
+    run(&work, &["add", "notes.txt"]);
+    run(
+        &work,
+        &["commit", "-q", "-m", "notes", "-m", OWN_COMMIT_TRAILER],
+    );
+    let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+    assert!(matches!(
+        unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOnly),
+        Ok(UnpushedHistory::Blocked(_))
+    ));
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn unresolved_conflicts_and_a_detached_head_are_named() {
+    let (work, _remote) = init_repo_with_remote();
+    run(&work, &["checkout", "-q", "-b", "side"]);
+    fs::write(work.join("tracked.md"), "- [x] side\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "side"]);
+    run(&work, &["checkout", "-q", "main"]);
+    fs::write(work.join("tracked.md"), "- [x] main\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "main"]);
+    let _ = crate::test_support::git()
+        .current_dir(&work)
+        .args(["merge", "-q", "side"])
+        .output();
+    // Past the merge-in-progress marker, to the conflict check itself.
+    fs::remove_file(work.join(".git").join("MERGE_HEAD")).unwrap();
+    assert_eq!(
+        repo_sync_blocked(&work).as_deref(),
+        Some("the repository has unresolved merge conflicts")
+    );
+
+    run(&work, &["checkout", "-q", "-f", "main"]);
+    run(&work, &["checkout", "-q", "--detach"]);
+    assert!(
+        repo_sync_blocked(&work).is_some_and(|reason| reason.contains("detached HEAD")),
+        "{:?}",
+        repo_sync_blocked(&work)
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}

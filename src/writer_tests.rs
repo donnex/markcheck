@@ -303,7 +303,11 @@ fn a_lock_whose_owner_has_died_is_recovered() {
     // The other half: a crash while holding the lock must not wedge every
     // future write. Recovery is immediate once the owner is *shown* to be
     // gone, rather than waiting out a timeout.
-    if proc_reports_gone("1").is_none() && !ps_is_installed() {
+    #[cfg(target_os = "linux")]
+    let proc_answers = proc_reports_gone("1").is_some();
+    #[cfg(not(target_os = "linux"))]
+    let proc_answers = false;
+    if !proc_answers && !ps_is_installed() {
         eprintln!("skipped: no /proc and no ps to prove the owner gone");
         return;
     }
@@ -1031,12 +1035,16 @@ fn read_checklist_refuses_a_symlink_a_fifo_and_a_directory() {
 
     let device = PathBuf::from("/dev/null");
     for (path, what) in [
-        (&link, "a symlink"),
-        (&fifo, "a named pipe"),
-        (&dir, "a directory"),
-        (&device, "a device or socket"),
+        (link, "a symlink"),
+        (fifo, "a named pipe"),
+        (dir, "a directory"),
+        (device, "a device or socket"),
     ] {
-        let err = read_checklist(path).unwrap_err();
+        let err = within_seconds(10, {
+            let path = path.clone();
+            move || read_checklist(&path)
+        })
+        .unwrap_err();
         assert!(is_not_regular(&err), "{}: {err}", path.display());
         assert_eq!(err.to_string(), format!("not a regular file: it is {what}"));
     }
@@ -1207,10 +1215,11 @@ fn a_lock_that_is_a_symlink_to_a_fifo_neither_blocks_nor_is_honoured() {
     );
     std::os::unix::fs::symlink(&fifo, &lock_file).unwrap();
 
-    assert!(matches!(
-        WriteLock::acquire(&path),
-        LockOutcome::Unavailable
-    ));
+    let outcome = within_seconds(10, {
+        let path = path.clone();
+        move || matches!(WriteLock::acquire(&path), LockOutcome::Unavailable)
+    });
+    assert!(outcome);
 
     let _ = fs::remove_file(&lock_file);
     fs::remove_file(&path).ok();
@@ -1430,4 +1439,88 @@ fn a_second_session_sees_the_live_one_and_clears_a_dead_ones_marker() {
     drop(marker);
     assert!(!own.exists(), "and removed again on exit");
     let _ = fs::remove_file(dir.join(format!("{prefix}{live}")));
+}
+
+#[test]
+fn a_file_owned_by_root_is_reported_as_someone_elses() {
+    use std::os::unix::fs::MetadataExt;
+    let target = Path::new("/etc/hostname");
+    if !target.exists() || current_uid() == Some(0) {
+        eprintln!("skipped: needs a root-owned file and a non-root user");
+        return;
+    }
+    assert_eq!(fs::metadata(target).unwrap().uid(), 0);
+    assert_eq!(foreign_owner(target), Some(0));
+}
+
+#[test]
+fn a_lock_held_by_a_live_process_is_busy() {
+    let path = write_temp_file(EXAMPLE);
+    let lock = plant_lock(&path, std::os::unix::process::parent_id());
+    assert!(matches!(WriteLock::acquire(&path), LockOutcome::Busy(_)));
+    let _ = fs::remove_file(lock);
+}
+
+#[test]
+fn temp_name_stem_backs_up_to_a_character_boundary() {
+    // A one-byte lead puts every two-byte boundary at an odd offset, so the
+    // 160-byte cut lands mid-character and has to move back.
+    let long = format!("a{}", "é".repeat(100));
+    let stem = within_seconds(10, {
+        let long = long.clone();
+        move || temp_name_stem(&long).len()
+    });
+    assert_eq!(stem, 159);
+    let stem = &long[..stem];
+    assert!(long.starts_with(stem));
+}
+
+/// Runs `f` on its own thread and fails the test when it hasn't returned
+/// within `secs`, so a guard that regresses into blocking (a FIFO opened
+/// without `O_NONBLOCK`, a loop that never ends) fails instead of hanging.
+fn within_seconds<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(secs))
+        .expect("did not return in time")
+}
+
+#[test]
+fn a_marker_whose_pid_part_is_not_a_number_is_left_alone() {
+    let target = write_temp_file(EXAMPLE);
+    let dir = lock_dir().unwrap();
+    let prefix = format!("markcheck-open-{}-", path_digest(&target));
+    let odd = dir.join(format!("{prefix}abc"));
+    fs::write(&odd, "").unwrap();
+
+    let (marker, others) = SessionMarker::register(&target);
+
+    assert!(others.is_empty(), "{others:?}");
+    assert!(odd.exists(), "not ours to remove");
+    drop(marker);
+    let _ = fs::remove_file(odd);
+}
+
+#[test]
+fn a_marker_left_under_this_pid_is_taken_over_and_a_directory_is_not() {
+    let target = write_temp_file(EXAMPLE);
+    let dir = lock_dir().unwrap();
+    let own = dir.join(format!(
+        "markcheck-open-{}-{}",
+        path_digest(&target),
+        std::process::id()
+    ));
+    fs::write(&own, "").unwrap();
+    let (marker, _) = SessionMarker::register(&target);
+    assert_eq!(marker.path.as_deref(), Some(own.as_path()));
+    drop(marker);
+    assert!(!own.exists());
+
+    fs::create_dir(&own).unwrap();
+    let (marker, _) = SessionMarker::register(&target);
+    assert_eq!(marker.path, None, "a directory isn't a marker");
+    drop(marker);
+    fs::remove_dir(&own).unwrap();
 }

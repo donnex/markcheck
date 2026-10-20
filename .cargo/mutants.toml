@@ -1,0 +1,31 @@
+# Mutation tests for the safety guards (#129); run with `cargo mutants`.
+# See DESIGN.md "Verifying the guards". Every mutant not excluded below must
+# be caught.
+examine_globs = ["src/git_sync/guards.rs", "src/writer.rs"]
+# The unit tests pin the guards; the PTY suite only slows each mutant down.
+additional_cargo_test_args = ["--bins"]
+# Mutants no test can tell from the original, each with why:
+exclude_re = [
+    # O_NOFOLLOW and O_NONBLOCK share no bits, so `^` gives the same flags.
+    'replace \| with \^ in (open_regular|write_in_place)',
+    # write_back refuses a non-regular path before it can reach the in-place
+    # write; its own flags guard only a swap racing that check.
+    'replace \| with & in write_in_place',
+    'delete ! in write_in_place',
+    # An fsync of the directory has no effect a test can observe.
+    'sync_parent_dir',
+    # Lock acquisition branches reached only by a race with another
+    # instance, or by the private lock directory turning unwritable mid-run.
+    'replace match guard err\.kind\(\) == io::ErrorKind::AlreadyExists with (true|false) in WriteLock::acquire',
+    'replace == with != in WriteLock::acquire',
+    'replace match guard is_not_regular\(&err\) with true in WriteLock::acquire',
+    'replace match guard lock\.still_ours\(\) with true in WriteLock::acquire',
+    # A temp file that can't be created for another reason fails the same
+    # way through the in-place fallback or the retry, so the error is the
+    # same either way.
+    'replace match guard err\.kind\(\) == io::ErrorKind::PermissionDenied with true in write_back',
+    'replace match guard err\.kind\(\) == io::ErrorKind::AlreadyExists with true in write_new_temp',
+    # Both arms refuse to sync; only the wording differs, and exit codes
+    # other than 0 and 1 from `git symbolic-ref` can't be produced on demand.
+    'replace match guard output\.status\.code\(\) == Some\(1\) with true in repo_sync_blocked',
+]
