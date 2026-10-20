@@ -55,8 +55,8 @@ workflow and file-backed state.
 
 - Card-based, one-step-at-a-time navigation with a prev/current/next stack
 - Starts on the first not-done task, so you resume where work remains
-- Three task states — not started, **started/in-progress** (`[/]`), and done
-  — each with its own card color and icon
+- Four task states — not started, **started/in-progress** (`[/]`),
+  **skipped** (`[-]`), and done — each with its own card color and icon
 - Lists from `##` headings, jumpable with number keys
 - Incremental text search (`/`) to jump to a task by title, body, or command
 - A filterable "go to task" overlay (`T`) listing every task at once
@@ -78,7 +78,8 @@ workflow and file-backed state.
 - Open the file in `$EDITOR` without leaving the app
 - Undo/redo (`u` / `Ctrl-R`) for every state change — a mistoggle or an
   accidental reset is one keystroke away from recovery
-- Reset the whole checklist (with confirmation), and an offer to reset when
+- Reset the whole checklist, the current list or the sub-list you're in
+  (with confirmation), and an offer to reset when
   you quit a fully-completed checklist
 - Mouse and keyboard driven; plain Unicode icons that work on any terminal, or Nerd Font ones with `--nerd-font`
 - Colors adapt to your terminal: curated 24-bit hues on truecolor terminals,
@@ -273,7 +274,7 @@ How each piece maps to the UI:
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. An uppercase `[X]` counts as done too; it keeps its casing until toggled, and is written back as `[x]`. |
 | `- [-]` | A **skipped** task — decided not to do it this run (it doesn't apply). Shown dimmed and struck through with a `⊘` marker. It counts as resolved, so a list of done and skipped tasks is complete, but it is left out of the done count, which the title bar reports apart (`☑ 7/9 (+2 skipped)`). The same marker as Obsidian's task plugins use for cancelled. |
-| `1. [ ]` / `1) [/]` / `1. [x]` | An **ordered (numbered) list** has the same three task states, cards and notes as a bulleted one, and each item keeps its **step number** exactly as written (`3.`, `7)`, gaps and all): in front of the card title, or of the card body when there's no title, on the overview row, in the `T` picker (where typing `3.` finds step 3), and in the side cards. The card's ` n/m ` position still counts every card in the list, notes and sub-items included, so it can differ from the step number. |
+| `1. [ ]` / `1) [/]` / `1. [x]` | An **ordered (numbered) list** has the same four task states, cards and notes as a bulleted one, and each item keeps its **step number** exactly as written (`3.`, `7)`, gaps and all): in front of the card title, or of the card body when there's no title, on the overview row, in the `T` picker (where typing `3.` finds step 3), and in the side cards. The card's ` n/m ` position still counts every card in the list, notes and sub-items included, so it can differ from the step number. |
 | `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. Inline `` `code` `` inside the title is shown as plain title text, not as a command chip, so `y` never copies it — put a command you want to copy in the body. A long title wraps inside the card, which grows to fit. The dimmed previous/next side cards in the wide layout show the title too, above the body. |
 | `- [ ] **! Bold** rest` (a task's bold title starting with `!`) | A **critical step**: the `!` is dropped from the title, the card is framed in the warning color with a `critical` label, and its overview row starts with a `!`. Checking or skipping it takes two presses: the first `Space` only asks "Critical step — press Space again to check it", the first `-` asks for a second `-` to skip it, a first click on its overview marker asks for a second click on that marker instead, and any other key, click, scroll or paste leaves it open. The second press must come after a short pause (half a second): a quicker one, such as a held key's repeats or a reflex double press, keeps the step open and says it was too quick. Unchecking, unskipping, reset and undo stay one key. The `!` stays visible in an editor or on GitHub, so the file still says which steps are critical. |
 | `- **Bold**` (bold only), **first** item of a list | The list's **banner** — a highlighted warning line (info icon, amber) shown below the list title and in the overview. Not a card. A long banner wraps onto as many rows as it needs above the card, so it is shown in full; on a terminal too short for both it and the shortest card it is the last row above the card to be cut, ending in `…`; the overview's one-row copy ends in `…` when cut. A bold-only bullet that carries code — `` `code` `` inside the bold, or a fenced or indented code block under the bullet — is never the banner: it stays a display-only card, so a code block under it is shown and copyable with `y`. Only a list that has a checkbox counts: a plain bullet list with no checkbox, which is dropped, neither supplies the banner nor takes the first-item slot from the task list after it. |
@@ -282,7 +283,7 @@ How each piece maps to the UI:
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |
 | `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. With several, each chip gets a dim `[1]`/`[2]` marker for `y` then a digit. |
 | a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. With several, each box shows `[1]`/`[2]` in its top border for `y` then a digit. A tab in a command (fenced or inline) is shown as spaces up to the next 4-column stop, so tab indentation stays visible; copying still gives the real tabs. |
-| an indented (4-space) code block inside a task or note | Treated exactly like a fenced block: shown in a box and copyable with `y`. An indented block outside any list item is ignored. |
+| an indented (4-space) code block inside a task or note | Treated exactly like a fenced block: shown in a box and copyable with `y`. Outside a list item it is treated like any other code block: shown above the first task under its heading (see the preamble row below), otherwise counted in the startup "not shown" note. |
 | a fenced block **directly after a list** (at column 0) | **Attached to that list's last card**, as if it were indented under it: shown in a box and copyable with `y`. Anything in between — a paragraph, a heading, another block — breaks the attachment, and a fence after a list that was dropped (no checkboxes) attaches nowhere; such a fence is not shown. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
@@ -310,7 +311,8 @@ Finer points:
   mistaken for two. Copying (`y` or a click) still gives the original text.
 - **Copying (`y`)** copies a task's command — a single inline `` `code` `` span
   in the body (code inside the bold card title doesn't count) or a single fenced (or indented) block. When there are several, each is numbered on the
-  card and `y` then a digit copies that one. Fenced blocks take priority: if a
+  card and `y` then a digit copies that one. Code blocks (fenced or indented)
+  take priority: if a
   task has any, only they are numbered, and its inline spans can be copied by
   clicking them. A command containing control
   characters the card can't show (escape, backspace, carriage return, bidi
@@ -440,7 +442,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Space` / `Enter` | toggle the current task done; after checking a task, move to the next card that isn't a done task (skipping done tasks, wrapping to the list's first open task), so pressing it again never unchecks a finished step; on an info card (nothing to toggle) advance to the next card instead; on a critical step (`**! Title**`), the first press only asks for a second, which must come after a short pause |
 | `s` | mark the current task started / in progress (`[/]`) |
 | `-` | skip the current task (`[-]`: it doesn't apply this run), or unskip it; skipping moves on to the next open task; on a critical step, the first press only asks for a second, after a short pause |
-| `u` / `Ctrl-R` | undo / redo the last change (toggle, start, or reset) |
+| `u` / `Ctrl-R` | undo / redo the last change (toggle, start, skip, or reset) |
 | `Ctrl-O` | go back to where you were before `o` followed a `#section` link, as in vim |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around, and the status bar says when it does) |
 | `Shift-H` / `Shift-L` | jump to the previous / next list with unfinished tasks |
@@ -461,12 +463,10 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `q` | quit; while git sync is running, wait for it (`q` again stops it) |
 | `Esc` | doesn't quit: as in vim, it cancels search, an overlay, a prompt or a confirmation, and otherwise shows a "Type q to quit" hint |
 
-Both digit shortcuts above (`1`–`9` list jump, `o` then `1`–`9` link open) only
-reach the first nine items — a document with a 10th `## H2` list, or a card
-with a 10th link, has no single-keypress (or click) shortcut for it. Reach a
-distant list with `Tab` / `Shift-H` / `Shift-L` / `T` instead; a 10th+ link has
-no way to open it directly (it's still listed, just not openable, in the
-panel below the card).
+The `1`–`9` list jump only reaches the first nine lists — a document with a
+10th `## H2` list has no single-keypress shortcut for it. Reach a distant list
+with `Tab` / `Shift-H` / `Shift-L` / `T` instead. Links and commands have no
+such limit: after `o` or `y`, type the digits of `[10]` and up in turn.
 
 Holding `Ctrl` or `Alt` makes a different key, as in vim: only the `Ctrl`
 chords listed above do anything. Any other chord, such as a reflexive `Ctrl-S`
@@ -493,7 +493,7 @@ starting up) lands on its first not-done task.
 
 ### Write-back
 
-Toggling a task rewrites only its `[ ]`/`[/]`/`[x]` marker character; the rest
+Toggling a task rewrites only its `[ ]`/`[/]`/`[-]`/`[x]` marker character; the rest
 of the file (formatting, comments, other lines) is left untouched. Writes are
 atomic — a temp file is written and renamed over the original — so a crash
 or full disk can never leave the runbook truncated, and the file's
@@ -604,8 +604,8 @@ instead`).
 ### Git sync
 
 With `--git-sync` (or a matching `git_sync_paths` entry, above) active for a
-file that's already in a git repository, every toggle/start/reset/undo/redo
-is committed and pushed in the background, so a checklist shared via git
+file that's already in a git repository, every toggle, start, skip, reset
+(of the whole checklist, a list or a sub-list), undo and redo is committed and pushed in the background, so a checklist shared via git
 stays in sync across machines without leaving the app. It waits until 10
 seconds pass without another change (the title bar shows `⇅ git · pending`
 meanwhile), so a burst of ticks becomes one commit and a tick you undo
@@ -682,7 +682,10 @@ way, waiting up to 5 seconds for the sync before stopping it. If that last
 sync doesn't land cleanly (it fails, the commit is made but the push fails,
 or it was stopped), `markcheck` prints one line on stderr after the screen
 closes saying so (e.g. `markcheck: git sync failed: ...`), so you don't walk
-away thinking the change was published. The exit status stays 0. If
+away thinking the change was published. The exit status stays 0. A second
+`SIGTERM` or `SIGINT` doesn't wait: `markcheck` exits at once with status 1,
+without that stderr line and without restoring the terminal (run `reset` if
+it's left in a strange state). If
 `markcheck` is ever killed outright, the next start removes the temporary
 files it left in the checklist's folder and the repository and says so in
 the status bar.
@@ -746,6 +749,7 @@ the meaning now rather than the glyph.) The text after it says where the file st
 | Title bar | Meaning |
 | --- | --- |
 | `⇅ git` (green) | Git-sync is on; nothing has failed. |
+| `⇅ git · pending` (yellow) | A change is waiting out the quiet period (`git_sync_delay`, 10 seconds by default) before it's committed. |
 | `⇅ git · syncing…` (yellow) | A sync or push retry is running. |
 | `⇅ git · Synced 8s ago` (green) | The latest change was committed and pushed; fades back to `⇅ git` after two minutes. |
 | `⇅ git · not pushed` (red) | Committed, but the push failed; retrying on its own. |
@@ -874,7 +878,7 @@ a row to highlight it and click it again to jump there.
 ### Clipboard
 
 `y` copies a task's command. If the task has a single inline `` `code` ``
-span in its body or a single fenced code block, that content is copied; if there is none,
+span in its body or a single code block (fenced or indented), that content is copied; if there is none,
 nothing is copied and the status bar says so. Inline code inside the bold
 card title is not a command: it shows as plain title text, so `y` and
 `--auto-copy` ignore it. If there are several, `y` asks
@@ -920,16 +924,16 @@ in a less-trusted environment.
 
 When a task has **several** commands, `y` won't guess between them. The card
 numbers them — a dim `[1]`, `[2]` after each inline command, or in the top
-border of each fenced block — and `y` shows `press 1–N to copy · esc cancels`
+border of each code block — and `y` shows `press 1–N to copy · esc cancels`
 in the status bar; press the number to copy that command, or `Esc` to cancel.
-Fenced blocks take priority, as for a single command: on a task with any
-fenced block, only the blocks are numbered. With ten or more commands, type
+Code blocks (fenced or indented) take priority, as for a single command: on a
+task with any code block, only the blocks are numbered. With ten or more commands, type
 the digits of `[10]` and up in turn, exactly as for links: `1` then `0` copies
 `[10]`, and `1` then `Enter` copies `[1]`.
 
 With the mouse, you can also **left-click the command** you want and that
 specific one is copied, in full (an inline command, the trailing command, or
-a fenced block). With two inline commands on one row, each copies its own; a
+a code block). With two inline commands on one row, each copies its own; a
 long inline command that wraps across rows copies whole from any of them.
 Clicking anywhere else on the card, including the prose beside a command,
 acts like `y`.
@@ -947,8 +951,8 @@ and stays silent when a card has no command or an ambiguous one.
 
 ### Undo and redo
 
-`u` undoes the last state-changing action — a toggle, a start (`s`), or a whole
-`R` reset — restoring the previous state, writing it back, and jumping to the
+`u` undoes the last state-changing action — a toggle, a start (`s`), a skip
+(`-`), or an `R` reset of any scope — restoring the previous state, writing it back, and jumping to the
 task that changed so you can see it. `Ctrl-R` redoes what you just undid; making
 a fresh change after an undo clears the redo history (the usual undo/redo rule).
 The status bar confirms each step (`Undo: marked not done`, `Redo: marked done`,

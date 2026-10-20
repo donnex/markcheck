@@ -22,7 +22,7 @@ expression: "screen(&mut state, 80, 24)"
 │ ☐ 3. Announce completion  — Ordered steps    │  │   ☑ Record the start time… ▓
 │                                              │  │   ⊘ Restart the replica —… ▓
 │                                              │  │ • [3] Ordered steps        │
-│                                              │  │   The three task states w… │
+│                                              │  │   Task states work the sa… │
 │                                              │  │   ☑ 1. Confirm the change… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

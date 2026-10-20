@@ -22,7 +22,7 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☑ Record the start time… │
             ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓               │   ⊘ Restart the replica —… │
 ┌ ☑ ────────┃                                                             ┃────────────┐  │ • [3] Ordered steps        │
-│    Confirm┃                                                             ┃eck out the │  │   The three task states w… │
+│    Confirm┃                                                             ┃eck out the │  │   Task states work the sa… │
 │   access t┃                    Warm the build cache                     ┃ release    │  │   ☑ 1. Confirm the change… │
 │ example-ho┃                                                             ┃ranch: git  │  │   ◐ 2. Notify the on-call… │
 │           ┃                                                             ┃checkout    │  │   ☐ 3. Announce completion │

@@ -9,13 +9,13 @@ markcheck examples/basics.md
 
 - **`basics.md`** — prose under a heading shown above the first task's card
   (the intro paragraph under the `# H1` and the one under `## Ordered steps`),
-  a `> [!WARNING]` alert in the warning color under `## Verify`, the three task
-  states (`[ ]` / `[/]` / `[x]`) plus a skipped `[-]` task (dimmed and
+  a `> [!WARNING]` alert in the warning color under `## Verify`, the four task
+  states (`[ ]` / `[/]` / `[x]` / `[-]`, the skipped one dimmed and
   struck through, counted apart from done), a critical step (a bold title
   starting with `!`) that takes a second, unhurried `Space` to check, a list banner
   (leading bold-only bullet), a card title (a task's leading `**bold**`, also as a title-only task, which
   the side cards show by its title), inline
-  and fenced commands, a plain-bullet note card, and the same three task states
+  and fenced commands, a plain-bullet note card, and task states
   again on an ordered (numbered) list, whose cards and overview rows show
   each step's `1.` / `2.` / `3.` number, plus
   an uppercase `[X]` that counts as done.

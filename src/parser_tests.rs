@@ -1812,23 +1812,28 @@ fn bold_only_first_bullet_with_indented_code_is_not_a_banner() {
 }
 
 #[test]
-fn indented_code_block_is_ignored() {
-    // A top-level 4-space indented code block (outside any list) is
-    // never a copy candidate and never attaches to an item, unlike a
-    // fence right after a list.
-    let source = "\
-## S
-
-Intro paragraph.
-
-    indented code line
-
-- [ ] `alpha`
-";
-    let document = parse(source);
+fn indented_code_block_outside_a_list_item_is_a_preamble_or_unshown() {
+    let document = parse(
+        "## S\n\nIntro paragraph.\n\n    indented code line\n\n- [ ] `alpha`\n\nAfter.\n\n    trailing indented\n",
+    );
     let item = &document.lists[0].items[0];
     assert!(item.code_blocks.is_empty());
     assert!(!item.display_text.contains("indented"));
+    assert_eq!(
+        preamble_of(&document, 7),
+        vec![
+            (PreambleKind::Paragraph, "Intro paragraph.".to_string()),
+            (PreambleKind::Code, "indented code line".to_string()),
+        ]
+    );
+    assert_eq!(
+        document.unshown,
+        Unshown {
+            paragraphs: 1,
+            code_blocks: 1,
+            ..Unshown::default()
+        }
+    );
 }
 
 // `[/]` lookalikes in and around indented code: the pre-pass finds

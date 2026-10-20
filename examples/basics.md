@@ -1,6 +1,6 @@
 # Deployment Runbook
 
-A short checklist showing markcheck's core Markdown handling: the three task
+A short checklist showing markcheck's core Markdown handling: the four task
 states, a card title (with or without a body), inline and fenced commands, and
 a note card.
 
@@ -35,7 +35,7 @@ a note card.
 
 ## Ordered steps
 
-The three task states work the same on an ordered (numbered) list as on a
+Task states work the same on an ordered (numbered) list as on a
 plain bulleted one, and each card and overview row shows the step's number.
 
 1. [x] Confirm the change window is open

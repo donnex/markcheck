@@ -22,7 +22,7 @@ expression: "screen(&mut state, width, height)"
 ┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☑ Record the start time… ▓
                                                   │   ⊘ Restart the replica —… ▓
                                                   │ • [3] Ordered steps        │
-                                                  │   The three task states w… │
+                                                  │   Task states work the sa… │
                                                   │   ☑ 1. Confirm the change… ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit
