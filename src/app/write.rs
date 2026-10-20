@@ -162,6 +162,14 @@ impl AppState {
         if !self.set_current_state(new_state) {
             return;
         }
+        self.set_status(
+            if new_state == TaskState::Started {
+                "Marked started"
+            } else {
+                "Marked not started"
+            }
+            .to_string(),
+        );
         self.view = View::Checklist;
     }
 

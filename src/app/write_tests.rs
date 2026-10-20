@@ -68,6 +68,7 @@ fn start_current_marks_started_without_advancing() {
     assert!(file_text(&state.document.file_path).starts_with("- [/] task 1\n- [ ] task 2\n"));
     assert_eq!(state.current_item_index, 0, "does not auto-advance");
     assert_eq!(shown(&state), (View::Checklist, None));
+    assert_eq!(state.status_message.as_deref(), Some("Marked started"));
 }
 
 #[test]
@@ -81,6 +82,7 @@ fn start_current_toggles_started_off() {
         ItemKind::Checkbox(TaskState::NotStarted)
     );
     assert_eq!(file_text(&state.document.file_path), original);
+    assert_eq!(state.status_message.as_deref(), Some("Marked not started"));
 }
 
 #[test]
@@ -93,6 +95,7 @@ fn start_current_on_done_task_reopens_as_started() {
         state.current_list().items[0].kind,
         ItemKind::Checkbox(TaskState::Started)
     );
+    assert_eq!(state.status_message.as_deref(), Some("Marked started"));
 }
 
 #[test]
