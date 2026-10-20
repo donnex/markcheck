@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-20
+
 ### Added
 
 - Prose under a heading is now shown. A paragraph, quote or code block written under a heading before its first task (a "take a snapshot first" note, a `> [!WARNING]` alert, the intro under the title) appears above that task's card and in the overview, and GitHub-style `[!WARNING]`, `[!CAUTION]` and `[!IMPORTANT]` alerts are shown in the warning color. Before, everything outside a task list was dropped without a word; prose that still can't be placed (between tasks, or after the last one) is now counted at startup. (#80)
