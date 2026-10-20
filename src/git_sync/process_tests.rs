@@ -458,3 +458,38 @@ fn command_error_says_unknown_only_when_neither_stream_explains() {
         "git commit: unknown error"
     );
 }
+
+#[test]
+fn a_missing_scratch_directory_is_named_and_not_mistaken_for_a_missing_git() {
+    let missing = Path::new("/nonexistent-markcheck-scratch-dir");
+    let err = ScratchFiles::new()
+        .create_in(missing, "stdout")
+        .expect_err("nothing can be created in a missing directory");
+    assert_ne!(err.kind(), io::ErrorKind::NotFound);
+    let message = err.to_string();
+    assert!(
+        message
+            .starts_with("cannot create git scratch files in /nonexistent-markcheck-scratch-dir: "),
+        "the message names the directory: {message}"
+    );
+    assert_ne!(
+        super::super::detect_spawn_error(&err),
+        "git not found on PATH",
+        "a missing temp directory is not a missing git"
+    );
+}
+
+#[test]
+fn a_scratch_file_is_private_and_removed_on_drop() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut scratch = ScratchFiles::new();
+    let (path, _file) = scratch
+        .create("stdout")
+        .expect("the temp directory is usable");
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    drop(scratch);
+    assert!(!path.exists(), "the scratch file is removed with its guard");
+}

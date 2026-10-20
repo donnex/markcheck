@@ -2483,10 +2483,10 @@ fn ctrl_c_cancels_a_pending_link_prompt() {
 #[test]
 fn finish_suspend_failure_is_a_sticky_error() {
     let mut state = AppState::new(two_list_document());
-    state.finish_suspend(Err("kill exited with exit status: 1".to_string()));
+    state.finish_suspend(Err("Operation not permitted (os error 1)".to_string()));
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Couldn't suspend: kill exited with exit status: 1")
+        Some("Couldn't suspend: Operation not permitted (os error 1)")
     );
     assert!(state.status_is_error);
 }

@@ -129,7 +129,11 @@ fn only_a_file_another_user_owns_is_flagged() {
     let target = write_temp_file(EXAMPLE);
     let owner = fs::metadata(&target).unwrap().uid();
 
-    assert_eq!(current_uid(), Some(owner), "the probe sees this user");
+    assert_eq!(
+        current_uid(),
+        owner,
+        "a new file belongs to the current user"
+    );
     assert_eq!(foreign_owner(&target), None, "your own file is not flagged");
     assert_eq!(
         foreign_owner_for(&target, owner.wrapping_add(1)),
@@ -1445,7 +1449,7 @@ fn a_second_session_sees_the_live_one_and_clears_a_dead_ones_marker() {
 fn a_file_owned_by_root_is_reported_as_someone_elses() {
     use std::os::unix::fs::MetadataExt;
     let target = Path::new("/etc/hostname");
-    if !target.exists() || current_uid() == Some(0) {
+    if !target.exists() || current_uid() == 0 {
         eprintln!("skipped: needs a root-owned file and a non-root user");
         return;
     }

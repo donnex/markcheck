@@ -126,10 +126,10 @@ pub fn hard_link_count(target: &Path) -> Option<u64> {
 /// The UID owning `target` when it isn't the user running markcheck, who
 /// can't keep it: `write_back`'s rename makes the file theirs. `None` when
 /// the owner is kept (it already is the current user, or that user is
-/// root) or either side can't be told. Warned about at startup, like a hard
+/// root) or the file's owner can't be read. Warned about at startup, like a hard
 /// link, since a teammate may then lose write access.
 pub fn foreign_owner(target: &Path) -> Option<u32> {
-    foreign_owner_for(target, current_uid()?)
+    foreign_owner_for(target, current_uid())
 }
 
 fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
@@ -138,23 +138,10 @@ fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
     (current_uid != 0 && owner != current_uid).then_some(owner)
 }
 
-/// The UID a file created by this process gets — exactly what a save's
-/// temp file will be owned by — read off a throwaway probe file.
-fn current_uid() -> Option<u32> {
-    use std::os::unix::fs::MetadataExt;
-    let probe = std::env::temp_dir().join(format!(
-        "markcheck-uid-probe-{}-{:x}",
-        std::process::id(),
-        random_suffix()
-    ));
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-        .ok()?;
-    let uid = file.metadata().ok().map(|meta| meta.uid());
-    let _ = fs::remove_file(&probe);
-    uid
+/// The effective UID, which is what a save's temp file will be owned by.
+fn current_uid() -> u32 {
+    // SAFETY: `geteuid` takes no arguments, touches no memory and can't fail.
+    unsafe { libc::geteuid() }
 }
 
 /// One lock file per checklist, named by the digest of its canonical path so
@@ -247,7 +234,7 @@ fn lock_dir() -> Option<PathBuf> {
     lock_dir_in(
         std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
         &std::env::temp_dir(),
-        current_uid()?,
+        current_uid(),
     )
 }
 

@@ -749,23 +749,14 @@ where
     Ok(())
 }
 
-/// Sends `SIGTSTP` to this process through `kill(1)`, as `git_sync` does for
-/// its timeouts. The process stops while waiting for `kill`, so this returns
-/// only once it's been resumed.
+/// Sends `SIGTSTP` to this process. A signal a process sends itself is
+/// delivered before `kill` returns, so this returns only once it's been
+/// resumed.
 fn stop_self() -> Result<(), String> {
-    use std::process::{Command, Stdio};
-
-    let status = Command::new("kill")
-        .args(["-TSTP", "--"])
-        .arg(std::process::id().to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|err| format!("couldn't run kill ({err})"))?;
-    if status.success() {
+    // SAFETY: `getpid` and `kill` take plain integers and touch no memory.
+    if unsafe { libc::kill(libc::getpid(), libc::SIGTSTP) } == 0 {
         Ok(())
     } else {
-        Err(format!("kill exited with {status}"))
+        Err(std::io::Error::last_os_error().to_string())
     }
 }

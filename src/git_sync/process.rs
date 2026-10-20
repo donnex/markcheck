@@ -69,10 +69,10 @@ impl Children {
     fn forget(&self, child: &Child) {
         self.lock().pids.retain(|&pid| pid != child.id());
     }
-    /// Stops every running child's process group with `signal` (`"-TERM"` or
-    /// `"-KILL"`) and refuses new ones from now on. Returns whether any child
+    /// Stops every running child's process group with `signal` (`SIGTERM` or
+    /// `SIGKILL`) and refuses new ones from now on. Returns whether any child
     /// was running.
-    pub(super) fn abandon(&self, signal: &str) -> bool {
+    pub(super) fn abandon(&self, signal: libc::c_int) -> bool {
         let mut inner = self.lock();
         inner.abandoned = true;
         for &pid in &inner.pids {
@@ -94,8 +94,14 @@ impl ScratchFiles {
 
     /// 0600, because git's output names branches and repository paths.
     fn create(&mut self, purpose: &str) -> io::Result<(PathBuf, fs::File)> {
+        self.create_in(&std::env::temp_dir(), purpose)
+    }
+
+    /// A failure names the directory and never keeps the `NotFound` kind, so
+    /// a missing temp directory isn't reported as a missing git.
+    fn create_in(&mut self, dir: &Path, purpose: &str) -> io::Result<(PathBuf, fs::File)> {
         use std::os::unix::fs::OpenOptionsExt;
-        let path = std::env::temp_dir().join(format!(
+        let path = dir.join(format!(
             "markcheck-git-{purpose}-{}-{:x}",
             std::process::id(),
             crate::writer::random_suffix()
@@ -104,7 +110,13 @@ impl ScratchFiles {
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(&path)?;
+            .open(&path)
+            .map_err(|err| {
+                io::Error::other(format!(
+                    "cannot create git scratch files in {}: {err}",
+                    dir.display()
+                ))
+            })?;
         self.paths.push(path.clone());
         Ok((path, file))
     }
@@ -211,7 +223,7 @@ fn spawn_in_new_session(mut cmd: Command) -> io::Result<Child> {
 /// child's PID, and so the group ID, can be recycled onto something unrelated.
 /// Returns whether the child outlived the grace period and had to be killed.
 fn terminate_and_reap(children: &Children, child: &mut Child, grace: Duration) -> bool {
-    signal_group(child.id(), "-TERM");
+    signal_group(child.id(), libc::SIGTERM);
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         if matches!(children.try_wait(child), Ok(Some(_))) {
@@ -219,22 +231,19 @@ fn terminate_and_reap(children: &Children, child: &mut Child, grace: Duration) -
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    signal_group(child.id(), "-KILL");
+    signal_group(child.id(), libc::SIGKILL);
     let _ = child.kill();
     children.forget(child);
     let _ = child.wait();
     true
 }
-fn signal_group(pid: u32, signal: &str) {
-    // Nulled: `kill` complains on stderr if the group is gone, and
-    // markcheck owns the terminal.
-    let _ = Command::new("kill")
-        .args([signal, "--"])
-        .arg(format!("-{pid}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+fn signal_group(pid: u32, signal: libc::c_int) {
+    // SAFETY: `killpg` only sends a signal; it touches no memory. A group
+    // that is already gone just makes it return `ESRCH`, which is ignored.
+    // `pid` came from `Child::id`, a `pid_t` to begin with.
+    unsafe {
+        libc::killpg(pid as libc::pid_t, signal);
+    }
 }
 include!("../git_env.rs");
 /// Strips [`REDIRECTING_GIT_VARS`]. `GIT_OPTIONAL_LOCKS=0` stops the

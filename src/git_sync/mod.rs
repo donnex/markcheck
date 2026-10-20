@@ -475,7 +475,8 @@ impl GitSync {
     pub fn abandon(&mut self, force: bool) -> bool {
         self.queued = None;
         self.retry = None;
-        self.children.abandon(if force { "-KILL" } else { "-TERM" })
+        self.children
+            .abandon(if force { libc::SIGKILL } else { libc::SIGTERM })
     }
 }
 
