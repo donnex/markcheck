@@ -309,10 +309,11 @@ impl AppState {
         let on_disk = writer::read_checklist(&self.document.file_path).ok();
         if self.content_diverged(on_disk.as_deref()) {
             self.apply_snapshot(pre_state);
-            self.force_reload();
-            self.set_error(
-                "File changed on disk — reloaded; change not saved, please retry".to_string(),
-            );
+            if self.force_reload() {
+                self.set_error(
+                    "File changed on disk — reloaded; change not saved, please retry".to_string(),
+                );
+            }
             return false;
         }
         // The pre-write content for git-sync's staged-target guard, which compares

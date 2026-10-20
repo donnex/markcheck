@@ -496,12 +496,18 @@ pub fn leftovers_warning(removed: usize) -> Option<String> {
 
 /// Joins the startup messages into the one the status bar shows: sticky and
 /// error-colored if any of them is a warning, otherwise the ephemeral
-/// "Created new checklist" alone. Returns the text and whether it's an error.
-pub fn startup_message(created_new: bool, warnings: &[Option<String>]) -> Option<(String, bool)> {
+/// "Created new checklist" and `opened` (the `open_at` note) alone. Returns
+/// the text and whether it's an error.
+pub fn startup_message(
+    created_new: bool,
+    opened: Option<&str>,
+    warnings: &[Option<String>],
+) -> Option<(String, bool)> {
     let mut parts: Vec<&str> = Vec::new();
     if created_new {
         parts.push("Created new checklist");
     }
+    parts.extend(opened);
     let warnings: Vec<&str> = warnings.iter().flatten().map(String::as_str).collect();
     let is_error = !warnings.is_empty();
     parts.extend(warnings);

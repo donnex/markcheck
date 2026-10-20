@@ -783,9 +783,15 @@ fn a_write_after_a_skipped_reload_is_refused_and_leaves_the_file_alone() {
         state
             .status_message
             .as_deref()
-            .is_some_and(|m| m.contains("File changed on disk")),
-        "the refusal must be reported: {:?}",
+            .is_some_and(|m| m.starts_with("Reload skipped: file has no checklist items")),
+        "the refusal must keep saying why, not claim a reload: {:?}",
         state.status_message
+    );
+    assert!(state.status_is_error);
+    assert_eq!(
+        state.current_item().unwrap().kind,
+        ItemKind::Checkbox(TaskState::NotStarted),
+        "the in-memory toggle must be rolled back"
     );
 
     fs::remove_file(&path).ok();
@@ -1269,4 +1275,19 @@ fn a_saved_edit_becomes_the_base_of_the_toggles_after_it() {
         }
     );
     fs::remove_file(&path).ok();
+}
+
+#[test]
+fn force_reload_of_an_unreadable_file_says_so_and_adopts_nothing() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    fs::remove_file(&path).unwrap();
+
+    assert!(!state.force_reload());
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reload failed: the file can't be read")
+    );
+    assert!(state.status_is_error);
+    assert_eq!(state.current_list().title, "List 1");
 }

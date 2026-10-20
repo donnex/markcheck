@@ -329,14 +329,10 @@ fn main() -> anyhow::Result<()> {
         Some(Ok(note)) => opened_note = Some(note),
         None => {}
     }
-    match launch::startup_message(created_new, &warnings) {
+    match launch::startup_message(created_new, opened_note.as_deref(), &warnings) {
         Some((message, true)) => state.set_error(message),
         Some((message, false)) => state.set_status(message),
-        None => {
-            if let Some(note) = opened_note {
-                state.set_status(note);
-            }
-        }
+        None => {}
     }
     // Drives the persistent `⇅ git` section in the title bar
     // (`render_title_bar` in `ui/mod.rs`) — set once here and never touched

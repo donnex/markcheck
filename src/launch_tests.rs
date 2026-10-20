@@ -498,18 +498,34 @@ fn watch_warning_names_the_error_and_the_fallback_interval() {
 
 #[test]
 fn startup_message_is_sticky_only_when_something_needs_attention() {
-    assert_eq!(startup_message(false, &[None, None]), None);
+    assert_eq!(startup_message(false, None, &[None, None]), None);
     assert_eq!(
-        startup_message(true, &[None, None]),
+        startup_message(true, None, &[None, None]),
         Some(("Created new checklist".to_string(), false))
     );
     assert_eq!(
-        startup_message(false, &[Some("one".to_string()), Some("two".to_string())]),
+        startup_message(false, Some("Opened at #b"), &[None]),
+        Some(("Opened at #b".to_string(), false))
+    );
+    assert_eq!(
+        startup_message(
+            false,
+            None,
+            &[Some("one".to_string()), Some("two".to_string())]
+        ),
         Some(("one; two".to_string(), true))
     );
     assert_eq!(
-        startup_message(true, &[None, Some("Git sync off: x".to_string())]),
+        startup_message(true, None, &[None, Some("Git sync off: x".to_string())]),
         Some(("Created new checklist; Git sync off: x".to_string(), true))
+    );
+    assert_eq!(
+        startup_message(
+            false,
+            Some("Opened at line 4"),
+            &[Some("Warning: x".to_string())]
+        ),
+        Some(("Opened at line 4; Warning: x".to_string(), true))
     );
 }
 

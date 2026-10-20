@@ -2407,6 +2407,17 @@ fn a_hash_anchor_or_plus_line_opens_at_that_task() {
     session.wait_for_screen("no list or task at #nowhere");
     session.key("q");
     assert!(session.finish().0);
+
+    write_file(
+        &path,
+        "## First\n\n- [ ] alpha\n\n## Second section\n\n- [ ] gamma\n\nA closing paragraph after the last task.\n",
+    );
+    let mut cmd = markcheck_command();
+    cmd.arg(format!("{}#second-section", path.display()));
+    let mut session = Session::spawn(cmd);
+    session.wait_for_screen("Opened at #second-section; 1 paragraph");
+    session.key("q");
+    assert!(session.finish().0);
 }
 
 #[test]

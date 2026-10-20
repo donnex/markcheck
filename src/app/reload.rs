@@ -124,13 +124,15 @@ impl AppState {
     }
 
     /// Reloads unconditionally, for when the content hash caught a change that
-    /// mtime and size missed on a coarse-mtime filesystem.
-    pub(super) fn force_reload(&mut self) {
+    /// mtime and size missed on a coarse-mtime filesystem. Returns whether the
+    /// new content was adopted; when it wasn't, a sticky error says why.
+    pub(super) fn force_reload(&mut self) -> bool {
         let Some((modified, size)) = current_stat(&self.document.file_path) else {
-            return;
+            self.set_error("Reload failed: the file can't be read".to_string());
+            return false;
         };
         let was_deleted = self.file_gone.take().is_some();
-        self.reload_from_disk(modified, size, was_deleted);
+        self.reload_from_disk(modified, size, was_deleted)
     }
 
     /// Parses the file fresh and swaps it in on success. `file_mtime` and
