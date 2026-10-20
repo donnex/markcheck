@@ -192,6 +192,18 @@ fn hidden_characters_are_detected() {
         "echo \u{202E}txt.exe",
         "a\u{2066}b",
         "a\u{0085}b",
+        "systemctl restart ng\u{200B}inx",
+        "ssh example\u{2060}-host",
+        "\u{FEFF}ls",
+        "rm -rf /tmp/a\u{00AD}b",
+        "a\u{180E}b",
+        "a\u{200D}b",
+        "echo a\u{E0041}\u{E007F}",
+        "\u{FE0F}ls",
+        "ls \u{FE0F}-l",
+        "ls\u{034F}\u{034F}",
+        "a\u{200B}\u{FE0F}",
+        "a\n\u{E0100}",
     ] {
         assert!(has_hidden_characters(text), "{text:?}");
     }
@@ -201,6 +213,25 @@ fn hidden_characters_are_detected() {
 fn newlines_and_tabs_are_not_hidden_characters() {
     assert!(!has_hidden_characters("make\tbuild\nmake test"));
     assert!(!has_hidden_characters("echo héllo → 世界"));
+}
+
+#[test]
+fn variation_selectors_on_a_base_are_not_hidden_characters() {
+    assert!(!has_hidden_characters("echo \u{2714}\u{FE0F} done"));
+    assert!(!has_hidden_characters("echo \u{8FBA}\u{E0100}"));
+    assert!(!has_hidden_characters("a\u{034F}b"));
+}
+
+#[test]
+fn copy_refuses_zero_width_characters() {
+    assert_eq!(
+        copy(
+            "systemctl restart ng\u{200B}inx",
+            false,
+            CopyRoute::SystemThenOsc52
+        ),
+        CopyOutcome::HiddenCharacters
+    );
 }
 
 #[test]

@@ -899,11 +899,14 @@ manager takes over the last copy; without one, X11 clipboard contents last
 only while markcheck is running.
 
 A command that contains hidden control characters — anything the card can't
-display, such as escape, backspace or a carriage return, plus Unicode bidi
-overrides that reorder what is shown — is refused with `Not copied: command
-contains hidden control characters`, whether you press `y`, click it, or
-reach it with `--auto-copy`. Otherwise a checklist could show one command and
-put another on your clipboard. Newlines and tabs copy normally.
+display, such as escape, backspace or a carriage return, zero-width
+characters such as a zero-width space, word joiner, byte-order mark, soft
+hyphen or Unicode tag characters, a variation selector with no character
+before it to modify, plus Unicode bidi overrides that reorder what is shown —
+is refused with `Not copied: command contains hidden control characters`,
+whether you press `y`, click it, or reach it with `--auto-copy`. Otherwise a
+checklist could show one command and put another on your clipboard. Newlines
+and tabs copy normally, and so does an emoji's variation selector.
 
 OSC 52 is an out-of-band channel: the escape sequence rides over whatever
 carries your terminal session, including a chain of SSH hops, so a copied

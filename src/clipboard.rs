@@ -27,12 +27,49 @@ pub enum CopyOutcome {
     HiddenCharacters,
 }
 
-/// Control characters other than `\n`/`\t` are dropped when drawn and bidi
-/// controls reorder text, so the paste would differ from what was read; an
-/// embedded `ESC [201~` can end a bracketed paste early.
+/// Control characters other than `\n`/`\t` and zero-width format characters
+/// are dropped when drawn and bidi controls reorder text, so the paste would
+/// differ from what was read; an embedded `ESC [201~` can end a bracketed
+/// paste early. A variation selector or U+034F is only refused where it has
+/// no base to modify.
 fn has_hidden_characters(text: &str) -> bool {
-    text.chars()
-        .any(|c| c != '\n' && c != '\t' && crate::printable::is_hidden(c))
+    let mut previous: Option<char> = None;
+    text.chars().any(|c| {
+        let hidden = c != '\n' && c != '\t' && crate::printable::is_hidden(c)
+            || is_invisible_format(c)
+            || is_modifier(c) && previous.is_none_or(|p| !is_base(p));
+        previous = Some(c);
+        hidden
+    })
+}
+
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{206A}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
+    )
+}
+
+fn is_modifier(c: char) -> bool {
+    matches!(
+        c,
+        '\u{034F}' | '\u{180B}'..='\u{180D}' | '\u{180F}' | '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
+fn is_base(c: char) -> bool {
+    !c.is_whitespace() && !c.is_control() && !is_invisible_format(c) && !is_modifier(c)
 }
 
 /// The commands `y` chooses between, in card order: fenced code blocks take
