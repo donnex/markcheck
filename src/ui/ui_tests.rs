@@ -907,7 +907,7 @@ fn list_heading_sits_one_line_above_the_card() {
 
 #[test]
 fn list_heading_suppressed_for_default_list() {
-    // No above-cards heading for the synthesized (Default)
+    // No above-cards heading for the synthesized default
     // list (no real H2).
     let mut state = sample_state();
     state.document.has_default_list = true;
@@ -967,7 +967,7 @@ fn list_banner_sits_below_heading_and_one_line_above_card() {
 fn list_banner_renders_for_title_less_default_list() {
     // The banner shows even when the list has no H2 title above it.
     let mut state = state_with(vec![List {
-        title: "(Default)".to_string(),
+        title: "Checklist".to_string(),
         banner: Some("Heads up".to_string()),
         items: vec![checkbox(1, "alpha", false)],
     }]);

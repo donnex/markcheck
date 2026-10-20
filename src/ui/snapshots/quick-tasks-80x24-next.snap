@@ -5,7 +5,7 @@ expression: "screen(&mut state, width, height)"
  ≡ Quick Tasks │ quick-tasks.md                                            ☑ 0/4
 ────────────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
-                                                  │ • [1] (Default)            │
+                                                  │ • [1] Quick Tasks          │
                                                   │   ☐ A loose task before a… │
                                                   │   ❯ The title bar shows "… │
                                                   │   ☐ Copy this command wit… │

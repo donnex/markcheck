@@ -3,7 +3,7 @@ source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
  ≡ Service Upgrade │ phases.md               ☑ 0/9
- [1] (Defa…   [2] Upgr…   [3] Hea…   [4] Roll…
+ [1] Service …   [2] Upg…   [3] He…   [4] Rol…
 ──────────────────────────────────────────────────
 ╭ Keybindings ───────────────────────────────────╮
 │                                                ▲

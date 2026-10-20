@@ -3,7 +3,7 @@ source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
  ≡ Quick Tasks │ quick-tasks.md              ☑ 0/4
- [1] (Default)   [2] A named section
+ [1] Quick Tasks   [2] A named section
 ──────────────────────────────────────────────────
 
 

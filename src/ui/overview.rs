@@ -173,8 +173,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let mut selected_index = 0;
 
     // With a single list the `[1] Title` row is redundant (the number is
-    // meaningless, the title already shows above the cards, and a title-less
-    // default list would read "[1] (Default)"), so it's dropped. Items
+    // meaningless, and the title already shows above the cards or, for the
+    // default list, in the title bar), so it's dropped. Items
     // and any banner de-indent to the left margin in that case.
     let has_list_header = state.document.lists.len() > 1;
 

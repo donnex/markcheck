@@ -69,7 +69,7 @@ fn example_phases_get_one_list_each() {
     let document = parse_document(path).expect("example parses");
     assert_eq!(document.title.as_deref(), Some("Service Upgrade"));
     let titles: Vec<&str> = document.lists.iter().map(|l| l.title.as_str()).collect();
-    assert_eq!(titles, ["(Default)", "Upgrade", "Health", "Rollback"]);
+    assert_eq!(titles, ["Service Upgrade", "Upgrade", "Health", "Rollback"]);
     assert_eq!(
         document.lists[3].banner.as_deref(),
         Some("Only if the checks above failed")
@@ -463,7 +463,7 @@ fn h3_and_deeper_headings_are_not_structural() {
     // synthesized default list.
     let d = parse("### Deep\n\n- [ ] a\n");
     assert!(d.has_default_list);
-    assert_eq!(d.lists[0].title, "(Default)");
+    assert_eq!(d.lists[0].title, "Test");
 }
 
 #[test]
@@ -891,7 +891,7 @@ fn yaml_front_matter_is_skipped_not_read_as_a_list_heading() {
     assert_eq!(document.title.as_deref(), Some("Weekly"));
     assert_eq!(document.lists.len(), 1);
     let list = &document.lists[0];
-    assert_eq!(list.title, "(Default)");
+    assert_eq!(list.title, "Weekly");
     let texts: Vec<&str> = list.items.iter().map(|i| i.display_text.as_str()).collect();
     assert_eq!(texts, ["first task", "second task"]);
     assert_eq!(list.items[0].line_number, 8);
@@ -912,7 +912,7 @@ fn front_matter_after_a_bom_is_still_skipped() {
     let source = format!("\u{FEFF}{YAML_FRONT_MATTER}");
     let document = parse(&source);
     assert_eq!(document.lists.len(), 1);
-    assert_eq!(document.lists[0].title, "(Default)");
+    assert_eq!(document.lists[0].title, "Weekly");
 }
 
 #[test]
@@ -926,7 +926,7 @@ fn a_block_not_on_the_first_line_is_not_front_matter() {
 fn front_matter_with_crlf_and_non_ascii_keeps_line_numbers() {
     let source = "---\r\ntitle: Café\r\n---\r\n\r\n- [ ] task\r\n";
     let document = parse(source);
-    assert_eq!(document.lists[0].title, "(Default)");
+    assert_eq!(document.lists[0].title, "Test");
     assert_eq!(document.lists[0].items[0].line_number, 5);
     assert_eq!(crate::writer::document_contents(&document), source);
 }
@@ -944,7 +944,7 @@ fn items_before_first_heading_go_into_default_list() {
     let source = "- [ ] `orphan task`\n\n## List 1\n\n- [ ] `task`\n";
     let document = parse(source);
     assert_eq!(document.lists.len(), 2);
-    assert_eq!(document.lists[0].title, "(Default)");
+    assert_eq!(document.lists[0].title, "Test");
     assert_eq!(document.lists[0].items.len(), 1);
     assert_eq!(document.lists[0].items[0].display_text, "orphan task");
 }
@@ -1018,7 +1018,7 @@ fn later_h1_starts_its_own_list() {
     assert_eq!(
         list_summary(&document),
         [
-            ("(Default)", vec!["Pack the bag"]),
+            ("Day one", vec!["Pack the bag"]),
             ("Morning", vec!["Coffee"]),
             ("Day three", vec!["Fly home"]),
         ]
@@ -1033,11 +1033,22 @@ fn h1s_alone_split_the_file_into_lists() {
     assert_eq!(
         list_summary(&document),
         [
-            ("(Default)", vec!["a"]),
+            ("Upgrade", vec!["a"]),
             ("Verify", vec!["b"]),
             ("Rollback", vec!["c"]),
         ]
     );
+}
+
+#[test]
+fn pre_heading_list_is_named_after_the_title_or_the_filename() {
+    let titled = parse("# Weekly ops\n\n- [ ] a\n\n## Later\n\n- [ ] b\n");
+    assert_eq!(titled.lists[0].title, "Weekly ops");
+    let untitled = parse_source(
+        "- [ ] a\n\n## Later\n\n- [ ] b\n",
+        PathBuf::from("quick-tasks.md"),
+    );
+    assert_eq!(untitled.lists[0].title, "Quick Tasks");
 }
 
 #[test]
@@ -1046,7 +1057,7 @@ fn h1_after_tasks_is_the_title_and_starts_a_list() {
     assert_eq!(document.title.as_deref(), Some("Release"));
     assert_eq!(
         list_summary(&document),
-        [("(Default)", vec!["a"]), ("Release", vec!["b"])]
+        [("Test", vec!["a"]), ("Release", vec!["b"])]
     );
 }
 
@@ -1065,10 +1076,10 @@ fn no_h1_leaves_title_none() {
 
 #[test]
 fn leading_bold_only_in_default_list_becomes_banner() {
-    // A banner attaches to the pre-heading (Default) list too.
+    // A banner attaches to the pre-heading default list too.
     let document = parse("- **Read me first**\n- [ ] `orphan`\n\n## S\n\n- [ ] `a`\n");
     assert!(document.has_default_list);
-    assert_eq!(document.lists[0].title, "(Default)");
+    assert_eq!(document.lists[0].title, "Test");
     assert_eq!(document.lists[0].banner.as_deref(), Some("Read me first"));
     assert_eq!(document.lists[0].items.len(), 1);
 }
@@ -1084,7 +1095,7 @@ fn checkbox_first_list_has_no_banner() {
 
 #[test]
 fn has_default_list_flags_pre_heading_items() {
-    // Items before the first H2 → a synthesized (Default) list.
+    // Items before the first H2 → a synthesized default list.
     let with_default = parse("- [ ] `orphan`\n\n## S\n\n- [ ] `a`\n");
     assert!(with_default.has_default_list);
     // Everything under an H2 → no default list.

@@ -5,9 +5,9 @@ expression: "screen(&mut state, 80, 24)"
  ≡ Service Upgrade │ phases.md                                             ☑ 0/9
 ────────────────────────────────────────────────────────────────────────────────
 ╭ Go to task ───────────────────────── 9 items ╮  ┌ Overview ──────────────────┐
-│ Filter:                                      │  │ • [1] (Default)            │
-│ ☐ Announce the maintenance win…  — (Default) │  │   A runbook split into ph… │
-│ ☐ Take a snapshot: snapshot-to…  — (Default) │  │   ❯ Announce the maintena… │
+│ Filter:                                      │  │ • [1] Service Upgrade      │
+│ ☐ Announce the maintenan…  — Service Upgrade │  │   A runbook split into ph… │
+│ ☐ Take a snapshot: snaps…  — Service Upgrade │  │   ❯ Announce the maintena… │
 │ ☐ Stop the service: service-ctl …  — Upgrade │  │   ☐ Take a snapshot: snap… │
 │ ☐ Install the new release  — Upgrade         │  │ • [2] Upgrade              │
 │ ☐ Start the service: service-ctl…  — Upgrade │  │   ☐ Stop the service: ser… │

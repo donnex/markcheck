@@ -470,8 +470,8 @@ pub struct Document {
     /// The document's `# H1` title, if present. `None` when the file
     /// has no (non-empty) level-1 heading.
     pub title: Option<String>,
-    /// True when `lists[0]` is the synthesized `(Default)` list for
-    /// items before the first `## H2` — i.e. that list has no real H2.
+    /// True when `lists[0]` is the synthesized default list for items
+    /// before the first `## H2`, named after the document title.
     /// Used to suppress the above-cards list heading for it.
     pub has_default_list: bool,
     pub lists: Vec<List>,

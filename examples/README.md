@@ -80,9 +80,9 @@ markcheck examples/basics.md
   block are the list's preamble, shown above its first card; a heading-only
   `- ## …` bullet as the list's first item is its banner, and a later one
   (`- ## Share the note`) is a titled note card, not a sub-section.
-- **`quick-tasks.md`** — items before any heading (the title-less default
-  section) and the filename-derived title ("Quick Tasks") shown when there is
-  no `# H1`.
+- **`quick-tasks.md`** — items before any heading (the default section, with
+  no heading above its cards and named "Quick Tasks" in the overview) and the
+  filename-derived title ("Quick Tasks") shown when there is no `# H1`.
 - **`front-matter.md`** — a leading YAML front-matter block (as Obsidian,
   Hugo or Jekyll write it) that markcheck skips: no list is named after the
   metadata, and toggling a task leaves the block untouched in the file.
@@ -93,7 +93,8 @@ markcheck examples/basics.md
   a task keeps both the line endings and the mark. `.gitattributes` marks it
   `-text` so git never converts its line endings.
 - **`phases.md`** — a runbook split into phases with `#` headings: the first
-  `# H1` is the title (its tasks form the untitled first list), and each later
+  `# H1` is the title (its tasks form the first list, which has no heading
+  above its cards and takes the title's name in the overview), and each later
   `# Upgrade` / `# Rollback` starts a list of its own, the same as a `## H2`,
   so the rollback steps aren't counted as part of the upgrade. `# Verify` has
   only a `## Health` list under it, which is the list shown; the `# Rollback`

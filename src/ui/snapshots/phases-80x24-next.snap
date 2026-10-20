@@ -5,7 +5,7 @@ expression: "screen(&mut state, width, height)"
  ≡ Service Upgrade │ phases.md                                             ☑ 0/9
 ────────────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
-                                                  │ • [1] (Default)            │
+                                                  │ • [1] Service Upgrade      │
                                                   │   A runbook split into ph… │
                                                   │   ☐ Announce the maintena… │
                                                   │   ❯ Take a snapshot: snap… │

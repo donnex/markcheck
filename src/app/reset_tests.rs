@@ -519,6 +519,25 @@ fn r_then_l_resets_only_the_current_list() {
 }
 
 #[test]
+fn r_then_l_names_the_pre_heading_list_after_the_document_title() {
+    let path = write_real_file("# Weekly ops\n\n- [x] a1\n\n## B\n\n- [ ] b1\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.focus_item(0, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('R'));
+    state.handle_key(KeyCode::Char('l'));
+    assert!(fs::read_to_string(&path).unwrap().contains("- [ ] a1"));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("\"Weekly ops\" reset to not done")
+    );
+    assert_eq!(
+        state.git_sync_request().map(|s| s.description.as_str()),
+        Some("Reset \"Weekly ops\" to not done")
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn r_then_s_resets_the_sub_list_the_cursor_is_in() {
     let path = write_real_file(
         "## A\n\n- [x] parent\n  - [x] child one\n  - [/] child two\n- [x] other\n",

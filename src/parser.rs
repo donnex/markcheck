@@ -616,6 +616,9 @@ struct ParseState<'a> {
     heading_quoted: bool,
     /// The first non-empty `# H1` becomes the document title.
     document_title: Option<String>,
+    /// The name of the pre-heading default list: the document title when
+    /// its `# H1` opens the file, so it names no other list.
+    default_title: Option<String>,
 
     /// The active `### H3`+ sub-section path: a heading stack, reduced on
     /// each heading (pop entries at level >= the new one, then push it) and
@@ -690,6 +693,7 @@ impl<'a> ParseState<'a> {
             critical: Default::default(),
             heading_quoted: false,
             document_title: None,
+            default_title: None,
             section_stack: Vec::new(),
             list_depth: 0,
             current_list_items: Vec::new(),
@@ -862,7 +866,7 @@ impl<'a> ParseState<'a> {
     }
 
     /// The items of the list currently being filled: the last `## H2` list,
-    /// or the pre-heading `(Default)` one.
+    /// or the pre-heading default one.
     fn target_items(&mut self) -> &mut Vec<Item> {
         match self.lists.last_mut() {
             Some(list) => &mut list.items,
@@ -921,6 +925,7 @@ impl<'a> ParseState<'a> {
                     self.document_title = Some(text.to_string());
                 }
                 if titles_document {
+                    self.default_title = self.document_title.clone();
                     self.section_stack.clear();
                 } else {
                     self.start_list(text);
@@ -1145,7 +1150,9 @@ impl<'a> ParseState<'a> {
             lists.insert(
                 0,
                 List {
-                    title: "(Default)".to_string(),
+                    title: self
+                        .default_title
+                        .unwrap_or_else(|| crate::scaffold::derive_title(&path)),
                     banner: self.default_banner,
                     items: self.default_items,
                 },

@@ -5,7 +5,7 @@ expression: "screen(&mut state, width, height)"
  ≡ Quick Tasks │ quick-tasks.md                                                                                    ☑ 0/4
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
-                                                                                          │ • [1] (Default)            │
+                                                                                          │ • [1] Quick Tasks          │
                                                                                           │   ❯ A loose task before a… │
                                                                                           │   ☐ The title bar shows "… │
                                                                                           │   ☐ Copy this command wit… │
@@ -23,7 +23,7 @@ expression: "screen(&mut state, width, height)"
             ┃                                                             ┃────────────┐  │                            │
             ┃                                                             ┃e title bar │  │                            │
             ┃    A loose task before any heading — this goes into the     ┃ows "Quick  │  │                            │
-            ┃                 title-less default section                  ┃sks", made  │  │                            │
+            ┃           default section, named after the title            ┃sks", made  │  │                            │
             ┃                                                             ┃from the    │  │                            │
             ┃                                                             ┃────────────┘  │                            │
             ┗ ◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
