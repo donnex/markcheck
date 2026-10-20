@@ -150,6 +150,10 @@ const COLS: u16 = 100;
 /// `\r`/`\n`, cursor positioning, screen/line erasure, and entering or
 /// leaving the alternate screen (both treated as a clear). Every other
 /// escape sequence is skipped.
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn render_screen(raw: &str) -> String {
     let (rows, cols) = (usize::from(ROWS), usize::from(COLS));
     let mut grid = vec![vec![' '; cols]; rows];
@@ -300,12 +304,15 @@ impl Session {
         }
     }
 
-    /// Waits for `needle` to be on screen, per [`render_screen`].
+    /// Waits for `needle` to be on screen, per [`render_screen`]. Runs of
+    /// whitespace, row breaks included, compare as one space: a long status
+    /// message wraps by words, and where depends on the temp path it names.
     fn wait_for_screen(&self, needle: &str) {
         let deadline = Instant::now() + SCREEN_TIMEOUT;
+        let wanted = collapse_whitespace(needle);
         loop {
             let screen = render_screen(&self.raw_output());
-            if screen.contains(needle) {
+            if collapse_whitespace(&screen).contains(&wanted) {
                 return;
             }
             if Instant::now() >= deadline {
