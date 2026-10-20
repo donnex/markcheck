@@ -800,3 +800,46 @@ fn an_immediate_request_or_a_flush_skips_the_quiet_period() {
     );
     fs::remove_dir_all(work.parent().unwrap()).ok();
 }
+
+#[test]
+fn parse_git_version_reads_release_and_vendor_builds() {
+    assert_eq!(
+        parse_git_version("git version 2.39.2\n"),
+        Some(((2, 39), "2.39.2"))
+    );
+    assert_eq!(
+        parse_git_version("git version 2.40.0.windows.1\n"),
+        Some(((2, 40), "2.40.0.windows.1"))
+    );
+    assert_eq!(
+        parse_git_version("git version 2.39.3 (Apple Git-146)\n"),
+        Some(((2, 39), "2.39.3"))
+    );
+    assert_eq!(
+        parse_git_version("git version 2.46.0.rc0"),
+        Some(((2, 46), "2.46.0.rc0"))
+    );
+    assert_eq!(parse_git_version("hub version 2.14.2"), None);
+    assert_eq!(parse_git_version("git version two"), None);
+    assert_eq!(parse_git_version("git version 2"), None);
+    assert_eq!(parse_git_version(""), None);
+}
+
+#[test]
+fn check_git_version_refuses_a_git_without_the_needed_format_atoms() {
+    assert_eq!(
+        check_git_version("git version 2.17.1\n"),
+        Err("git 2.22 or newer is needed (found 2.17.1)".to_string())
+    );
+    assert_eq!(
+        check_git_version("git version 1.8.3.1\n"),
+        Err("git 2.22 or newer is needed (found 1.8.3.1)".to_string())
+    );
+    assert_eq!(
+        check_git_version("git version 2.21.9\n"),
+        Err("git 2.22 or newer is needed (found 2.21.9)".to_string())
+    );
+    assert_eq!(check_git_version("git version 2.22.0\n"), Ok(()));
+    assert_eq!(check_git_version("git version 3.0.0\n"), Ok(()));
+    assert_eq!(check_git_version("some wrapper banner\n"), Ok(()));
+}

@@ -172,14 +172,50 @@ fn detect_git_error(stderr: &[u8]) -> String {
     }
 }
 
+/// The oldest git with every format atom git-sync reads: `%(push:remotename)`
+/// (2.16) and `%(trailers:key=…,valueonly,separator=…)` (2.22).
+const MIN_GIT_VERSION: (u32, u32) = (2, 22);
+
+/// The `(major, minor)` of `git version` output such as `git version 2.39.2`
+/// or `git version 2.40.0.windows.1`, with the version text as printed.
+fn parse_git_version(stdout: &str) -> Option<((u32, u32), &str)> {
+    let text = stdout
+        .trim()
+        .strip_prefix("git version ")?
+        .split_whitespace()
+        .next()?;
+    let mut parts = text.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some(((major, minor), text))
+}
+
+/// Refuses a git too old for git-sync. Output that can't be parsed is let
+/// through: a wrapper may print its own banner, and the commands themselves
+/// still report any failure.
+fn check_git_version(stdout: &str) -> Result<(), String> {
+    match parse_git_version(stdout) {
+        Some((version, text)) if version < MIN_GIT_VERSION => Err(format!(
+            "git {}.{} or newer is needed (found {text})",
+            MIN_GIT_VERSION.0, MIN_GIT_VERSION.1
+        )),
+        _ => Ok(()),
+    }
+}
+
 impl GitSync {
     /// `Err` with the reason, for the startup message, when the file isn't
-    /// in a git work tree or `git` can't be run; git-sync is optional, so the
-    /// caller carries on without it.
+    /// in a git work tree or `git` is missing or too old; git-sync is
+    /// optional, so the caller carries on without it.
     pub fn detect(file_path: &Path) -> Result<GitSync, String> {
         let file_dir = file_path
             .parent()
             .ok_or_else(|| "the file has no parent directory".to_string())?;
+        let mut cmd = git_command(file_dir);
+        cmd.arg("version");
+        let output =
+            run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| detect_spawn_error(&err))?;
+        check_git_version(&String::from_utf8_lossy(&output.stdout))?;
         let mut cmd = git_command(file_dir);
         cmd.args(["rev-parse", "--is-inside-work-tree"]);
         let output =

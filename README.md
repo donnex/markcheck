@@ -753,7 +753,8 @@ wasn't requested or the file isn't in a repo.
 inside a git work tree at startup. When the flag (or a `git_sync_paths`
 match) asks for git-sync but it can't start, the status bar says why at
 startup — for example `Git sync off: the file is not in a git repository`,
-`Git sync off: git not found on PATH`, or git's own error and suggested fix
+`Git sync off: git not found on PATH`, `Git sync off: git 2.22 or newer is
+needed (found 2.17.1)`, or git's own error and suggested fix
 when it refuses a repository owned by another user (`safe.directory`).
 
 **The branch needs an upstream.** Git-sync pushes the exact commit it just
@@ -785,10 +786,12 @@ moves the local branch it tracks.
 When the remote has a separate `pushurl`, the branch is checked on, and
 pushed to, that URL.
 
-**Requirements.** Git-sync shells out to `git`, so it needs `git` on
-`PATH`; it's developed and tested against modern git (2.40+) and uses only
-long-standing plumbing, so anything from **git 2.0** onward should work.
-No specific older version is verified in CI.
+**Requirements.** Git-sync shells out to `git`, so it needs **git 2.22 or
+newer** on `PATH`: it reads a commit's trailers and the branch's push remote
+with format options older git doesn't have. With an older git, git-sync stays
+off for the session and says so at startup, e.g. `Git sync off: git 2.22 or
+newer is needed (found 2.17.1)`. It's developed and tested against modern git
+(2.40+); no specific older version is verified in CI.
 
 **Git-sync runs the repository's commit hooks.** That's deliberate — it's
 why commits are made with a real `git commit` rather than assembled by hand,
