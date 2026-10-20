@@ -27,6 +27,7 @@ markcheck/
     ├── effect.rs        # Effect queue: every outward action AppState asks for, and its drain
     ├── writer.rs        # Write-back (atomic, ownership- and mode-preserving), write lock, session markers
     ├── scaffold.rs      # `--new`: create a starter checklist atomically
+    ├── printable.rs     # Strip terminal controls from text written outside ratatui
     ├── watcher.rs       # File watch plus timed recheck for external changes
     ├── clipboard.rs     # Copy: system clipboard and/or OSC 52 along a CopyRoute
     ├── git_env.rs       # REDIRECTING_GIT_VARS, include!d by git_sync/process.rs and build.rs
@@ -623,7 +624,7 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 
 **One arboard instance per session.** `set_via_arboard` keeps one `arboard::Clipboard` in a `static Mutex<Option<Clipboard>>`. On X11 the owning instance serves the selection to whoever pastes and the last instance's `Drop` destroys it, so a per-copy instance made `Copied` a lie without a clipboard manager. A failed write drops the instance so the next copy reconnects; `release_system_clipboard()` on quit lets arboard hand over once.
 
-**Hidden characters.** `copy_text`, under every copy, refuses text with a control character other than `\n`/`\t` or a bidi control (U+061C, U+200E/F, U+202A–U+202E, U+2066–U+2069) — ratatui can't draw them, so the card would show one command while the clipboard got another (an embedded `ESC [201~` ends a bracketed paste early). `CopyOutcome::HiddenCharacters` is reported sticky: `Not copied: command contains hidden control characters`.
+**Hidden characters.** `copy_text`, under every copy, refuses text with a control character other than `\n`/`\t` or a bidi control (U+061C, U+200E/F, U+202A–U+202E, U+2066–U+2069; `printable::is_hidden`) — ratatui can't draw them, so the card would show one command while the clipboard got another (an embedded `ESC [201~` ends a bracketed paste early). `CopyOutcome::HiddenCharacters` is reported sticky: `Not copied: command contains hidden control characters`.
 
 **`--primary`** also sets the X11 PRIMARY selection (best effort) and emits a second OSC 52 sequence for `p`. **`--auto-copy`** runs `maybe_auto_copy` after each navigation: one candidate is copied and the success appended to the motion's message; no or several candidates stay silent; a hidden-characters refusal is always reported.
 
@@ -663,6 +664,8 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 **The loop.** It polls every 100 ms and **redraws only when something may have changed**: an input event other than key releases and pointer motion (`ui::event_needs_redraw`), a reload, a finished sync, an expired status (`expire_status`), a round trip to the editor, shell or a link, or the next change of a relative label (`ui::next_label_change`). Keys go to `handle_key_with_mods`, the wheel to `handle_scroll_up/down`, a left press to `handle_left_click`. Mouse capture is on unless `--no-mouse`. Bracketed paste is always on, so a paste arrives as one `Event::Paste` instead of keystrokes (a stray paste would otherwise toggle, reset and quit); `handle_paste` appends it as one line to the search or picker query and elsewhere says `Paste ignored`.
 
 **Terminal title and exit line (#135).** With `terminal_title` (default on), startup pushes the current title (`CSI 22;2t`) and the guard pops it (`CSI 23;2t`); between them `launch::terminal_title` (`Deployment Runbook · 3/11 — markcheck`) is set after a draw when it changed. With `exit_summary` (default on), a successful run prints `launch::exit_summary` after the terminal is restored: done/total with started and skipped, and the card the cursor stopped on, or `all N done`.
+
+**Text written outside ratatui (#145).** ratatui drops control characters from what it draws, but the terminal title, the exit line, the git-sync exit report and the startup error lines go straight to the terminal, and the checklist's H1, labels and file name (and git's own output) can carry raw `ESC`/`BEL` that pulldown-cmark passes through. Each of these sinks runs its text through `printable`: `printable_line` (title, exit line, file path in messages, commit subject and body lines) drops C0/C1 controls, DEL and bidi controls and turns line breaks and tabs into spaces; `printable` (`git_sync::exit_report`) keeps line breaks and tabs. Without it a heading could end the title's OSC sequence early and inject one of its own, such as an OSC 52 clipboard write.
 
 **CLI** (`Cli` in `cli.rs`): `file` (or `--new PATH`), `+N`/`file.md#anchor` start targets, and paired flags for each boolean setting (`--nerd-font`/`--no-nerd-font`, `--mouse`/`--no-mouse`, `--primary`/`--no-primary`, `--auto-copy`/`--no-auto-copy`, `--git-sync`/`--no-git-sync`, each pair conflicting), `--color`, `--clipboard`, `--git-sync-delay`, `--config PATH`/`--no-config`, `--version` and the hidden `--generate-man`/`--generate-completions`.
 

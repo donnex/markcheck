@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::model::hash_bytes;
+use crate::printable::printable_line;
 
 use super::commit::commit_via_temp_index;
 use super::guards::{
@@ -31,7 +32,10 @@ pub(super) fn batch_message(file_path: &Path, descriptions: &[String]) -> String
         [one] => commit_message(file_path, one),
         many => {
             let subject = commit_message(file_path, &format!("{} changes", many.len()));
-            let body: Vec<String> = many.iter().map(|desc| format!("- {desc}")).collect();
+            let body: Vec<String> = many
+                .iter()
+                .map(|desc| format!("- {}", printable_line(desc)))
+                .collect();
             format!("{subject}\n\n{}", body.join("\n"))
         }
     }
@@ -41,7 +45,7 @@ const MAX_FILE_NAME_LEN: usize = MAX_COMMIT_MESSAGE_LEN - (2 + MIN_DESC_LEN + 1)
 pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
     let file_name = file_path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
+        .map(|n| printable_line(&n.to_string_lossy()))
         .unwrap_or_else(|| "checklist".to_string());
     let file_name = if file_name.chars().count() > MAX_FILE_NAME_LEN {
         let kept: String = file_name
@@ -52,6 +56,7 @@ pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
     } else {
         file_name
     };
+    let change_desc = &printable_line(change_desc);
     let prefix = format!("{file_name}: ");
     let full = format!("{prefix}{change_desc}");
     if full.chars().count() <= MAX_COMMIT_MESSAGE_LEN {

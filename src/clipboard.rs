@@ -31,13 +31,8 @@ pub enum CopyOutcome {
 /// controls reorder text, so the paste would differ from what was read; an
 /// embedded `ESC [201~` can end a bracketed paste early.
 fn has_hidden_characters(text: &str) -> bool {
-    text.chars().any(|c| {
-        (c.is_control() && c != '\n' && c != '\t')
-            || matches!(
-                c,
-                '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-            )
-    })
+    text.chars()
+        .any(|c| c != '\n' && c != '\t' && crate::printable::is_hidden(c))
 }
 
 /// The commands `y` chooses between, in card order: fenced code blocks take

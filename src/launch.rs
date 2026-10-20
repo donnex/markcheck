@@ -407,7 +407,10 @@ fn document_name(state: &crate::model::AppState) -> String {
 /// it holds and how far along it is.
 pub fn terminal_title(state: &crate::model::AppState) -> String {
     let (done, total) = state.document.checkbox_stats();
-    format!("{} · {done}/{total} — markcheck", document_name(state))
+    crate::printable::printable_line(&format!(
+        "{} · {done}/{total} — markcheck",
+        document_name(state)
+    ))
 }
 
 /// The line printed after a normal quit (#135), for handovers and notes:
@@ -435,13 +438,17 @@ pub fn exit_summary(state: &crate::model::AppState) -> String {
     };
     let name = document_name(state);
     if total > 0 && done == total {
-        return format!("{file} — {name}: all {total} done{extras}");
+        return crate::printable::printable_line(&format!(
+            "{file} — {name}: all {total} done{extras}"
+        ));
     }
     let stopped = state
         .current_item()
         .map(|item| format!(", stopped at \"{}\"", item.label()))
         .unwrap_or_default();
-    format!("{file} — {name}: {done}/{total} done{extras}{stopped}")
+    crate::printable::printable_line(&format!(
+        "{file} — {name}: {done}/{total} done{extras}{stopped}"
+    ))
 }
 
 /// The startup warning that the checklist is already open in another

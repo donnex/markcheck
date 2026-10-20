@@ -1120,6 +1120,23 @@ fn commit_message_prefixes_the_file_name() {
     );
 }
 #[test]
+fn commit_messages_drop_terminal_controls_from_labels_and_file_names() {
+    assert_eq!(
+        commit_message(
+            Path::new("/a/run\x1bbook.md"),
+            "Check \"x\x07\x1b]52;c;AA==\x07\""
+        ),
+        "runbook.md: Check \"x]52;c;AA==\""
+    );
+    assert_eq!(
+        batch_message(
+            Path::new("/a/list.md"),
+            &["Check \"a\x1b[2J\"".into(), "Skip \"b\nc\"".into()]
+        ),
+        "list.md: 2 changes\n\n- Check \"a[2J\"\n- Skip \"b c\""
+    );
+}
+#[test]
 fn commit_message_truncates_a_long_description() {
     let long_item = "x".repeat(100);
     let message = commit_message(

@@ -596,6 +596,23 @@ fn exit_report_names_each_problem_with_the_final_sync() {
 }
 
 #[test]
+fn exit_report_drops_terminal_controls_from_git_output() {
+    let failed = exit_report(
+        Some(&SyncOutcome::Failed(
+            "remote: no\x1b]52;c;AA==\x07\nremote:\tbye".into(),
+        )),
+        false,
+    );
+    assert_eq!(
+        failed.as_deref(),
+        Some(
+            "markcheck: git sync failed: remote: no]52;c;AA==\nremote:\tbye; \
+             the file is saved, but not committed"
+        )
+    );
+}
+
+#[test]
 fn exit_report_flags_a_sync_cut_off_by_the_exit_wait() {
     for last in [None, Some(&SyncOutcome::Synced)] {
         assert!(exit_report(last, true).is_some_and(|m| m.contains("still running")));

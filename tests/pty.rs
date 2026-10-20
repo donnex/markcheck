@@ -2538,3 +2538,32 @@ fn the_terminal_title_shows_progress_and_the_exit_line_says_where_it_stopped() {
         "the exit line comes after the TUI: {tail:?}"
     );
 }
+
+#[test]
+fn checklist_text_cannot_inject_escapes_through_the_title_or_exit_line() {
+    let path = unique_path("title-inject");
+    write_file(
+        &path,
+        "# Run\x07\x1b]52;c;ZWNobw==\x07book\n\n## Work\n\n- [ ] al\x1b]52;c;cHduZWQ=\x07pha\n- [ ] beta\n",
+    );
+    let mut cmd = markcheck_command();
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.key(" ");
+    session.wait_until(SCREEN_TIMEOUT, "the updated title", |raw| {
+        raw.contains("\x1b]0;Run]52;c;ZWNobw==book · 1/2 — markcheck\x07")
+    });
+    session.key("k");
+    session.key("q");
+    let (ok, output) = session.finish();
+    assert!(ok);
+    assert!(
+        !output.contains("\x1b]52"),
+        "no OSC 52 reaches the terminal: {output:?}"
+    );
+    let tail = output.rsplit("\x1b[?1049l").next().unwrap_or_default();
+    assert!(
+        tail.contains("Run]52;c;ZWNobw==book: 1/2 done, stopped at \"al]52;c;cHduZWQ=pha\""),
+        "the exit line comes without the escapes: {tail:?}"
+    );
+}

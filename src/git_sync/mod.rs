@@ -66,6 +66,10 @@ pub fn status_message(outcome: &SyncOutcome) -> Option<String> {
 /// `still_running` says the wait gave up before the worker finished. The TUI
 /// is already gone by then, so this is the only place the user can learn it.
 pub fn exit_report(last: Option<&SyncOutcome>, still_running: bool) -> Option<String> {
+    exit_report_text(last, still_running).map(|report| crate::printable::printable(&report))
+}
+
+fn exit_report_text(last: Option<&SyncOutcome>, still_running: bool) -> Option<String> {
     if still_running {
         return Some(
             "markcheck: git sync was still running when markcheck exited; \

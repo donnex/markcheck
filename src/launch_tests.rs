@@ -707,6 +707,22 @@ fn the_terminal_title_names_the_checklist_and_its_progress() {
 }
 
 #[test]
+fn the_terminal_title_and_exit_line_drop_terminal_controls() {
+    let state = state_from(
+        "# Run\x07\x1b]52;c;ZWNobw==\x07book\n\n- [ ] st\x1b[2Jep\n",
+        "deploy.md",
+    );
+    assert_eq!(
+        terminal_title(&state),
+        "Run]52;c;ZWNobw==book · 0/1 — markcheck"
+    );
+    assert_eq!(
+        exit_summary(&state),
+        "deploy.md — Run]52;c;ZWNobw==book: 0/1 done, stopped at \"st[2Jep\""
+    );
+}
+
+#[test]
 fn the_exit_summary_says_where_the_run_stopped_or_that_it_finished() {
     let state = state_from(
         "# Deploy\n\n## A\n\n- [x] one\n- [/] two\n- [-] three\n- [ ] four\n",

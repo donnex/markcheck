@@ -10,6 +10,7 @@ mod git_sync;
 mod launch;
 mod model;
 mod parser;
+mod printable;
 mod scaffold;
 #[cfg(test)]
 mod temp_test_support;
@@ -118,8 +119,12 @@ fn main() -> anyhow::Result<()> {
     // returns a canonical path.
     let mut start_at = start_line.map(model::StartAt::Line);
     let (file_path, created_new) = if let Some(new_path) = &cli.new {
-        let created = scaffold::create_new_checklist(new_path)
-            .with_context(|| format!("cannot create {}", new_path.display()))?;
+        let created = scaffold::create_new_checklist(new_path).with_context(|| {
+            format!(
+                "cannot create {}",
+                printable::printable_line(&new_path.display().to_string())
+            )
+        })?;
         (created, true)
     } else {
         // clap's `required_unless_present = "new"` guarantees this is `Some`
@@ -132,11 +137,15 @@ fn main() -> anyhow::Result<()> {
             file = path;
             start_at = Some(model::StartAt::Anchor(anchor));
         }
-        let resolved = std::fs::canonicalize(&file)
-            .with_context(|| format!("cannot resolve path: {}", file.display()))?;
+        let resolved = std::fs::canonicalize(&file).with_context(|| {
+            format!(
+                "cannot resolve path: {}",
+                printable::printable_line(&file.display().to_string())
+            )
+        })?;
         (resolved, false)
     };
-    let shown_path = file_path.display().to_string();
+    let shown_path = printable::printable_line(&file_path.display().to_string());
     let document =
         parser::parse_document(file_path).with_context(|| format!("cannot read {shown_path}"))?;
 
