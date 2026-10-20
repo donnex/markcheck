@@ -12,6 +12,8 @@ mod model;
 mod parser;
 mod scaffold;
 #[cfg(test)]
+mod temp_test_support;
+#[cfg(test)]
 mod test_support;
 mod ui;
 mod watcher;

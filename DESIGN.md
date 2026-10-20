@@ -31,6 +31,7 @@ markcheck/
     ├── clipboard.rs     # Copy: system clipboard and/or OSC 52 along a CopyRoute
     ├── git_env.rs       # REDIRECTING_GIT_VARS, include!d by git_sync/process.rs and build.rs
     ├── test_support.rs  # Shared test fixtures and the property-test Markdown generator
+    ├── temp_test_support.rs # Self-removing temp paths, shared with tests/common by #[path]
     ├── *_tests.rs       # Each module's tests, in a sibling file (so coverage can leave them out)
     ├── git_sync/        # Background git commit+push after write-back
     │   ├── mod.rs       # GitSync: request queue and quiet period, poll, retry, abandon, status/exit messages
@@ -710,7 +711,7 @@ pub struct Config {
 - **Property tests (#79).** `test_support::markdown::document()` generates Markdown from the constructs markcheck treats specially and the ones it must leave alone (headings, bullets and numbered items with every marker, space and tab indentation, quotes, fences, indented code, HTML, setext underlines; LF, CRLF or CR; with or without a BOM). `parsing_and_writing_back_unchanged_keeps_every_byte` and `one_toggle_changes_one_marker_and_nothing_else` run 256 cases each (`PROPTEST_CASES` raises it). Failure persistence is off: a shrunk counterexample becomes a named test.
 - **Golden screens (#105).** `ui/golden_tests.rs` renders every `examples/` file at 50×24, 80×24 and 120×40, on the start card and after `j`, plus the picker and help, and compares the symbols with `insta` snapshots in `src/ui/snapshots/`. Unicode icons and a basic palette keep them machine-independent. Review a change with `cargo insta review`; on CI nothing is written, so an unreviewed change fails.
 - **Mutation tests (#129):** see Verifying the guards.
-- **Temp files** come from `test_support::unique_temp_path` (and its copy in `tests/common`), removed when the test's thread ends, pass or fail.
+- **Temp files** come from `unique_temp_path` in `src/temp_test_support.rs`, removed when the test's thread ends, pass or fail. It's one file compiled into both the unit tests (re-exported by `test_support`) and the integration tests (`tests/common` includes it with `#[path]`, since `tests/` can't see the crate's `cfg(test)` code), so it uses nothing but `std` (#143).
 - **Prerequisites.** `git` and `sh` on `PATH`, and `cargo build` before the integration tests. A few tests skip with `skipped:` on stderr where the machine can't support them: running as root (permissions don't bite), no `ps` (slim images) and no `/proc`, no root-owned file.
 - **Coverage** (`cargo llvm-cov`, see CLAUDE.md) measures production code only, gated at 97% in `check.yml`; it leaves out the test files and `main.rs`. That exclusion holds only while `main.rs` stays wiring: anything with branches (flag precedence, command resolution, message mapping, the post-editor reload) lives in a covered module.
 
