@@ -1074,26 +1074,8 @@ pub struct AppState {
     /// Scroll offset (in wrapped lines) of the current card's body.
     /// Reset to 0 on any navigation.
     pub card_scroll: u16,
-    /// Maximum useful scroll for the current card; written back by the
-    /// cards renderer each frame (0 = body fits, no overflow).
-    pub card_max_scroll: u16,
-    /// Visible height (in rows) of the current card's body viewport; written
-    /// back by the cards renderer each frame. Drives half-page (`Ctrl-D`/`U`)
-    /// and page (`PageUp`/`Down`) scroll distances. 0 until first render.
-    pub card_viewport_height: u16,
-    /// The current card's on-screen area, written back by the cards renderer
-    /// each frame; used to hit-test left-clicks for click-to-copy.
-    /// `None` until the first checklist render.
-    pub card_rect: Option<Rect>,
-    /// Per-row copyable code regions on the current card, written back by the
-    /// cards renderer each frame: `(on-screen row rect, clean code text)`.
-    /// A left-click on a row copies that exact fragment.
-    pub code_regions: Vec<(Rect, String)>,
-    /// Per-row click targets in the overview panel, written back by the
-    /// overview renderer each frame: `(on-screen row rect, target)`. A
-    /// left-click on a row jumps the cursor there. Cleared when the
-    /// overview isn't shown (narrow terminals) so stale rects can't be hit.
-    pub overview_rows: Vec<(Rect, OverviewTarget)>,
+    /// Geometry the renderer measured on the last frame — see [`ViewLayout`].
+    pub layout: ViewLayout,
     /// True after a lone `g`, waiting for the second `g` of the `gg` motion
     /// (go to the first task). Reset by any other key.
     pub pending_g: bool,
@@ -1164,6 +1146,39 @@ pub struct SearchState {
     pub origin: (usize, usize),
 }
 
+/// Geometry the renderer measures while drawing a frame and the key and
+/// mouse handlers read back: scroll limits, viewport heights and click
+/// regions. `ui::render` fills it every frame; the handlers only empty a
+/// part whose subject changed (a new card's scroll limit, a freshly opened
+/// picker's rows) until the next frame measures it. Before the first frame
+/// it is empty (zero heights, no regions), so a scroll moves nothing and a
+/// click hits nothing (#142).
+#[derive(Debug, Default)]
+pub struct ViewLayout {
+    /// Maximum useful scroll of the current card's body (0 = it fits).
+    pub card_max_scroll: u16,
+    /// Visible height in rows of the card body; the half-page and page
+    /// scroll distances.
+    pub card_viewport_height: u16,
+    /// The current card's area, for click-to-copy. `None` off the checklist.
+    pub card_rect: Option<Rect>,
+    /// One `(row, code text)` per copy target on the current card, so a
+    /// click copies exactly that command.
+    pub code_regions: Vec<(Rect, String)>,
+    /// One `(row, target)` per clickable overview row. Empty while the
+    /// overview is hidden, so stale rows can't be hit.
+    pub overview_rows: Vec<(Rect, OverviewTarget)>,
+    /// Visible row count of the `T` picker's list; its half-page jumps.
+    pub picker_viewport_height: u16,
+    /// The picker's entry rows and the index of the entry on its top row,
+    /// for click hit-testing. `None` when no entries are drawn.
+    pub picker_rows_area: Option<Rect>,
+    pub picker_scroll_offset: usize,
+    /// Maximum useful scroll and the viewport height of the help overlay.
+    pub help_max_scroll: u16,
+    pub help_viewport_height: u16,
+}
+
 /// `T` go-to-task overlay state: a filterable list of every task.
 #[derive(Debug, Default)]
 pub struct PickerState {
@@ -1172,15 +1187,6 @@ pub struct PickerState {
     /// Index of the highlighted row within the picker's current (filtered)
     /// entries; reset to 0 whenever the filter changes.
     pub selection: usize,
-    /// Visible row count of the picker's list viewport, written back by
-    /// `render_list_picker` each frame; drives the half-page `Ctrl-D`/`Ctrl-U`
-    /// selection jumps. 0 until the overlay is first rendered.
-    pub viewport_height: u16,
-    /// On-screen area of the picker's entry rows and the index of the entry
-    /// drawn on its top row, written back by `render_list_picker` each frame
-    /// for click hit-testing. `None` when no entries are drawn.
-    pub rows_area: Option<Rect>,
-    pub scroll_offset: usize,
 }
 
 /// `?` help overlay scroll state.
@@ -1189,10 +1195,6 @@ pub struct HelpState {
     /// Scroll offset (in lines) of the overlay when it's taller than the
     /// terminal. Reset to 0 each time help opens.
     pub scroll: u16,
-    /// Maximum useful scroll and the viewport height, written back by
-    /// `render_help` each frame; drive the help scroll-key clamping.
-    pub max_scroll: u16,
-    pub viewport_height: u16,
 }
 
 /// Background git-sync state (`--git-sync`).

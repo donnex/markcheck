@@ -495,7 +495,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     super::render_scrollbar(frame, area, total_rows, content_viewport, offset);
 
     // Each list row is one line tall, below the reserved header rows.
-    state.overview_rows.clear();
+    state.layout.overview_rows.clear();
     let row_end = area.x + area.width; // one past the row's last column
     for (i, click) in row_clicks.iter().enumerate() {
         if i < offset || i >= offset + content_viewport {
@@ -506,6 +506,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             RowClick::None => {}
             RowClick::Whole(target) => {
                 state
+                    .layout
                     .overview_rows
                     .push((Rect::new(area.x, y, area.width, 1), target));
             }
@@ -516,12 +517,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             } => {
                 // The marker prefix toggles; the label navigates.
                 let marker_end = (inner.x + marker_cells).min(row_end);
-                state.overview_rows.push((
+                state.layout.overview_rows.push((
                     Rect::new(area.x, y, marker_end - area.x, 1),
                     OverviewTarget::Toggle(list_index, item_index),
                 ));
                 if marker_end < row_end {
-                    state.overview_rows.push((
+                    state.layout.overview_rows.push((
                         Rect::new(marker_end, y, row_end - marker_end, 1),
                         OverviewTarget::Item(list_index, item_index),
                     ));

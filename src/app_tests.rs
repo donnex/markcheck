@@ -349,8 +349,8 @@ fn help_scroll_keys_scroll_instead_of_closing() {
     // overlay rather than dismissing it; it clamps and any other key closes.
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('?'));
-    state.help.max_scroll = 5; // as if the renderer measured an overflow
-    state.help.viewport_height = 6;
+    state.layout.help_max_scroll = 5; // as if the renderer measured an overflow
+    state.layout.help_viewport_height = 6;
     state.handle_key(KeyCode::Char('j'));
     assert_eq!(
         state.overlay,
@@ -365,7 +365,7 @@ fn help_scroll_keys_scroll_instead_of_closing() {
     state.handle_key_with_mods(KeyCode::Char('d'), KeyModifiers::CONTROL);
     assert_eq!(state.help.scroll, 4, "Ctrl-D jumps half a page (3)");
     state.handle_key(KeyCode::PageDown);
-    assert_eq!(state.help.scroll, 5, "clamps at help.max_scroll");
+    assert_eq!(state.help.scroll, 5, "clamps at layout.help_max_scroll");
     state.handle_key(KeyCode::Char('q')); // a non-scroll key still closes
     assert_eq!(shown(&state), (View::Checklist, None));
 }
@@ -1301,7 +1301,7 @@ fn picker_ctrl_d_u_move_half_a_page() {
         items,
     }]));
     state.handle_key(KeyCode::Char('T'));
-    state.picker.viewport_height = 10; // as if rendered with a 10-row list
+    state.layout.picker_viewport_height = 10; // as if rendered with a 10-row list
     state.handle_key_with_mods(KeyCode::Char('d'), KeyModifiers::CONTROL);
     assert_eq!(state.picker.selection, 5, "Ctrl-D jumps half a page down");
     state.handle_key_with_mods(KeyCode::Char('u'), KeyModifiers::CONTROL);
@@ -1620,7 +1620,7 @@ fn mouse_click_clears_a_pending_open_link_chord() {
     state.handle_key(KeyCode::Char('o'));
     assert!(state.pending_open_link, "armed");
 
-    state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::List(0))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::List(0))];
     state.handle_left_click(65, 5);
     assert!(!state.pending_open_link, "cleared by the click");
 }
@@ -1646,7 +1646,7 @@ fn mouse_click_clears_a_pending_gg_chord() {
     state.handle_key(KeyCode::Char('g'));
     assert!(state.pending_g, "armed");
 
-    state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::List(1))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::List(1))];
     state.handle_left_click(65, 5);
     assert!(!state.pending_g, "cleared by the click");
 }
@@ -2105,7 +2105,7 @@ fn j_k_and_vertical_arrows_navigate() {
     // j/k and ↑/↓ now walk the task list like h/l, they no longer
     // scroll the card body.
     let mut state = AppState::new(two_list_document());
-    state.card_max_scroll = 5; // overflow present, but j/k must still nav
+    state.layout.card_max_scroll = 5; // overflow present, but j/k must still nav
     state.handle_key(KeyCode::Char('j'));
     assert_eq!(state.current_item_index, 1);
     state.handle_key(KeyCode::Down);
@@ -2122,8 +2122,8 @@ fn ctrl_and_page_keys_scroll_the_card_and_clamp() {
     // Card-body scrolling lives on Ctrl-E/Y (line), Ctrl-D/U (half
     // page) and PageDown/Up (page); none of them navigate.
     let mut state = AppState::new(two_list_document());
-    state.card_max_scroll = 5;
-    state.card_viewport_height = 4; // half_page = 2, page = 3
+    state.layout.card_max_scroll = 5;
+    state.layout.card_viewport_height = 4; // half_page = 2, page = 3
     let ctrl = |c| (KeyCode::Char(c), KeyModifiers::CONTROL);
 
     let (code, m) = ctrl('e'); // one line down
@@ -2152,11 +2152,11 @@ fn ctrl_and_page_keys_scroll_the_card_and_clamp() {
 #[test]
 fn navigation_resets_card_scroll() {
     let mut state = AppState::new(two_list_document());
-    state.card_max_scroll = 5;
+    state.layout.card_max_scroll = 5;
     state.card_scroll = 3;
     state.navigate_next();
     assert_eq!(state.card_scroll, 0);
-    assert_eq!(state.card_max_scroll, 0);
+    assert_eq!(state.layout.card_max_scroll, 0);
 }
 
 #[test]
@@ -2166,7 +2166,7 @@ fn wheel_scrolls_overflowing_card_and_navigates_otherwise() {
     state.handle_scroll_down();
     assert_eq!(state.current_item_index, 1);
     // Overflow: wheel scrolls, does not navigate.
-    state.card_max_scroll = 3;
+    state.layout.card_max_scroll = 3;
     state.handle_scroll_down();
     assert_eq!(state.card_scroll, 1);
     assert_eq!(state.current_item_index, 1);
@@ -2181,7 +2181,7 @@ fn wheel_up_navigates_to_previous_item_when_card_fits() {
     // wheel-up navigates to the previous item rather than scrolling.
     let mut state = AppState::new(two_list_document());
     state.current_item_index = 1;
-    state.card_max_scroll = 0;
+    state.layout.card_max_scroll = 0;
     state.handle_scroll_up();
     assert_eq!(state.current_item_index, 0);
     assert_eq!(state.card_scroll, 0);
@@ -2205,11 +2205,11 @@ fn wheel_crosses_list_edges_like_j_and_k() {
 fn wheel_scrolls_the_help_overlay() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('?'));
-    state.help.max_scroll = 2;
+    state.layout.help_max_scroll = 2;
     state.handle_scroll_down();
     state.handle_scroll_down();
     state.handle_scroll_down();
-    assert_eq!(state.help.scroll, 2, "clamps at help.max_scroll");
+    assert_eq!(state.help.scroll, 2, "clamps at layout.help_max_scroll");
     state.handle_scroll_up();
     assert_eq!(state.help.scroll, 1);
     assert_eq!(
@@ -3237,7 +3237,7 @@ fn click_inside_card_copies_current_command() {
     // A click inside the card behaves like `y`. No-code item →
     // the same "nothing to copy" hint (success paths are manual-only).
     let mut state = AppState::new(two_list_document());
-    state.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.handle_left_click(15, 8);
     assert_eq!(
         state.status_message.as_deref(),
@@ -3248,7 +3248,7 @@ fn click_inside_card_copies_current_command() {
     let mut document = two_list_document();
     document.lists[0].items[0].code_blocks = vec!["a".to_string(), "b".to_string()];
     let mut state = AppState::new(document);
-    state.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.handle_left_click(12, 6);
     assert!(state.pending_copy_code, "armed like `y`");
 }
@@ -3262,8 +3262,8 @@ fn click_on_code_region_copies_that_specific_row() {
     let mut document = two_list_document();
     document.lists[0].items[0].code_blocks = vec!["a".to_string(), "b".to_string()];
     let mut state = AppState::new(document);
-    state.card_rect = Some(Rect::new(10, 5, 40, 10));
-    state.code_regions = vec![(Rect::new(11, 7, 38, 1), "b".to_string())];
+    state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), "b".to_string())];
 
     // On the region: the specific path, never the ambiguous hint.
     state.handle_left_click(15, 7);
@@ -3285,7 +3285,7 @@ fn click_on_code_region_copies_that_specific_row() {
 fn click_outside_card_or_off_checklist_is_ignored() {
     use ratatui::layout::Rect;
     let mut state = AppState::new(two_list_document());
-    state.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.handle_left_click(2, 2); // outside the card rect
     assert_eq!(
         state.status_message, None,
@@ -3306,7 +3306,7 @@ fn click_on_overview_item_row_focuses_that_task() {
     // A click on a recorded overview item row moves the cursor to that
     // exact task and returns to the checklist screen.
     let mut state = AppState::new(two_list_document());
-    state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 1))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 1))];
 
     state.handle_left_click(70, 5);
     assert_eq!(state.current_list_index, 1);
@@ -3320,7 +3320,7 @@ fn click_on_overview_list_row_jumps_to_that_list() {
     // A click on a list-title row jumps to that list, landing on its
     // first not-done item (like the number keys / jump_to_list).
     let mut state = AppState::new(two_list_document());
-    state.overview_rows = vec![(Rect::new(60, 3, 30, 1), OverviewTarget::List(1))];
+    state.layout.overview_rows = vec![(Rect::new(60, 3, 30, 1), OverviewTarget::List(1))];
 
     state.handle_left_click(65, 3);
     assert_eq!(state.current_list_index, 1);
@@ -3335,7 +3335,7 @@ fn click_on_overview_works_from_completion_screen() {
     // a click there jumps to the task and drops back to the checklist.
     let mut state = AppState::new(two_list_document());
     state.view = View::AllComplete;
-    state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 0))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 0))];
 
     state.handle_left_click(70, 5);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 0));
@@ -3350,7 +3350,7 @@ fn click_on_overview_ignored_while_a_modal_is_open() {
     let mut state = AppState::new(two_list_document());
     let before = (state.current_list_index, state.current_item_index);
     state.overlay = Some(Overlay::Help);
-    state.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 1))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 30, 1), OverviewTarget::Item(1, 1))];
 
     state.handle_left_click(70, 5);
     assert_eq!(
@@ -3368,7 +3368,7 @@ fn click_on_overview_marker_toggles_item_without_moving_cursor() {
     // place — the cursor (and card view) don't move.
     let mut state = AppState::new(two_list_document());
     let before = (state.current_list_index, state.current_item_index);
-    state.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(1, 0))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(1, 0))];
 
     let original = file_text(&state.document.file_path);
     state.handle_left_click(61, 5);
@@ -3475,7 +3475,7 @@ fn no_code_copy_hint_is_sticky() {
     // A `y` on a no-code item is feedback to a deliberate keypress,
     // so it sticks (no expiry) rather than fading after 4s.
     let mut state = AppState::new(two_list_document());
-    state.card_rect = Some(ratatui::layout::Rect::new(10, 5, 40, 10));
+    state.layout.card_rect = Some(ratatui::layout::Rect::new(10, 5, 40, 10));
     state.handle_left_click(15, 8); // no-code item -> "Nothing to copy"
     assert_eq!(
         state.status_message.as_deref(),
@@ -4734,7 +4734,7 @@ fn u_and_ctrl_r_write_the_undone_and_redone_marker() {
 fn an_overview_marker_click_writes_that_task_only() {
     use ratatui::layout::Rect;
     let (mut state, path) = state_from_markdown(WRITE_PATH_MARKDOWN);
-    state.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(1, 0))];
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(1, 0))];
     state.handle_left_click(61, 5);
     assert_eq!(
         file_text(&path),
@@ -5154,8 +5154,8 @@ fn help_ctrl_scroll_keys_and_page_up_scroll() {
     // Ctrl-E/Ctrl-Y/Ctrl-U/PageUp arms that test doesn't reach.
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('?'));
-    state.help.max_scroll = 5;
-    state.help.viewport_height = 6;
+    state.layout.help_max_scroll = 5;
+    state.layout.help_viewport_height = 6;
     state.handle_key(KeyCode::PageDown);
     assert_eq!(state.help.scroll, 5, "clamps at max_scroll");
     state.handle_key_with_mods(KeyCode::Char('u'), KeyModifiers::CONTROL);
@@ -5706,8 +5706,8 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
     assert!(state.status_is_error);
 
     let mut state = AppState::new(two_list_document());
-    state.card_rect = Some(Rect::new(10, 5, 40, 10));
-    state.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.clone())];
+    state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.clone())];
     state.handle_left_click(15, 7);
     state.settle();
     assert_eq!(state.status_message.as_deref(), expected);
@@ -6066,7 +6066,7 @@ fn every_overlay_key_has_a_help_row() {
         state.handle_key(KeyCode::Char('T'));
         type_str(&mut state, "task");
         state.picker.selection = 2;
-        state.picker.viewport_height = 4;
+        state.layout.picker_viewport_height = 4;
         state
     });
     let dialogs = ["Reset dialogs (R, or q when all done)"];

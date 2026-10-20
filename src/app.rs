@@ -11,7 +11,7 @@ use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
     AppState, CopyRoute, Document, FileGone, GitSyncState, HelpState, IconSet, Item, ItemKind,
     List, Overlay, OverviewTarget, Palette, PendingSync, PickerState, ResetScope, SearchState,
-    StateSnapshot, TaskState, UNDO_HISTORY_CAP, View, hash_bytes,
+    StateSnapshot, TaskState, UNDO_HISTORY_CAP, View, ViewLayout, hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -185,11 +185,7 @@ impl AppState {
             last_update_at: None,
             git_sync: GitSyncState::default(),
             card_scroll: 0,
-            card_max_scroll: 0,
-            card_viewport_height: 0,
-            card_rect: None,
-            code_regions: Vec::new(),
-            overview_rows: Vec::new(),
+            layout: ViewLayout::default(),
             pending_g: false,
             pending_open_link: false,
             pending_copy_code: false,
@@ -479,7 +475,7 @@ impl AppState {
     fn open_list_picker(&mut self) {
         self.picker.query.clear();
         self.picker.selection = 0;
-        self.picker.rows_area = None;
+        self.layout.picker_rows_area = None;
         self.overlay = Some(Overlay::ListPicker);
     }
 
@@ -514,7 +510,7 @@ impl AppState {
     /// Half the picker's visible list height (min 1), for the `Ctrl-D`/`Ctrl-U`
     /// half-page jumps — mirrors the card-body `half_page`.
     fn picker_half_page(&self) -> isize {
-        (self.picker.viewport_height / 2).max(1) as isize
+        (self.layout.picker_viewport_height / 2).max(1) as isize
     }
 
     /// Move the picker selection by `delta`, clamped to the current entries
@@ -532,13 +528,13 @@ impl AppState {
     /// click on the already-highlighted row jumps there like `Enter`. Clicks
     /// off the entry rows are ignored.
     fn picker_click(&mut self, col: u16, row: u16) {
-        let Some(area) = self.picker.rows_area else {
+        let Some(area) = self.layout.picker_rows_area else {
             return;
         };
         if !area.contains((col, row).into()) {
             return;
         }
-        let index = self.picker.scroll_offset + usize::from(row - area.y);
+        let index = self.layout.picker_scroll_offset + usize::from(row - area.y);
         let count = self.picker_matches().len();
         if index >= count {
             return;
@@ -561,7 +557,11 @@ impl AppState {
 
     /// Scroll the `?` help overlay down/up by `n` lines, clamped.
     fn scroll_help_down_by(&mut self, n: u16) {
-        self.help.scroll = self.help.scroll.saturating_add(n).min(self.help.max_scroll);
+        self.help.scroll = self
+            .help
+            .scroll
+            .saturating_add(n)
+            .min(self.layout.help_max_scroll);
     }
     fn scroll_help_up_by(&mut self, n: u16) {
         self.help.scroll = self.help.scroll.saturating_sub(n);
@@ -569,10 +569,10 @@ impl AppState {
     /// Half / near-full help viewport, for `Ctrl-D`/`Ctrl-U` and `PageDown`/`Up`
     /// — mirrors the card-body `half_page`/`page`.
     fn help_half_page(&self) -> u16 {
-        (self.help.viewport_height / 2).max(1)
+        (self.layout.help_viewport_height / 2).max(1)
     }
     fn help_page(&self) -> u16 {
-        self.help.viewport_height.saturating_sub(1).max(1)
+        self.layout.help_viewport_height.saturating_sub(1).max(1)
     }
 
     /// The first list after `from` that still has incomplete work, if any.
@@ -713,7 +713,7 @@ impl AppState {
 
     fn reset_card_scroll(&mut self) {
         self.card_scroll = 0;
-        self.card_max_scroll = 0; // recomputed by the renderer next frame
+        self.layout.card_max_scroll = 0; // recomputed by the renderer next frame
     }
 
     /// Sets an **ephemeral** status message that auto-clears after
@@ -863,7 +863,10 @@ impl AppState {
 
     /// Scroll the card body down by `n` wrapped lines, clamped to the bottom.
     pub fn scroll_card_down_by(&mut self, n: u16) {
-        self.card_scroll = self.card_scroll.saturating_add(n).min(self.card_max_scroll);
+        self.card_scroll = self
+            .card_scroll
+            .saturating_add(n)
+            .min(self.layout.card_max_scroll);
     }
 
     /// Scroll the card body up by `n` wrapped lines, clamped to the top.
@@ -873,13 +876,13 @@ impl AppState {
 
     /// Half the current card viewport height (min 1), for `Ctrl-D`/`Ctrl-U`.
     fn half_page(&self) -> u16 {
-        (self.card_viewport_height / 2).max(1)
+        (self.layout.card_viewport_height / 2).max(1)
     }
 
     /// A near-full card viewport (leaving one row of context), for
     /// `PageDown`/`PageUp`. Min 1.
     fn page(&self) -> u16 {
-        self.card_viewport_height.saturating_sub(1).max(1)
+        self.layout.card_viewport_height.saturating_sub(1).max(1)
     }
 
     /// Mouse wheel, routed per screen: on the checklist an overflowing card
@@ -889,7 +892,7 @@ impl AppState {
     pub fn handle_scroll_up(&mut self) {
         self.clear_pending_chords();
         match (self.overlay, self.view) {
-            (None, View::Checklist) if self.card_max_scroll > 0 => self.scroll_card_up(),
+            (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_up(),
             (None, View::Checklist) => self.navigate_backward(),
             (Some(Overlay::Help), _) => self.scroll_help_up_by(1),
             (Some(Overlay::ListPicker), _) => self.picker_move(-1),
@@ -900,7 +903,7 @@ impl AppState {
     pub fn handle_scroll_down(&mut self) {
         self.clear_pending_chords();
         match (self.overlay, self.view) {
-            (None, View::Checklist) if self.card_max_scroll > 0 => self.scroll_card_down(),
+            (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_down(),
             (None, View::Checklist) => self.navigate_forward(),
             (Some(Overlay::Help), _) => self.scroll_help_down_by(1),
             (Some(Overlay::ListPicker), _) => self.picker_move(1),
@@ -972,7 +975,8 @@ impl AppState {
             .overlay
             .is_none()
             .then(|| {
-                self.overview_rows
+                self.layout
+                    .overview_rows
                     .iter()
                     .find(|(rect, _)| rect.contains((col, row).into()))
                     .map(|(_, target)| *target)
@@ -1000,6 +1004,7 @@ impl AppState {
         // A click on a specific code row copies that exact fragment,
         // overriding the fenced-over-inline priority that governs `y`.
         if let Some(text) = self
+            .layout
             .code_regions
             .iter()
             .find(|(rect, _)| rect.contains((col, row).into()))
@@ -1011,6 +1016,7 @@ impl AppState {
         // Otherwise a click anywhere on the card copies its sole candidate,
         // exactly like `y` (the MVP behavior).
         if self
+            .layout
             .card_rect
             .is_some_and(|r| r.contains((col, row).into()))
         {

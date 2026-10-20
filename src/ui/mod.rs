@@ -124,7 +124,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         cards::render(frame, cards_area, state);
     } else {
         // No overview panel this frame, so drop any stale click targets.
-        state.overview_rows.clear();
+        state.layout.overview_rows.clear();
         cards::render(frame, main_area, state);
     }
 

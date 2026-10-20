@@ -163,8 +163,8 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let [filter_area, list_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
     // Expose the list viewport height for the Ctrl-D/Ctrl-U half-page jumps.
-    state.picker.viewport_height = list_area.height;
-    state.picker.rows_area = None;
+    state.layout.picker_viewport_height = list_area.height;
+    state.layout.picker_rows_area = None;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("Filter: ", Style::default().add_modifier(Modifier::DIM)),
@@ -195,8 +195,8 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let mut list_state =
         ListState::default().with_selected(Some(state.picker.selection.min(count - 1)));
     frame.render_stateful_widget(list, list_area, &mut list_state);
-    state.picker.rows_area = Some(list_area);
-    state.picker.scroll_offset = list_state.offset();
+    state.layout.picker_rows_area = Some(list_area);
+    state.layout.picker_scroll_offset = list_state.offset();
 }
 
 /// One titled group of `?` overlay rows: `(key column, description)`.
@@ -374,9 +374,9 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let height = (total as u16 + 2).min(area.height);
     let row = card_row(area, height);
     let inner_h = row.height.saturating_sub(2) as usize; // visible content rows
-    state.help.max_scroll = total.saturating_sub(inner_h) as u16;
-    state.help.viewport_height = inner_h as u16;
-    state.help.scroll = state.help.scroll.min(state.help.max_scroll);
+    state.layout.help_max_scroll = total.saturating_sub(inner_h) as u16;
+    state.layout.help_viewport_height = inner_h as u16;
+    state.help.scroll = state.help.scroll.min(state.layout.help_max_scroll);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -991,7 +991,7 @@ fn side_card_lines(item: &Item, width: u16) -> Vec<Line<'static>> {
 
 fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: &mut AppState) {
     // Record the card's on-screen area for click-to-copy hit-testing.
-    state.card_rect = Some(area);
+    state.layout.card_rect = Some(area);
     let icons = state.icons;
     let palette = state.palette;
     let list_title = state.current_list().title.clone();
@@ -1082,14 +1082,14 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     let visible = inner.height as usize;
     let total_lines = lines.len();
     let max_scroll = clamp_to_u16(total_lines.saturating_sub(visible));
-    state.card_max_scroll = max_scroll;
-    state.card_viewport_height = inner.height;
+    state.layout.card_max_scroll = max_scroll;
+    state.layout.card_viewport_height = inner.height;
     state.card_scroll = state.card_scroll.min(max_scroll);
 
     // Click-to-copy: map each code target to its on-screen row and columns,
     // accounting for the vertical-centering pad (body fits) or the scroll
     // offset (body overflows), and clip to the visible body area.
-    state.code_regions.clear();
+    state.layout.code_regions.clear();
     let scroll = state.card_scroll as usize;
     let top = if max_scroll == 0 {
         top_pad(lines.len(), visible)
@@ -1109,7 +1109,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
             continue;
         }
         for (cols, text) in targets {
-            state.code_regions.push((
+            state.layout.code_regions.push((
                 Rect::new(
                     inner.x + cols.start,
                     inner.y + vis_row as u16,

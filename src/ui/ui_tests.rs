@@ -1528,7 +1528,7 @@ fn list_picker_overlay_lists_tasks_with_count_and_filters() {
 }
 
 fn picker_row_of(state: &AppState, rows: &[String], label: &str) -> u16 {
-    let area = state.picker.rows_area.expect("picker rows recorded");
+    let area = state.layout.picker_rows_area.expect("picker rows recorded");
     (area.y..area.y + area.height)
         .find(|&y| {
             let row: String = rows[y as usize]
@@ -1547,7 +1547,7 @@ fn clicking_a_picker_row_highlights_it_and_a_second_click_jumps() {
     state.handle_key(KeyCode::Char('T'));
     let rows = buffer_rows(&mut state, 100, 30);
     let y = picker_row_of(&state, &rows, "gamma");
-    let x = state.picker.rows_area.unwrap().x;
+    let x = state.layout.picker_rows_area.unwrap().x;
     state.handle_left_click(x, y);
     assert_eq!(
         state.overlay,
@@ -1575,9 +1575,9 @@ fn picker_click_maps_rows_through_the_scroll_offset() {
         state.handle_scroll_down();
     }
     let rows = buffer_rows(&mut state, 100, 16);
-    assert!(state.picker.scroll_offset > 0, "list scrolled");
+    assert!(state.layout.picker_scroll_offset > 0, "list scrolled");
     let y = picker_row_of(&state, &rows, "task-24");
-    let x = state.picker.rows_area.unwrap().x;
+    let x = state.layout.picker_rows_area.unwrap().x;
     state.handle_left_click(x, y);
     assert_eq!(state.picker.selection, 23);
 }
@@ -1587,7 +1587,7 @@ fn picker_click_off_the_rows_or_with_no_matches_is_ignored() {
     let mut state = sample_state();
     state.handle_key(KeyCode::Char('T'));
     let _ = buffer_rows(&mut state, 100, 30);
-    let area = state.picker.rows_area.unwrap();
+    let area = state.layout.picker_rows_area.unwrap();
     state.handle_left_click(area.x, area.y.saturating_sub(1));
     state.handle_left_click(area.x, area.y + 3); // past the last entry
     assert_eq!(state.overlay, Some(Overlay::ListPicker));
@@ -1595,7 +1595,7 @@ fn picker_click_off_the_rows_or_with_no_matches_is_ignored() {
 
     state.handle_key(KeyCode::Char('z'));
     let _ = buffer_rows(&mut state, 100, 30);
-    assert_eq!(state.picker.rows_area, None, "no rows drawn");
+    assert_eq!(state.layout.picker_rows_area, None, "no rows drawn");
     state.handle_left_click(area.x, area.y);
     assert_eq!(state.overlay, Some(Overlay::ListPicker));
 }
@@ -1700,17 +1700,21 @@ fn render_records_code_region_for_click_to_copy() {
     }]);
     let _ = buffer_text(&mut state, 100, 30);
     assert!(
-        state.code_regions.iter().any(|(_, t)| t == "kubectl apply"),
+        state
+            .layout
+            .code_regions
+            .iter()
+            .any(|(_, t)| t == "kubectl apply"),
         "code region recorded for the fenced block: {:?}",
-        state.code_regions
+        state.layout.code_regions
     );
     assert!(
-        state.code_regions.iter().all(|(r, _)| r.height == 1),
+        state.layout.code_regions.iter().all(|(r, _)| r.height == 1),
         "regions are single rows"
     );
     // Geometry cross-check: the row where the box content actually renders
     // must have a recorded region at that same y (catches vis_row bugs).
-    let region_ys: Vec<u16> = state.code_regions.iter().map(|(r, _)| r.y).collect();
+    let region_ys: Vec<u16> = state.layout.code_regions.iter().map(|(r, _)| r.y).collect();
     let mut checked = false;
     for y in 0..30u16 {
         if nth_row(&mut state, 100, 30, y).contains("kubectl apply") {
@@ -2719,7 +2723,10 @@ fn overflowing_card_shows_scroll_indicator() {
     }]);
     // Short terminal forces the long body to overflow the card.
     let text = buffer_text(&mut state, 90, 12);
-    assert!(state.card_max_scroll > 0, "renderer detected overflow");
+    assert!(
+        state.layout.card_max_scroll > 0,
+        "renderer detected overflow"
+    );
     assert!(text.contains('–'), "scroll indicator like 1-6/N present");
     assert!(
         text.contains(SCROLLBAR_THUMB),
@@ -2745,7 +2752,10 @@ fn overflowing_card_with_many_items_never_loses_the_current_dot() {
     }]);
     state.current_item_index = last;
     let text = buffer_text(&mut state, 50, 10);
-    assert!(state.card_max_scroll > 0, "renderer detected overflow");
+    assert!(
+        state.layout.card_max_scroll > 0,
+        "renderer detected overflow"
+    );
     let has_dots = text.contains('·') || text.contains('●');
     assert!(
         !has_dots || text.contains('◉'),
@@ -2794,6 +2804,7 @@ fn overview_records_clickable_row_rects_that_map_to_the_right_task() {
     // A list-title row is recorded for the second list.
     assert!(
         state
+            .layout
             .overview_rows
             .iter()
             .any(|(_, t)| *t == OverviewTarget::List(1)),
@@ -2802,6 +2813,7 @@ fn overview_records_clickable_row_rects_that_map_to_the_right_task() {
 
     // Clicking the recorded rect for list 2's second item focuses it.
     let (rect, _) = state
+        .layout
         .overview_rows
         .iter()
         .find(|(_, t)| *t == OverviewTarget::Item(1, 1))
@@ -2856,6 +2868,7 @@ fn overview_sticky_header_click_rects_stay_consistent_near_a_scroll_boundary() {
 
     for (target_list, target_item, label) in [(0, 8, "verify-a"), (0, 9, "verify-b")] {
         let (rect, _) = state
+            .layout
             .overview_rows
             .iter()
             .find(|(_, t)| *t == OverviewTarget::Item(target_list, target_item))
@@ -2893,6 +2906,7 @@ fn overview_marker_zone_toggles_and_label_zone_navigates() {
 
     let rect_for = |state: &AppState, want: OverviewTarget| {
         state
+            .layout
             .overview_rows
             .iter()
             .find(|(_, t)| *t == want)
@@ -2931,12 +2945,12 @@ fn overview_rows_cleared_when_overview_is_hidden() {
         banner: None,
         items: vec![checkbox(1, "a", false)],
     }]);
-    state.overview_rows = vec![(Rect::new(0, 0, 1, 1), OverviewTarget::Item(0, 0))];
+    state.layout.overview_rows = vec![(Rect::new(0, 0, 1, 1), OverviewTarget::Item(0, 0))];
     // Below OVERVIEW_MIN_WIDTH (60), so the overview isn't drawn.
     let mut terminal = Terminal::new(TestBackend::new(40, 20)).unwrap();
     terminal.draw(|f| render(f, &mut state)).unwrap();
     assert!(
-        state.overview_rows.is_empty(),
+        state.layout.overview_rows.is_empty(),
         "stale click targets cleared when the overview is hidden"
     );
 }
@@ -2948,7 +2962,7 @@ fn overflowing_help_overlay_scrolls_and_shows_a_scrollbar() {
     // A short terminal clips the long help; it becomes scrollable.
     let text = buffer_text(&mut state, 90, 12);
     assert!(
-        state.help.max_scroll > 0,
+        state.layout.help_max_scroll > 0,
         "help overflows the short viewport"
     );
     assert!(
