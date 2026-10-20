@@ -661,8 +661,13 @@ and pushed`. Since the sync runs on a background thread, a slow or offline `git 
 never freezes the app during normal use. Git sync can't answer a password,
 passphrase or host-key prompt in the terminal: a push or signed commit that
 needs one fails at once, with the reason in the status bar, so use a
-credential helper, `ssh-agent` or a graphical askpass/pinentry for a synced
-repository. Quitting while a sync is still running is the one exception:
+credential helper, `ssh-agent`, a cached GPG passphrase or a graphical
+askpass/pinentry for a synced repository. A terminal pinentry
+(`pinentry-curses`) is never shown, since markcheck doesn't pass `GPG_TTY`
+on to git, except by a `gpg-agent` that was already sent to a terminal with
+`gpg-connect-agent updatestartuptty`: that one draws over markcheck and
+shares its keystrokes, so don't run it in the terminal markcheck uses.
+Quitting while a sync is still running is the one exception:
 `markcheck` stays open with `Waiting for git sync… press q again to
 abandon` and exits as soon as the sync finishes, so a quick `e` then `q`
 doesn't leave the change unsynced. Press `q` again to stop the sync

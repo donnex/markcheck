@@ -240,11 +240,15 @@ include!("../git_env.rs");
 /// Strips [`REDIRECTING_GIT_VARS`]. `GIT_OPTIONAL_LOCKS=0` stops the
 /// background `git status` from taking `.git/index.lock` to refresh the stat
 /// cache, which would make the user's own git commands fail meanwhile.
+/// `GPG_TTY` is removed because `gpg-agent` opens a curses pinentry on the
+/// terminal it names, which a new session doesn't prevent: signing then
+/// fails at once instead of drawing over the TUI.
 pub(super) fn git_command(repo_root: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env_remove("GPG_TTY");
     for var in REDIRECTING_GIT_VARS {
         cmd.env_remove(var);
     }

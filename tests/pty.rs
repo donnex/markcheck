@@ -1188,9 +1188,10 @@ fn git_sync_flag_commits_and_pushes_after_toggle() {
 
 #[test]
 fn git_sync_children_cannot_reach_markcheck_s_terminal() {
-    // A credential, host-key or pinentry prompt opens /dev/tty directly, so
-    // a hook doing the same stands in for all of them. Under the PTY the
-    // terminal exists; git sync's children must still be unable to open it.
+    // A credential or host-key prompt opens /dev/tty, and a curses pinentry
+    // opens the terminal `GPG_TTY` names, which needs no controlling
+    // terminal; a hook trying both stands in for all of them. markcheck is
+    // started with `GPG_TTY` set to the PTY, as a shell rc would.
     let root = unique_path("gitsync-no-tty");
     let work = root.join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -1208,7 +1209,13 @@ fn git_sync_children_cannot_reach_markcheck_s_terminal() {
     write_file(
         &hook,
         &format!(
-            "#!/bin/sh\nif (: < /dev/tty) 2>/dev/null; then r=opened; else r=refused; fi\necho $r > '{}'\n",
+            concat!(
+                "#!/bin/sh\nr=refused\n",
+                "if (: < /dev/tty) 2>/dev/null; then r='opened /dev/tty'; fi\n",
+                "if [ -n \"$GPG_TTY\" ] && (: < \"$GPG_TTY\") 2>/dev/null; ",
+                "then r=\"opened GPG_TTY $GPG_TTY\"; fi\n",
+                "echo \"$r\" > '{}'\n",
+            ),
             marker.display()
         ),
     );
@@ -1217,10 +1224,15 @@ fn git_sync_children_cannot_reach_markcheck_s_terminal() {
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    let ok = drive_args(
+    let mut cmd = CommandBuilder::new("sh");
+    cmd.arg("-c");
+    cmd.arg("GPG_TTY=$(tty); export GPG_TTY; exec \"$0\" --no-nerd-font --git-sync \"$1\"");
+    cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg(&path);
+    isolate(&mut cmd);
+    let ok = run_with_pty(
+        cmd,
         &path,
-        &["--git-sync"],
-        &[],
         &[
             Step::Key(" "),
             Step::WaitForFile(|s| s.contains("[x] `alpha`")),
@@ -1237,7 +1249,7 @@ fn git_sync_children_cannot_reach_markcheck_s_terminal() {
     assert_eq!(
         result.trim(),
         "refused",
-        "a git-sync child must have no controlling terminal"
+        "a git-sync child must not reach markcheck's terminal"
     );
 
     std::fs::remove_dir_all(&root).ok();

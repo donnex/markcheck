@@ -258,6 +258,18 @@ fn git_command_turns_off_gits_own_terminal_prompt() {
     );
 }
 #[test]
+fn git_command_hides_the_terminal_from_gpg() {
+    for cmd in [
+        git_command(Path::new(".")),
+        literal_pathspec_command(Path::new(".")),
+    ] {
+        assert!(
+            cmd.get_envs().any(|(k, v)| k == "GPG_TTY" && v.is_none()),
+            "a curses pinentry must not be told which terminal to draw on"
+        );
+    }
+}
+#[test]
 fn a_command_runs_in_a_session_of_its_own() {
     // Fields 5 and 6 of /proc/<pid>/stat are the process group and session.
     if !Path::new("/proc/self/stat").exists() {
