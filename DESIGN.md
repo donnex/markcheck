@@ -744,142 +744,142 @@ One line per decision, oldest first within each area, with the commit that made 
 
 ### Parsing
 
-- `[/]` markers come from pulldown-cmark's own task positions, not a line scan — `cba765e` (#3); the pre-pass repeats until it finds nothing new, and looks past setext headings — `4e147eb` (#79)
-- A closing fence must be a bare fence line, as CommonMark says — `c63e25f`
-- One line model for `\r\n`, `\n` and `\r`, shared by parsing and write-back — `08f9f06`
-- A leading YAML or TOML front-matter block is skipped and kept byte for byte — `e83bec3` (#43)
-- A list whose only checkboxes are quoted is dropped — `aa97026` (#27)
-- A heading inside an item or a quote isn't structural — `f6a0468` (#92)
-- A list's banner comes only from a list with tasks — `a908995` (#103); a bold-only bullet carrying a command stays a card — `7050a2d` (#115)
-- Paragraphs and HTML-split words inside an item are separated by a space — `34e0f22` (#72)
-- Bare URLs in task text are links — `2fc2f0f` (#81)
-- Ordered-list step numbers show on cards and rows — `dc428a3` (#82)
-- A file without an H1 is titled from its name — `7124b97` (#86)
-- An item's indented code block is shown and copyable — `7450867` (#130)
-- Code in a card title is no copy candidate — `9c1c776` (#137)
-- `parse_source` is a `ParseState` event walk — `aa71dfd` (#40)
-- Prose under a heading shows above its first task; what can't be shown is reported — `509c4e1` (#80)
-- A skipped state, `[-]` — `ff89c2c` (#54); critical steps, `**! Title**`, take a second press — `b9fb1b7` (#95)
-- Headings get GitHub-style anchors for `#links`, `+N` and `file.md#anchor` — `b5134b9` (#114, #139)
-- A tab-indented nested task gets its own line — `e1f8af6` (#79)
-- Property tests pin the round trip and the one-marker toggle — `4a04ea7` (#79); every example is pinned too — `342cec0`
+- `[/]` markers come from pulldown-cmark's own task positions, not a line scan — `d816a6b` (#3); the pre-pass repeats until it finds nothing new, and looks past setext headings — `99b877a` (#79)
+- A closing fence must be a bare fence line, as CommonMark says — `d31cb9e`
+- One line model for `\r\n`, `\n` and `\r`, shared by parsing and write-back — `07233fd`
+- A leading YAML or TOML front-matter block is skipped and kept byte for byte — `083afb6` (#43)
+- A list whose only checkboxes are quoted is dropped — `afd6913` (#27)
+- A heading inside an item or a quote isn't structural — `20b1968` (#92)
+- A list's banner comes only from a list with tasks — `df0ca8c` (#103); a bold-only bullet carrying a command stays a card — `4b4e95e` (#115)
+- Paragraphs and HTML-split words inside an item are separated by a space — `4521b53` (#72)
+- Bare URLs in task text are links — `9eef786` (#81)
+- Ordered-list step numbers show on cards and rows — `d03d9c0` (#82)
+- A file without an H1 is titled from its name — `8e05f7f` (#86)
+- An item's indented code block is shown and copyable — `57a52e2` (#130)
+- Code in a card title is no copy candidate — `001f897` (#137)
+- `parse_source` is a `ParseState` event walk — `f50e9f0` (#40)
+- Prose under a heading shows above its first task; what can't be shown is reported — `84bc913` (#80)
+- A skipped state, `[-]` — `198972c` (#54); critical steps, `**! Title**`, take a second press — `a98e483` (#95)
+- Headings get GitHub-style anchors for `#links`, `+N` and `file.md#anchor` — `9670c45` (#114, #139)
+- A tab-indented nested task gets its own line — `003b4c2` (#79)
+- Property tests pin the round trip and the one-marker toggle — `61f8789` (#79); every example is pinned too — `b04f98a`
 
 ### Writing the file
 
-- Write-back rolls memory back when it fails — `9cb9b7c`; a missing final newline stays missing — `91978b0`
-- A write is refused when the file changed since it was loaded — `f69b7ee`, made a compare-and-swap under a lock — `f3774c5`, with SHA-256 as the fingerprint — `14ce17e`
-- Writes are refused after a reload markcheck declined — `d38e0b9`, and a failed reload doesn't advance the fingerprint — `01322d5`
-- A temp-file collision retries at a new name rather than deleting the file — `65c7d07`; names carry process-random entropy — `305900d`
-- The write lock is never deleted while another instance holds it — `3239e91`; it is recovered only from a provably dead owner — `116c78d`, `4d2c5da` (#6); created `0600` — `5d36e44`; kept in a directory private to the user — `a3fb1f4` (#1)
-- The checklist path is resolved before locking — `07082c9`
-- A hard-linked checklist is warned about, not refused — `3a42ccf`
-- A write-protected checklist is refused — `9cc1c92` (#47)
-- An untouched `[X]` keeps its casing — `ee75c78` (#23)
-- The group is kept on save and another owner flagged — `52320b8` (#106); setuid, setgid and sticky bits are cleared — `400b91d` (#122)
-- A symlink or special file swapped in for the checklist is refused — `6dfe4f1` (#123)
-- A read-only folder falls back to an in-place save, and failures say why — `6a6189e`, `90462dc` (#46)
-- One atomic temp-file writer serves save and `--new` — `69948cc` (#19); `--new` falls back to a direct write without hard links — `f12171e` (#14)
+- Write-back rolls memory back when it fails — `5509d83`; a missing final newline stays missing — `5b719a3`
+- A write is refused when the file changed since it was loaded — `7d6602a`, made a compare-and-swap under a lock — `a814c32`, with SHA-256 as the fingerprint — `408d43f`
+- Writes are refused after a reload markcheck declined — `1ef5efa`, and a failed reload doesn't advance the fingerprint — `eede861`
+- A temp-file collision retries at a new name rather than deleting the file — `ed8160f`; names carry process-random entropy — `18642c0`
+- The write lock is never deleted while another instance holds it — `2d2987a`; it is recovered only from a provably dead owner — `7775667`, `adbd3a5` (#6); created `0600` — `83e3008`; kept in a directory private to the user — `597497a` (#1)
+- The checklist path is resolved before locking — `6b22320`
+- A hard-linked checklist is warned about, not refused — `12701c3`
+- A write-protected checklist is refused — `f3280bb` (#47)
+- An untouched `[X]` keeps its casing — `fd7f3df` (#23)
+- The group is kept on save and another owner flagged — `8988d46` (#106); setuid, setgid and sticky bits are cleared — `cd70b83` (#122)
+- A symlink or special file swapped in for the checklist is refused — `73df2cd` (#123)
+- A read-only folder falls back to an in-place save, and failures say why — `b491c12`, `12ae69a` (#46)
+- One atomic temp-file writer serves save and `--new` — `bd712c8` (#19); `--new` falls back to a direct write without hard links — `aa4d64e` (#14)
 
 ### Reloading
 
-- The watcher watches the parent directory; a 2 s recheck backs it up — `fc5d4ec` (#50)
-- Search, the picker and help stay open across a reload — `da1fea7` (#24); armed chords are disarmed — `27bd671`
-- The cursor stays on its task across a reload, and a reload never auto-copies — `e843915` (#60); same-named lists are told apart by rank — `a93e1fb`
-- A refused undo or redo that reloaded drops its stale entry — `757e987` (#91)
-- A reload says which tasks it changed — `b88be7d` (#140)
-- A second session on the same file is announced — `10f426f` (#101)
+- The watcher watches the parent directory; a 2 s recheck backs it up — `a5ee606` (#50)
+- Search, the picker and help stay open across a reload — `758fb0d` (#24); armed chords are disarmed — `7ae1c62`
+- The cursor stays on its task across a reload, and a reload never auto-copies — `def3585` (#60); same-named lists are told apart by rank — `d2c5fa7`
+- A refused undo or redo that reloaded drops its stale entry — `aa5eb8d` (#91)
+- A reload says which tasks it changed — `219fdaf` (#140)
+- A second session on the same file is announced — `adfdc1c` (#101)
 
 ### Keys and feedback
 
-- Unbound `Ctrl`/`Alt` chords are refused, not run as the plain key — `3752696` (#25)
-- `Ctrl-C` answers with how to quit — `ff57661` (#13); `Esc` no longer quits — `8ebb679`, `cfaf7bc` (#51)
-- Keys that do nothing say so — `423c639`, `e5f880b` (#52); a lone `g` shows its prompt — `9524831` (#104)
-- The reset dialog counts started tasks — `9e162fa` (#26); the quit-reset stays open when it can't be saved — `2519713` (#7); `R` can reset one list or sub-list — `185d953` (#118)
-- `/` searches forward from the cursor — `8344971` (#61); a failed search puts the cursor and clipboard back — `1406f58` (#117); an empty `/` repeats the last search — `7794ec0` (#131)
-- `Tab`, `n` and `N` say when they wrap — `56356f4` (#87)
-- `Space` advances to the next open task, never a done one — `bdfc180` (#84)
-- Every mode's keys are in help, enforced by a test — `0eecf9a` (#74)
-- The wheel is routed per screen and picker rows are clickable — `b475ce0` (#65)
-- Pasted text is ignored, not run as keys — `991a3fc` (#57)
-- `Ctrl-Z` suspends to the shell — `8bcdf06` (#107)
-- Toggles from keys and clicks share `set_state` — `4019837` (#19)
+- Unbound `Ctrl`/`Alt` chords are refused, not run as the plain key — `76bada0` (#25)
+- `Ctrl-C` answers with how to quit — `f87d913` (#13); `Esc` no longer quits — `8370afa`, `611c5e6` (#51)
+- Keys that do nothing say so — `6f6691c`, `bdcc1d6` (#52); a lone `g` shows its prompt — `afcc0e3` (#104)
+- The reset dialog counts started tasks — `3992d74` (#26); the quit-reset stays open when it can't be saved — `87b4f10` (#7); `R` can reset one list or sub-list — `a9f8c12` (#118)
+- `/` searches forward from the cursor — `ed5b296` (#61); a failed search puts the cursor and clipboard back — `3b49091` (#117); an empty `/` repeats the last search — `0b71837` (#131)
+- `Tab`, `n` and `N` say when they wrap — `fd55457` (#87)
+- `Space` advances to the next open task, never a done one — `79be1ff` (#84)
+- Every mode's keys are in help, enforced by a test — `7736e9f` (#74)
+- The wheel is routed per screen and picker rows are clickable — `b267844` (#65)
+- Pasted text is ignored, not run as keys — `1c5454e` (#57)
+- `Ctrl-Z` suspends to the shell — `375f59b` (#107)
+- Toggles from keys and clicks share `set_state` — `9526138` (#19)
 
 ### Clipboard and links
 
-- OSC 52 is reported as sent, not copied — `c3c40c1`; an oversized payload is named — `0760fb5`
-- Commands with hidden control characters aren't copied — `dff1099` (#4)
-- One arboard instance lives for the session, so X11 copies survive — `3ec1ac1` (#58)
-- A click copies the clicked command in full — `5ff877b` (#59); `y` plus a digit picks one of several — `c6a8392` (#116), and `[10]` and up work for `o` and `y` — `6e64d5e` (#100)
-- Auto-copy runs on every navigation — `6cb16c0` (#30)
-- `$BROWSER` follows the colon-list and `%s` convention — `b3d59be` (#15)
-- Headless sessions copy a link instead of opening it; failed openers are reported — `84ce621` (#63)
-- Over SSH copies go to both clipboards; `--clipboard` chooses — `05172a2` (#133)
+- OSC 52 is reported as sent, not copied — `09286ac`; an oversized payload is named — `60d4d33`
+- Commands with hidden control characters aren't copied — `970ede0` (#4)
+- One arboard instance lives for the session, so X11 copies survive — `dff8215` (#58)
+- A click copies the clicked command in full — `766b23e` (#59); `y` plus a digit picks one of several — `0c6bdc5` (#116), and `[10]` and up work for `o` and `y` — `9ac587e` (#100)
+- Auto-copy runs on every navigation — `6f32862` (#30)
+- `$BROWSER` follows the colon-list and `%s` convention — `a30e2c8` (#15)
+- Headless sessions copy a link instead of opening it; failed openers are reported — `4a61362` (#63)
+- Over SSH copies go to both clipboards; `--clipboard` chooses — `74ba3e8` (#133)
 
 ### Screen
 
-- Text is measured in display cells — `3f05e4e` (#12), `7a829d1`
-- A long status message wraps — `00dd890` (#11)
-- A completion claim is never made with work left — `3bd14ab`
-- `NO_COLOR` is honoured and code has an explicit foreground — `87dedb5` (#45); truecolor is detected from `TERM` too, with `--color` — `f618fec` (#134)
-- The overview stays linear and the loop redraws only on change — `a7f997c` (#39)
-- `Screen` split into a base `View` and an `Overlay` — `7f711d0` (#66)
-- Side cards show the task title — `1c1e76c` (#75)
-- Dialogs size to their content — `7134587` (#93), and never panic on a short terminal — `0e79194`
-- Long banners and titles wrap; other rows are cut with `…` — `c47199f` (#102)
-- Tabs in commands render as indentation — `2d5b4ef` (#85); wrapped command rows carry `↩` — `bfafca9` (#136)
-- One state-marker mapping draws every marker — `9845a0b` (#19); the progress ramp derives from the palette — `97e9cc5` (#19)
-- Unicode icons are the default — `cea43ac` (#83)
-- The terminal title and an exit line show progress — `d985efd` (#135)
+- Text is measured in display cells — `290b5c8` (#12), `91b5629`
+- A long status message wraps — `0cc4249` (#11)
+- A completion claim is never made with work left — `46ddb3d`
+- `NO_COLOR` is honoured and code has an explicit foreground — `10d8ed2` (#45); truecolor is detected from `TERM` too, with `--color` — `2600b88` (#134)
+- The overview stays linear and the loop redraws only on change — `4632909` (#39)
+- `Screen` split into a base `View` and an `Overlay` — `71be6ba` (#66)
+- Side cards show the task title — `2953fde` (#75)
+- Dialogs size to their content — `6da2f23` (#93), and never panic on a short terminal — `0e79194`
+- Long banners and titles wrap; other rows are cut with `…` — `5e9e637` (#102)
+- Tabs in commands render as indentation — `0d0cac7` (#85); wrapped command rows carry `↩` — `3fd86d6` (#136)
+- One state-marker mapping draws every marker — `e50bb57` (#19); the progress ramp derives from the palette — `d287e74` (#19)
+- Unicode icons are the default — `bbf566a` (#83)
+- The terminal title and an exit line show progress — `d68b741` (#135)
 
 ### Git sync
 
-- Commits are built from a captured snapshot through a temporary index, never the real one — `9cf57f7`, `d9893d5`, and the real index is kept in step — `9f19aea`
-- Every git subprocess is bounded and killed on timeout — `6319ff7`, with explicit stdio — `9dcd627` and scratch files instead of pipes — `50a41ac`
-- The commit's scope is enforced after hooks run — `cc4f850`; the commit made is verified and rolled back exactly — `3cfbcc5`; a timed-out commit is reconciled against HEAD — `c07461d`, `8c543b2`
-- Stale content is never committed — `5f6e737`; nothing is committed at startup — `80c8004`
-- Unrelated unpushed commits block a sync — `c5150f1`, `01ddc1e`; commits are checked one by one — `b5bfd9e`; unverifiable history refuses — `15f29f8`
-- A staged checklist is neither overwritten nor dropped — `36566b4`, `d725dbf`
-- A commit markcheck didn't make is never rewound — `2f93265`
-- The verified commit is pushed explicitly — `c01dbe7`, `978742e`; never an unresolved one — `cba8f50`; never without an upstream — `352c736`; only where `git push` would push — `053a98c` (#98); never into a local branch it tracks — `4993056` (#71)
-- The remote check and the push are one atomic operation — `826fee5`
-- Retries are tracked by commit SHA — `68e29ce`, `835231d`, `55c1509`, and an abandoned retry is cleared — `133618a`
-- Trackedness comes from the index — `f402867`; blobs are hashed as git hashes them — `8814728`, and compared as SHAs — `2bf68de` (#127)
-- The ambient git environment is neutralised — `cbe75c0`; the variables to strip live in one list — `9933823` (#19)
-- The pathspec is matched literally — `a8ee986` (#70); a non-UTF-8 file name refuses — `be78ef1` (#8)
-- An unknown repository state fails closed — `0539c79` (#9)
-- Startup says why sync stays off — `e3cb557` (#38) and reports an untracked checklist — `e934930` (#28)
-- Hooks get 5 minutes and the real error is reported — `90472e8` (#53)
-- A failed sync stays in the title bar until a push lands — `f89ba07` (#64); the last one's failure is reported after quitting — `16371bd` (#108)
-- A stale `.git/index.lock` is never left behind — `3f4f4b8` (#119)
-- An `e` edit is synced — `aea85ec`, but not after an editor failure — `dc6c0bb` (#94); an external edit drops a queued request — `0d83290`
-- `--no-git-sync` overrides `git_sync_paths` — `790448c` (#111)
-- Git runs with no controlling terminal — `0bfd1c4` (#2); quit and signals stop and clean up git — `cf33400` (#5); every command runs from the repository root — `6d8d080` (#141)
-- A `Synced-by: markcheck` trailer marks markcheck's commits — `f765b93` (#62, #99)
-- A `git_sync_paths` entry covers only its own repository unless it ends in `/**` — `7290953` (#124)
-- Changes are batched after a quiet period — `2655743` (#56)
-- The module is split by concern into one dependency direction — `a566723` … `99be4d8`
-- A randomised operation-sequence test drives the invariants — `b06d88d`
+- Commits are built from a captured snapshot through a temporary index, never the real one — `03203d9`, `b942ea9`, and the real index is kept in step — `e20d4cc`
+- Every git subprocess is bounded and killed on timeout — `1f16c98`, with explicit stdio — `2c2c13c` and scratch files instead of pipes — `b884fed`
+- The commit's scope is enforced after hooks run — `b16510c`; the commit made is verified and rolled back exactly — `31eb035`; a timed-out commit is reconciled against HEAD — `2081504`, `3c19d5b`
+- Stale content is never committed — `c0707fc`; nothing is committed at startup — `8f63a2e`
+- Unrelated unpushed commits block a sync — `9d89a8d`, `a1f2860`; commits are checked one by one — `cbce565`; unverifiable history refuses — `4f41c9d`
+- A staged checklist is neither overwritten nor dropped — `39f6bd7`, `43205de`
+- A commit markcheck didn't make is never rewound — `e1f7b99`
+- The verified commit is pushed explicitly — `bb7b07e`, `b4f1c4d`; never an unresolved one — `b04d9e5`; never without an upstream — `7c199e5`; only where `git push` would push — `464f295` (#98); never into a local branch it tracks — `c5bf59f` (#71)
+- The remote check and the push are one atomic operation — `17a13be`
+- Retries are tracked by commit SHA — `901f062`, `dd3231c`, `1edb49e`, and an abandoned retry is cleared — `8ac542f`
+- Trackedness comes from the index — `82a2d6a`; blobs are hashed as git hashes them — `fa99398`, and compared as SHAs — `f85b215` (#127)
+- The ambient git environment is neutralised — `a3f1fe4`; the variables to strip live in one list — `b6af810` (#19)
+- The pathspec is matched literally — `acea6aa` (#70); a non-UTF-8 file name refuses — `60cc8e7` (#8)
+- An unknown repository state fails closed — `cdeb31d` (#9)
+- Startup says why sync stays off — `a7bbc00` (#38) and reports an untracked checklist — `be0713d` (#28)
+- Hooks get 5 minutes and the real error is reported — `e80a274` (#53)
+- A failed sync stays in the title bar until a push lands — `3d3a136` (#64); the last one's failure is reported after quitting — `313d309` (#108)
+- A stale `.git/index.lock` is never left behind — `c7283e8` (#119)
+- An `e` edit is synced — `aea85ec`, but not after an editor failure — `2c7b0af` (#94); an external edit drops a queued request — `0ab2032`
+- `--no-git-sync` overrides `git_sync_paths` — `ac665d4` (#111)
+- Git runs with no controlling terminal — `3757ff9` (#2); quit and signals stop and clean up git — `b6deb70` (#5); every command runs from the repository root — `8f2432f` (#141)
+- A `Synced-by: markcheck` trailer marks markcheck's commits — `1de27ce` (#62, #99)
+- A `git_sync_paths` entry covers only its own repository unless it ends in `/**` — `3c227da` (#124)
+- Changes are batched after a quiet period — `7b197bd` (#56)
+- The module is split by concern into one dependency direction — `fd3877e` … `f366f23`
+- A randomised operation-sequence test drives the invariants — `1db63de`
 
 ### Startup, config and packaging
 
-- Every boolean setting has a flag in both directions — `f59cc63`, `0fbdf89`
-- The version is stamped from the checkout and restamped when it moves — `547f827`, `89c9a57`
-- Startup errors name the file and the fix — `7639d12` (#48); a main-thread panic shows on the restored screen — `31eb317` (#49)
-- Logic moved out of `main.rs` into covered modules — `9e506b1` (#33)
-- Editors open on the task's line — `43be145` (#110), with a hint when one returns at once — `a309e83` (#109)
-- Unknown config keys warn instead of failing; `--config`/`--no-config` — `2fb6170` (#112)
-- AppState's outward actions go through one effect queue — `0e13a29` (#138)
-- Unix only, with a clear build error — `ba4b69f` (#78)
-- A static musl binary and a declared minimum Rust — `864735e` (#44); license notices — `c70f432` (#132); a man page and completions — `53d62d1` (#90)
-- The release workflow is hardened and reuses `check.yml` — `aa21ab7` (#16)
+- Every boolean setting has a flag in both directions — `9c0989f`
+- The version is stamped from the checkout and restamped when it moves — `9525e7f`, `b26ac1b`
+- Startup errors name the file and the fix — `8089d26` (#48); a main-thread panic shows on the restored screen — `7baac68` (#49)
+- Logic moved out of `main.rs` into covered modules — `d427a6e` (#33)
+- Editors open on the task's line — `cf535b6` (#110), with a hint when one returns at once — `470948b` (#109)
+- Unknown config keys warn instead of failing; `--config`/`--no-config` — `372b004` (#112)
+- AppState's outward actions go through one effect queue — `408afcb` (#138)
+- Unix only, with a clear build error — `87c8e59` (#78)
+- A static musl binary and a declared minimum Rust — `b8f26e2` (#44); license notices — `3916dff` (#132); a man page and completions — `ed4f632` (#90)
+- The release workflow is hardened and reuses `check.yml` — `57272c5` (#16)
 
 ### Tests
 
-- Test git and config are isolated from the machine — `f0aca59` (#31)
-- PTY waits are bounded and fixed sleeps dropped — `ce3fd31` (#32)
-- Tests don't leak temp files or touch the clipboard — `8b45522` (#29)
-- Test code is outside the coverage gate — `9eca174` (#125)
-- Machine-dependent tests skip as root or without `ps` — `0998eeb` (#126)
-- Write-back is asserted on the file's bytes — `2c5c625` (#76); auto-copy tests can fail — `ad08ac6` (#77)
-- Golden screens for every example — `b6f2fa4` (#105)
-- Load-sensitive waits widened — `6d4cc1d`, `25af013`, `d6b91ff` (#144)
+- Test git and config are isolated from the machine — `e918f78` (#31)
+- PTY waits are bounded and fixed sleeps dropped — `d381c88` (#32)
+- Tests don't leak temp files or touch the clipboard — `f1b8788` (#29)
+- Test code is outside the coverage gate — `f8d7f1e` (#125)
+- Machine-dependent tests skip as root or without `ps` — `e8d0e1a` (#126)
+- Write-back is asserted on the file's bytes — `a773656` (#76); auto-copy tests can fail — `29915f2` (#77)
+- Golden screens for every example — `6095cbf` (#105)
+- Load-sensitive waits widened — `7756f9f`, `5d4a7c3`, `b6deb70` (#144)
