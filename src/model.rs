@@ -1225,8 +1225,9 @@ pub struct GitSyncState {
 pub struct PendingSync {
     pub content: String,
     pub content_hash: [u8; 32],
-    /// The file's content before this change was written; `None` when the file
-    /// couldn't be read just before the write.
+    /// The file's content just before `commit_write` wrote this change; `None`
+    /// when it couldn't be read then. For an edit made in `e`, the edited
+    /// content itself, since markcheck didn't write it.
     /// Used only by git-sync's staged-target guard, which compares it with the
     /// staged blob through `hash-object --path` so clean filters apply. A full
     /// copy rather than a blob SHA, which would need a git subprocess while the
