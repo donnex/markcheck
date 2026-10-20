@@ -54,6 +54,15 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-deny@0.20.2
+
+      # Every dependency's license must be on deny.toml's list (#132).
+      - name: cargo deny check licenses
+        run: cargo deny check licenses
+
       - name: Build
         run: cargo build --locked
 
