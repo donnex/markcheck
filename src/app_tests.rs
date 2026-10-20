@@ -1965,6 +1965,32 @@ fn list_with_zero_items_does_not_panic() {
 }
 
 #[test]
+fn q_offers_the_reset_when_every_task_is_skipped() {
+    let mut skipped = checkbox(1, false);
+    skipped.kind = ItemKind::Checkbox(TaskState::Skipped);
+    let mut state = AppState::new(document_with_lists(vec![List {
+        title: "S".to_string(),
+        banner: None,
+        items: vec![skipped],
+    }]));
+    state.handle_key(KeyCode::Char('q'));
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
+    assert!(!state.quit_requested());
+}
+
+#[test]
+fn q_quits_straight_away_with_no_tasks_touched() {
+    let mut state = AppState::new(document_with_lists(vec![List {
+        title: "S".to_string(),
+        banner: None,
+        items: vec![],
+    }]));
+    state.handle_key(KeyCode::Char('q'));
+    assert_eq!(state.overlay, None);
+    assert!(state.quit_requested());
+}
+
+#[test]
 fn q_sets_should_quit() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('q'));
@@ -5501,6 +5527,31 @@ fn undo_after_start_then_toggle_reports_marked_started() {
     assert_eq!(
         state.status_message.as_deref(),
         Some("Undo: marked started")
+    );
+}
+
+#[test]
+fn undo_and_redo_of_a_skip_name_the_state() {
+    let document = document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, false), checkbox(2, false)],
+    }]);
+    let mut state = AppState::new(document);
+    state.skip_current();
+    state.undo();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Undo: marked not done")
+    );
+    state.redo();
+    assert_eq!(
+        state.document.lists[0].items[0].kind,
+        ItemKind::Checkbox(TaskState::Skipped)
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Redo: marked skipped")
     );
 }
 

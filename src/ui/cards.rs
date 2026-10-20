@@ -2046,21 +2046,30 @@ fn completion_rule() -> Line<'static> {
     ))
 }
 
-/// What a reset will change, e.g. `3 done and 2 started tasks`.
-fn reset_scope(done: usize, started: usize) -> String {
-    let mut parts = Vec::new();
-    if done > 0 {
-        parts.push(format!("{done} done"));
-    }
-    if started > 0 {
-        parts.push(format!("{started} started"));
-    }
-    let noun = if done + started == 1 { "task" } else { "tasks" };
-    format!("{} {noun}", parts.join(" and "))
+/// What a reset will change, e.g. `3 done, 1 started and 2 skipped tasks`.
+fn reset_scope(done: usize, started: usize, skipped: usize) -> String {
+    let parts: Vec<String> = [(done, "done"), (started, "started"), (skipped, "skipped")]
+        .into_iter()
+        .filter(|&(count, _)| count > 0)
+        .map(|(count, name)| format!("{count} {name}"))
+        .collect();
+    let joined = match parts.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => "no".to_string(),
+    };
+    let noun = if done + started + skipped == 1 {
+        "task"
+    } else {
+        "tasks"
+    };
+    format!("{joined} {noun}")
 }
 
 fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
     let (done, started, total) = state.document.checkbox_progress();
+    let skipped = state.document.skipped_count();
+    let total = total + skipped;
     let file_name = state
         .document
         .file_path
@@ -2077,7 +2086,7 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(""),
         Line::from(format!(
             "This marks {} (of {total}) as not started",
-            reset_scope(done, started)
+            reset_scope(done, started, skipped)
         )),
         Line::from(format!("and rewrites {file_name}.")),
     ];
@@ -2110,11 +2119,18 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_confirm_quit_reset(frame: &mut Frame, area: Rect, state: &AppState) {
     let (_, total) = state.document.checkbox_stats();
+    let skipped = state.document.skipped_count();
+    let total = total + skipped;
+    let heading = if skipped > 0 {
+        "All tasks are done or skipped."
+    } else {
+        "All tasks are done."
+    };
 
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "All tasks are done.",
+            heading,
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),

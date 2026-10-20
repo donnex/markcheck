@@ -2113,6 +2113,7 @@ impl AppState {
                     Some(ItemKind::Checkbox(TaskState::Done)) => "marked done",
                     Some(ItemKind::Checkbox(TaskState::Started)) => "marked started",
                     Some(ItemKind::Checkbox(TaskState::NotStarted)) => "marked not done",
+                    Some(ItemKind::Checkbox(TaskState::Skipped)) => "marked skipped",
                     _ => "restored",
                 };
                 self.set_status(format!("{verb}: {desc}"));
@@ -2539,10 +2540,10 @@ impl AppState {
         }
 
         if code == KeyCode::Char('q') {
-            // When everything is done, offer to reset before quitting
-            // instead of quitting outright.
-            let (done, total) = self.document.checkbox_stats();
-            if total > 0 && done == total {
+            // When every task is done or skipped, offer to reset before
+            // quitting instead of quitting outright.
+            let (done, _started, total) = self.document.checkbox_progress();
+            if done == total && done + self.document.skipped_count() > 0 {
                 self.overlay = Some(Overlay::ConfirmQuitReset);
             } else {
                 self.effects.push(Effect::Quit);

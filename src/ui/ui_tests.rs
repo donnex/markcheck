@@ -2524,6 +2524,46 @@ fn confirm_reset_counts_started_tasks() {
 }
 
 #[test]
+fn confirm_reset_counts_skipped_tasks() {
+    let mut state = sample_state();
+    state.document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Skipped);
+    state.overlay = Some(Overlay::ConfirmReset);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        text.contains("This marks 1 skipped task (of 3) as not started"),
+        "{text}"
+    );
+
+    state.document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+    state.document.lists[1].items[0].kind = ItemKind::Checkbox(TaskState::Started);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        text.contains("This marks 1 done, 1 started and 1 skipped task"),
+        "{text}"
+    );
+}
+
+#[test]
+fn confirm_reset_says_no_tasks_when_nothing_is_set() {
+    let mut state = sample_state();
+    state.document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::NotStarted);
+    state.overlay = Some(Overlay::ConfirmReset);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(text.contains("This marks no tasks (of 3)"), "{text}");
+}
+
+#[test]
+fn confirm_quit_reset_counts_skipped_tasks() {
+    let mut state = sample_state();
+    state.document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Done);
+    state.document.lists[1].items[0].kind = ItemKind::Checkbox(TaskState::Skipped);
+    state.overlay = Some(Overlay::ConfirmQuitReset);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(text.contains("All tasks are done or skipped."), "{text}");
+    assert!(text.contains("Reset all 3 tasks"), "{text}");
+}
+
+#[test]
 fn renders_confirm_quit_reset_screen() {
     let mut state = sample_state();
     state.overlay = Some(Overlay::ConfirmQuitReset);
