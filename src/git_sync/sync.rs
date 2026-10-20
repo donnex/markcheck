@@ -24,7 +24,6 @@ use super::shared::{RacePoint, SyncOutcome, lock_hash, race_point};
 const MAX_COMMIT_MESSAGE_LEN: usize = 80;
 /// The smallest description budget worth keeping after a cut.
 const MIN_DESC_LEN: usize = 8;
-/// Bounds the file-name prefix so a very long name can't push the message
 /// One description as it is; several as a count, listed in the body, for a
 /// batch of changes synced together.
 pub(super) fn batch_message(file_path: &Path, descriptions: &[String]) -> String {
@@ -40,8 +39,11 @@ pub(super) fn batch_message(file_path: &Path, descriptions: &[String]) -> String
         }
     }
 }
+
+/// Bounds the file-name prefix so a very long name can't push the message
 /// past `MAX_COMMIT_MESSAGE_LEN`.
 const MAX_FILE_NAME_LEN: usize = MAX_COMMIT_MESSAGE_LEN - (2 + MIN_DESC_LEN + 1);
+
 pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
     let file_name = file_path
         .file_name()

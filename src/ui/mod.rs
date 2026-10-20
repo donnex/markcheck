@@ -260,8 +260,6 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     );
 
     // Left group: just the static identity — title │ filename.
-    // Nothing dynamic lives here any more; the list tabs are their own row
-    // on narrow terminals, so they don't either.
     let spans = vec![title_span, separator, filename_span];
     frame.render_widget(Paragraph::new(Line::from(spans)), left_area);
 }

@@ -62,8 +62,8 @@ fn current_stat(path: &Path) -> Option<(SystemTime, u64)> {
 }
 
 /// Hash of `path`'s current on-disk bytes, or `None` if it can't be read.
-/// See `model::hash_bytes`'s doc comment for what this check is (and isn't)
-/// used for — a pre-write content check, not an atomic compare-and-swap.
+/// The pre-write content check, made a compare-and-swap between instances
+/// by `writer::WriteLock`.
 fn current_content_hash(path: &Path) -> Option<[u8; 32]> {
     writer::read_checklist(path)
         .ok()
@@ -225,8 +225,8 @@ impl AppState {
             .expect("current_list_index within bounds (AppState ≥1-list invariant)")
     }
 
-    /// `None` if the current list has no items at all (e.g. a heading
-    /// with only prose underneath it, no checklist).
+    /// `None` when the cursor is past the current list's items. The parser
+    /// keeps only lists with a task, so a loaded document always has one.
     pub fn current_item(&self) -> Option<&Item> {
         self.current_list().items.get(self.current_item_index)
     }
@@ -1020,7 +1020,7 @@ impl AppState {
             return;
         }
         // Otherwise a click anywhere on the card copies its sole candidate,
-        // exactly like `y` (the MVP behavior).
+        // exactly like `y`.
         if self
             .layout
             .card_rect
@@ -2704,8 +2704,6 @@ fn list_all_done(list: &List) -> bool {
         .all(|i| matches!(i.kind, ItemKind::Checkbox(state) if state.is_resolved()))
 }
 
-/// The verb naming a transition *into* `state`, used to build the git-sync
-/// commit message: `Check "Restart service"`, `Start "..."`,
 /// `Ctrl-W` in a prompt: drop trailing spaces, then the word before them,
 /// as in the shell and vim's command line.
 fn delete_last_word(query: &mut String) {
@@ -2802,7 +2800,9 @@ fn toggle_message(state: TaskState) -> &'static str {
     }
 }
 
-/// `Uncheck "..."`.
+/// The verb naming a transition *into* `state`, used to build the git-sync
+/// commit message: `Check "Restart service"`, `Start "..."`,
+/// `Uncheck "..."`, `Skip "..."`.
 fn state_verb(state: TaskState) -> &'static str {
     match state {
         TaskState::Done => "Check",

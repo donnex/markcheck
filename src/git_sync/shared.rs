@@ -62,8 +62,10 @@ pub enum SyncOutcome {
     /// A push retry gave up because its commit is no longer `HEAD`. Unlike
     /// `Skipped`, it clears the armed retry.
     RetryAbandoned,
-    /// The sync stopped: a git command failed (the message is the first line
-    /// of its stderr) or a guard refused. Usually nothing was committed, but a
+    /// The sync stopped: a git command failed (the message is the line that
+    /// says why: a push's rejection or a remote's message, else a `fatal:` or
+    /// `error:` line, else the last line, from stderr or else stdout) or a
+    /// guard refused. Usually nothing was committed, but a
     /// commit whose scope couldn't be verified, or whose undo failed, is left on
     /// the branch and the message names it.
     Failed(String),

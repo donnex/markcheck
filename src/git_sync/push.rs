@@ -154,10 +154,11 @@ pub(super) fn retry_commit(repo_root: &Path, expected_commit: &str) -> SyncOutco
 /// Pushes a commit an earlier session left local-only, and never builds a
 /// commit: opening a checklist must not publish uncommitted edits. An
 /// untracked checklist is always reported, since git-sync can never act on
-/// it; a blocked repository or a refused history is `Failed`; nothing to
-/// push, or a tip that can't be read, is a quiet `Skipped`. Only commits
-/// carrying markcheck's own trailer are pushed (#62): one the user made and
-/// kept local is left alone, with `NotCaughtUp` saying so.
+/// it; a blocked repository, or a history that can't be checked, is
+/// `Failed`; nothing to push, or a tip that can't be read, is a quiet
+/// `Skipped`. Only commits carrying markcheck's own trailer are pushed (#62):
+/// one the user made and kept local is left alone, with `NotCaughtUp` saying
+/// so.
 pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(repo_root) {
         return SyncOutcome::Failed(reason);

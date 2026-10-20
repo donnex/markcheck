@@ -72,8 +72,8 @@ fn is_base(c: char) -> bool {
     !c.is_whitespace() && !c.is_control() && !is_invisible_format(c) && !is_modifier(c)
 }
 
-/// The commands `y` chooses between, in card order: fenced code blocks take
-/// priority; inline spans are the fallback.
+/// The commands `y` chooses between, in card order: code blocks (fenced or
+/// indented) take priority; inline spans are the fallback.
 pub fn candidates(item: &Item) -> &[String] {
     if !item.code_blocks.is_empty() {
         &item.code_blocks

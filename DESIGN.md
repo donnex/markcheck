@@ -524,7 +524,7 @@ The base `view` (`Checklist`, `ListComplete`, `AllComplete`) and the optional `o
 | `/` | incremental search | — | — |
 | `n` / `N` | next / prev search match | — | — |
 | `}` / `{` | next / prev `### H3`+ sub-section, within the list | — | — |
-| `T` | go-to-task picker | — | — |
+| `T` | go-to-task picker | same | same |
 | `y`, then `1`–`9`… | copy the card's command; with several, pick `[N]` | — | — |
 | `o`, then `1`–`9`… | open the card's link; with several, pick `[N]` | — | — |
 | `Ctrl-O` | back to before the last `#anchor` jump | — | — |
@@ -548,7 +548,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 3. **Unbound chords are rejected** (`is_bound_chord`): every handler below matches on `KeyCode` alone, so a key carrying `Ctrl`, `Alt` or another modifier besides `Shift` gets through only where the screen binds it — `Ctrl-E`/`Y`/`D`/`U`/`R`/`O` on `Checklist`, `Ctrl-R` on the completion screens, `Ctrl-E`/`Y`/`D`/`U` in help, `Ctrl-P`/`N`/`D`/`U`/`W` in the picker, `Ctrl-U`/`W` in search, nothing in the confirmations. Anything else cancels armed chords and shows `Ctrl-S is not bound (? lists every key)`. `Shift` passes, since capitals may arrive as `Char('L')` with `SHIFT` set.
 4. The digit prompts (`handle_pending_open_link_key`, `handle_pending_copy_code_key`), before the global digit jump and `Esc`.
 5. An open overlay takes every key: `handle_confirm_key`, `handle_help_key`, `handle_search_key`, `handle_picker_key`. So `q`, `j` or `?` typed into search are text.
-6. `handle_checklist_scroll_key` (before `e`/`y`, so `Ctrl-E`/`Ctrl-Y` scroll), then `handle_global_key` (`Tab`, `Shift-H`/`L`, `1`–`9`, `e`, `R`, `u`/`Ctrl-R`, `?`, `q`, `Esc`), then the view's own handler (`handle_checklist_key`, `handle_list_complete_key`, `handle_all_complete_key`).
+6. `handle_checklist_scroll_key` (before `e`/`y`, so `Ctrl-E`/`Ctrl-Y` scroll), then `handle_global_key` (`Tab`, `Shift-H`/`L`, `1`–`9`, `e`, `R`, `u`/`Ctrl-R`, `T`, `Ctrl-O` on the checklist, `?`, `q`, `Esc`), then the view's own handler (`handle_checklist_key`, `handle_list_complete_key`, `handle_all_complete_key`).
 
 `main.rs` passes the real `KeyModifiers`; `handle_key(code)` is the unmodified wrapper tests use.
 
@@ -570,7 +570,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 
 `Enter` (`commit_search`) reports `Match 7/12 · n/N to cycle`, stores the query in `search.last` and only then runs auto-copy, which is suppressed while typing. A committed query with no match skips auto-copy so the sticky `No matches` stays. An empty `Enter` repeats the last search, as in vim and `less`, or says `No previous search`. `Esc` restores the origin quietly.
 
-`n`/`N` (`search_cycle`) step through `search.last` from the cursor, wrapping, with `Match i/N`, plus `· wrapped to top`/`· wrapped to bottom` when they wrap; with no previous search, `No previous search — press / to search`. Matching is **smart-case** substring containment (`smart_case_contains`: case-insensitive unless the query has a capital) over `Item::search_text`: the title, the body (with inline code) and the fenced blocks, so a task is findable by its command.
+`n`/`N` (`search_cycle`) step through `search.last` from the cursor, wrapping, with `Match i/N`, plus `· wrapped to top`/`· wrapped to bottom` when they wrap; with no previous search, `No previous search — press / to search`. Matching is **smart-case** substring containment (`smart_case_contains`: case-insensitive unless the query has a capital) over `Item::search_text`: the title, the body (with inline code) and the code blocks (fenced or indented), so a task is findable by its command.
 
 ---
 
@@ -582,7 +582,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 
 ## Editor (`e`)
 
-`e` queues `Effect::OpenEditor { line }`. `open_in_editor` leaves the TUI (`leave_tui`: raw mode, mouse capture, bracketed paste and the alternate screen off, the same sequence `restore_terminal` and `suspend_to_shell` use), runs the editor from `$VISUAL`, `$EDITOR` or `vi`, split with `shell-words` (`EDITOR="code --wait"` works; unbalanced quotes fall back to `vi` with a warning) with `SIGINT` held off markcheck (see Signals), and restores the terminal (`enter_tui`) with `terminal.resize(current_size)`, never `Terminal::clear()`, whose cursor-position query hangs on terminals that don't answer. `AppState::finish_editor` reloads first (`reload_if_changed`, which queues a git-sync request when the edit changed the file and the editor succeeded) and then reports a launch failure or non-zero exit, so the reload's status can't hide it.
+`e` queues `Effect::OpenEditor { line }`. `open_in_editor` leaves the TUI (`leave_tui`: raw mode, mouse capture, bracketed paste and the alternate screen off, the same sequence `restore_terminal` and `suspend_to_shell` use), runs the editor from `$VISUAL`, `$EDITOR` or `vi`, split with `shell-words` (`EDITOR="code --wait"` works; unbalanced quotes fall back to `vi` with a warning) with `SIGINT` held off markcheck (see Signals), and restores the terminal (`enter_tui`) with `terminal.resize(current_size)`, never `Terminal::clear()`, whose cursor-position query hangs on terminals that don't answer. `AppState::finish_editor` reloads first (`reload_if_changed`), queues a git-sync request (`request_external_edit_sync`) when the edit changed the file and the editor succeeded, and then reports a launch failure or non-zero exit, so the reload's status can't hide it.
 
 `editor_file_args` opens the editor on the selected task's line, in the form that editor takes: `+N path` (vi family, nano, pico, emacs, emacsclient, joe, gedit, kak, micro), `path:N` (hx, helix, subl) or `--goto path:N` (code, codium), after any arguments from the variable. Anything else gets the bare path. A successful exit within `EDITOR_RETURNED_AT_ONCE` (1 s) that left the file unchanged is almost always a GUI editor handing off to a window, whose later save would arrive as an external edit and never be synced, so markcheck says so: `<editor> returned immediately — if it opened a window, make it wait: EDITOR="code --wait" (subl -w, gedit --wait)`.
 
@@ -612,7 +612,7 @@ Every state change (`set_state`, the overview's `toggle_item`, `reset_scope`) ca
 
 ## Clipboard (`src/clipboard.rs`)
 
-`y` copies code only. The candidates (`clipboard::candidates`) are the item's fenced `code_blocks`, else its inline `code_spans`. One → a `CopyKind::Command` copy; none → `Nothing to copy: item has no code`; several → `pending_copy_code` is armed and the status bar shows `press 1–N to copy · esc cancels`, matching the card's `[N]` markers. A number (collected as for links, below) copies candidate `[N]` through `copy_specific`, the same path as a click, or says `No command [n] on this card`.
+`y` copies code only. The candidates (`clipboard::candidates`) are the item's `code_blocks` (fenced or indented), else its inline `code_spans`. One → a `CopyKind::Command` copy; none → `Nothing to copy: item has no code`; several → `pending_copy_code` is armed and the status bar shows `press 1–N to copy · esc cancels`, matching the card's `[N]` markers. A number (collected as for links, below) copies candidate `[N]` through `copy_specific`, the same path as a click, or says `No command [n] on this card`.
 
 **Routes (#133).** `--clipboard auto|system|osc52` (config `clipboard`, `ClipboardChoice`) resolves at startup into `AppState::copy_route`:
 
@@ -657,7 +657,7 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 
 **Before the terminal.** Every way of failing to open the checklist names the path: `cannot resolve path: <file>`, `cannot read <file>` (with an `iconv` hint for a file that isn't UTF-8), and a file without tasks prints `No checklist items found in <file>.` with a hint about `- [ ] step` and exits 0. Then, before anything with side effects, a stdout that isn't a terminal is refused (`cannot open <file>: markcheck is interactive and needs a terminal`). `--help` names the config file.
 
-**Restoring it.** `TerminalGuard { mouse }` restores on drop, panics included: raw mode off, mouse capture released, bracketed paste off, the alternate screen left, the title popped. `install_panic_hook` restores the terminal on a main-thread panic *before* the previous hook prints, so the message lands on the normal screen, and adds a pointer to the issue tracker; other threads only run the previous hook (git-sync workers turn their panics into a `Failed` outcome while the TUI runs on). Debug builds read `MARKCHECK_TEST_PANIC` to panic after a draw, for `a_main_thread_panic_prints_its_message_on_the_restored_screen`.
+**Restoring it.** `TerminalGuard { mouse, title }` restores on drop, panics included: raw mode off, mouse capture released, bracketed paste off, the alternate screen left, the title popped. `install_panic_hook` restores the terminal on a main-thread panic *before* the previous hook prints, so the message lands on the normal screen, and adds a pointer to the issue tracker; other threads only run the previous hook (git-sync workers turn their panics into a `Failed` outcome while the TUI runs on). Debug builds read `MARKCHECK_TEST_PANIC` to panic after a draw, for `a_main_thread_panic_prints_its_message_on_the_restored_screen`.
 
 **Signals (#5).** `StopSignals` (`signal-hook`) turns `SIGTERM`, `SIGHUP` and `SIGINT` into the same exit as `q`: the terminal is restored and a running sync is waited for, with `Waiting for git sync… press q again to abandon`. A second `SIGTERM` or `SIGINT` exits at once. While the editor runs, `StopSignals::ignoring_interrupts` swaps the `SIGINT` actions for one that drops it (#146): with raw mode off, the terminal sends its interrupt key (`Ctrl-C`, or `C-g` under Emacs) to the whole foreground process group, markcheck included, and it is meant for the editor. The signal stays caught rather than ignored so the editor starts with the default action; `SIGTERM` and `SIGHUP` keep working throughout. Abandoning a sync stops every git child's process group through the `Children` registry (`git_sync/process.rs`), which also refuses new children from then on.
 

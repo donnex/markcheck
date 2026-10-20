@@ -107,8 +107,8 @@ pub struct Item {
     pub header: Option<String>,
     /// Inline `` `code` `` spans, in order.
     pub code_spans: Vec<String>,
-    /// Fenced code blocks belonging to this item (inside it, or immediately
-    /// following its list), in order.
+    /// Code blocks belonging to this item, in order: fenced or indented ones
+    /// inside it, and fences immediately following its list.
     pub code_blocks: Vec<String>,
     pub kind: ItemKind,
 }
@@ -127,7 +127,8 @@ impl Item {
 
     /// All matchable text for search: the card title, the body
     /// (prose plus inline code, both already folded into `display_text`), and
-    /// any fenced command blocks (which are *not* part of `display_text`).
+    /// its `code_blocks`, fenced or indented (which are *not* part of
+    /// `display_text`).
     pub fn search_text(&self) -> String {
         let mut text = String::new();
         if let Some(header) = &self.header {
@@ -251,7 +252,7 @@ impl List {
 
     /// The **list-local** ordinal of the sub-list headed by the parent at
     /// `parent_index`: its position among this list's parent items (those
-    /// with children). `Document::sublist_slot` offsets it into a document-wide
+    /// with children). `Document::sublist_base` offsets it into a document-wide
     /// slot so every sub-list gets its own guide color.
     pub fn sublist_slot(&self, parent_index: usize) -> usize {
         (0..parent_index).filter(|&j| self.has_children(j)).count()
@@ -485,8 +486,8 @@ pub struct Document {
     /// The lines of critical tasks, whose bold title started with `!`:
     /// checking one takes a second, deliberate press (#95).
     pub critical: std::collections::BTreeSet<LineNumber>,
-    /// The source file's lines, each including its own terminator, indexed by
-    /// `Item::line_number`. `writer::write_back` edits one line and rejoins by
+    /// The source file's lines, each including its own terminator; the 1-based
+    /// `Item::line_number` is at index `line_number - 1`. `writer::write_back` edits one line and rejoins by
     /// concatenation, so mixed line endings round-trip exactly.
     pub raw_lines: Vec<String>,
 }
@@ -584,14 +585,16 @@ pub enum View {
 /// returns to the view it was opened from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
-    /// Modal confirmation before resetting every task to not-done.
+    /// Modal confirmation before resetting tasks to not-done: every task, the
+    /// current list or the current sub-list.
     ConfirmReset,
     /// Offered on quit when all tasks are done: reset before quitting?
     ConfirmQuitReset,
     /// Full keybinding cheatsheet overlay, opened with `?`.
     Help,
-    /// Incremental text search input, entered with `/` from `Checklist`; the
-    /// cursor jumps live to the first match as the query is typed.
+    /// Incremental text search input, entered with `/` from `Checklist`; as
+    /// the query is typed, the cursor jumps live to the first match at or
+    /// after where the search started, wrapping around.
     Search,
     /// Full-list "go to task" overlay, opened with `T`: a filterable list of
     /// every task; typing filters, arrows / Ctrl-N/P move the selection, and
@@ -599,9 +602,9 @@ pub enum Overlay {
     ListPicker,
 }
 
-/// The glyphs used across the UI. Nerd Font icons by default; the
-/// `--no-nerd-font` flag swaps in plain-Unicode symbols that render in
-/// any terminal font (e.g. bare SSH targets).
+/// The glyphs used across the UI. Plain-Unicode symbols that render in any
+/// terminal font by default; the `--nerd-font` flag swaps in Nerd Font
+/// icons.
 #[derive(Debug, Clone, Copy)]
 pub struct IconSet {
     pub done: &'static str,
@@ -803,7 +806,7 @@ pub struct Palette {
     pub code: Style,       // inline + fenced code: an explicit fg/bg pair, so it reads on any theme
     pub current: Color,    // cursor/current, filename, accents
     pub note: Color,       // display-only note cards
-    pub error: Color,      // error text, e.g. the missing-title placeholder
+    pub error: Color,      // error text, e.g. a sticky status-bar error
     pub warning: Color,    // list banner — a leading bold-only bullet
     pub depth: ColorDepth, // the tier this palette was resolved for (gradient, depth guides)
 }
@@ -890,7 +893,8 @@ impl Palette {
     }
 
     /// Guide color for a nested sub-list, from a small cycle of distinct hues.
-    /// `slot` is the document-wide ordinal from `Document::sublist_slot`.
+    /// `slot` is the document-wide ordinal: `Document::sublist_base` plus the
+    /// list-local `sublist_slot`.
     pub fn depth_color(&self, slot: usize) -> Color {
         match self.depth {
             ColorDepth::TrueColor => {

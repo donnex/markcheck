@@ -969,7 +969,7 @@ fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
 }
 #[test]
 fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
-    // `repo_dir` isn't the repo root here.
+    // `repo_root` isn't the file's directory here.
     let root = unique_dir("repo-nested");
     let remote = root.join("remote.git");
     let repo = root.join("repo");

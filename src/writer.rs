@@ -45,8 +45,8 @@ pub(crate) struct WriteLock {
 
 impl WriteLock {
     /// Acquires the lock for `target`. An existing lock is honoured unless
-    /// its owner can be *shown* to be gone — see the type's doc comment for
-    /// why elapsed time is no longer part of that decision.
+    /// its owner can be *shown* to be gone, never recovered by age (see the
+    /// type's doc comment).
     pub(crate) fn acquire(target: &Path) -> LockOutcome {
         let Some(path) = lock_path(target) else {
             return LockOutcome::Unavailable;
@@ -139,8 +139,7 @@ fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
 }
 
 /// The UID a file created by this process gets — exactly what a save's
-/// temp file will be owned by — read off a throwaway probe file, as std
-/// exposes no `geteuid`.
+/// temp file will be owned by — read off a throwaway probe file.
 fn current_uid() -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     let probe = std::env::temp_dir().join(format!(
@@ -159,16 +158,16 @@ fn current_uid() -> Option<u32> {
 }
 
 /// One lock file per checklist, named by the digest of its canonical path so
-/// every spelling of one file (symlink, `..`) shares a lock. Falls back to
-/// the given path when canonicalization fails; `write_back` then refuses
-/// the missing file.
+/// every spelling of one file (symlink, `..`) shares a lock (`path_digest`).
 /// `None` when there is no private directory to put it in.
 fn lock_path(target: &Path) -> Option<PathBuf> {
     Some(lock_dir()?.join(format!("markcheck-write-lock-{}", path_digest(target))))
 }
 
 /// The hex digest of `target`'s canonical path, shared by the write lock and
-/// the session markers, so every spelling of one file shares them.
+/// the session markers, so every spelling of one file shares them. Falls back
+/// to the given path when canonicalization fails; `write_back` then refuses
+/// the missing file.
 fn path_digest(target: &Path) -> String {
     let resolved = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
     let digest = crate::model::hash_bytes(resolved.as_os_str().as_encoded_bytes());

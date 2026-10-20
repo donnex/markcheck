@@ -422,7 +422,6 @@ fn palette_for_depth_uses_the_matching_color_kind() {
         Some(Color::DarkGray),
         "basic fallback: a subtle gray code background"
     );
-    // The error role (missing-title placeholder) resolves per depth.
     assert!(matches!(
         Palette::for_depth(ColorDepth::TrueColor).error,
         Color::Rgb(..)

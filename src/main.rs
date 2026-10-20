@@ -154,8 +154,8 @@ fn main() -> anyhow::Result<()> {
         })?;
         (created, true)
     } else {
-        // clap's `required_unless_present = "new"` guarantees this is `Some`
-        // whenever `cli.new` is `None`.
+        // clap's `required_unless_present_any` guarantees this is `Some`
+        // whenever `cli.new` is `None` (the generate flags returned above).
         let mut file = cli
             .file
             .clone()
@@ -283,7 +283,7 @@ fn main() -> anyhow::Result<()> {
     }
     // Drives the persistent `⇅ git` section in the title bar
     // (`render_title_bar` in `ui/mod.rs`) — set once here and never touched
-    // again; `GitSyncState::last_at`/`pending` handle the per-sync timing,
+    // again; `GitSyncState::last_at`/`busy`/`waiting` handle the per-sync timing,
     // this is just "is the feature on for this session at all".
     state.git_sync.active = git_sync.is_some();
     // A previous session may have quit before pushing its commit. This only
@@ -437,7 +437,7 @@ where
             dirty = true;
         }
         // Drain a finished background sync before requesting the next
-        // one, so a request queued during the finished run's `pending` slot
+        // one, so a request queued in the finished run's `GitSync::queued` slot
         // (see `GitSync::poll`) is already spawned by the time this
         // iteration's effects request another.
         if let Some(sync) = git_sync.as_mut() {
@@ -750,8 +750,8 @@ where
 }
 
 /// Sends `SIGTSTP` to this process through `kill(1)`, as `git_sync` does for
-/// its timeouts, rather than taking on a libc dependency. The process stops
-/// while waiting for `kill`, so this returns only once it's been resumed.
+/// its timeouts. The process stops while waiting for `kill`, so this returns
+/// only once it's been resumed.
 fn stop_self() -> Result<(), String> {
     use std::process::{Command, Stdio};
 

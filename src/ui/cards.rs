@@ -252,7 +252,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("e", "edit the file in $EDITOR"),
             ("Ctrl-Z", "suspend to the shell (fg to come back)"),
             ("Ctrl-C", "cancel like Esc; elsewhere hints how to quit"),
-            ("R", "reset all tasks (asks first)"),
+            ("R", "reset all, the list or the sub-list (asks first)"),
             ("1-9", "jump to list N"),
             ("?", "toggle this help"),
             (
@@ -861,7 +861,7 @@ fn render_section_breadcrumb(frame: &mut Frame, area: Rect, crumb: &str, max_wid
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// The top-border line: just the task-state icon (`☑`/`◐`/`☐`/note) in its
+/// The top-border line: just the task-state icon (`☑`/`◐`/`☐`/`⊘`/note) in its
 /// state color. The card title (`Item.header`) is drawn inside the card body
 /// instead (`card_title_lines`).
 fn header_line(
@@ -1126,7 +1126,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
 
     // Display-only notes get a rounded border so they read as information,
     // not an actionable step; tasks get a thick border so an actionable step
-    // reads as a bold, solid frame (thick replaced the old double).
+    // reads as a bold, solid frame.
     let border_type = if matches!(item.kind, ItemKind::DisplayOnly) {
         BorderType::Rounded
     } else {
@@ -1451,8 +1451,9 @@ fn item_body_tokens(item: &Item) -> BodyTokens {
     (tokens, trailing)
 }
 
-/// The current card's body as styled, word-wrapped lines, with fenced
-/// blocks appended below. Char-count based so scroll clamping stays exact.
+/// The current card's body as styled, word-wrapped lines, with its code
+/// blocks appended below. Measured in display cells so scroll clamping stays
+/// exact.
 fn body_lines(item: &Item, width: u16, code: Style) -> Vec<Line<'static>> {
     body_layout(item, width, code).0
 }
@@ -1616,7 +1617,7 @@ fn code_block_lines(
     // The box always spans the full card-body width — the gray
     // background reaches both edges even for a short one-line block — so code
     // blocks align regardless of content length, matching a rendered Markdown
-    // block. (Previously `box_w` shrank to the longest content line.)
+    // block.
     let box_w = content_w;
 
     // A blank gray row just inside the top and bottom borders gives the code

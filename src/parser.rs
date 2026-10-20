@@ -1041,8 +1041,8 @@ impl<'a> ParseState<'a> {
     }
 
     /// Inside an item, fenced and indented blocks are both the item's code.
-    /// Outside one, only a fence may attach to the previous list; a stray
-    /// indented block is dropped.
+    /// Outside one, only a fence may attach to the previous list; any other
+    /// top-level block is preamble for the next task, or counted as unshown.
     fn on_code_block_end(&mut self) {
         let Some((fenced, content)) = self.code_block.take() else {
             return;
