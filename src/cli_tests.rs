@@ -298,3 +298,39 @@ fn a_hash_suffix_is_an_anchor_only_when_the_file_before_it_exists() {
     assert_eq!(super::split_anchor(&dir.join("runbook.md#")), None);
     assert_eq!(super::split_anchor(&dir.join("missing.md#x")), None);
 }
+
+#[test]
+fn the_man_page_covers_the_flags_the_config_file_and_points_to_the_readme() {
+    let page = String::from_utf8(super::man_page().unwrap()).unwrap();
+    assert!(page.contains(".TH markcheck 1"));
+    assert!(
+        page.contains(r"\-\-git\-sync\-delay"),
+        "every flag is listed"
+    );
+    assert!(
+        !page.contains("generate"),
+        "the packaging flags stay hidden"
+    );
+    assert!(page.contains(".SH FILES") && page.contains("config.toml"));
+    assert!(page.contains("github.com/donnex/markcheck#readme"));
+}
+
+#[test]
+fn completions_are_generated_for_each_shell() {
+    for shell in [
+        clap_complete::Shell::Bash,
+        clap_complete::Shell::Zsh,
+        clap_complete::Shell::Fish,
+    ] {
+        let script = String::from_utf8(super::completions(shell)).unwrap();
+        assert!(script.contains("markcheck"), "{shell}");
+        assert!(script.contains("git-sync-delay"), "{shell}");
+    }
+}
+
+#[test]
+fn the_packaging_flags_need_no_file_but_take_nothing_else() {
+    assert!(Cli::try_parse_from(["markcheck", "--generate-man"]).is_ok());
+    assert!(Cli::try_parse_from(["markcheck", "--generate-completions", "zsh"]).is_ok());
+    assert!(Cli::try_parse_from(["markcheck", "--generate-man", "x.md"]).is_err());
+}

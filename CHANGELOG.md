@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A man page and bash, zsh and fish completions, generated from the same
+  definitions as `--help`, are now in the release archive (and printed by
+  `markcheck --generate-man` and `--generate-completions <shell>` for a
+  source build). The man page covers the flags and the config file; the
+  keybindings and Markdown handling stay in the README it points to. (#90)
+
 - Critical steps: start a task's bold title with `!`
   (`- [ ] **! Drop the old database**`) and checking it takes a second,
   deliberate `Space`, so a held key or a double press can't walk past it.

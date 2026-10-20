@@ -32,8 +32,17 @@ const VERSION: &str = concat!(
 )]
 pub struct Cli {
     /// Path to the Markdown file (omit when using --new)
-    #[arg(required_unless_present = "new")]
+    #[arg(
+        required_unless_present_any = ["new", "generate_man", "generate_completions"],
+        value_hint = clap::ValueHint::FilePath
+    )]
     pub file: Option<PathBuf>,
+    /// Print the man page (roff) and exit; for packaging
+    #[arg(long, hide = true, exclusive = true)]
+    pub generate_man: bool,
+    /// Print shell completions for SHELL and exit; for packaging
+    #[arg(long, value_name = "SHELL", hide = true, exclusive = true)]
+    pub generate_completions: Option<clap_complete::Shell>,
     /// Create a new starter checklist at PATH, then open it (PATH must not
     /// already exist and must end in .md)
     #[arg(long, value_name = "PATH", conflicts_with = "file")]
@@ -154,6 +163,37 @@ pub fn split_anchor(path: &Path) -> Option<(PathBuf, String)> {
     let (file, anchor) = text.rsplit_once('#')?;
     let file = PathBuf::from(file);
     (!anchor.is_empty() && file.exists()).then(|| (file, anchor.to_string()))
+}
+
+/// The man page (#90): the flags from the clap definition, the config file's
+/// location, and a pointer to the README for keybindings and the Markdown
+/// handling, rather than another copy of them to keep in step.
+pub fn man_page() -> std::io::Result<Vec<u8>> {
+    use clap::CommandFactory;
+    let mut out = Vec::new();
+    clap_mangen::Man::new(Cli::command()).render(&mut out)?;
+    out.extend_from_slice(
+        br#".SH FILES
+.TP
+\fI$XDG_CONFIG_HOME/markcheck/config.toml\fR
+Defaults for the flags, one key per flag (for example \fBnerd_font = true\fR).
+Without \fBXDG_CONFIG_HOME\fR, \fI~/.config/markcheck/config.toml\fR.
+\fB\-\-config\fR reads another file; \fB\-\-no\-config\fR skips it.
+.SH SEE ALSO
+The keybindings (also shown by \fB?\fR in the app) and how each piece of
+Markdown is handled are described in the README:
+https://github.com/donnex/markcheck#readme
+"#,
+    );
+    Ok(out)
+}
+
+/// Shell completions for `shell` (#90).
+pub fn completions(shell: clap_complete::Shell) -> Vec<u8> {
+    use clap::CommandFactory;
+    let mut out = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "markcheck", &mut out);
+    out
 }
 
 /// Where copies go: the flag, then the config, then `auto`.

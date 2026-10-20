@@ -99,7 +99,17 @@ Pre-built binaries (Linux x86_64) are attached to each
 `.tar.gz` with a `.sha256` checksum — download, verify, extract, and put
 `markcheck` on your `$PATH`. The archive also holds `LICENSE` and
 `THIRD-PARTY-LICENSES`, the license texts of every crate compiled into the
-binary. The binary is statically linked (musl), so it
+binary, a man page and shell completions:
+
+```sh
+cp markcheck.1 ~/.local/share/man/man1/                          # then: man markcheck
+cp completions/markcheck.bash ~/.local/share/bash-completion/completions/markcheck
+cp completions/_markcheck ~/.zfunc/                               # a directory on your $fpath
+cp completions/markcheck.fish ~/.config/fish/completions/
+```
+
+A source build can make the same files with `markcheck --generate-man` and
+`markcheck --generate-completions bash|zsh|fish`, which print to stdout. The binary is statically linked (musl), so it
 runs on any x86_64 Linux, old or new, whatever its C library. For any other
 platform, build from source: that needs Rust 1.88 or newer (`rustc
 --version`; install or update it with [rustup](https://rustup.rs)).

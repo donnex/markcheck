@@ -2,7 +2,8 @@ name: Release
 
 # Push a tag like "v0.2.0" to trigger a build + GitHub release with a
 # markcheck-<tag>-x86_64-unknown-linux-musl.tar.gz (binary, README.md,
-# LICENSE and THIRD-PARTY-LICENSES) and
+# LICENSE, THIRD-PARTY-LICENSES, the markcheck.1 man page and bash, zsh and
+# fish completions) and
 # its .sha256 checksum attached. Only Linux x86_64, built against musl so
 # the binary is static and runs whatever the host's glibc is (#44). Uses the `GITHUB_TOKEN` GitHub Actions injects
 # automatically for every run rather than requiring a manually-created
@@ -122,6 +123,12 @@ jobs:
           mkdir -p "dist/$ARCHIVE_NAME"
           cp target/x86_64-unknown-linux-musl/release/markcheck "dist/$ARCHIVE_NAME/markcheck"
           cp README.md LICENSE THIRD-PARTY-LICENSES "dist/$ARCHIVE_NAME/"
+          bin=target/x86_64-unknown-linux-musl/release/markcheck
+          "$bin" --generate-man > "dist/$ARCHIVE_NAME/markcheck.1"
+          mkdir -p "dist/$ARCHIVE_NAME/completions"
+          "$bin" --generate-completions bash > "dist/$ARCHIVE_NAME/completions/markcheck.bash"
+          "$bin" --generate-completions zsh > "dist/$ARCHIVE_NAME/completions/_markcheck"
+          "$bin" --generate-completions fish > "dist/$ARCHIVE_NAME/completions/markcheck.fish"
           chmod +x "dist/$ARCHIVE_NAME/markcheck"
           tar -C dist -czf "dist/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
           (cd dist && sha256sum "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256")

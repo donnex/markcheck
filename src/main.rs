@@ -90,6 +90,14 @@ const ISSUES_URL: &str = "https://github.com/donnex/markcheck/issues";
 fn main() -> anyhow::Result<()> {
     let (args, start_line) = cli::take_start_line(std::env::args_os().collect());
     let cli = Cli::parse_from(args);
+    if cli.generate_man {
+        io::stdout().write_all(&cli::man_page()?)?;
+        return Ok(());
+    }
+    if let Some(shell) = cli.generate_completions {
+        io::stdout().write_all(&cli::completions(shell))?;
+        return Ok(());
+    }
     // A passed flag wins, then the config, then the default. A malformed
     // config is an error rather than a silent fallback; an unknown key is
     // only a warning, since it may come from a newer release.
