@@ -78,17 +78,24 @@ fn leave_tui(mouse: bool) -> io::Result<()> {
     raw.and(mouse).and(screen)
 }
 
-/// Takes the terminal back after `leave_tui` and repaints the whole frame.
-fn enter_tui<B: Backend>(terminal: &mut Terminal<B>, mouse: bool) -> anyhow::Result<()>
-where
-    B::Error: std::error::Error + Send + Sync + 'static,
-{
+/// Puts the terminal into the TUI's modes: raw input, the alternate screen,
+/// bracketed paste and, with `mouse`, mouse capture. `leave_tui` undoes it.
+fn take_terminal(mouse: bool) -> anyhow::Result<()> {
     enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
         .context("cannot set up the terminal (markcheck is interactive)")?;
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
+    Ok(())
+}
+
+/// Takes the terminal back after `leave_tui` and repaints the whole frame.
+fn enter_tui<B: Backend>(terminal: &mut Terminal<B>, mouse: bool) -> anyhow::Result<()>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    take_terminal(mouse)?;
     // Force a full repaint by resizing: `Terminal::clear` queries the cursor,
     // which hangs on terminals that don't answer.
     let size = terminal.size()?;
@@ -295,12 +302,7 @@ fn main() -> anyhow::Result<()> {
     let mut signals = StopSignals::install().context("cannot install signal handlers")?;
     let mouse = settings.mouse;
     install_panic_hook();
-    enable_raw_mode().context("cannot set up the terminal (markcheck is interactive)")?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
-        .context("cannot set up the terminal (markcheck is interactive)")?;
-    if mouse {
-        execute!(io::stdout(), EnableMouseCapture)?;
-    }
+    take_terminal(mouse)?;
     let show_title = config.terminal_title.unwrap_or(true);
     if show_title {
         // Push the current title, restored by `TerminalGuard`.

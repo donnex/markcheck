@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use super::cards::wrap_text;
 use crate::clipboard;
-use crate::model::{AppState, Overlay, View};
+use crate::model::{AppState, Overlay, PendingChord, View};
 
 /// Most rows a long status message may grow the status bar to.
 const MAX_STATUS_ROWS: u16 = 6;
@@ -97,16 +97,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Priority: search > status message > armed prompt > legend.
     let armed_prompt = if state.overlay.is_none() && state.view == View::Checklist {
         let item = state.current_item();
-        if state.pending_open_link {
-            let n = item.map_or(0, |item| item.link_urls().len());
-            Some(number_prompt("open", n, state.pending_number))
-        } else if state.pending_copy_code {
-            let n = item.map_or(0, |item| clipboard::candidates(item).len());
-            Some(number_prompt("copy", n, state.pending_number))
-        } else if state.pending_g {
-            Some(PENDING_G_PROMPT.to_string())
-        } else {
-            None
+        match state.pending_chord {
+            PendingChord::OpenLink { typed } => {
+                let n = item.map_or(0, |item| item.link_urls().len());
+                Some(number_prompt("open", n, typed))
+            }
+            PendingChord::CopyCode { typed } => {
+                let n = item.map_or(0, |item| clipboard::candidates(item).len());
+                Some(number_prompt("copy", n, typed))
+            }
+            PendingChord::G => Some(PENDING_G_PROMPT.to_string()),
+            PendingChord::None => None,
         }
     } else {
         None

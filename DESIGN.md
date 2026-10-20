@@ -23,7 +23,18 @@ markcheck/
     ├── config.rs        # Config file: TOML defaults for the flags
     ├── model.rs         # Data types (Item, List, Document, AppState, IconSet, Palette, ...)
     ├── parser.rs        # Markdown → Document
-    ├── app.rs           # AppState: navigation, toggles, reset, reload, search, key dispatch
+    ├── app/             # AppState's behaviour, one file per concern, each with its sibling *_tests.rs
+    │   ├── mod.rs       # AppState::new, status messages, shared helpers
+    │   ├── navigation.rs # Cursor motions, screen transitions, card scrolling
+    │   ├── search.rs    # `/` search, the `T` picker, help scrolling
+    │   ├── write.rs     # Toggle/start/skip, critical steps, set_state/commit_write, git-sync reporting
+    │   ├── reload.rs    # Reload from disk, cursor remapping, return from the editor or a suspend
+    │   ├── reset.rs     # `R` reset by scope
+    │   ├── history.rs   # Undo/redo snapshots
+    │   ├── copy.rs      # `y` and auto-copy, copy outcomes
+    │   ├── links.rs     # `o`, anchors, the Ctrl-O jump-back stack
+    │   ├── keys.rs      # Key, mouse and paste dispatch; chords
+    │   └── test_support.rs # Fixtures shared by the app tests
     ├── effect.rs        # Effect queue: every outward action AppState asks for, and its drain
     ├── writer.rs        # Write-back (atomic, ownership- and mode-preserving), write lock, session markers
     ├── scaffold.rs      # `--new`: create a starter checklist atomically
@@ -183,7 +194,7 @@ Called synchronously on every write; the file is never observed half-written.
 
 ---
 
-## App State & Navigation (`src/app.rs`)
+## App State & Navigation (`src/app/`)
 
 `AppState::new` requires a document with at least one list (startup refuses a list-less file and a reload keeps the last good document, so this always holds; `current_list()` indexes without a fallback and a `debug_assert!` states it). The cursor starts on the first unresolved task: the first list's, else the first anywhere, else item 0. `+N` and `file.md#anchor` then move it (`open_at`, see Open link).
 
@@ -235,7 +246,7 @@ The main loop calls `effect::drain(state, host)` once per iteration, after the i
 
 ---
 
-## Reload From Disk (`src/watcher.rs`, `src/app.rs`)
+## Reload From Disk (`src/watcher.rs`, `src/app/reload.rs`)
 
 Edits made outside markcheck (another terminal, `git pull`, a colleague's session) are picked up live.
 
@@ -546,17 +557,17 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 1. `Ctrl-Z` (suspend, from anywhere, search input included).
 2. `Ctrl-C` (`handle_ctrl_c`): raw mode delivers it as a key, not `SIGINT`. As in vim it cancels search, the picker, help, a confirmation and armed chords like `Esc`, and on a content screen shows the sticky `Type q to quit`. `Esc` never quits either, so neither can bypass the all-done reset offer.
 3. **Unbound chords are rejected** (`is_bound_chord`): every handler below matches on `KeyCode` alone, so a key carrying `Ctrl`, `Alt` or another modifier besides `Shift` gets through only where the screen binds it — `Ctrl-E`/`Y`/`D`/`U`/`R`/`O` on `Checklist`, `Ctrl-R` on the completion screens, `Ctrl-E`/`Y`/`D`/`U` in help, `Ctrl-P`/`N`/`D`/`U`/`W` in the picker, `Ctrl-U`/`W` in search, nothing in the confirmations. Anything else cancels armed chords and shows `Ctrl-S is not bound (? lists every key)`. `Shift` passes, since capitals may arrive as `Char('L')` with `SHIFT` set.
-4. The digit prompts (`handle_pending_open_link_key`, `handle_pending_copy_code_key`), before the global digit jump and `Esc`.
+4. The digit prompts (`handle_pending_number_key`), before the global digit jump and `Esc`.
 5. An open overlay takes every key: `handle_confirm_key`, `handle_help_key`, `handle_search_key`, `handle_picker_key`. So `q`, `j` or `?` typed into search are text.
 6. `handle_checklist_scroll_key` (before `e`/`y`, so `Ctrl-E`/`Ctrl-Y` scroll), then `handle_global_key` (`Tab`, `Shift-H`/`L`, `1`–`9`, `e`, `R`, `u`/`Ctrl-R`, `T`, `Ctrl-O` on the checklist, `?`, `q`, `Esc`), then the view's own handler (`handle_checklist_key`, `handle_list_complete_key`, `handle_all_complete_key`).
 
 `main.rs` passes the real `KeyModifiers`; `handle_key(code)` is the unmodified wrapper tests use.
 
-**Chords.** `gg` arms `pending_g`, shown as `g… press g for the first task · any other key cancels`; any other key resets it. The digit prompts collect a number (below). Mouse input cancels every armed chord first (`clear_pending_chords`), so a click that changes the card can't leave a prompt armed against the new one.
+**Chords.** The armed chord is one field, `pending_chord: PendingChord` (`None`, `G`, `OpenLink { typed }`, `CopyCode { typed }`), so two can never be armed at once and one assignment clears it. `gg` arms `PendingChord::G`, shown as `g… press g for the first task · any other key cancels`; any other key resets it. The digit prompts collect a number (below). Mouse input cancels every armed chord first (`clear_pending_chords`), so a click that changes the card can't leave a prompt armed against the new one.
 
 **Navigating, not scrolling.** All four home-row motions navigate between items (the carousel slides left/right; the overview reads as a list going down), and card-body scrolling lives on vim's viewport keys. Card scroll resets on every navigation. `Tab` reports a wrap (`Wrapped to the first unfinished task (<list>)`) and a sticky `No unfinished tasks`. `Shift-H`/`Shift-L` land on the target list's first unresolved task and never wrap (`No lists have unfinished tasks`, `Already at the last incomplete list`). `}`/`{` jump between sub-sections within the list, reporting the one landed on, or that there is no further one or none at all; they are in help, not on the legend.
 
-**Help (`?`).** A modal card with one titled group per mode, from `HELP_SECTIONS` (`ui/cards.rs`): the checklist and global keys, the digit prompts, the completion screens, search, the picker, help itself and the reset dialogs. It takes the whole main area (the overview isn't drawn beside it, and its click rows are dropped), and a description too long for its column wraps onto rows indented under the description column (`HELP_KEY_COLUMN`, no narrower than `HELP_MIN_DESC_WIDTH`), so no row is cut mid-word and `help_max_scroll` counts the wrapped rows. It scrolls with the card keys, `j`/`k` and the arrows when it overflows; any other key closes it. `app_tests.rs` presses, for each mode, every named key, printable character and bound chord on a fresh state, and requires every key that does something there to appear in that mode's rows, so a new binding without a help row fails the suite. The always-on legend stays trimmed to `hjkl:nav · space:toggle · /:search · y:copy · ?:help · q:quit`.
+**Help (`?`).** A modal card with one titled group per mode, from `HELP_SECTIONS` (`ui/cards.rs`): the checklist and global keys, the digit prompts, the completion screens, search, the picker, help itself and the reset dialogs. It takes the whole main area (the overview isn't drawn beside it, and its click rows are dropped), and a description too long for its column wraps onto rows indented under the description column (`HELP_KEY_COLUMN`, no narrower than `HELP_MIN_DESC_WIDTH`), so no row is cut mid-word and `help_max_scroll` counts the wrapped rows. It scrolls with the card keys, `j`/`k` and the arrows when it overflows; any other key closes it. `app/keys_tests.rs` presses, for each mode, every named key, printable character and bound chord on a fresh state, and requires every key that does something there to appear in that mode's rows, so a new binding without a help row fails the suite. The always-on legend stays trimmed to `hjkl:nav · space:toggle · /:search · y:copy · ?:help · q:quit`.
 
 **Clicks.** `handle_left_click` tries, in order: the picker's rows (`picker_click`); on a content screen, the overview rows (`Item` → `focus_item` as navigation, `List` → `jump_to_list`, `Toggle` → `toggle_item` in place); on `Checklist`, the card's `layout.code_regions` (one per copy target, so a click copies exactly that command, even on a card `y` would ask about), then `layout.card_rect` (the whole card: behaves like `y`). Anything else is ignored. `body_layout` produces the copy targets in lockstep with the body lines, so a chip split over two rows copies its whole text from either fragment. Every row of one command holds the same shared (`Rc<str>`) copy of its text rather than its own, and the wrappers check whether a word fits by scanning at most one row's worth of it, so a long block or command costs time and memory in proportion to its size, not to its size times its row count (#245).
 
@@ -582,7 +593,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 
 ## Editor (`e`)
 
-`e` queues `Effect::OpenEditor { line }`. `open_in_editor` leaves the TUI (`leave_tui`: raw mode, mouse capture, bracketed paste and the alternate screen off, the same sequence `restore_terminal` and `suspend_to_shell` use), runs the editor from `$VISUAL`, `$EDITOR` or `vi`, split with `shell-words` (`EDITOR="code --wait"` works; unbalanced quotes fall back to `vi` with a warning) with `SIGINT` held off markcheck (see Signals), and restores the terminal (`enter_tui`) with `terminal.resize(current_size)`, never `Terminal::clear()`, whose cursor-position query hangs on terminals that don't answer. `AppState::finish_editor` reloads first (`reload_if_changed`), queues a git-sync request (`request_external_edit_sync`) when the edit changed the file and the editor succeeded, and then reports a launch failure or non-zero exit, so the reload's status can't hide it.
+`e` queues `Effect::OpenEditor { line }`. `open_in_editor` leaves the TUI (`leave_tui`: raw mode, mouse capture, bracketed paste and the alternate screen off, the same sequence `restore_terminal` and `suspend_to_shell` use; `take_terminal` is its inverse, shared by startup and `enter_tui`), runs the editor from `$VISUAL`, `$EDITOR` or `vi`, split with `shell-words` (`EDITOR="code --wait"` works; unbalanced quotes fall back to `vi` with a warning) with `SIGINT` held off markcheck (see Signals), and restores the terminal (`enter_tui`) with `terminal.resize(current_size)`, never `Terminal::clear()`, whose cursor-position query hangs on terminals that don't answer. `AppState::finish_editor` reloads first (`reload_if_changed`), queues a git-sync request (`request_external_edit_sync`) when the edit changed the file and the editor succeeded, and then reports a launch failure or non-zero exit, so the reload's status can't hide it.
 
 `editor_file_args` opens the editor on the selected task's line, in the form that editor takes: `+N path` (vi family, nano, pico, emacs, emacsclient, joe, gedit, kak, micro), `path:N` (hx, helix, subl) or `--goto path:N` (code, codium), after any arguments from the variable. Anything else gets the bare path. A successful exit within `EDITOR_RETURNED_AT_ONCE` (1 s) that left the file unchanged is almost always a GUI editor handing off to a window, whose later save would arrive as an external edit and never be synced, so markcheck says so: `<editor> returned immediately — if it opened a window, make it wait: EDITOR="code --wait" (subl -w, gedit --wait)`.
 
@@ -612,7 +623,7 @@ Every state change (`set_state`, the overview's `toggle_item`, `reset_scope`) ca
 
 ## Clipboard (`src/clipboard.rs`)
 
-`y` copies code only. The candidates (`clipboard::candidates`) are the item's `code_blocks` (fenced or indented), else its inline `code_spans`. One → a `CopyKind::Command` copy; none → `Nothing to copy: item has no code`; several → `pending_copy_code` is armed and the status bar shows `press 1–N to copy · esc cancels`, matching the card's `[N]` markers. A number (collected as for links, below) copies candidate `[N]` through `copy_specific`, the same path as a click, or says `No command [n] on this card`.
+`y` copies code only. The candidates (`clipboard::candidates`) are the item's `code_blocks` (fenced or indented), else its inline `code_spans`. One → a `CopyKind::Command` copy; none → `Nothing to copy: item has no code`; several → `PendingChord::CopyCode` is armed and the status bar shows `press 1–N to copy · esc cancels`, matching the card's `[N]` markers. A number (collected as for links, below) copies candidate `[N]` through `copy_specific`, the same path as a click, or says `No command [n] on this card`.
 
 **Routes (#133).** `--clipboard auto|system|osc52` (config `clipboard`, `ClipboardChoice`) resolves at startup into `AppState::copy_route`:
 
@@ -639,9 +650,9 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 - one link → `open_url`: a `#anchor` goes to `follow_anchor` (below), a safe scheme to `Effect::OpenLink`;
 - one with another scheme → `Not opened: unsupported link type (<url>)`;
 - none → `Nothing to open: card has no link`;
-- several → `pending_open_link`, no status message so the numbered list below the card stays readable, and `press 1–N to open · esc cancels` in the prompt slot.
+- several → `PendingChord::OpenLink`, no status message so the numbered list below the card stays readable, and `press 1–N to open · esc cancels` in the prompt slot.
 
-**Number prompts** (`o` and `y`). `pick_number_key` collects digits into `pending_number`: a digit acts at once unless a longer valid number could still follow (`n * 10 <= count`), so up to nine choices act on one key and with twelve `1` waits for `0`–`2` or `Enter`. `Backspace` deletes a digit, `Esc` cancels, and any other key cancels and takes its normal action. A partial number shows as `open [1…] of 1–12 · next digit, or enter for [1] · esc cancels`. Out of range: `No link [n] on this card`.
+**Number prompts** (`o` and `y`). `pick_number_key` collects digits into the chord's `typed`: a digit acts at once unless a longer valid number could still follow (`n * 10 <= count`), so up to nine choices act on one key and with twelve `1` waits for `0`–`2` or `Enter`. `Backspace` deletes a digit, `Esc` cancels, and any other key cancels and takes its normal action. A partial number shows as `open [1…] of 1–12 · next digit, or enter for [1] · esc cancels`. Out of range: `No link [n] on this card`.
 
 **Safe schemes** are `http://`, `https://` and `mailto:` (`SAFE_LINK_SCHEMES`, case-insensitive). Everything else is refused, `file://` included (an opener may run a `.desktop` file or an executable it's handed), and since no allowed URL can start with `-`, a link can't inject an option into the opener's arguments (`xdg-open` has no `--` convention).
 

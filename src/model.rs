@@ -581,6 +581,22 @@ pub enum View {
     AllComplete,
 }
 
+/// An input chord waiting for its next key. At most one is armed at a time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PendingChord {
+    #[default]
+    None,
+    /// A lone `g`, waiting for the second `g` of `gg` (go to the first task).
+    G,
+    /// `o` on a card with several links, waiting for the link number.
+    /// `typed` is the digits typed so far as a number (0 for none), so a card
+    /// with ten or more links can pick `[10]`+.
+    OpenLink { typed: usize },
+    /// `y` on a card with several commands, waiting for the command number,
+    /// with `typed` as for [`PendingChord::OpenLink`].
+    CopyCode { typed: usize },
+}
+
 /// A modal layer over the [`View`]. Closing one is `overlay = None`, which
 /// returns to the view it was opened from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1103,18 +1119,9 @@ pub struct AppState {
     pub card_scroll: u16,
     /// Geometry the renderer measured on the last frame — see [`ViewLayout`].
     pub layout: ViewLayout,
-    /// True after a lone `g`, waiting for the second `g` of the `gg` motion
-    /// (go to the first task). Reset by any other key.
-    pub pending_g: bool,
-    /// True after `o` on a card with several links, waiting for the link
-    /// number to open (`o` then a digit). Reset by any other key.
-    pub pending_open_link: bool,
-    /// True after `y` on a card with several commands, waiting for the
-    /// command number to copy (`y` then a digit). Reset by any other key.
-    pub pending_copy_code: bool,
-    /// The digits typed so far at an armed `o`/`y` prompt, as a number (0 for
-    /// none), so a card with ten or more links or commands can pick `[10]`+.
-    pub pending_number: usize,
+    /// The input chord armed by the last key, waiting for its next key — see
+    /// [`PendingChord`]. Reset by any other key.
+    pub pending_chord: PendingChord,
     pub icons: IconSet,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,

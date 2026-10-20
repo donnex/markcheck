@@ -84,7 +84,7 @@ enum Step {
     WaitForScreen(&'static str),
     /// Simulates another program (e.g. an editor) writing the file while
     /// the binary is running, with a bumped mtime (avoiding
-    /// coarse-mtime-resolution flakiness, mirroring `app_tests.rs`'s
+    /// coarse-mtime-resolution flakiness, mirroring the app tests'
     /// `touch_with_new_mtime`). Follow it with a `WaitForScreen` on the
     /// reload's status message.
     ExternalWrite(&'static str),
@@ -760,7 +760,7 @@ fn advance_across_lists_exits_clean() {
 #[test]
 fn live_reload_picks_up_an_external_edit() {
     // Exercises the real watcher.poll_changed() -> reload_if_changed() wiring
-    // in main.rs's event loop, not just app.rs's own direct-call unit tests.
+    // in main.rs's event loop, not just the app module's own direct-call unit tests.
     // `G` (jump to the last item) only reaches `beta` if the reload actually
     // happened — otherwise the app still thinks there's a single-item list
     // and `G`/toggle would land on `alpha` instead.
@@ -793,7 +793,7 @@ fn live_reload_picks_up_an_external_edit() {
 #[test]
 fn file_deletion_blocks_writes_then_reloads_when_restored() {
     // Exercises the real watcher-driven deletion/restoration path through
-    // main.rs, not just app.rs's own direct-call unit tests: the toggle
+    // main.rs, not just the app module's own direct-call unit tests: the toggle
     // attempted while deleted must not crash or resurrect the file, and the
     // later restore-and-toggle must land on the newly-added item, proving
     // the app picked the restored content back up.

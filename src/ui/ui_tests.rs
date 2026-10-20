@@ -3029,7 +3029,7 @@ fn overview_marker_zone_toggles_and_label_zone_navigates() {
     );
 
     // Clicking the label navigates without toggling. (The marker-click →
-    // toggle path writes the file, so it's exercised in app.rs against a
+    // toggle path writes the file, so it's exercised in the app tests against a
     // real temp path; here the render fixture has no backing file.)
     state.handle_left_click(navigate.x + navigate.width / 2, navigate.y);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 1));

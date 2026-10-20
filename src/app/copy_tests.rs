@@ -1,0 +1,414 @@
+use super::*;
+use crate::app::test_support::*;
+
+#[test]
+fn a_sub_section_jump_keeps_its_name_beside_the_auto_copy_confirmation() {
+    let mut item = text_item(2, "task 2");
+    item.section = vec![crate::model::SubHeading {
+        level: 3,
+        text: "Alpha".to_string(),
+    }];
+    item.code_spans = vec!["make".to_string()];
+    let mut state = AppState::new(document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![text_item(1, "task 1"), item],
+    }]));
+    state.auto_copy = true;
+    state.handle_key(KeyCode::Char('}'));
+    state.settle();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sub-section: Alpha · Sent to clipboard (OSC 52)")
+    );
+}
+
+#[test]
+fn an_auto_copy_confirmation_never_hides_an_error() {
+    let mut state = AppState::new(two_list_document());
+    state.set_error("Something failed".to_string());
+    state.apply_copy_outcome(CopyKind::Auto, "make", CopyOutcome::CopiedSystem);
+    assert_eq!(state.status_message.as_deref(), Some("Something failed"));
+    assert!(state.status_is_error);
+
+    state.clear_status();
+    state.apply_copy_outcome(CopyKind::Auto, "make", CopyOutcome::Failed);
+    assert_eq!(state.status_message, None, "a failed auto-copy is silent");
+}
+
+#[test]
+fn auto_copy_stays_silent_without_a_single_candidate() {
+    // Auto-copy announces only a successful copy. With no code
+    // candidate, or an ambiguous set, it stays silent (the success paths
+    // touch a real clipboard backend, so they're manual-only).
+    let mut state = AppState::new(two_list_document());
+    state.auto_copy = true;
+    state.maybe_auto_copy();
+    assert_eq!(state.status_message, None, "no code candidate -> silent");
+
+    // Ambiguous: put two candidates on the current item.
+    let (si, ii) = (state.current_list_index, state.current_item_index);
+    state.document.lists[si].items[ii].code_blocks = vec!["one".to_string(), "two".to_string()];
+    state.maybe_auto_copy();
+    assert_eq!(state.status_message, None, "ambiguous set -> silent");
+}
+
+#[test]
+fn auto_copy_fires_on_every_navigation_motion() {
+    // Every motion that lands on a card honours --auto-copy, not just
+    // h/l: each card carries one command, and the fake clipboard records
+    // which one was copied.
+    type Position = (usize, usize);
+    let cases: &[(&str, View, Position, &[KeyCode], Position)] = &[
+        ("l", View::Checklist, (0, 1), &[KeyCode::Char('l')], (0, 2)),
+        ("h", View::Checklist, (0, 2), &[KeyCode::Char('h')], (0, 1)),
+        ("j", View::Checklist, (0, 1), &[KeyCode::Char('j')], (0, 2)),
+        ("k", View::Checklist, (0, 2), &[KeyCode::Char('k')], (0, 1)),
+        (
+            "l across lists",
+            View::Checklist,
+            (0, 2),
+            &[KeyCode::Char('l')],
+            (1, 0),
+        ),
+        ("Tab", View::Checklist, (0, 1), &[KeyCode::Tab], (0, 2)),
+        (
+            "Tab wraps",
+            View::Checklist,
+            (1, 1),
+            &[KeyCode::Tab],
+            (0, 1),
+        ),
+        (
+            "gg",
+            View::Checklist,
+            (1, 1),
+            &[KeyCode::Char('g'), KeyCode::Char('g')],
+            (0, 0),
+        ),
+        ("G", View::Checklist, (0, 1), &[KeyCode::Char('G')], (1, 1)),
+        (
+            "digit",
+            View::Checklist,
+            (0, 1),
+            &[KeyCode::Char('2')],
+            (1, 0),
+        ),
+        ("L", View::Checklist, (0, 1), &[KeyCode::Char('L')], (1, 0)),
+        ("H", View::Checklist, (1, 1), &[KeyCode::Char('H')], (0, 1)),
+        ("n", View::Checklist, (0, 1), &[KeyCode::Char('n')], (1, 0)),
+        (
+            "T + Enter",
+            View::Checklist,
+            (1, 1),
+            &[KeyCode::Char('T'), KeyCode::Enter],
+            (0, 0),
+        ),
+        (
+            "all-complete h",
+            View::AllComplete,
+            (0, 0),
+            &[KeyCode::Char('h')],
+            (1, 1),
+        ),
+        (
+            "all-complete k",
+            View::AllComplete,
+            (0, 0),
+            &[KeyCode::Char('k')],
+            (1, 1),
+        ),
+    ];
+    for &(name, screen, (from_list, from_item), keys, (to_list, to_item)) in cases {
+        let mut document = two_list_document();
+        document.lists[0].items[0].kind = ItemKind::Checkbox(TaskState::Done);
+        for list in &mut document.lists {
+            for item in &mut list.items {
+                item.code_spans = vec![format!("cmd-{}", item.line_number)];
+            }
+        }
+        let expected = document.lists[to_list].items[to_item].code_spans[0].clone();
+        let mut state = AppState::new(document);
+        state.auto_copy = true;
+        state.search.last = Some("task 4".to_string());
+        state.current_list_index = from_list;
+        state.current_item_index = from_item;
+        state.view = screen;
+        crate::clipboard::fake::with(|c| c.system_attempts.clear());
+
+        for &key in keys {
+            state.handle_key(key);
+        }
+        state.settle();
+
+        assert_eq!(
+            (state.current_list_index, state.current_item_index),
+            (to_list, to_item),
+            "{name}: lands on the target card"
+        );
+        crate::clipboard::fake::with(|c| {
+            assert_eq!(
+                c.system_attempts,
+                vec![(expected.clone(), false)],
+                "{name}: copies the landing card's command"
+            );
+        });
+        let status = state.status_message.as_deref().unwrap_or_default();
+        assert!(
+            status.ends_with("Sent to clipboard (OSC 52)"),
+            "{name}: confirms the copy, got {status:?}"
+        );
+    }
+}
+
+#[test]
+fn a_wrap_message_keeps_the_auto_copy_confirmation_beside_it() {
+    let mut document = two_list_document();
+    for list in &mut document.lists {
+        for item in &mut list.items {
+            item.code_spans = vec![format!("cmd-{}", item.line_number)];
+        }
+    }
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    state.settle();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Wrapped to the first unfinished task (List 1) · Sent to clipboard (OSC 52)")
+    );
+}
+
+#[test]
+fn a_wrap_message_gives_way_to_a_sticky_auto_copy_error() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["rm\u{202e}x".to_string()];
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.focus_item(1, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Tab);
+    state.settle();
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(HIDDEN_CHARACTERS_MESSAGE)
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
+fn quiet_cursor_moves_do_not_auto_copy() {
+    // Cancelling a search restores the cursor without copying.
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["cmd".to_string()];
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_key(KeyCode::Char('5'));
+    state.handle_key(KeyCode::Esc);
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+    assert_eq!(shown(&state), (View::Checklist, None));
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+// Copy alert paths (0 or many candidates) never touch a clipboard
+// backend, so they are safe to test headless. The Copied* paths are
+// manual verification.
+
+#[test]
+fn copy_with_no_code_shows_alert() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('y'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Nothing to copy: item has no code")
+    );
+}
+
+#[test]
+fn y_with_multiple_candidates_arms_a_digit_prompt() {
+    // `y` on a multi-command card copies nothing yet: it arms a digit
+    // (matching the card's [N] markers) and sets no status message, so the
+    // status bar shows the prompt.
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec!["first".to_string(), "second".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    assert!(state.pending_copy_code(), "armed for a command number");
+    assert_eq!(state.status_message, None);
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn y_then_two_digits_copies_command_ten() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = (1..=10).map(|n| format!("cmd-{n}")).collect();
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('1'));
+    assert!(state.pending_copy_code(), "1 could still become 10");
+    state.handle_key(KeyCode::Char('0'));
+    state.settle();
+    assert!(!state.pending_copy_code(), "consumed");
+    assert_eq!(state.current_list_index, 0, "no list jump");
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("cmd-10".to_string(), false)]);
+    });
+}
+
+#[test]
+fn y_then_a_digit_copies_that_fenced_block_not_a_list() {
+    // The armed digit selects a command and must pre-empt the global
+    // digit→list jump.
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec!["first".to_string(), "second".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('2'));
+    state.settle();
+    assert!(!state.pending_copy_code(), "consumed");
+    assert_eq!(state.current_list_index, 0, "no list jump");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sent to clipboard (OSC 52)")
+    );
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("second".to_string(), false)]);
+    });
+}
+
+#[test]
+fn y_then_a_digit_copies_that_inline_command() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["stop-svc".to_string(), "start-svc".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('1'));
+    state.settle();
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(c.system_attempts, vec![("stop-svc".to_string(), false)]);
+    });
+}
+
+#[test]
+fn y_then_an_out_of_range_digit_reports_no_such_command() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('3'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No command [3] on this card")
+    );
+    assert!(state.status_is_error);
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn esc_cancels_the_copy_prompt_without_quitting() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Esc);
+    assert!(!state.pending_copy_code(), "cancelled");
+    assert!(
+        !state.quit_requested(),
+        "esc must not quit while arming a copy"
+    );
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn y_then_a_non_digit_cancels_the_prompt_and_acts_normally() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    let before = state.current_item_index;
+    state.handle_key(KeyCode::Char('y'));
+    state.handle_key(KeyCode::Char('j'));
+    assert!(!state.pending_copy_code(), "cancelled");
+    assert_ne!(state.current_item_index, before, "j still navigated");
+}
+
+#[test]
+fn mouse_input_clears_a_pending_copy_prompt() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["a".to_string(), "b".to_string()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    assert!(state.pending_copy_code(), "armed");
+    state.handle_scroll_down();
+    assert!(!state.pending_copy_code(), "cleared by the scroll");
+}
+
+#[test]
+fn no_code_copy_hint_is_sticky() {
+    // A `y` on a no-code item is feedback to a deliberate keypress,
+    // so it sticks (no expiry) rather than fading after 4s.
+    let mut state = AppState::new(two_list_document());
+    state.layout.card_rect = Some(ratatui::layout::Rect::new(10, 5, 40, 10));
+    state.handle_left_click(15, 8); // no-code item -> "Nothing to copy"
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Nothing to copy: item has no code")
+    );
+    assert_eq!(state.status_expiry, None, "the no-code hint is sticky");
+    assert!(
+        state.status_is_error,
+        "a 'nothing to copy' hint is an error"
+    );
+}
+
+#[test]
+fn every_copy_path_refuses_a_command_with_hidden_characters() {
+    use ratatui::layout::Rect;
+    // The card drops control characters when drawn, so copying them would
+    // put something on the clipboard the user never saw. `y`, a click on a
+    // code row and `--auto-copy` all refuse, with a sticky error.
+    let expected = Some("Not copied: command contains hidden control characters");
+    let hidden = "ls\x1b[201~\nrm -rf ~".to_string();
+
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec![hidden.clone()];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.settle();
+    assert_eq!(state.status_message.as_deref(), expected);
+    assert!(state.status_is_error);
+
+    let mut state = AppState::new(two_list_document());
+    state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
+    state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), hidden.as_str().into())];
+    state.handle_left_click(15, 7);
+    state.settle();
+    assert_eq!(state.status_message.as_deref(), expected);
+
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_spans = vec!["echo ok\rrm -rf ~".to_string()];
+    let mut state = AppState::new(document);
+    state.auto_copy = true;
+    state.maybe_auto_copy();
+    state.settle();
+    assert_eq!(state.status_message.as_deref(), expected);
+}
+
+#[test]
+fn a_copy_to_both_clipboards_says_so() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_copy_outcome(CopyKind::Command, "ls", CopyOutcome::CopiedBoth);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Copied (system clipboard + OSC 52)")
+    );
+    state.apply_copy_outcome(CopyKind::LinkFallback, "x", CopyOutcome::CopiedBoth);
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .unwrap()
+            .contains("system clipboard + OSC 52")
+    );
+}
