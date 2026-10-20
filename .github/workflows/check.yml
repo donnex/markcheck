@@ -70,3 +70,22 @@ jobs:
           cargo llvm-cov --locked \
             --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs' \
             --fail-under-lines 97 --fail-under-regions 97
+
+  # Cargo.toml's rust-version is a promise to anyone building from source;
+  # building with exactly that toolchain keeps it true (#44).
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust 1.88 (Cargo.toml rust-version)
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch
+        with:
+          toolchain: "1.88.0"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build with the minimum supported Rust
+        run: cargo build --locked

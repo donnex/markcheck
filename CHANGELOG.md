@@ -145,6 +145,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The release binary is now statically linked, so it runs on any x86_64
+  Linux. It used to need glibc 2.34 or newer and failed to start on older
+  systems (RHEL 8, Debian 11, Ubuntu 20.04) with a cryptic loader error. The
+  release archive is now named `markcheck-<version>-x86_64-unknown-linux-musl.tar.gz`
+  instead of `…-linux-gnu.tar.gz`; update any script that downloads it.
+  Building from source needs Rust 1.88 or newer, which is now declared and
+  checked. (#44)
+
 - When the file changes on disk, the status bar now says what changed in
   task terms, for example `Reloaded: 2 done, 1 reopened ("Restart service",
   "Verify output") · 1 added`, instead of only "Reloaded: file changed on

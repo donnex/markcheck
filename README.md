@@ -97,8 +97,10 @@ workflow and file-backed state.
 Pre-built binaries (Linux x86_64) are attached to each
 [release](https://github.com/donnex/markcheck/releases) as a
 `.tar.gz` with a `.sha256` checksum — download, verify, extract, and put
-`markcheck` on your `$PATH`. For any other platform, build from source:
-requires a stable Rust toolchain ([rustup](https://rustup.rs)).
+`markcheck` on your `$PATH`. The binary is statically linked (musl), so it
+runs on any x86_64 Linux, old or new, whatever its C library. For any other
+platform, build from source: that needs Rust 1.88 or newer (`rustc
+--version`; install or update it with [rustup](https://rustup.rs)).
 
 ```sh
 cargo build --release        # binary at target/release/markcheck
