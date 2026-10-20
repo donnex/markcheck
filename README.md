@@ -148,6 +148,8 @@ markcheck --auto-copy runbook.md      # copy a task's command as you navigate to
 markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --color 256 runbook.md      # force a palette: auto, truecolor, 256 or 16
 markcheck --clipboard osc52 runbook.md  # copy through the terminal only: auto, system or osc52
+markcheck --no-terminal-title runbook.md  # leave the terminal title alone
+markcheck --no-exit-summary runbook.md    # print nothing after quitting
 markcheck --git-sync runbook.md       # commit + push on toggles/edits (needs a git repo)
 markcheck --no-git-sync runbook.md    # ...or never, even under a git_sync_paths entry
 markcheck --git-sync-delay 0 runbook.md  # commit every change at once instead of after 10 s
@@ -180,8 +182,8 @@ primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
 clipboard = "auto"  # = --clipboard: "auto", "system" or "osc52"
-terminal_title = true  # show the checklist and its progress in the terminal title
-exit_summary = true    # print where the run stopped after quitting
+terminal_title = true  # false = --no-terminal-title, true = --terminal-title
+exit_summary = true    # false = --no-exit-summary,   true = --exit-summary
 git_sync_paths = ["/home/you/checklists"]  # auto-enable --git-sync under these paths (end with /** to include nested repositories)
 git_sync_delay = 10 # = --git-sync-delay: seconds without a change before git sync commits; 0 = at once, at most 86400 (a day)
 ```
@@ -205,11 +207,14 @@ entirely for one run — built-in defaults plus whatever flags you pass —
 which gets you past a broken config without editing it. The two are
 mutually exclusive. `markcheck --help` also names the default location.
 
-Each of the four boolean settings has a flag in both directions, so a config
+Each of the six boolean settings has a flag in both directions, so a config
 value can always be overridden for a single run:
 `--nerd-font`/`--no-nerd-font`, `--mouse`/`--no-mouse`,
-`--primary`/`--no-primary`, and `--auto-copy`/`--no-auto-copy`.
-`color` works the same way: `--color` overrides it, and `--color auto` goes
+`--primary`/`--no-primary`, `--auto-copy`/`--no-auto-copy`,
+`--terminal-title`/`--no-terminal-title`, and
+`--exit-summary`/`--no-exit-summary`.
+`color`, `clipboard` and `git_sync_delay` work the same way: `--color`,
+`--clipboard` and `--git-sync-delay` override them, and `--color auto` goes
 back to detecting the terminal. An explicit `color` (from either) also wins
 over `NO_COLOR`, per [no-color.org](https://no-color.org/).
 
@@ -217,7 +222,7 @@ over `NO_COLOR`, per [no-color.org](https://no-color.org/).
 plain default. A file whose path starts with one of them gets git-sync
 turned on automatically, the same as passing `--git-sync` for that one run.
 `--git-sync` and `git_sync_paths` are additive (either one turns it on),
-unlike the four booleans above, where a passed flag simply overrides the
+unlike the six booleans above, where a passed flag simply overrides the
 config value. To turn it off for one run under a matching entry (a
 rehearsal, working offline, committing by hand), pass `--no-git-sync`: the
 file is still saved on every toggle, but nothing is committed or pushed and
@@ -554,7 +559,9 @@ again when it takes the terminal back. After a normal quit,
 one line on the screen says where the run stopped, for notes or a handover:
 `runbook.md — Deployment Runbook: 3/11 done (1 started), stopped at "Warm the
 build cache"`, or `all 11 done`. Turn either off with `terminal_title =
-false` or `exit_summary = false` in the config file.
+false` or `exit_summary = false` in the config file, or for one run with
+`--no-terminal-title` or `--no-exit-summary` (`--terminal-title` and
+`--exit-summary` turn them back on over the config).
 
 ### Live reload
 

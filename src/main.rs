@@ -270,7 +270,7 @@ fn main() -> anyhow::Result<()> {
         state.icons = IconSet::nerd();
     }
     state.clipboard_primary = settings.primary;
-    state.copy_route = cli::clipboard_choice(&cli, &config).route(cli::is_remote_session(
+    state.copy_route = settings.clipboard.route(cli::is_remote_session(
         std::env::var("SSH_CONNECTION").ok().as_deref(),
         std::env::var("SSH_TTY").ok().as_deref(),
     ));
@@ -302,7 +302,7 @@ fn main() -> anyhow::Result<()> {
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
     if let Some(sync) = git_sync.as_mut() {
-        sync.set_delay(cli::git_sync_delay(&cli, &config));
+        sync.set_delay(settings.git_sync_delay);
     }
     // What no signal handler can catch (SIGKILL, the OOM killer, a power
     // loss) still leaves these behind.
@@ -351,7 +351,7 @@ fn main() -> anyhow::Result<()> {
     let mouse = settings.mouse;
     install_panic_hook();
     take_terminal(mouse)?;
-    let show_title = config.terminal_title.unwrap_or(true);
+    let show_title = settings.terminal_title;
     if show_title {
         // Push the current title, restored by `TerminalGuard`.
         let _ = write!(io::stdout(), "\x1b[22;2t");
@@ -375,7 +375,7 @@ fn main() -> anyhow::Result<()> {
     );
     drop(guard);
     clipboard::release_system_clipboard();
-    if result.is_ok() && config.exit_summary.unwrap_or(true) {
+    if result.is_ok() && settings.exit_summary {
         let _ = writeln!(io::stdout(), "{}", launch::exit_summary(&state));
     }
     // Printed only once the alternate screen is gone, so it stays visible.

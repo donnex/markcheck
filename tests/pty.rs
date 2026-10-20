@@ -2590,6 +2590,28 @@ fn the_terminal_title_shows_progress_and_the_exit_line_says_where_it_stopped() {
     );
 }
 
+#[test]
+fn the_title_and_exit_line_flags_turn_both_off_for_one_run() {
+    let path = unique_path("title-summary-off");
+    write_file(
+        &path,
+        "# Night shift\n\n## Work\n\n- [ ] alpha\n- [ ] beta\n",
+    );
+    let mut cmd = markcheck_command();
+    cmd.args(["--no-terminal-title", "--no-exit-summary"]);
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.key(" ");
+    session.wait_for_screen("1/2");
+    session.key("q");
+    let (ok, output) = session.finish();
+    assert!(ok);
+    assert!(!output.contains("\x1b[22;2t"), "the title is left alone");
+    assert!(!output.contains("— markcheck\x07"), "no title is set");
+    let tail = output.rsplit("\x1b[?1049l").next().unwrap_or_default();
+    assert!(!tail.contains("stopped at"), "no exit line: {tail:?}");
+}
+
 /// Whether `raw` hands the title back (pops it) before `marker`, then sets
 /// `title` again after it.
 fn title_restored_around(raw: &str, marker: &str, title: &str) -> bool {

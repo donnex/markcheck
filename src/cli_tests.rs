@@ -1,7 +1,7 @@
-use super::{
-    Cli, ColorChoice, Settings, clipboard_choice, config, git_sync_delay, is_remote_session,
-    resolve_flag,
-};
+use std::time::Duration;
+
+use super::{Cli, ColorChoice, Settings, config, is_remote_session, resolve_flag};
+use crate::model::ClipboardChoice;
 use clap::Parser as _;
 
 #[test]
@@ -45,8 +45,24 @@ fn config_all(value: bool) -> config::Config {
         git_sync_paths: None,
         git_sync_delay: None,
         clipboard: None,
-        terminal_title: None,
-        exit_summary: None,
+        terminal_title: Some(value),
+        exit_summary: Some(value),
+    }
+}
+
+/// The settings with every boolean set to `value` and the rest at their
+/// defaults.
+fn settings_all(value: bool) -> Settings {
+    Settings {
+        nerd_font: value,
+        mouse: value,
+        primary: value,
+        auto_copy: value,
+        terminal_title: value,
+        exit_summary: value,
+        color: ColorChoice::Auto,
+        clipboard: ClipboardChoice::Auto,
+        git_sync_delay: Duration::from_secs(10),
     }
 }
 
@@ -59,51 +75,36 @@ fn settings_resolve_the_built_in_defaults_with_no_flags_and_no_config() {
             mouse: true,
             primary: false,
             auto_copy: false,
-            color: ColorChoice::Auto,
+            terminal_title: true,
+            exit_summary: true,
+            ..settings_all(false)
         }
     );
 }
 
 #[test]
 fn settings_take_the_config_when_no_flag_is_passed() {
-    assert_eq!(
-        settings_from(&[], config_all(true)),
-        Settings {
-            nerd_font: true,
-            mouse: true,
-            primary: true,
-            auto_copy: true,
-            color: ColorChoice::Auto,
-        }
-    );
-    assert_eq!(
-        settings_from(&[], config_all(false)),
-        Settings {
-            nerd_font: false,
-            mouse: false,
-            primary: false,
-            auto_copy: false,
-            color: ColorChoice::Auto,
-        }
-    );
+    assert_eq!(settings_from(&[], config_all(true)), settings_all(true));
+    assert_eq!(settings_from(&[], config_all(false)), settings_all(false));
 }
 
 #[test]
 fn every_setting_can_be_forced_on_over_a_config_that_disables_it() {
     // `nerd_font` and `mouse` need a positive flag to override the config.
     let settings = settings_from(
-        &["--nerd-font", "--mouse", "--primary", "--auto-copy"],
+        &[
+            "--nerd-font",
+            "--mouse",
+            "--primary",
+            "--auto-copy",
+            "--terminal-title",
+            "--exit-summary",
+        ],
         config_all(false),
     );
     assert_eq!(
         settings,
-        Settings {
-            nerd_font: true,
-            mouse: true,
-            primary: true,
-            auto_copy: true,
-            color: ColorChoice::Auto,
-        },
+        settings_all(true),
         "a passed flag must beat the config in the positive direction"
     );
 }
@@ -116,18 +117,14 @@ fn every_setting_can_be_forced_off_over_a_config_that_enables_it() {
             "--no-mouse",
             "--no-primary",
             "--no-auto-copy",
+            "--no-terminal-title",
+            "--no-exit-summary",
         ],
         config_all(true),
     );
     assert_eq!(
         settings,
-        Settings {
-            nerd_font: false,
-            mouse: false,
-            primary: false,
-            auto_copy: false,
-            color: ColorChoice::Auto,
-        },
+        settings_all(false),
         "a passed flag must beat the config in the negative direction"
     );
 }
@@ -141,6 +138,8 @@ fn each_setting_s_two_flags_conflict() {
         ["--mouse", "--no-mouse"],
         ["--primary", "--no-primary"],
         ["--auto-copy", "--no-auto-copy"],
+        ["--terminal-title", "--no-terminal-title"],
+        ["--exit-summary", "--no-exit-summary"],
         ["--git-sync", "--no-git-sync"],
         ["--config=other.toml", "--no-config"],
     ] {
@@ -206,28 +205,21 @@ fn color_flag_beats_the_config_which_beats_auto() {
 
 #[test]
 fn git_sync_delay_takes_the_flag_then_the_config_then_ten_seconds() {
-    use std::time::Duration;
-    let parse = |flags: &[&str]| {
-        let mut argv = vec!["markcheck", "checklist.md"];
-        argv.extend_from_slice(flags);
-        Cli::parse_from(argv)
-    };
-    let mut config = config_all(false);
     assert_eq!(
-        git_sync_delay(&parse(&[]), &config),
+        settings_from(&[], config_all(false)).git_sync_delay,
         Duration::from_secs(10)
     );
-    config.git_sync_delay = Some(30);
+    let delay = |flags: &[&str]| {
+        let config = config::Config {
+            git_sync_delay: Some(30),
+            ..config_all(false)
+        };
+        settings_from(flags, config).git_sync_delay
+    };
+    assert_eq!(delay(&[]), Duration::from_secs(30));
+    assert_eq!(delay(&["--git-sync-delay", "0"]), Duration::ZERO);
     assert_eq!(
-        git_sync_delay(&parse(&[]), &config),
-        Duration::from_secs(30)
-    );
-    assert_eq!(
-        git_sync_delay(&parse(&["--git-sync-delay", "0"]), &config),
-        Duration::ZERO
-    );
-    assert_eq!(
-        git_sync_delay(&parse(&["--git-sync-delay", "86400"]), &config),
+        delay(&["--git-sync-delay", "86400"]),
         Duration::from_secs(86_400)
     );
 }
@@ -248,24 +240,18 @@ fn git_sync_delay_over_a_day_is_rejected() {
 
 #[test]
 fn clipboard_choice_takes_the_flag_then_the_config_then_auto() {
-    use crate::model::ClipboardChoice;
-    let parse = |flags: &[&str]| {
-        let mut argv = vec!["markcheck", "checklist.md"];
-        argv.extend_from_slice(flags);
-        Cli::parse_from(argv)
+    let config = |clipboard| config::Config {
+        clipboard,
+        ..config::Config::default()
     };
-    let mut config = config_all(false);
+    let choice = |flags: &[&str], clipboard| settings_from(flags, config(clipboard)).clipboard;
+    assert_eq!(choice(&[], None), ClipboardChoice::Auto);
     assert_eq!(
-        clipboard_choice(&parse(&[]), &config),
-        ClipboardChoice::Auto
-    );
-    config.clipboard = Some(ClipboardChoice::System);
-    assert_eq!(
-        clipboard_choice(&parse(&[]), &config),
+        choice(&[], Some(ClipboardChoice::System)),
         ClipboardChoice::System
     );
     assert_eq!(
-        clipboard_choice(&parse(&["--clipboard", "osc52"]), &config),
+        choice(&["--clipboard", "osc52"], Some(ClipboardChoice::System)),
         ClipboardChoice::Osc52
     );
 }

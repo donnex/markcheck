@@ -80,6 +80,20 @@ pub struct Cli {
     /// (config: clipboard = "...")
     #[arg(long, value_name = "WHERE", value_enum)]
     pub clipboard: Option<ClipboardChoice>,
+    /// Show the checklist and its progress in the terminal title, overriding
+    /// `terminal_title = false` in the config (the default)
+    #[arg(long, conflicts_with = "no_terminal_title")]
+    pub terminal_title: bool,
+    /// Leave the terminal title alone (config: terminal_title = false)
+    #[arg(long)]
+    pub no_terminal_title: bool,
+    /// Print where the run stopped after quitting, overriding
+    /// `exit_summary = false` in the config (the default)
+    #[arg(long, conflicts_with = "no_exit_summary")]
+    pub exit_summary: bool,
+    /// Print nothing after quitting (config: exit_summary = false)
+    #[arg(long)]
+    pub no_exit_summary: bool,
     /// Commit and push this file's changes after every toggle, when it's inside a
     /// git repo (config: git_sync_paths matches this file's path; --no-git-sync
     /// turns it off)
@@ -105,15 +119,19 @@ pub struct Cli {
     pub no_config: bool,
 }
 
-/// The four boolean settings and the palette choice, resolved in one place
-/// so the wiring can be tested through real argv.
+/// Every setting with a flag and a config key, resolved in one place so the
+/// wiring can be tested through real argv.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Settings {
     pub nerd_font: bool,
     pub mouse: bool,
     pub primary: bool,
     pub auto_copy: bool,
+    pub terminal_title: bool,
+    pub exit_summary: bool,
     pub color: ColorChoice,
+    pub clipboard: ClipboardChoice,
+    pub git_sync_delay: std::time::Duration,
 }
 
 impl Settings {
@@ -125,7 +143,25 @@ impl Settings {
             mouse: resolve_flag(cli.mouse, cli.no_mouse, config.mouse, true),
             primary: resolve_flag(cli.primary, cli.no_primary, config.primary, false),
             auto_copy: resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false),
+            terminal_title: resolve_flag(
+                cli.terminal_title,
+                cli.no_terminal_title,
+                config.terminal_title,
+                true,
+            ),
+            exit_summary: resolve_flag(
+                cli.exit_summary,
+                cli.no_exit_summary,
+                config.exit_summary,
+                true,
+            ),
             color: cli.color.or(config.color).unwrap_or_default(),
+            clipboard: cli.clipboard.or(config.clipboard).unwrap_or_default(),
+            git_sync_delay: std::time::Duration::from_secs(
+                cli.git_sync_delay
+                    .or(config.git_sync_delay)
+                    .unwrap_or(DEFAULT_GIT_SYNC_DELAY),
+            ),
         }
     }
 }
@@ -200,26 +236,11 @@ pub fn completions(shell: clap_complete::Shell) -> Vec<u8> {
     out
 }
 
-/// Where copies go: the flag, then the config, then `auto`.
-pub fn clipboard_choice(cli: &Cli, config: &config::Config) -> ClipboardChoice {
-    cli.clipboard.or(config.clipboard).unwrap_or_default()
-}
-
 /// Whether this runs inside an SSH session, from the variables sshd sets.
 pub fn is_remote_session(ssh_connection: Option<&str>, ssh_tty: Option<&str>) -> bool {
     [ssh_connection, ssh_tty]
         .iter()
         .any(|var| var.is_some_and(|value| !value.is_empty()))
-}
-
-/// How long git sync waits for the changes to stop before committing: the
-/// flag, then the config, then [`DEFAULT_GIT_SYNC_DELAY`].
-pub fn git_sync_delay(cli: &Cli, config: &config::Config) -> std::time::Duration {
-    std::time::Duration::from_secs(
-        cli.git_sync_delay
-            .or(config.git_sync_delay)
-            .unwrap_or(DEFAULT_GIT_SYNC_DELAY),
-    )
 }
 
 /// Seconds: long enough to fold a burst of ticks (or a tick and its undo)

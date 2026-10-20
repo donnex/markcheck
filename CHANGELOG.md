@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--no-terminal-title` and `--no-exit-summary` turn off the terminal title and the line printed after quitting for one run, and `--terminal-title` and `--exit-summary` turn them back on over a config file that sets `terminal_title = false` or `exit_summary = false`. These two settings could only be changed in the config file, although the 1.3.0 notes and the README said every on/off setting has a flag in both directions, so a shared config that turned the exit line off couldn't be overridden, and there was no way to leave the title alone without writing a config file. (#163)
+
 ### Fixed
 
 - The terminal title is now right while you are in your editor or the shell, and after you come back. While `e` had the editor open or `Ctrl-Z` had you in the shell, the tab still read `Deployment Runbook · 3/11 — markcheck`, and after the editor or shell set a title of its own markcheck didn't set its title again until the next tick changed the count, so the tab named the wrong thing. Your own title is now shown while the other program has the terminal, and markcheck's comes back as soon as it takes the terminal back. (#162)
