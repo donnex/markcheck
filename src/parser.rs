@@ -603,6 +603,11 @@ struct ParseState<'a> {
     heading_line: LineNumber,
     /// Every structural heading's GitHub-style anchor and line, in order.
     anchors: Vec<(String, LineNumber)>,
+    /// The anchors already in `anchors`, so a repeat is checked in O(1).
+    taken_anchors: HashSet<String>,
+    /// The next `-N` suffix to try for each slug, so the k-th repeat of a
+    /// heading doesn't retry every suffix before it (#148).
+    next_anchor_suffix: HashMap<String, usize>,
     /// The lines of critical tasks (`**! Title**`).
     critical: std::collections::BTreeSet<LineNumber>,
     /// Set while the open heading sits inside a `>` blockquote outside any
@@ -680,6 +685,8 @@ impl<'a> ParseState<'a> {
             heading: None,
             heading_line: 0,
             anchors: Vec::new(),
+            taken_anchors: HashSet::new(),
+            next_anchor_suffix: HashMap::new(),
             critical: Default::default(),
             heading_quoted: false,
             document_title: None,
@@ -757,12 +764,17 @@ impl<'a> ParseState<'a> {
     /// there (#139).
     fn add_anchor(&mut self, text: &str) {
         let base = slug(text);
-        let mut anchor = base.clone();
-        let mut repeat = 0;
-        while self.anchors.iter().any(|(taken, _)| *taken == anchor) {
-            repeat += 1;
+        let repeat = self.next_anchor_suffix.entry(base.clone()).or_insert(0);
+        let mut anchor = match *repeat {
+            0 => base.clone(),
+            n => format!("{base}-{n}"),
+        };
+        while self.taken_anchors.contains(&anchor) {
+            *repeat += 1;
             anchor = format!("{base}-{repeat}");
         }
+        *repeat += 1;
+        self.taken_anchors.insert(anchor.clone());
         self.anchors.push((anchor, self.heading_line));
     }
 

@@ -2295,6 +2295,39 @@ fn headings_get_github_style_anchors_numbered_when_repeated() {
 }
 
 #[test]
+fn repeated_headings_skip_a_suffix_a_literal_heading_already_took() {
+    let document = parse(
+        "## Verify\n\n- [ ] a\n\n## Verify 1\n\n- [ ] b\n\n## Verify\n\n- [ ] c\n\n## Verify\n\n- [ ] d\n\n## Verify 1\n\n- [ ] e\n\n## Verify\n\n- [ ] f\n",
+    );
+    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    assert_eq!(
+        anchors,
+        vec![
+            "verify",
+            "verify-1",
+            "verify-2",
+            "verify-3",
+            "verify-1-1",
+            "verify-4"
+        ]
+    );
+}
+
+#[test]
+fn thousands_of_repeated_headings_parse_quickly() {
+    let source: String = (0..3000).map(|_| "### Verify\n\n- [ ] a\n\n").collect();
+    let started = std::time::Instant::now();
+    let document = parse(&source);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(document.anchors.len(), 3000);
+    assert_eq!(document.anchors[2999].0, "verify-2999");
+}
+
+#[test]
 fn a_bang_in_a_tasks_bold_title_makes_it_critical() {
     let document = parse(
         "- [ ] **! Drop the old database** after the backup\n- [ ] **!**\n- **! a note**\n- [ ] plain\n",
