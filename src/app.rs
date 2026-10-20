@@ -1,7 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -9,9 +9,10 @@ use crate::clipboard::{self, CopyOutcome};
 use crate::effect::{CopyKind, Effect};
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
-    AppState, CopyRoute, Document, FileGone, GitSyncState, HelpState, IconSet, Item, ItemKind,
-    List, Overlay, OverviewTarget, Palette, PendingSync, PickerState, ResetScope, SearchState,
-    StateSnapshot, TaskState, UNDO_HISTORY_CAP, View, ViewLayout, hash_bytes,
+    AppState, CopyRoute, CriticalAction, CriticalArm, Document, FileGone, GitSyncState, HelpState,
+    IconSet, Item, ItemKind, List, Overlay, OverviewTarget, Palette, PendingSync, PickerState,
+    ResetScope, SearchState, StateSnapshot, TaskState, UNDO_HISTORY_CAP, View, ViewLayout,
+    hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -24,10 +25,9 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
 
 const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
-const CRITICAL_PROMPT: &str =
-    "Critical step — press Space again to check it, any other key leaves it open";
-const CRITICAL_CLICK_PROMPT: &str =
-    "Critical step — click its marker again to check it, any other click or key leaves it open";
+/// The quiet spell a critical step's confirming press must follow, so key
+/// repeat from a held key, or a reflex double press, can't confirm it (#219).
+const CRITICAL_PAUSE: Duration = Duration::from_millis(500);
 const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
      so a crash mid-save could truncate the checklist";
 /// What Esc and Ctrl-C say on a screen with nothing to cancel.
@@ -1057,7 +1057,7 @@ impl AppState {
 
         let new_state = toggled_done(state);
         let position = (self.current_list_index, self.current_item_index);
-        if new_state == TaskState::Done && !self.confirm_critical(position, CRITICAL_PROMPT) {
+        if new_state == TaskState::Done && !self.confirm_critical(position, CriticalAction::Check) {
             return;
         }
         if !self.set_current_state(new_state) {
@@ -1091,7 +1091,7 @@ impl AppState {
         };
         let new_state = toggled_done(state);
         if new_state == TaskState::Done
-            && !self.confirm_critical((list_index, item_index), CRITICAL_CLICK_PROMPT)
+            && !self.confirm_critical((list_index, item_index), CriticalAction::Click)
         {
             return;
         }
@@ -1135,20 +1135,40 @@ impl AppState {
         self.view = View::Checklist;
     }
 
-    /// Checking a critical task takes a second, deliberate press (#95): the
-    /// first arms it and says so, the second (on the same task) confirms.
-    /// `prompt` names the action that confirms, which is the one that armed it.
-    /// Returns whether the check may go ahead now.
-    fn confirm_critical(&mut self, position: (usize, usize), prompt: &str) -> bool {
+    /// Checking or skipping a critical task takes a second, deliberate press
+    /// (#95): the first arms it and says so, and the same input again on the
+    /// same task confirms, but only after [`CRITICAL_PAUSE`] without it (#219).
+    /// A quicker repeat keeps it armed and restarts the pause, so a held key
+    /// never gets through. Returns whether the change may go ahead now.
+    fn confirm_critical(&mut self, position: (usize, usize), action: CriticalAction) -> bool {
         if !self.document.is_critical(position.0, position.1) {
             return true;
         }
-        if self.critical_armed == Some(position) {
-            self.critical_armed = None;
-            return true;
+        let now = Instant::now();
+        let (again, others) = match action {
+            CriticalAction::Check => ("press Space again to check it", "key"),
+            CriticalAction::Skip => ("press - again to skip it", "key"),
+            CriticalAction::Click => ("click its marker again to check it", "click or key"),
+        };
+        match self.critical_armed {
+            Some(arm) if arm.position == position && arm.action == action => {
+                if now.saturating_duration_since(arm.at) >= CRITICAL_PAUSE {
+                    self.critical_armed = None;
+                    return true;
+                }
+                self.set_notice(format!(
+                    "Critical step still open: too quick — pause, then {again}"
+                ));
+            }
+            _ => self.set_notice(format!(
+                "Critical step — {again}, any other {others} leaves it open"
+            )),
         }
-        self.critical_armed = Some(position);
-        self.set_notice(prompt.to_string());
+        self.critical_armed = Some(CriticalArm {
+            position,
+            action,
+            at: now,
+        });
         false
     }
 
@@ -1168,6 +1188,11 @@ impl AppState {
         } else {
             TaskState::Skipped
         };
+        let position = (self.current_list_index, self.current_item_index);
+        if new_state == TaskState::Skipped && !self.confirm_critical(position, CriticalAction::Skip)
+        {
+            return;
+        }
         if !self.set_current_state(new_state) {
             return;
         }
@@ -2163,7 +2188,7 @@ impl AppState {
 
     /// Any key or click other than the confirming one leaves an armed
     /// critical task unchecked.
-    fn disarm_unless_used(&mut self, armed: Option<(usize, usize)>) {
+    fn disarm_unless_used(&mut self, armed: Option<CriticalArm>) {
         if armed.is_some() && self.critical_armed == armed {
             self.critical_armed = None;
         }

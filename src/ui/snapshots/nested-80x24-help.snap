@@ -17,12 +17,12 @@ expression: "screen(&mut state, 80, 24)"
 │  space / Enter      toggle the task done, the│  │   │ ☐ Free up disk space   │
 │  s                  mark the task started / i│  │   │ ☐ Notify the team on … │
 │  -                  skip the task (doesn't ap│  │ • [2] Release              │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ Tag the release        │
-│  Ctrl-O             go back after o followed │  │   ☐ Publish                │
-│  Tab                jump to the next unfinish│  │   │ ☐ Upload the artifact  │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   │ ☐ Announce the release │
+│  critical step      space or - twice, pausing│  │   ☐ Tag the release        │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ Publish                │
+│  Ctrl-O             go back after o followed │  │   │ ☐ Upload the artifact  │
+│  Tab                jump to the next unfinish│  │   │ ☐ Announce the release │
+│  Shift-H / Shift-L  previous / next unfinishe│  │                            │
 │  /                  search tasks by text     │  │                            │
-│  n / N              next / previous search ma│  │                            │
-│  T                  go to task (filterable li▼  │                            │
+│  n / N              next / previous search ma▼  │                            │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

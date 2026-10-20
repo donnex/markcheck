@@ -17,12 +17,12 @@ expression: "screen(&mut state, 80, 24)"
 │  space / Enter      toggle the task done, the│  │   ☐ A task with a short o… ▓
 │  s                  mark the task started / i│  │   ☐ A task with fenced li… ▓
 │  -                  skip the task (doesn't ap│  │   ☐ A task with a tab-ind… │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ A task with two comma… │
-│  Ctrl-O             go back after o followed │  │   ☐ A task with a command… │
-│  Tab                jump to the next unfinish│  │   ☐ Fetch curl -fsSL http… │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ A task with emphasis,… │
-│  /                  search tasks by text     │  │   ☐ A task whose text run… │
-│  n / N              next / previous search ma│  │   ☐ A task in wide (two-c… │
-│  T                  go to task (filterable li▼  │   ☐ Open the project runb… ▼
+│  critical step      space or - twice, pausing│  │   ☐ A task with two comma… │
+│  u / Ctrl-R         undo / redo the last chan│  │   ☐ A task with a command… │
+│  Ctrl-O             go back after o followed │  │   ☐ Fetch curl -fsSL http… │
+│  Tab                jump to the next unfinish│  │   ☐ A task with emphasis,… │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ A task whose text run… │
+│  /                  search tasks by text     │  │   ☐ A task in wide (two-c… │
+│  n / N              next / previous search ma▼  │   ☐ Open the project runb… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help

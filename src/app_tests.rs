@@ -6561,6 +6561,7 @@ fn checking_a_critical_task_takes_a_second_space() {
     );
     assert!(state.git_sync_request().is_none());
 
+    let_critical_pause_pass(&mut state);
     state.handle_key(KeyCode::Char(' '));
     assert!(
         fs::read_to_string(&path)
@@ -6620,6 +6621,7 @@ fn an_overview_click_on_a_critical_task_also_needs_a_second_click() {
         "the prompt names the click that confirms, not Space: {:?}",
         state.status_message
     );
+    let_critical_pause_pass(&mut state);
     state.toggle_item(0, 1);
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.contains("- [x] **! Reboot"), "{text}");
@@ -6666,5 +6668,127 @@ fn the_wheel_or_a_paste_leaves_an_armed_critical_task_open() {
             .unwrap()
             .contains("- [ ] **! Fail"),
         "still open after the paste"
+    );
+}
+
+/// Backdates an armed critical step as if the user had paused before the
+/// confirming press.
+fn let_critical_pause_pass(state: &mut AppState) {
+    let arm = state
+        .critical_armed
+        .as_mut()
+        .expect("a critical step is armed");
+    arm.at = arm.at.checked_sub(CRITICAL_PAUSE).unwrap();
+}
+
+const HELD_KEY_LIST: &str = "## L\n\n- [ ] a\n- [ ] **! Drop the database**\n- [ ] b\n- [ ] c\n";
+
+#[test]
+fn a_held_space_does_not_walk_past_a_critical_step() {
+    let path = write_real_file(HELD_KEY_LIST);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    for _ in 0..10 {
+        state.handle_key(KeyCode::Char(' '));
+    }
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("- [x] a"), "{text}");
+    assert!(text.contains("- [ ] **! Drop"), "{text}");
+    assert!(text.contains("- [ ] b"), "{text}");
+    assert_eq!(state.current_item_index, 1, "the cursor stays on it");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Critical step still open: too quick — pause, then press Space again to check it")
+    );
+
+    let_critical_pause_pass(&mut state);
+    state.handle_key(KeyCode::Char(' '));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [x] **! Drop")
+    );
+    assert_eq!(state.current_item_index, 2, "moved on as usual");
+}
+
+#[test]
+fn skipping_a_critical_step_takes_a_second_deliberate_minus() {
+    let path = write_real_file(HELD_KEY_LIST);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.handle_key(KeyCode::Char('-'));
+    state.handle_key(KeyCode::Char('-'));
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("- [-] a"), "{text}");
+    assert!(text.contains("- [ ] **! Drop"), "{text}");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Critical step — press - again to skip it, any other key leaves it open")
+    );
+
+    state.handle_key(KeyCode::Char('-'));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Drop"),
+        "too quick"
+    );
+
+    let_critical_pause_pass(&mut state);
+    state.handle_key(KeyCode::Char('-'));
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("- [-] **! Drop"), "{text}");
+    assert_eq!(state.status_message.as_deref(), Some("Marked skipped"));
+    assert_eq!(state.current_item_index, 2, "moved on as usual");
+
+    state.focus_item(0, 1, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('-'));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Drop"),
+        "unskipping stays one press"
+    );
+}
+
+#[test]
+fn a_critical_step_armed_by_one_key_is_not_confirmed_by_another() {
+    let path = write_real_file(HELD_KEY_LIST);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.focus_item(0, 1, CursorMove::Quiet);
+
+    state.handle_key(KeyCode::Char(' '));
+    let_critical_pause_pass(&mut state);
+    state.handle_key(KeyCode::Char('-'));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Drop"),
+        "the - only armed a skip"
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Critical step — press - again"))
+    );
+}
+
+#[test]
+fn a_quick_second_click_leaves_a_critical_step_open() {
+    let path = write_real_file(HELD_KEY_LIST);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_item(0, 1);
+    state.toggle_item(0, 1);
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Drop")
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(
+            "Critical step still open: too quick — pause, then click its marker again to check it"
+        )
     );
 }

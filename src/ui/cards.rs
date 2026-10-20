@@ -224,6 +224,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("space / Enter", "toggle the task done, then next open task"),
             ("s", "mark the task started / in progress"),
             ("-", "skip the task (doesn't apply this run), or unskip"),
+            ("critical step", "space or - twice, pausing between"),
             ("u / Ctrl-R", "undo / redo the last change"),
             ("Ctrl-O", "go back after o followed a #section link"),
             ("Tab", "jump to the next unfinished task"),

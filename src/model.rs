@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -1032,6 +1032,27 @@ pub enum OverviewTarget {
     Toggle(usize, usize),
 }
 
+/// The input that confirms a critical step: the one that armed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CriticalAction {
+    /// `Space`/`Enter` checking the current task.
+    Check,
+    /// `-` skipping the current task.
+    Skip,
+    /// A click on the task's overview marker.
+    Click,
+}
+
+/// A critical step waiting for its confirming press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CriticalArm {
+    /// The task, as `(list, item)`.
+    pub position: (usize, usize),
+    pub action: CriticalAction,
+    /// When the arming input, or the latest too-quick repeat of it, came.
+    pub at: Instant,
+}
+
 pub struct AppState {
     pub document: Document,
     pub current_list_index: usize,
@@ -1091,9 +1112,9 @@ pub struct AppState {
     pub icons: IconSet,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
-    /// A critical task armed by a first `Space` (or click), as `(list,
-    /// item)`: the next one confirms it, anything else disarms it.
-    pub critical_armed: Option<(usize, usize)>,
+    /// A critical task armed by a first `Space`, `-` or click: the same
+    /// input again, after a pause, confirms it; anything else disarms it.
+    pub critical_armed: Option<CriticalArm>,
     /// Where `o` on a `#anchor` link jumped from, latest last, for `Ctrl-O`.
     pub jump_back: Vec<(usize, usize)>,
     /// Where `y` copies to (`--clipboard`).

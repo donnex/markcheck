@@ -26,7 +26,8 @@ a note card.
 - [ ] Check the health endpoint `curl https://example.com/health`
 - [ ] **Run the smoke tests**
 - [ ] **! Switch traffic to the new release** — a critical step: its title
-  starts with `!`, so `Space` asks for a second press before checking it
+  starts with `!`, so `Space` (or `-`) asks for a second, unhurried press
+  before checking (or skipping) it
 - [ ] Tail the logs and watch for errors; if they show a failure, go back to
   [Prepare](#prepare) (`o` follows the link, `Ctrl-O` comes back)
 - [X] Record the start time — an uppercase `[X]` counts as done too

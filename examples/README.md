@@ -12,7 +12,7 @@ markcheck examples/basics.md
   a `> [!WARNING]` alert in the warning color under `## Verify`, the three task
   states (`[ ]` / `[/]` / `[x]`) plus a skipped `[-]` task (dimmed and
   struck through, counted apart from done), a critical step (a bold title
-  starting with `!`) that takes a second `Space` to check, a list banner
+  starting with `!`) that takes a second, unhurried `Space` to check, a list banner
   (leading bold-only bullet), a card title (a task's leading `**bold**`, also as a title-only task, which
   the side cards show by its title), inline
   and fenced commands, a plain-bullet note card, and the same three task states

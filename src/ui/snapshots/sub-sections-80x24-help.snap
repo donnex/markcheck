@@ -17,12 +17,12 @@ expression: "screen(&mut state, 80, 24)"
 │  space / Enter      toggle the task done, the│  │   ☐ confirm the snapshot … │
 │  s                  mark the task started / i│  │   ── Rollout ───────────── │
 │  -                  skip the task (doesn't ap│  │   ☑ restart-service        │
-│  u / Ctrl-R         undo / redo the last chan│  │   ☐ check-status example-… │
-│  Ctrl-O             go back after o followed │  │   ▪ Watch the dashboards   │
-│  Tab                jump to the next unfinish│  │   ☐ confirm the error rat… │
-│  Shift-H / Shift-L  previous / next unfinishe│  │   ☐ announce the rollout … │
-│  /                  search tasks by text     │  │   ── Post-rollout ──────── │
-│  n / N              next / previous search ma│  │   ☐ tail the logs for one… │
-│  T                  go to task (filterable li▼  │   ☐ verify-output --final  ▼
+│  critical step      space or - twice, pausing│  │   ☐ check-status example-… │
+│  u / Ctrl-R         undo / redo the last chan│  │   ▪ Watch the dashboards   │
+│  Ctrl-O             go back after o followed │  │   ☐ confirm the error rat… │
+│  Tab                jump to the next unfinish│  │   ☐ announce the rollout … │
+│  Shift-H / Shift-L  previous / next unfinishe│  │   ── Post-rollout ──────── │
+│  /                  search tasks by text     │  │   ☐ tail the logs for one… │
+│  n / N              next / previous search ma▼  │   ☐ verify-output --final  ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 j/k ↑↓: scroll  ·  any other key: close help
