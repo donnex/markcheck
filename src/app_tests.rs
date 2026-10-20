@@ -146,6 +146,7 @@ fn document_with_missing_file(lists: Vec<List>) -> Document {
         preambles: Default::default(),
         unshown: Default::default(),
         anchors: Vec::new(),
+        critical: Default::default(),
         raw_lines,
     }
 }
@@ -6537,5 +6538,84 @@ fn a_reload_that_changes_no_task_keeps_the_plain_message() {
     assert_eq!(
         state.status_message.as_deref(),
         Some("Reloaded: file changed on disk")
+    );
+}
+
+#[test]
+fn checking_a_critical_task_takes_a_second_space() {
+    let path = write_real_file("## S\n\n- [ ] **! Drop the database**\n- [ ] next\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.handle_key(KeyCode::Char(' '));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Drop"),
+        "not yet"
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Critical step — press Space again"))
+    );
+    assert!(state.git_sync_request().is_none());
+
+    state.handle_key(KeyCode::Char(' '));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [x] **! Drop")
+    );
+    assert_eq!(state.current_item_index, 1, "moved on as usual");
+
+    state.focus_item(0, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char(' '));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Drop"),
+        "unchecking stays one press"
+    );
+}
+
+#[test]
+fn any_other_key_or_esc_leaves_an_armed_critical_task_open() {
+    let path = write_real_file("## S\n\n- [ ] **! Fail over**\n- [ ] next\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.handle_key(KeyCode::Char(' '));
+    state.handle_key(KeyCode::Char('j'));
+    state.handle_key(KeyCode::Char('k'));
+    state.handle_key(KeyCode::Char(' '));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Fail"),
+        "the j disarmed it, so this Space only armed it again"
+    );
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Critical step not checked")
+    );
+    assert_eq!(state.critical_armed, None);
+}
+
+#[test]
+fn an_overview_click_on_a_critical_task_also_needs_a_second_click() {
+    let path = write_real_file("## S\n\n- [ ] a\n- [ ] **! Reboot**\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_item(0, 1);
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [ ] **! Reboot")
+    );
+    state.toggle_item(0, 1);
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("- [x] **! Reboot")
     );
 }

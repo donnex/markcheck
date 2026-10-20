@@ -2207,3 +2207,22 @@ fn headings_get_github_style_anchors_numbered_when_repeated() {
     assert_eq!(document.first_task_from(6), Some((1, 0)));
     assert_eq!(document.first_task_from(99), None);
 }
+
+#[test]
+fn a_bang_in_a_tasks_bold_title_makes_it_critical() {
+    let document = parse(
+        "- [ ] **! Drop the old database** after the backup\n- [ ] **!**\n- **! a note**\n- [ ] plain\n",
+    );
+    let items = &document.lists[0].items;
+    assert_eq!(items[0].header.as_deref(), Some("Drop the old database"));
+    assert_eq!(
+        document.critical.iter().copied().collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert!(document.is_critical(0, 0));
+    assert!(!document.is_critical(0, 1), "a lone ! is no title");
+    assert!(
+        !document.is_critical(0, 2),
+        "a note can't be checked, so isn't critical"
+    );
+}

@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/11 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────
+ ≡ Deployment Runbook │ basics.md                                                                    ☑ 3/12 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Prepare              │
                                                                                           │   ▪ Do not run against pr… │
@@ -17,15 +17,15 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ▪ Warning: Run these on… │
                                                                                           │   ☐ Check the health endp… │
                                                                                           │   ☐ Run the smoke tests    │
-                                        • Prepare                                         │   ☐ Tail the logs and wat… │
-                             ▪ Do not run against production                              │   ☑ Record the start time… │
-                                                                                          │   ⊘ Restart the replica —… │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │ • [3] Ordered steps        │
-┌ ◐ ────────┃                                                             ┃────────────┐  │   The three task states w… │
-│           ┃                Check out the release branch:                ┃Build the   │  │   ☑ 1. Confirm the change… │
-│   Warm the┃                                                             ┃artifact    │  │   ◐ 2. Notify the on-call… │
-│  build cac┃                    git checkout release                     ┃            │  │   ☐ 3. Announce completion │
-│           ┃                                                             ┃ompile and  │  │                            │
+                                        • Prepare                                         │   ☐ ! Switch traffic to t… │
+                             ▪ Do not run against production                              │   ☐ Tail the logs and wat… │
+                                                                                          │   ☑ Record the start time… │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │   ⊘ Restart the replica —… │
+┌ ◐ ────────┃                                                             ┃────────────┐  │ • [3] Ordered steps        │
+│           ┃                Check out the release branch:                ┃Build the   │  │   The three task states w… │
+│   Warm the┃                                                             ┃artifact    │  │   ☑ 1. Confirm the change… │
+│  build cac┃                    git checkout release                     ┃            │  │   ◐ 2. Notify the on-call… │
+│           ┃                                                             ┃ompile and  │  │   ☐ 3. Announce completion │
 └───────────┃                                                             ┃────────────┘  │                            │
             ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
                                                                                           │                            │

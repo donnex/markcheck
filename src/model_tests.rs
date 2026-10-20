@@ -558,6 +558,7 @@ fn document_checkbox_stats_sums_across_lists() {
         preambles: Default::default(),
         unshown: Default::default(),
         anchors: Vec::new(),
+        critical: Default::default(),
         raw_lines: vec![],
     };
     assert_eq!(document.checkbox_stats(), (2, 3));

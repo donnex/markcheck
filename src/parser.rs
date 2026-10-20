@@ -603,6 +603,8 @@ struct ParseState<'a> {
     heading_line: LineNumber,
     /// Every structural heading's GitHub-style anchor and line, in order.
     anchors: Vec<(String, LineNumber)>,
+    /// The lines of critical tasks (`**! Title**`).
+    critical: std::collections::BTreeSet<LineNumber>,
     /// Set while the open heading sits inside a `>` blockquote outside any
     /// item: a quoted heading never opens a list, sets the title or starts a
     /// sub-section.
@@ -678,6 +680,7 @@ impl<'a> ParseState<'a> {
             heading: None,
             heading_line: 0,
             anchors: Vec::new(),
+            critical: Default::default(),
             heading_quoted: false,
             document_title: None,
             section_stack: Vec::new(),
@@ -996,6 +999,16 @@ impl<'a> ParseState<'a> {
         if is_banner {
             self.pending_banner = item.header.take();
         } else {
+            // A task whose bold title starts with `!` is critical (#95): the
+            // `!` stays readable in an editor or on GitHub, and here becomes a
+            // confirmation on checking it.
+            if matches!(item.kind, ItemKind::Checkbox(_))
+                && let Some(rest) = item.header.as_deref().and_then(|h| h.strip_prefix('!'))
+                && !rest.trim().is_empty()
+            {
+                item.header = Some(rest.trim_start().to_string());
+                self.critical.insert(item.line_number);
+            }
             self.current_list_items.push(item);
         }
     }
@@ -1135,6 +1148,7 @@ impl<'a> ParseState<'a> {
             preambles,
             unshown,
             anchors: self.anchors,
+            critical: self.critical,
             raw_lines,
         }
     }

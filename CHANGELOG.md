@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Critical steps: start a task's bold title with `!`
+  (`- [ ] **! Drop the old database**`) and checking it takes a second,
+  deliberate `Space`, so a held key or a double press can't walk past it.
+  Its card is framed in the warning color with a `critical` label. (#95)
+
 - The terminal title now shows the open checklist and its progress
   (`Deployment Runbook · 3/11 — markcheck`), and the title you had comes
   back on exit; after quitting, one line says where the run stopped

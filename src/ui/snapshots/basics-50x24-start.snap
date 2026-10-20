@@ -2,9 +2,9 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Ru… │ basics.md  ☑ 3/11 (+1 skipped)
+ ≡ Deployment Ru… │ basics.md  ☑ 3/12 (+1 skipped)
  [1] Prepare   [2] Verify   [3] Ordered steps
-━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
+━━━━━━━━━━━━━━━━━━━━──────────────────────────────
 
 
 

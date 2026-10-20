@@ -480,6 +480,9 @@ pub struct Document {
     /// Each structural heading's GitHub-style anchor (`rollback` for
     /// `## Rollback`) and its line, in document order (#114, #139).
     pub anchors: Vec<(String, LineNumber)>,
+    /// The lines of critical tasks, whose bold title started with `!`:
+    /// checking one takes a second, deliberate press (#95).
+    pub critical: std::collections::BTreeSet<LineNumber>,
     /// The source file's lines, each including its own terminator, indexed by
     /// `Item::line_number`. `writer::write_back` edits one line and rejoins by
     /// concatenation, so mixed line endings round-trip exactly.
@@ -514,6 +517,14 @@ impl Document {
                 .position(|item| item.line_number >= line)
                 .map(|ii| (li, ii))
         })
+    }
+
+    /// Whether the task at `(list, item)` is critical.
+    pub fn is_critical(&self, list_index: usize, item_index: usize) -> bool {
+        self.lists
+            .get(list_index)
+            .and_then(|list| list.items.get(item_index))
+            .is_some_and(|item| self.critical.contains(&item.line_number))
     }
 
     /// Skipped tasks summed across all lists.
@@ -1098,6 +1109,9 @@ pub struct AppState {
     pub icons: IconSet,
     /// Also copy to the X11 PRIMARY selection (`--primary`).
     pub clipboard_primary: bool,
+    /// A critical task armed by a first `Space` (or click), as `(list,
+    /// item)`: the next one confirms it, anything else disarms it.
+    pub critical_armed: Option<(usize, usize)>,
     /// Where `o` on a `#anchor` link jumped from, latest last, for `Ctrl-O`.
     pub jump_back: Vec<(usize, usize)>,
     /// Where `y` copies to (`--clipboard`).

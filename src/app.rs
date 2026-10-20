@@ -24,6 +24,8 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
 const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
 
 const READ_ONLY_MESSAGE: &str = "File is read-only — change not saved (chmod u+w to allow saving)";
+const CRITICAL_PROMPT: &str =
+    "Critical step — press Space again to check it, any other key leaves it open";
 const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
      so a crash mid-save could truncate the checklist";
 /// What Esc and Ctrl-C say on a screen with nothing to cancel.
@@ -195,6 +197,7 @@ impl AppState {
             icons: IconSet::unicode(),
             clipboard_primary: false,
             jump_back: Vec::new(),
+            critical_armed: None,
             copy_route: CopyRoute::default(),
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this
@@ -939,7 +942,9 @@ impl AppState {
     /// picker a click selects a row (see `picker_click`). Clicks outside the
     /// card, or off the checklist, are ignored.
     pub fn handle_left_click(&mut self, col: u16, row: u16) {
+        let armed = self.critical_armed;
         self.dispatch_left_click(col, row);
+        self.disarm_unless_used(armed);
         self.show_write_notice();
     }
 
@@ -1040,6 +1045,10 @@ impl AppState {
         };
 
         let new_state = toggled_done(state);
+        let position = (self.current_list_index, self.current_item_index);
+        if new_state == TaskState::Done && !self.confirm_critical(position) {
+            return;
+        }
         if !self.set_current_state(new_state) {
             return;
         }
@@ -1070,6 +1079,9 @@ impl AppState {
             return;
         };
         let new_state = toggled_done(state);
+        if new_state == TaskState::Done && !self.confirm_critical((list_index, item_index)) {
+            return;
+        }
         if !self.set_state(list_index, item_index, new_state) {
             return;
         }
@@ -1108,6 +1120,22 @@ impl AppState {
             return;
         }
         self.view = View::Checklist;
+    }
+
+    /// Checking a critical task takes a second, deliberate press (#95): the
+    /// first arms it and says so, the second (on the same task) confirms.
+    /// Returns whether the check may go ahead now.
+    fn confirm_critical(&mut self, position: (usize, usize)) -> bool {
+        if !self.document.is_critical(position.0, position.1) {
+            return true;
+        }
+        if self.critical_armed == Some(position) {
+            self.critical_armed = None;
+            return true;
+        }
+        self.critical_armed = Some(position);
+        self.set_notice(CRITICAL_PROMPT.to_string());
+        false
     }
 
     /// `-` sets a task aside as skipped (`[-]`, not applicable this run), or
@@ -1365,6 +1393,7 @@ impl AppState {
                 self.history_epoch += 1;
                 // Positions from before the edit may no longer mean the same card.
                 self.jump_back.clear();
+                self.critical_armed = None;
                 // A queued git-sync request describes content this reload replaced. The
                 // new content queues nothing: markcheck doesn't commit edits it didn't
                 // make.
@@ -2107,8 +2136,23 @@ impl AppState {
     /// Top-level key dispatch: modal overlays first, then card scroll, then
     /// global keys, then the view's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        let armed = self.critical_armed;
+        if armed.is_some() && code == KeyCode::Esc {
+            self.critical_armed = None;
+            self.set_status("Critical step not checked".to_string());
+            return;
+        }
         self.dispatch_key(code, modifiers);
+        self.disarm_unless_used(armed);
         self.show_write_notice();
+    }
+
+    /// Any key or click other than the confirming one leaves an armed
+    /// critical task unchecked.
+    fn disarm_unless_used(&mut self, armed: Option<(usize, usize)>) {
+        if armed.is_some() && self.critical_armed == armed {
+            self.critical_armed = None;
+        }
     }
 
     fn dispatch_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {

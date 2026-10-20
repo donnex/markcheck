@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Deployment Runbook │ basics.md                            ☑ 3/11 (+1 skipped)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────────────────
+ ≡ Deployment Runbook │ basics.md                            ☑ 3/12 (+1 skipped)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Prepare              ▲
                                                   │   ▪ Do not run against pr… ▓
@@ -17,12 +17,12 @@ expression: "screen(&mut state, width, height)"
 ┃                                              ┃  │   ▪ Warning: Run these on… ▓
 ┃             Warm the build cache             ┃  │   ☐ Check the health endp… ▓
 ┃                                              ┃  │   ☐ Run the smoke tests    ▓
+┃                                              ┃  │   ☐ ! Switch traffic to t… ▓
 ┃                                              ┃  │   ☐ Tail the logs and wat… ▓
-┃                                              ┃  │   ☑ Record the start time… ▓
-┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ⊘ Restart the replica —… ▓
-                                                  │ • [3] Ordered steps        ▓
-                                                  │   The three task states w… ▓
-                                                  │   ☑ 1. Confirm the change… │
-                                                  │   ◐ 2. Notify the on-call… ▼
+┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☑ Record the start time… ▓
+                                                  │   ⊘ Restart the replica —… ▓
+                                                  │ • [3] Ordered steps        │
+                                                  │   The three task states w… │
+                                                  │   ☑ 1. Confirm the change… ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

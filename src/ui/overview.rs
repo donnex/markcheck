@@ -369,8 +369,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             }
             let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
             spans.push(Span::styled(format!("{marker} "), marker_style));
+            // A critical step still to do (#95) leads with a warning-colored `!`.
+            let critical = item.kind != ItemKind::Checkbox(TaskState::Done)
+                && state.document.critical.contains(&item.line_number);
+            let mut label_budget = inner_width.saturating_sub(marker_cells as usize);
+            if critical {
+                spans.push(Span::styled(
+                    "! ",
+                    Style::default()
+                        .fg(palette.warning)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                label_budget = label_budget.saturating_sub(2);
+            }
             spans.push(Span::styled(
-                super::truncate(&label, inner_width.saturating_sub(marker_cells as usize)),
+                super::truncate(&label, label_budget),
                 text_style,
             ));
             list_items.push(ListItem::new(Line::from(spans)));

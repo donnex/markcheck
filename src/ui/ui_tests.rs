@@ -351,6 +351,7 @@ fn state_with(lists: Vec<List>) -> AppState {
         preambles: Default::default(),
         unshown: Default::default(),
         anchors: Vec::new(),
+        critical: Default::default(),
         raw_lines: vec![],
     };
     let mut state = AppState::new(document);
@@ -3206,5 +3207,23 @@ fn a_tasks_preamble_shows_above_its_card_with_an_alert_in_the_warning_color() {
     assert!(
         !text.contains("Warning: no rollback after step 4."),
         "only the first task's card carries it"
+    );
+}
+
+#[test]
+fn a_critical_task_is_labelled_on_its_card_and_marked_in_the_overview() {
+    let mut item = checkbox(1, "Drop the database", false);
+    item.header = Some("Drop the database".to_string());
+    let mut state = state_with(vec![List {
+        title: "Ops".to_string(),
+        banner: None,
+        items: vec![item, checkbox(2, "next", false)],
+    }]);
+    state.document.critical.insert(1);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(text.contains(" critical "), "{text}");
+    assert!(
+        text.contains("! Drop the database"),
+        "the overview row: {text}"
     );
 }

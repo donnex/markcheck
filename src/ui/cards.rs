@@ -1019,7 +1019,16 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         .info_parent_state(state.current_item_index);
     let done = matches!(item.kind, ItemKind::Checkbox(TaskState::Done));
     let skipped = item.kind == ItemKind::Checkbox(TaskState::Skipped);
+    // A critical step still to do is framed in the warning color and
+    // labelled, so it isn't ticked by reflex (#95).
+    let critical = !done
+        && state
+            .document
+            .is_critical(state.current_list_index, state.current_item_index);
     let border_style = match accent_color(item, info_state, palette) {
+        _ if critical => Style::default()
+            .fg(palette.warning)
+            .add_modifier(Modifier::BOLD),
         Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
         None => Style::default().add_modifier(Modifier::BOLD),
     };
@@ -1036,6 +1045,17 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         .border_type(border_type)
         .border_style(border_style)
         .padding(Padding::horizontal(BODY_PAD));
+    if critical {
+        block = block.title_top(
+            Line::from(Span::styled(
+                " critical ",
+                Style::default()
+                    .fg(palette.warning)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .centered(),
+        );
+    }
 
     // Body layout: checkbox syntax is gone; the body wraps with exact line
     // counts so scrolling can be clamped precisely. Inline code and fenced
