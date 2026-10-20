@@ -919,6 +919,12 @@ yourself, pass `--clipboard system` or `--clipboard osc52` (or set
 through your terminal and never the system clipboard, and `system` never
 falls back. `auto`, the default, is the behaviour described above.
 
+A command too large for OSC 52 (over 70 KB once encoded) can't go through
+the terminal. Over SSH it is then copied to the system clipboard alone, and
+the status bar says so in error color, and keeps it until the next key:
+`Copied to the system clipboard only — too large to send through the
+terminal (OSC 52)`, since that clipboard may not be the one you paste from.
+
 On X11 the program that copied something has to stay running to hand it over
 when you paste. markcheck holds the clipboard for as long as it runs, so a
 copy is always pasteable while it is open. When you quit, a running clipboard

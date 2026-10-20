@@ -290,11 +290,19 @@ fn each_copy_route_uses_the_clipboards_it_names() {
 }
 
 #[test]
-fn too_large_for_osc52_still_counts_when_the_system_clipboard_took_it() {
+fn too_large_for_osc52_says_only_the_system_clipboard_took_it() {
     let huge = "x".repeat(OSC52_MAX_BASE64_BYTES);
     assert_eq!(
-        fake_copy(&huge, true, CopyRoute::Both).0,
+        fake_copy(&huge, true, CopyRoute::Both),
+        (CopyOutcome::CopiedSystemOnlyTooLarge, 1, false)
+    );
+    assert_eq!(
+        fake_copy(&huge, true, CopyRoute::SystemThenOsc52).0,
         CopyOutcome::CopiedSystem
+    );
+    assert_eq!(
+        fake_copy(&huge, false, CopyRoute::Both).0,
+        CopyOutcome::TooLarge
     );
     assert_eq!(
         fake_copy(&huge, true, CopyRoute::Osc52Only).0,

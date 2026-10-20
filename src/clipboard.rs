@@ -18,6 +18,9 @@ pub enum CopyOutcome {
     CopiedOsc52,
     /// Both the system clipboard and OSC 52 (`CopyRoute::Both`).
     CopiedBoth,
+    /// `CopyRoute::Both`, but too large for OSC 52: only the system
+    /// clipboard has it, which over SSH may not be the user's.
+    CopiedSystemOnlyTooLarge,
     /// No clipboard backend usable at all.
     Failed,
     /// Too large for OSC 52. Distinct from `Failed`: the clipboard is fine.
@@ -136,10 +139,8 @@ fn copy_text_with(
     // OSC 52 for the clipboard, and for PRIMARY too when requested. Success
     // of the clipboard write decides the outcome.
     if osc52_sequence(text, 'c').is_none() {
-        // Too big for the escape sequence — say so rather than blaming the
-        // clipboard, unless the system clipboard already has it.
         return if system_ok {
-            CopyOutcome::CopiedSystem
+            CopyOutcome::CopiedSystemOnlyTooLarge
         } else {
             CopyOutcome::TooLarge
         };

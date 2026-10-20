@@ -412,3 +412,45 @@ fn a_copy_to_both_clipboards_says_so() {
             .contains("system clipboard + OSC 52")
     );
 }
+
+#[test]
+fn a_copy_too_large_for_osc52_says_only_the_system_clipboard_has_it() {
+    const SYSTEM_ONLY: &str =
+        "Copied to the system clipboard only — too large to send through the terminal (OSC 52)";
+    let mut state = AppState::new(two_list_document());
+    state.apply_copy_outcome(
+        CopyKind::Command,
+        "ls",
+        CopyOutcome::CopiedSystemOnlyTooLarge,
+    );
+    assert_eq!(state.status_message.as_deref(), Some(SYSTEM_ONLY));
+    assert!(state.status_is_error);
+
+    state.clear_status();
+    state.set_status("Match 1/2".to_string());
+    state.apply_copy_outcome(CopyKind::Auto, "ls", CopyOutcome::CopiedSystemOnlyTooLarge);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(format!("Match 1/2 · {SYSTEM_ONLY}").as_str())
+    );
+    assert!(state.status_is_error);
+
+    state.clear_status();
+    state.apply_copy_outcome(CopyKind::Auto, "ls", CopyOutcome::CopiedSystemOnlyTooLarge);
+    assert_eq!(state.status_message.as_deref(), Some(SYSTEM_ONLY));
+
+    state.clear_status();
+    state.apply_copy_outcome(
+        CopyKind::LinkFallback,
+        "x",
+        CopyOutcome::CopiedSystemOnlyTooLarge,
+    );
+    assert!(
+        state
+            .status_message
+            .as_deref()
+            .unwrap()
+            .contains("link copied to the system clipboard only")
+    );
+    assert!(state.status_is_error);
+}

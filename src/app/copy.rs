@@ -38,6 +38,8 @@ impl AppState {
         const COPIED: &str = "Copied to clipboard";
         const SENT: &str = "Sent to clipboard (OSC 52)";
         const BOTH: &str = "Copied (system clipboard + OSC 52)";
+        const SYSTEM_ONLY: &str =
+            "Copied to the system clipboard only — too large to send through the terminal (OSC 52)";
         match (kind, outcome) {
             (CopyKind::Auto, CopyOutcome::CopiedSystem) => self.report_auto_copy(COPIED),
             (CopyKind::Auto, CopyOutcome::CopiedOsc52) => self.report_auto_copy(SENT),
@@ -45,6 +47,12 @@ impl AppState {
             (CopyKind::Command, CopyOutcome::CopiedSystem) => self.set_status(COPIED.to_string()),
             (CopyKind::Command, CopyOutcome::CopiedOsc52) => self.set_status(SENT.to_string()),
             (CopyKind::Command, CopyOutcome::CopiedBoth) => self.set_status(BOTH.to_string()),
+            (CopyKind::Auto, CopyOutcome::CopiedSystemOnlyTooLarge) => {
+                self.report_auto_copy_problem(SYSTEM_ONLY)
+            }
+            (CopyKind::Command, CopyOutcome::CopiedSystemOnlyTooLarge) => {
+                self.set_error(SYSTEM_ONLY.to_string())
+            }
             (CopyKind::Auto | CopyKind::Command, CopyOutcome::HiddenCharacters) => {
                 self.set_error(HIDDEN_CHARACTERS_MESSAGE.to_string())
             }
@@ -63,6 +71,10 @@ impl AppState {
             }
             (CopyKind::LinkFallback, CopyOutcome::CopiedBoth) => self.set_status(
                 "No browser here — link copied (system clipboard + OSC 52)".to_string(),
+            ),
+            (CopyKind::LinkFallback, CopyOutcome::CopiedSystemOnlyTooLarge) => self.set_error(
+                "No browser here — link copied to the system clipboard only, too large to send through the terminal (OSC 52)"
+                    .to_string(),
             ),
             (CopyKind::LinkFallback, CopyOutcome::TooLarge) => self.set_error(
                 "No browser here, and the link is too large for the terminal clipboard".to_string(),
@@ -94,6 +106,16 @@ impl AppState {
             None => copied.to_string(),
         };
         self.set_status(message);
+    }
+
+    /// Like [`Self::report_auto_copy`], but for a copy that needs reading:
+    /// it goes after whatever the motion reported, error or not, and stays.
+    pub(super) fn report_auto_copy_problem(&mut self, problem: &str) {
+        let message = match self.status_message.take() {
+            Some(reported) => format!("{reported} · {problem}"),
+            None => problem.to_string(),
+        };
+        self.set_error(message);
     }
 
     /// `o` with nowhere to send the link (`launch::no_browser_available`):
