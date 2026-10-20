@@ -2590,6 +2590,66 @@ fn the_terminal_title_shows_progress_and_the_exit_line_says_where_it_stopped() {
     );
 }
 
+/// Whether `raw` hands the title back (pops it) before `marker`, then sets
+/// `title` again after it.
+fn title_restored_around(raw: &str, marker: &str, title: &str) -> bool {
+    raw.split_once(marker).is_some_and(|(before, after)| {
+        before.contains("\x1b[23;2t") && after.contains(&format!("\x1b]0;{title}\x07"))
+    })
+}
+
+#[test]
+fn the_terminal_title_is_handed_over_to_the_editor_and_set_again_after() {
+    let path = unique_path("title-editor");
+    write_file(&path, "# Night shift\n\n## Work\n\n- [ ] alpha\n");
+    let editor = unique_path("titleeditor").with_extension("sh");
+    write_file(&editor, "#!/bin/sh\nprintf '\\033]0;EDITOR-TITLE\\007'\n");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut cmd = markcheck_command();
+    cmd.env("EDITOR", editor.to_str().unwrap());
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.wait_until(SCREEN_TIMEOUT, "the title", |raw| {
+        raw.contains("\x1b]0;Night shift · 0/1 — markcheck\x07")
+    });
+    session.key("e");
+    session.wait_until(SCREEN_TIMEOUT, "the title set again", |raw| {
+        title_restored_around(raw, "EDITOR-TITLE", "Night shift · 0/1 — markcheck")
+    });
+    session.key("q");
+    assert!(session.finish().0);
+
+    std::fs::remove_file(&path).ok();
+    std::fs::remove_file(&editor).ok();
+}
+
+#[test]
+fn the_terminal_title_is_handed_back_on_ctrl_z_and_set_again_on_fg() {
+    let path = unique_path("title-suspend");
+    write_file(&path, "# Night shift\n\n## Work\n\n- [ ] alpha\n");
+    let mut cmd = CommandBuilder::new("sh");
+    cmd.arg("-c");
+    cmd.arg("set -m; \"$0\" \"$1\"; echo SUSPENDED-IN-SHELL; fg");
+    cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg(&path);
+    isolate(&mut cmd);
+    let mut session = Session::spawn(cmd);
+    session.wait_until(SCREEN_TIMEOUT, "the title", |raw| {
+        raw.contains("\x1b]0;Night shift · 0/1 — markcheck\x07")
+    });
+    session.key("\x1a");
+    session.wait_until(SCREEN_TIMEOUT, "the title set again", |raw| {
+        title_restored_around(raw, "SUSPENDED-IN-SHELL", "Night shift · 0/1 — markcheck")
+    });
+    session.key("q");
+    assert!(session.finish().0);
+
+    std::fs::remove_file(&path).ok();
+}
+
 #[test]
 fn checklist_text_cannot_inject_escapes_through_the_title_or_exit_line() {
     let path = unique_path("title-inject");

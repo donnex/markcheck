@@ -90,6 +90,54 @@ fn take_terminal(mouse: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The terminal title markcheck shows while it holds the terminal. The
+/// title it replaced is saved on xterm's title stack (which tmux and most
+/// terminals keep) and handed back whenever another program gets the
+/// terminal.
+struct TerminalTitle {
+    enabled: bool,
+    /// What was last sent, so an unchanged title isn't rewritten every frame.
+    shown: String,
+}
+
+impl TerminalTitle {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            shown: String::new(),
+        }
+    }
+
+    fn show(&mut self, state: &AppState) {
+        if !self.enabled {
+            return;
+        }
+        let title = launch::terminal_title(state);
+        if title != self.shown {
+            let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(&title));
+            self.shown = title;
+        }
+    }
+
+    /// Restores the title markcheck replaced, before another program takes
+    /// the terminal.
+    fn release(&mut self) {
+        if self.enabled {
+            let _ = write!(io::stdout(), "\x1b[23;2t");
+            let _ = io::stdout().flush();
+            self.shown.clear();
+        }
+    }
+
+    /// Saves the title the other program left, so the next `show` writes
+    /// markcheck's own over it and `release` can restore it.
+    fn reclaim(&self) {
+        if self.enabled {
+            let _ = write!(io::stdout(), "\x1b[22;2t");
+        }
+    }
+}
+
 /// Takes the terminal back after `leave_tui` and repaints the whole frame.
 fn enter_tui<B: Backend>(terminal: &mut Terminal<B>, mouse: bool) -> anyhow::Result<()>
 where
@@ -422,8 +470,7 @@ where
     // is the one reported after the TUI closes.
     let mut quitting = false;
     let mut last_outcome = None;
-    // Written only when it changes, not on every frame.
-    let mut shown_title = String::new();
+    let mut title = TerminalTitle::new(show_title);
     loop {
         // Nothing is drawn from here on: after SIGHUP the terminal is gone.
         if signals.stopped() {
@@ -471,13 +518,7 @@ where
         dirty |= label_due.is_some_and(|due| now >= due);
         if dirty {
             terminal.draw(|frame| ui::render(frame, state))?;
-            if show_title {
-                let title = launch::terminal_title(state);
-                if title != shown_title {
-                    let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(&title));
-                    shown_title = title;
-                }
-            }
+            title.show(state);
             label_due = ui::next_label_change(state, SystemTime::now());
             dirty = false;
             // Debug builds only: lets `tests/pty.rs` force a main-thread
@@ -526,6 +567,7 @@ where
                 git_sync,
                 mouse,
                 signals,
+                title: &mut title,
                 opener_failures: &opener_failures,
             },
         )?;
@@ -557,6 +599,7 @@ struct TerminalHost<'a, B: Backend> {
     git_sync: &'a mut Option<git_sync::GitSync>,
     mouse: bool,
     signals: &'a mut StopSignals,
+    title: &'a mut TerminalTitle,
     opener_failures: &'a std::sync::mpsc::Sender<String>,
 }
 
@@ -569,11 +612,18 @@ where
         state: &mut AppState,
         line: Option<model::LineNumber>,
     ) -> anyhow::Result<()> {
-        open_in_editor(self.terminal, state, line, self.mouse, self.signals)
+        open_in_editor(
+            self.terminal,
+            state,
+            line,
+            self.mouse,
+            self.signals,
+            self.title,
+        )
     }
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
-        suspend_to_shell(self.terminal, state, self.mouse)
+        suspend_to_shell(self.terminal, state, self.mouse, self.title)
     }
 
     fn open_link(&mut self, state: &mut AppState, url: &str) {
@@ -700,6 +750,7 @@ fn open_in_editor<B: Backend>(
     line: Option<model::LineNumber>,
     mouse: bool,
     signals: &mut StopSignals,
+    title: &mut TerminalTitle,
 ) -> anyhow::Result<()>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
@@ -707,6 +758,7 @@ where
     use std::process::Command;
 
     leave_tui(mouse)?;
+    title.release();
 
     let (program, args, warning) = launch::resolve_editor(
         std::env::var("VISUAL").ok().as_deref(),
@@ -724,6 +776,7 @@ where
     let elapsed = started.elapsed();
 
     // Restore the terminal regardless of how the editor fared.
+    title.reclaim();
     enter_tui(terminal, mouse)?;
     let status = status.context("cannot restore the SIGINT handler")?;
 
@@ -739,12 +792,15 @@ fn suspend_to_shell<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
     mouse: bool,
+    title: &mut TerminalTitle,
 ) -> anyhow::Result<()>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
     leave_tui(mouse)?;
+    title.release();
     let outcome = stop_self();
+    title.reclaim();
     enter_tui(terminal, mouse)?;
 
     state.finish_suspend(outcome);

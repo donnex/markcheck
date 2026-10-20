@@ -548,7 +548,9 @@ and a sticky error asks you to retry.
 While `markcheck` runs, the terminal window or tab title (and tmux's pane
 title) reads `Deployment Runbook · 3/11 — markcheck`, so with several
 checklists or shells open you can see which tab holds which and how far each
-is. The title you had before comes back when you quit. After a normal quit,
+is. The title you had before comes back when you quit, and while `e` has
+your editor open or `Ctrl-Z` has you in the shell; markcheck sets its own
+again when it takes the terminal back. After a normal quit,
 one line on the screen says where the run stopped, for notes or a handover:
 `runbook.md — Deployment Runbook: 3/11 done (1 started), stopped at "Warm the
 build cache"`, or `all 11 done`. Turn either off with `terminal_title =
