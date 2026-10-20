@@ -2220,9 +2220,39 @@ fn prose_markcheck_cannot_place_is_counted_as_unshown() {
         Unshown {
             paragraphs: 3,
             quotes: 1,
+            bullets: 0,
             code_blocks: 1,
         }
     );
+}
+
+#[test]
+fn the_bullets_of_a_list_with_no_checkbox_are_counted_as_unshown() {
+    let document = parse(
+        "## Before you start\n\n- Take a backup of the database first\n- Tell the on-call channel\n  - and the owner\n\n## Steps\n\n- [ ] one\n",
+    );
+    assert_eq!(document.lists.len(), 1);
+    assert_eq!(document.lists[0].items.len(), 1);
+    assert_eq!(
+        document.unshown,
+        Unshown {
+            bullets: 2,
+            ..Unshown::default()
+        }
+    );
+}
+
+#[test]
+fn a_dropped_lists_bold_first_bullet_is_counted_too() {
+    let document = parse("- **Careful**\n- plain\n\n## Steps\n\n- [ ] one\n");
+    assert_eq!(document.lists[0].banner, None);
+    assert_eq!(document.unshown.bullets, 2);
+}
+
+#[test]
+fn a_kept_list_and_a_quoted_bullet_list_count_no_bullets() {
+    let document = parse("## Steps\n\n- a note\n- [ ] one\n\n> - quoted\n> - bullets\n");
+    assert_eq!(document.unshown.bullets, 0);
 }
 
 #[test]

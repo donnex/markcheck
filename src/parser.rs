@@ -968,6 +968,9 @@ impl<'a> ParseState<'a> {
             // Items arrive post-order; sort by line to restore document order.
             items.sort_by_key(|item| item.line_number);
             self.target_items().append(&mut items);
+        } else if self.blockquote_depth == 0 {
+            let top_level = items.iter().filter(|item| item.depth == 0).count();
+            self.unshown.bullets += top_level + usize::from(pending_banner.is_some());
         }
     }
 

@@ -368,7 +368,8 @@ pub fn watch_warning(error: &str) -> String {
 }
 
 /// The startup note for prose markcheck read but can't show (#80): what
-/// sits between tasks, after the last one, or under a heading with none.
+/// sits between tasks, after the last one, or under a heading with none, and
+/// the bullets of a list with no checkbox.
 pub fn unshown_warning(unshown: &crate::model::Unshown) -> Option<String> {
     if unshown.is_empty() {
         return None;
@@ -379,6 +380,7 @@ pub fn unshown_warning(unshown: &crate::model::Unshown) -> Option<String> {
     let parts: Vec<String> = [
         counted(unshown.paragraphs, "paragraph", "paragraphs"),
         counted(unshown.quotes, "quote", "quotes"),
+        counted(unshown.bullets, "bullet point", "bullet points"),
         counted(unshown.code_blocks, "code block", "code blocks"),
     ]
     .into_iter()

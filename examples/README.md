@@ -52,7 +52,8 @@ markcheck examples/basics.md
   opens, plus a `file://` one that `o` refuses as an unsupported scheme, a
   bare URL in the task text that `o` opens just the same,
   a fenced block placed directly after a list that attaches to the list's last
-  card, and a no-checkbox section that gets dropped.
+  card, and a no-checkbox section that gets dropped (its bullets are counted
+  in the startup note of what isn't shown).
 - **`sub-sections.md`** — `### H3`+ sub-sections *within* a list: items
   before the first sub-heading (directly under the H2), an `### H3` group, an
   `#### H4` nested under it, a second `### H3` that pops the H4 and starts a

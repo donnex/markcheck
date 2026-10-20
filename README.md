@@ -386,7 +386,10 @@ Finer points:
 
 - **A list with no checkboxes is skipped** — a `##` list (or the pre-heading
   area) whose list contains no `- [ ]` items is dropped entirely: no tab, and
-  it isn't navigable. Blockquoted checkboxes don't count, since they are never
+  it isn't navigable. `markcheck` counts its bullets in the startup note
+  (`2 bullet points outside task lists not shown`), so a "before you start"
+  list written without checkboxes doesn't vanish unnoticed. Blockquoted
+  checkboxes don't count, since they are never
   live tasks: a `##` list whose only checkboxes are quoted (`> - [ ]`) is
   dropped too, and a file with no other checkboxes reports that it has no
   checklist items.

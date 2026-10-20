@@ -138,4 +138,5 @@ smoke-test --all
 ## Notes only (this section is dropped)
 
 - This section has no checkboxes, so markcheck drops it entirely.
+- Its bullets are counted in the startup note of what isn't shown.
 - It appears in the file but not as a tab or in the overview.

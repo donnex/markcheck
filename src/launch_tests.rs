@@ -641,10 +641,28 @@ fn unshown_warning_lists_what_is_not_shown() {
         unshown_warning(&Unshown {
             paragraphs: 2,
             quotes: 1,
+            bullets: 0,
             code_blocks: 3,
         })
         .as_deref(),
         Some("2 paragraphs, 1 quote and 3 code blocks outside task lists not shown")
+    );
+    assert_eq!(
+        unshown_warning(&Unshown {
+            bullets: 1,
+            ..Unshown::default()
+        })
+        .as_deref(),
+        Some("1 bullet point outside task lists not shown")
+    );
+    assert_eq!(
+        unshown_warning(&Unshown {
+            paragraphs: 1,
+            bullets: 2,
+            ..Unshown::default()
+        })
+        .as_deref(),
+        Some("1 paragraph and 2 bullet points outside task lists not shown")
     );
 }
 

@@ -439,12 +439,13 @@ pub enum PreambleKind {
 }
 
 /// Blocks outside any task list that markcheck doesn't show (prose between
-/// tasks, under a heading with no tasks, after the last task), counted for
-/// the startup report.
+/// tasks, under a heading with no tasks, after the last task, and the items of
+/// a list with no checkbox), counted for the startup report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Unshown {
     pub paragraphs: usize,
     pub quotes: usize,
+    pub bullets: usize,
     pub code_blocks: usize,
 }
 
