@@ -30,6 +30,7 @@ fn a_branch_deleted_on_the_remote_is_not_recreated_by_a_sync() {
         &commit_message(&file, "Check \"one\""),
         &no_race(content),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -77,6 +78,7 @@ fn run_sync_refuses_a_non_utf8_file_name_without_committing() {
         "should not commit",
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -101,6 +103,7 @@ fn run_sync_reports_an_untracked_file_without_adding_it() {
             "should not commit",
             &no_race("- [ ] new\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::SkippedUntracked
     );
@@ -124,6 +127,7 @@ fn run_sync_skips_when_tracked_file_is_unchanged() {
             "no changes",
             &no_race("- [ ] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Skipped
     );
@@ -144,6 +148,7 @@ fn run_sync_commits_and_pushes_a_tracked_change() {
             &message,
             &no_race("- [x] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -177,6 +182,7 @@ fn run_sync_leaves_the_real_index_matching_head_after_a_commit() {
             &message,
             &no_race("- [x] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -206,6 +212,7 @@ fn run_sync_reports_failure_when_push_has_no_remote() {
         "Check \"one\"",
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
     assert!(matches!(outcome, SyncOutcome::CommittedNotPushed { .. }));
 
@@ -228,6 +235,7 @@ fn run_sync_commits_and_pushes_on_a_non_default_branch() {
             &message,
             &no_race("- [x] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -286,6 +294,7 @@ fn run_sync_never_publishes_unrelated_work_when_no_upstream_is_configured() {
         &message,
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -322,6 +331,7 @@ fn run_sync_refuses_to_commit_content_that_went_stale_before_the_worker_ran() {
         &message,
         &no_race("- [x] A\n"),
         None,
+        Publish::Everything,
     );
     assert!(
         matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("changed after this sync was queued")),
@@ -362,6 +372,7 @@ fn run_sync_refuses_to_recommit_a_file_deleted_after_the_request_was_queued() {
         &message,
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
     assert!(
         matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("changed after this sync was queued")),
@@ -398,6 +409,7 @@ fn run_sync_recovers_on_the_next_request_after_a_stale_refusal() {
             &stale_message,
             &no_race("- [x] A\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Failed(_)
     ));
@@ -410,6 +422,7 @@ fn run_sync_recovers_on_the_next_request_after_a_stale_refusal() {
         &fresh_message,
         &no_race("- [x] A\n- [x] B\n"),
         None,
+        Publish::Everything,
     );
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
 
@@ -440,6 +453,7 @@ fn run_sync_never_includes_an_unrelated_staged_file() {
             &message,
             &no_race("- [x] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -495,6 +509,7 @@ fn run_sync_undoes_the_commit_when_a_hook_stages_extra_files() {
         &message,
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -568,6 +583,7 @@ fn run_sync_undoes_a_hook_violated_root_commit_by_deleting_the_branch_ref() {
         &message,
         &no_race("- [x] one\n"),
         staged_matches("- [x] one\n"),
+        Publish::Everything,
     );
 
     assert!(
@@ -616,6 +632,7 @@ fn run_sync_refuses_during_an_unresolved_merge_conflict() {
         "should not commit",
         &no_race("- [x] resolved\n"),
         None,
+        Publish::Everything,
     );
     assert!(matches!(outcome, SyncOutcome::Failed(_)), "{outcome:?}");
 
@@ -646,7 +663,8 @@ fn a_later_request_commits_the_concurrent_change_separately() {
             "- [x] A\n",
             &first_message,
             &latest,
-            None
+            None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -660,6 +678,7 @@ fn a_later_request_commits_the_concurrent_change_separately() {
             &second_message,
             &latest,
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -699,6 +718,7 @@ fn run_sync_skips_when_expected_content_already_matches_head_and_upstream() {
             "already committed",
             &no_race("- [ ] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Skipped
     );
@@ -729,6 +749,7 @@ fn run_sync_recognises_already_committed_content_under_an_eol_filter() {
             "already committed",
             &no_race(newer),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Skipped
     );
@@ -753,6 +774,7 @@ fn run_sync_retries_the_push_when_expected_content_matches_head_but_is_unpushed(
         "already committed",
         &no_race("- [ ] one\n"),
         None,
+        Publish::Everything,
     );
     assert!(
         matches!(outcome, SyncOutcome::CommittedNotPushed { .. }),
@@ -781,6 +803,7 @@ fn run_sync_refuses_when_branch_has_unrelated_unpushed_commits() {
         &message,
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -826,6 +849,7 @@ fn run_sync_refuses_the_fast_path_push_when_branch_has_unrelated_unpushed_commit
         "Catch up a pending push",
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -878,6 +902,7 @@ fn run_sync_refuses_when_an_unrelated_commit_is_reverted_before_the_checklist_co
         &message,
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -917,6 +942,7 @@ fn run_sync_refuses_when_a_merge_commit_is_in_the_unpushed_range() {
         "already committed",
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -944,6 +970,7 @@ fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
         &commit_message(&file_path, "Check \"one\""),
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
     assert!(matches!(first, SyncOutcome::CommittedNotPushed { .. }));
 
@@ -955,6 +982,7 @@ fn run_sync_does_not_refuse_for_markchecks_own_stacked_unpushed_commits() {
         &commit_message(&file_path, "Check \"two\""),
         &no_race("- [x] one\n- [x] two\n"),
         None,
+        Publish::Everything,
     );
     assert!(
         matches!(second, SyncOutcome::CommittedNotPushed { .. }),
@@ -1000,6 +1028,7 @@ fn run_sync_works_when_the_file_is_in_a_repo_subdirectory() {
             &message,
             &no_race("- [x] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -1038,6 +1067,7 @@ fn run_sync_handles_filenames_with_spaces_dashes_colons_and_unicode() {
                 &message,
                 &no_race("- [x] one\n"),
                 None,
+                Publish::Everything
             ),
             SyncOutcome::Synced,
             "file name: {file_name:?}"
@@ -1077,6 +1107,7 @@ fn run_sync_commits_a_checklist_whose_name_has_glob_characters_as_itself() {
             &message,
             &no_race("- [x] one\n"),
             None,
+            Publish::Everything
         ),
         SyncOutcome::Synced
     );
@@ -1230,6 +1261,7 @@ fn an_untracked_checklist_is_reported_even_when_git_status_stays_silent() {
                 "should not commit",
                 &no_race("- [ ] new\n"),
                 None,
+                Publish::Everything
             ),
             SyncOutcome::SkippedUntracked,
             "{label}: an untracked checklist must still be reported"
@@ -1266,6 +1298,7 @@ fn an_unrelated_commit_landing_after_validation_is_not_published_by_the_fast_pat
         &commit_message(&file, "Check \"one\""),
         &no_race(content),
         None,
+        Publish::Everything,
     );
 
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
@@ -1299,6 +1332,7 @@ fn a_commit_landing_before_ours_is_detected_rather_than_built_on_stale_state() {
         &commit_message(&file, "Check \"one\""),
         &no_race(content),
         None,
+        Publish::Everything,
     );
 
     // The commit markcheck did not make must still be on the branch.
@@ -1340,6 +1374,7 @@ fn a_version_staged_during_the_sync_survives_index_alignment() {
         &commit_message(&file, "Check \"one\""),
         &no_race(content),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -1384,6 +1419,7 @@ fn a_second_sync_committing_mid_flight_cannot_revert_the_first() {
             "a.md: Check \"a\"",
             &no_race("- [x] a\n"),
             None,
+            Publish::Everything,
         );
         assert!(
             matches!(
@@ -1402,6 +1438,7 @@ fn a_second_sync_committing_mid_flight_cannot_revert_the_first() {
         "b.md: Check \"b\"",
         &no_race("- [x] b\n"),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -1468,6 +1505,7 @@ fn a_configured_but_unresolvable_upstream_does_not_bypass_the_unrelated_guard() 
         &commit_message(&file, "Check \"one\""),
         &no_race(expected),
         None,
+        Publish::Everything,
     );
 
     assert!(
@@ -1530,6 +1568,7 @@ fn randomised_sequences_never_lose_a_commit_markcheck_did_not_make() {
                         &commit_message(&file, "Toggle"),
                         &no_race(&content),
                         Some(previous.as_str()),
+                        Publish::Everything,
                     );
                 }
                 1 => {
@@ -1602,6 +1641,7 @@ fn run_sync_works_when_the_checklist_lives_in_a_subdirectory() {
         &commit_message(&file, "Check \"one\""),
         &no_race(expected),
         None,
+        Publish::Everything,
     );
 
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
@@ -1648,6 +1688,7 @@ fn run_sync_works_inside_a_linked_worktree() {
         &commit_message(&file, "Check \"one\""),
         &no_race(expected),
         None,
+        Publish::Everything,
     );
 
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
@@ -1693,6 +1734,7 @@ fn detect_and_sync_cope_with_a_shallow_clone() {
         &commit_message(&file, "Check \"one\""),
         &no_race(expected),
         None,
+        Publish::Everything,
     );
 
     assert_eq!(
@@ -1730,6 +1772,7 @@ fn run_sync_refuses_when_a_staged_checklist_version_would_be_dropped() {
         &commit_message(&file, "Check \"one\""),
         &no_race(expected),
         staged_matches(pre_write),
+        Publish::Everything,
     );
 
     assert!(
@@ -1774,6 +1817,7 @@ fn run_sync_proceeds_when_the_staged_checklist_matches_the_working_tree() {
         &commit_message(&file, "Check \"one\""),
         &no_race(expected),
         staged_matches(pre_write),
+        Publish::OwnChangesSince(Some(pre_write)),
     );
 
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
@@ -1817,6 +1861,7 @@ fn a_second_checklist_syncs_past_the_first_one_s_stranded_commit() {
         &commit_message(&a, "Check \"one\""),
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
     assert!(
         matches!(stranded, SyncOutcome::CommittedNotPushed { .. }),
@@ -1835,6 +1880,7 @@ fn a_second_checklist_syncs_past_the_first_one_s_stranded_commit() {
         &commit_message(&b, "Check \"two\""),
         &no_race("- [x] two\n"),
         None,
+        Publish::Everything,
     );
     assert_eq!(outcome, SyncOutcome::Synced, "{outcome:?}");
     assert_eq!(
@@ -1861,6 +1907,7 @@ fn markcheck_s_commits_carry_its_trailer() {
         &commit_message(&file, "Check \"one\""),
         &no_race("- [x] one\n"),
         None,
+        Publish::Everything,
     );
     assert_eq!(outcome, SyncOutcome::Synced);
     assert_eq!(
@@ -1870,4 +1917,84 @@ fn markcheck_s_commits_carry_its_trailer() {
         ),
         "markcheck"
     );
+}
+
+#[test]
+fn run_sync_refuses_to_publish_an_uncommitted_edit_under_a_toggle() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let drafted = "- [ ] one\n- [ ] DRAFT step not ready to publish\n";
+    let expected = "- [x] one\n- [ ] DRAFT step not ready to publish\n";
+    fs::write(&file, expected).unwrap();
+
+    let outcome = run_sync(
+        &work,
+        &file,
+        expected,
+        &commit_message(&file, "Check \"one\""),
+        &no_race(expected),
+        Some(drafted),
+        Publish::OwnChangesSince(Some(drafted)),
+    );
+
+    assert_eq!(
+        outcome,
+        SyncOutcome::Failed(
+            "the checklist has changes markcheck didn't make, so nothing was published; \
+             commit them yourself, then toggle again"
+                .to_string()
+        )
+    );
+    assert_eq!(git_stdout(&work, &["log", "--format=%s", "main"]), "init");
+    assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+    assert_eq!(fs::read_to_string(&file).unwrap(), expected);
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn run_sync_publishes_a_toggle_on_the_committed_content() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    fs::write(&file, "- [x] one\n").unwrap();
+
+    let outcome = run_sync(
+        &work,
+        &file,
+        "- [x] one\n",
+        &commit_message(&file, "Check \"one\""),
+        &no_race("- [x] one\n"),
+        Some("- [ ] one\n"),
+        Publish::OwnChangesSince(Some("- [ ] one\n")),
+    );
+
+    assert_eq!(outcome, SyncOutcome::Synced);
+    assert_eq!(
+        git_stdout(&remote, &["show", "main:tracked.md"]),
+        "- [x] one"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn run_sync_refuses_a_toggle_whose_base_could_not_be_read() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    fs::write(&file, "- [x] one\n").unwrap();
+
+    let outcome = run_sync(
+        &work,
+        &file,
+        "- [x] one\n",
+        &commit_message(&file, "Check \"one\""),
+        &no_race("- [x] one\n"),
+        None,
+        Publish::OwnChangesSince(None),
+    );
+
+    assert!(
+        matches!(&outcome, SyncOutcome::Failed(msg) if msg.contains("didn't make")),
+        "{outcome:?}"
+    );
+    assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+    fs::remove_dir_all(work.parent().unwrap()).ok();
 }

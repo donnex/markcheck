@@ -140,6 +140,7 @@ pub(super) fn pending_sync(content: &str, description: &str) -> PendingSync {
         previous_content: None,
         description: description.to_string(),
         immediate: false,
+        base: SyncBase::Edited { epoch: 0 },
     }
 }
 /// Removed on drop, so a hook never leaks into the next test on the thread.

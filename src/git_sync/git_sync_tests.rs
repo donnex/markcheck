@@ -863,3 +863,141 @@ fn check_git_version_refuses_a_git_without_the_needed_format_atoms() {
     assert_eq!(check_git_version("git version 3.0.0\n"), Ok(()));
     assert_eq!(check_git_version("some wrapper banner\n"), Ok(()));
 }
+
+fn own_toggle(content: &str, epoch: u64, base: &str) -> PendingSync {
+    PendingSync {
+        previous_content: Some(base.to_string()),
+        base: SyncBase::Own {
+            epoch,
+            content: Some(base.to_string()),
+        },
+        ..pending_sync(content, "Check \"one\"")
+    }
+}
+
+fn settle(sync: &mut GitSync) -> Vec<SyncOutcome> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut outcomes = Vec::new();
+    while (sync.busy || sync.queued.is_some()) && Instant::now() < deadline {
+        outcomes.extend(sync.poll());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!sync.busy, "the sync never finished");
+    outcomes
+}
+
+fn failing_pre_commit_hook(work: &Path) -> PathBuf {
+    let hooks = work.join(".git").join("hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    hook
+}
+
+#[test]
+fn toggling_again_after_a_refused_sync_syncs_markcheck_s_own_changes() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let hook = failing_pre_commit_hook(&work);
+    let mut sync = GitSync::detect(&file).unwrap();
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(own_toggle("- [x] one\n", 1, "- [ ] one\n"));
+    let outcomes = settle(&mut sync);
+    assert!(
+        matches!(outcomes.as_slice(), [SyncOutcome::Failed(_)]),
+        "{outcomes:?}"
+    );
+
+    fs::remove_file(&hook).unwrap();
+    fs::write(&file, "- [x] one\n- [x] two\n").unwrap();
+    sync.request(own_toggle("- [x] one\n- [x] two\n", 1, "- [ ] one\n"));
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
+    assert_eq!(
+        git_stdout(&remote, &["show", "main:tracked.md"]),
+        "- [x] one\n- [x] two"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_toggle_queued_behind_a_landing_sync_is_checked_against_what_landed() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let mut sync = GitSync::detect(&file).unwrap();
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(own_toggle("- [x] one\n", 1, "- [ ] one\n"));
+    assert!(sync.busy);
+    fs::write(&file, "- [x] one\n- [x] two\n").unwrap();
+    sync.request(own_toggle("- [x] one\n- [x] two\n", 1, "- [ ] one\n"));
+
+    assert_eq!(
+        settle(&mut sync),
+        vec![SyncOutcome::Synced, SyncOutcome::Synced]
+    );
+    assert_eq!(
+        git_stdout(&remote, &["show", "main:tracked.md"]),
+        "- [x] one\n- [x] two"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_toggle_after_an_outside_reload_does_not_publish_the_outside_edit() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let mut sync = GitSync::detect(&file).unwrap();
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(own_toggle("- [x] one\n", 1, "- [ ] one\n"));
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
+
+    let reloaded = "- [x] one\n- [ ] DRAFT\n";
+    fs::write(&file, "- [ ] one\n- [ ] DRAFT\n").unwrap();
+    sync.request(own_toggle("- [ ] one\n- [ ] DRAFT\n", 2, reloaded));
+    let outcomes = settle(&mut sync);
+    assert!(
+        matches!(outcomes.as_slice(), [SyncOutcome::Failed(msg)] if msg.contains("didn't make")),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        git_stdout(&remote, &["show", "main:tracked.md"]),
+        "- [x] one"
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_toggle_after_a_saved_edit_that_failed_to_sync_publishes_the_edit() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let hook = failing_pre_commit_hook(&work);
+    let mut sync = GitSync::detect(&file).unwrap();
+
+    let edited = "- [ ] one\n- [ ] added in the editor\n";
+    fs::write(&file, edited).unwrap();
+    sync.request(PendingSync {
+        immediate: true,
+        base: SyncBase::Edited { epoch: 4 },
+        ..pending_sync(edited, "Edited in vi")
+    });
+    let outcomes = settle(&mut sync);
+    assert!(
+        matches!(outcomes.as_slice(), [SyncOutcome::Failed(_)]),
+        "{outcomes:?}"
+    );
+
+    fs::remove_file(&hook).unwrap();
+    let toggled = "- [x] one\n- [ ] added in the editor\n";
+    fs::write(&file, toggled).unwrap();
+    sync.request(own_toggle(toggled, 4, edited));
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
+    assert_eq!(
+        git_stdout(&remote, &["show", "main:tracked.md"]),
+        toggled.trim_end()
+    );
+    fs::remove_dir_all(work.parent().unwrap()).ok();
+}

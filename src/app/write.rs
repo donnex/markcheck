@@ -9,7 +9,7 @@ use crate::effect::Effect;
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
     AppState, CriticalAction, CriticalArm, FileGone, ItemKind, PendingSync, StateSnapshot,
-    TaskState, View, hash_bytes,
+    SyncBase, TaskState, View, hash_bytes,
 };
 use crate::writer;
 
@@ -350,12 +350,21 @@ impl AppState {
         let content_hash = hash_bytes(content.as_bytes());
         self.file_content_hash = Some(content_hash);
         self.last_update_at = Some(SystemTime::now());
+        if self.git_sync.unsynced_base.is_none() {
+            self.git_sync.unsynced_base = previous_content.clone();
+            self.git_sync.base_epoch += 1;
+        }
+        let base = SyncBase::Own {
+            epoch: self.git_sync.base_epoch,
+            content: self.git_sync.unsynced_base.clone(),
+        };
         self.queue_git_sync(PendingSync {
             content,
             content_hash,
             previous_content,
             description: change_desc.to_string(),
             immediate: false,
+            base,
         });
         true
     }

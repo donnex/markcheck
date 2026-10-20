@@ -17,13 +17,13 @@ use process::{
     Children, PLUMBING_TIMEOUT, git_command, run_with_timeout, track_children_on_this_thread,
 };
 use push::{catch_up_push, retry_commit};
-use sync::{batch_message, run_sync};
+use sync::{Publish, batch_message, run_sync};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::model::{PendingSync, hash_bytes};
+use crate::model::{PendingSync, SyncBase, hash_bytes};
 
 /// Backoff before the first automatic push retry after `CommittedNotPushed`.
 /// Each failed retry of the same commit doubles it, up to
@@ -123,6 +123,15 @@ pub struct GitSync {
     latest_requested_hash: Arc<Mutex<[u8; 32]>>,
     /// The git processes the workers have running, for `abandon`.
     children: Arc<Children>,
+    /// The base an `e` edit the user saved was made on: later toggles on it
+    /// may publish that edit too.
+    edited_epoch: Option<u64>,
+    /// The base the last landed content sync was made on, and the content it
+    /// committed. A later request on that base is checked against this
+    /// content, since the commit moved `HEAD` past the base itself.
+    landed: Option<(u64, String)>,
+    /// The base and content of the running content sync, for `landed`.
+    in_flight: Option<(u64, String)>,
 }
 
 /// Requests folded together while they wait (see `GitSync::queued`).
@@ -250,6 +259,9 @@ impl GitSync {
             retry_interval: PUSH_RETRY_INTERVAL,
             latest_requested_hash: Arc::new(Mutex::new(hash_bytes(b""))),
             children: Arc::default(),
+            edited_epoch: None,
+            landed: None,
+            in_flight: None,
         })
     }
 
@@ -264,6 +276,9 @@ impl GitSync {
     /// quiet period, restarted by every later one, unless it is `immediate`.
     pub fn request(&mut self, sync: PendingSync) {
         *lock_hash(&self.latest_requested_hash) = sync.content_hash;
+        if let SyncBase::Edited { epoch } = sync.base {
+            self.edited_epoch = Some(epoch);
+        }
         let now = Instant::now();
         let due = if sync.immediate {
             Some(now)
@@ -326,8 +341,24 @@ impl GitSync {
         }
     }
 
+    /// The content a request on `base` must find committed or staged, given
+    /// what has landed since; `None` when it may publish everything.
+    fn publish_scope(&self, base: SyncBase) -> Option<Option<String>> {
+        match base {
+            SyncBase::Own { epoch, content } if self.edited_epoch != Some(epoch) => {
+                Some(match &self.landed {
+                    Some((landed_epoch, landed)) if *landed_epoch == epoch => Some(landed.clone()),
+                    _ => content,
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn spawn(&mut self, sync: PendingSync, descriptions: Vec<String>) {
         self.busy = true;
+        self.in_flight = Some((sync.base.epoch(), sync.content.clone()));
+        let scope = self.publish_scope(sync.base);
         let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
@@ -337,6 +368,10 @@ impl GitSync {
             track_children_on_this_thread(children);
             let outcome = run_reporting_panics(|| {
                 let message = batch_message(&file_path, &descriptions);
+                let publish = match &scope {
+                    None => Publish::Everything,
+                    Some(base) => Publish::OwnChangesSince(base.as_deref()),
+                };
                 run_sync(
                     &repo_root,
                     &file_path,
@@ -344,6 +379,7 @@ impl GitSync {
                     &message,
                     &latest_requested_hash,
                     sync.previous_content.as_deref(),
+                    publish,
                 )
             });
             let _ = sender.send(outcome);
@@ -352,6 +388,7 @@ impl GitSync {
 
     fn spawn_retry(&mut self, commit: String) {
         self.busy = true;
+        self.in_flight = None;
         let repo_root = self.repo_root.clone();
         let sender = self.sender.clone();
         let children = Arc::clone(&self.children);
@@ -373,6 +410,7 @@ impl GitSync {
             return;
         }
         self.busy = true;
+        self.in_flight = None;
         let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
         let sender = self.sender.clone();
@@ -389,6 +427,16 @@ impl GitSync {
         let outcome = self.receiver.try_recv().ok();
         if let Some(outcome) = &outcome {
             self.busy = false;
+            if let Some(synced) = self.in_flight.take()
+                && matches!(
+                    outcome,
+                    SyncOutcome::Synced
+                        | SyncOutcome::Skipped
+                        | SyncOutcome::CommittedNotPushed { .. }
+                )
+            {
+                self.landed = Some(synced);
+            }
             self.apply_outcome(outcome);
             self.spawn_if_due(Instant::now());
         }
@@ -475,6 +523,7 @@ impl GitSync {
     pub fn abandon(&mut self, force: bool) -> bool {
         self.queued = None;
         self.retry = None;
+        self.in_flight = None;
         self.children
             .abandon(if force { libc::SIGKILL } else { libc::SIGTERM })
     }

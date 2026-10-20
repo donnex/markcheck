@@ -622,13 +622,30 @@ the file in `$EDITOR` (`e`) syncs too, at once rather than after the wait
 directory) — even if you only edit and quit without toggling anything
 afterward. An editor that
 exits with an error (vim's `:cq`) counts as an abort: the edit is reloaded
-but not synced, and the status bar keeps the error, ending in `not synced`. The editor has to stay open until you close the file (see [Editor and reset](#editor-and-reset)): an edit saved later from a window it handed off to reaches markcheck as an outside change, which is not synced. If something *else* changes the file in the meantime — an
+but not synced, and the status bar keeps the error, ending in `not synced`;
+it stays unsynced until you commit it yourself (see below). The editor has to stay open until you close the file (see [Editor and reset](#editor-and-reset)): an edit saved later from a window it handed off to reaches markcheck as an outside change, which is not synced. If something *else* changes the file in the meantime — an
 edit made outside markcheck entirely, or the file getting deleted — while
 a sync is still queued or in flight, that sync is refused rather than
 publishing content that's since gone stale: `Git sync failed: the file
-changed after this sync was queued; toggle again to sync the latest
-version`. Toggling or editing again picks up the file's
-actual current content normally. It only ever
+changed after this sync was queued, so it was not published`.
+
+A toggle only ever publishes **markcheck's own changes**. Its commit holds
+the whole file, so before committing, git sync checks that the file as it
+was before your first not-yet-synced toggle is already committed (or
+staged, below); if not, the file holds changes markcheck didn't make — a
+draft line you haven't committed, an edit from another editor or script
+that markcheck reloaded, an `e` edit whose editor exited with an error —
+and the sync refuses rather than publishing them under `Check "…"`:
+`Git sync failed: the checklist has changes markcheck didn't make, so
+nothing was published; commit them yourself, then toggle again`. The
+message stays red in the status bar and the title bar shows `not synced`
+until a sync lands. Commit (or stage) those changes yourself and the next
+toggle syncs normally. A refused sync for any other reason (a merge
+conflict, a failing hook, the staleness refusal above) doesn't count
+against your own toggles: once the problem is fixed, toggling again syncs
+everything markcheck changed since the last sync. An edit saved in `e` is
+yours to publish, so it syncs as described above, and so do the toggles
+after it. It only ever
 touches files git already tracks — a new/untracked file next to the
 checklist is never picked up and never committed, and the same goes for the
 checklist file itself: if it isn't tracked yet, git-sync won't `git add` it
@@ -707,7 +724,8 @@ committing would drop them — commit or unstage them first`. Committing the
 working tree would replace that staged version in the index, leaving it in
 no commit and no longer staged. Staging the checklist and *then* toggling is
 fine and syncs normally — everything you staged is already part of what gets
-committed; only a staged version you have since edited away is at risk.
+committed (staging counts as approving those changes for publishing); only a
+staged version you have since edited away is at risk.
 
 If git-sync cannot *determine* whether the branch has unrelated unpushed
 commits — a git command failing or timing out while it inspects history —

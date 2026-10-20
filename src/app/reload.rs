@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use crate::launch::program_name;
 use crate::model::{
     AppState, Document, FileGone, Item, ItemKind, List, Overlay, PendingChord, PendingSync,
-    TaskState, View, hash_bytes,
+    SyncBase, TaskState, View, hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -189,9 +189,15 @@ impl AppState {
                 }
                 self.last_update_at = Some(SystemTime::now());
                 // Taken from the adopted document, never a fresh read.
-                self.file_content_hash = Some(hash_bytes(
+                let content_hash = Some(hash_bytes(
                     writer::document_contents(&self.document).as_bytes(),
                 ));
+                // New content is a change markcheck didn't make, so its next toggle
+                // must not publish it on top of the old base.
+                if content_hash != self.file_content_hash {
+                    self.git_sync.unsynced_base = None;
+                }
+                self.file_content_hash = content_hash;
                 true
             }
             // Sticky: the state persists until the file gains tasks again.
@@ -217,6 +223,8 @@ impl AppState {
     pub fn request_external_edit_sync(&mut self, editor: &str) {
         let content = writer::document_contents(&self.document);
         let content_hash = hash_bytes(content.as_bytes());
+        self.git_sync.unsynced_base = Some(content.clone());
+        self.git_sync.base_epoch += 1;
         self.queue_git_sync(PendingSync {
             // The editor wrote this, so the content being replaced is the content
             // carried.
@@ -225,6 +233,9 @@ impl AppState {
             content_hash,
             description: format!("Edited in {}", program_name(editor)),
             immediate: true,
+            base: SyncBase::Edited {
+                epoch: self.git_sync.base_epoch,
+            },
         });
     }
 

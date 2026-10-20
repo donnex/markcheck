@@ -1250,6 +1250,16 @@ pub struct GitSyncState {
     /// The reason last reported in the status bar, so a retry failing the
     /// same way doesn't replace whatever message is showing every time.
     pub reported_reason: Option<String>,
+    /// The content markcheck's own unsynced changes started from: the file
+    /// before the first change since it was loaded or reloaded, or an `e`
+    /// edit the user saved. A toggle's sync must find it committed or staged
+    /// (or saved in `e`). Kept across failed syncs and dropped when the file
+    /// is reloaded with new content, so a change markcheck didn't make is
+    /// never published under a toggle's message.
+    pub unsynced_base: Option<String>,
+    /// Counts the bases taken, so git sync can tell a new base from one it
+    /// has already synced past, even when their content is the same.
+    pub base_epoch: u64,
 }
 
 /// A queued git-sync request: the exact content expected once the change
@@ -1273,6 +1283,30 @@ pub struct PendingSync {
     /// Sync at once rather than after git sync's quiet period, for an edit
     /// made outside markcheck (the `e` editor) that shouldn't wait on keys.
     pub immediate: bool,
+    /// What the sync may publish beyond the change it describes.
+    pub base: SyncBase,
+}
+
+/// What a git-sync request may publish. `epoch` names the base the request
+/// was made on: a new one is taken whenever the file is reloaded with content
+/// markcheck didn't write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncBase {
+    /// The whole content: an edit the user made in `e` and saved. Later
+    /// toggles on the same base may publish it too.
+    Edited { epoch: u64 },
+    /// Only markcheck's own changes on top of `content`, which must already
+    /// be committed or staged. `content` is `None` when it couldn't be read,
+    /// and the sync then refuses.
+    Own { epoch: u64, content: Option<String> },
+}
+
+impl SyncBase {
+    pub fn epoch(&self) -> u64 {
+        match self {
+            SyncBase::Edited { epoch } | SyncBase::Own { epoch, .. } => *epoch,
+        }
+    }
 }
 
 /// Every checkbox item's state, keyed by 1-based line number. Undo skips

@@ -1267,3 +1267,25 @@ fn a_quick_second_click_leaves_a_critical_step_open() {
         )
     );
 }
+
+#[test]
+fn toggles_carry_the_content_before_the_first_unsynced_change_as_their_base() {
+    let original = "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n";
+    let path = write_real_file(original);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    state.toggle_current();
+    let first = state.take_git_sync_request().expect("a sync is queued");
+    let expected = SyncBase::Own {
+        epoch: 1,
+        content: Some(original.to_string()),
+    };
+    assert_eq!(first.base, expected);
+
+    state.apply_git_sync_outcome(&SyncOutcome::Failed("refused".to_string()));
+    state.toggle_current();
+    let second = state.take_git_sync_request().expect("a sync is queued");
+    assert_ne!(second.previous_content.as_deref(), Some(original));
+    assert_eq!(second.base, expected, "a refused sync keeps the base");
+    fs::remove_file(&path).ok();
+}

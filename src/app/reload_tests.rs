@@ -1208,3 +1208,65 @@ fn a_reload_that_changes_no_task_keeps_the_plain_message() {
         Some("Reloaded: file changed on disk")
     );
 }
+
+#[test]
+fn an_outside_reload_drops_the_toggles_base() {
+    let original = "## List 1\n\n- [ ] `task one`\n";
+    let path = write_real_file(original);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    state.take_git_sync_request();
+
+    let outside = "## List 1\n\n- [x] `task one`\n- [ ] `draft`\n";
+    touch_with_new_mtime(&path, outside);
+    assert!(state.reload_if_changed());
+    assert_eq!(state.git_sync.unsynced_base, None);
+
+    state.toggle_current();
+    let pending = state.take_git_sync_request().expect("a sync is queued");
+    assert_eq!(
+        pending.base,
+        SyncBase::Own {
+            epoch: 2,
+            content: Some(outside.to_string()),
+        }
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_reload_that_changes_nothing_keeps_the_toggles_base() {
+    let original = "## List 1\n\n- [ ] `task one`\n";
+    let path = write_real_file(original);
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    state.take_git_sync_request();
+
+    let current = fs::read_to_string(&path).unwrap();
+    touch_with_new_mtime(&path, &current);
+    assert!(state.reload_if_changed());
+    assert_eq!(state.git_sync.unsynced_base.as_deref(), Some(original));
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_saved_edit_becomes_the_base_of_the_toggles_after_it() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    let edited = "## List 1\n\n- [ ] `task one`\n- [ ] `task two`\n";
+    touch_with_new_mtime(&path, edited);
+    state.finish_editor("vi", None, Ok(exit_status(0)), EDITOR_WAITED);
+    let pending = state.take_git_sync_request().expect("a sync is queued");
+    assert_eq!(pending.base, SyncBase::Edited { epoch: 1 });
+
+    state.toggle_current();
+    let pending = state.take_git_sync_request().expect("a sync is queued");
+    assert_eq!(
+        pending.base,
+        SyncBase::Own {
+            epoch: 1,
+            content: Some(edited.to_string()),
+        }
+    );
+    fs::remove_file(&path).ok();
+}

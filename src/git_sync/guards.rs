@@ -231,6 +231,22 @@ pub(super) fn range_has_unrelated_commits(
         .split(|&b| b == 0)
         .any(|path| !path.is_empty() && path != relpath.as_bytes()))
 }
+pub(super) const OUTSIDE_CHANGES_REFUSAL: &str = "the checklist has changes markcheck didn't make, so nothing was published; \
+     commit them yourself, then toggle again";
+/// Whether a commit would publish changes markcheck didn't make: `base`,
+/// the content markcheck's own changes started from, is neither committed
+/// nor staged. Fails closed.
+pub(super) fn outside_changes_would_be_published(
+    repo_root: &Path,
+    relpath: &str,
+    head_blob: Option<&str>,
+    base: Option<&str>,
+) -> bool {
+    let Some(sha) = base.and_then(|base| blob_sha_for(repo_root, relpath, base)) else {
+        return true;
+    };
+    head_blob != Some(sha.as_str()) && index_blob(repo_root, relpath).as_deref() != Some(&sha)
+}
 pub(super) const STAGED_TARGET_REFUSAL: &str = "the checklist has staged changes that differ from the file on disk; \
      committing would drop them — commit or unstage them first";
 /// Whether committing the working tree would discard a staged snapshot of

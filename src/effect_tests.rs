@@ -18,6 +18,7 @@ fn sync(description: &str) -> PendingSync {
         previous_content: None,
         description: description.to_string(),
         immediate: false,
+        base: crate::model::SyncBase::Edited { epoch: 0 },
     }
 }
 

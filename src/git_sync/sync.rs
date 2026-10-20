@@ -10,7 +10,8 @@ use crate::printable::printable_line;
 
 use super::commit::commit_via_temp_index;
 use super::guards::{
-    STAGED_TARGET_REFUSAL, repo_sync_blocked, staged_target_would_be_lost, unpushed_history_blocks,
+    OUTSIDE_CHANGES_REFUSAL, STAGED_TARGET_REFUSAL, outside_changes_would_be_published,
+    repo_sync_blocked, staged_target_would_be_lost, unpushed_history_blocks,
 };
 use super::inspect::{
     ahead_of_upstream, blob_at, blob_sha_for, hash_object, index_entry, resolve_parent,
@@ -74,6 +75,16 @@ pub(super) fn commit_message(file_path: &Path, change_desc: &str) -> String {
         format!("{prefix}{truncated}\u{2026}")
     }
 }
+/// What a sync may publish beyond the change it describes.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Publish<'a> {
+    /// The whole content, as for an `e` edit the user saved.
+    Everything,
+    /// Only markcheck's own changes on top of this content, which must be
+    /// committed or staged; `None` when it couldn't be read.
+    OwnChangesSince(Option<&'a str>),
+}
+
 /// Runs the commit+push sequence synchronously; a free function so tests
 /// can drive it without a thread.
 ///
@@ -88,6 +99,7 @@ pub(super) fn run_sync(
     message: &str,
     latest_requested_hash: &Mutex<[u8; 32]>,
     previous_content: Option<&str>,
+    publish: Publish<'_>,
 ) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(repo_root) {
         return SyncOutcome::Failed(reason);
@@ -158,13 +170,17 @@ pub(super) fn run_sync(
         Ok(bytes) if hash_bytes(&bytes) == *lock_hash(latest_requested_hash) => {}
         _ => {
             return SyncOutcome::Failed(
-                "the file changed after this sync was queued; toggle again to sync the latest version"
-                    .to_string(),
+                "the file changed after this sync was queued, so it was not published".to_string(),
             );
         }
     }
 
     // Checked after the fast path, which never builds a commit.
+    if let Publish::OwnChangesSince(base) = publish
+        && outside_changes_would_be_published(repo_root, &relpath, head_blob.as_deref(), base)
+    {
+        return SyncOutcome::Failed(OUTSIDE_CHANGES_REFUSAL.to_string());
+    }
     if staged_target_would_be_lost(repo_root, &relpath, head_blob.as_deref(), previous_content) {
         return SyncOutcome::Failed(STAGED_TARGET_REFUSAL.to_string());
     }
