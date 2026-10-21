@@ -7,8 +7,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::model::{
-    AppState, CopyRoute, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Palette,
-    PendingChord, PickerState, SearchState, TaskState, View, ViewLayout, hash_bytes,
+    AppState, CopyRoute, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
+    Palette, PendingChord, PickerState, SearchState, TaskState, View, ViewLayout, hash_bytes,
 };
 use crate::writer;
 
@@ -187,11 +187,48 @@ impl AppState {
         self.status_is_error = false;
     }
 
+    /// Clears the status message before an input is handled, except while `/`
+    /// search is open: a message that arrives during a search (a reload's
+    /// summary, a deletion notice, a sync failure) is drawn above the prompt
+    /// and stays until the search closes, so typing the query never discards
+    /// it unread.
+    fn clear_status_outside_search(&mut self) {
+        if self.overlay != Some(Overlay::Search) {
+            self.clear_status();
+        }
+    }
+
+    /// Runs `action`, then puts a status message that was already showing in
+    /// front of whatever `action` reported (`Reloaded: … · Match 2/5`), rather
+    /// than letting it be replaced unread. The merged message is an error if
+    /// either part is, and sticky if either part is.
+    fn keeping_status(&mut self, action: impl FnOnce(&mut Self)) {
+        let earlier = self.status_message.take();
+        let earlier_is_error = self.status_is_error;
+        let earlier_expiry = self.status_expiry;
+        action(self);
+        let Some(earlier) = earlier else {
+            return;
+        };
+        self.status_message = Some(match self.status_message.take() {
+            Some(reported) => {
+                self.status_is_error |= earlier_is_error;
+                self.status_expiry = earlier_expiry.and(self.status_expiry);
+                format!("{earlier} · {reported}")
+            }
+            None => {
+                self.status_is_error = earlier_is_error;
+                self.status_expiry = earlier_expiry;
+                earlier
+            }
+        });
+    }
+
     /// Cancels any armed input chord (`gg`, `o`/`y`'s digit prompt) and the status
     /// message. Mouse input bypasses `handle_key_with_mods`, so a click between
     /// the two halves of a chord would otherwise leave it armed.
     fn clear_pending_chords(&mut self) {
-        self.clear_status();
+        self.clear_status_outside_search();
         self.pending_chord = PendingChord::None;
     }
 

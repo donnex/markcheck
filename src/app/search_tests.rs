@@ -330,6 +330,62 @@ fn a_successful_search_commit_auto_copies_the_match() {
 }
 
 #[test]
+fn a_message_raised_during_search_survives_typing_and_leads_the_commit() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    state.set_error("Git sync failed".to_string());
+    type_str(&mut state, "task 4x");
+    state.handle_key(KeyCode::Backspace);
+    state.handle_paste("");
+    state.handle_scroll_down();
+    state.handle_key_with_mods(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Git sync failed · Ctrl-S is not bound (? lists every key)")
+    );
+    state.set_error("Git sync failed".to_string());
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Git sync failed · Match 1/1")
+    );
+    assert!(state.status_is_error);
+    assert_eq!(state.status_expiry, None);
+    state.handle_key(KeyCode::Char('j'));
+    assert_eq!(state.status_message, None, "cleared once search is closed");
+}
+
+#[test]
+fn an_ephemeral_message_during_search_stays_ephemeral_and_survives_esc() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('/'));
+    state.set_status("Reloaded".to_string());
+    type_str(&mut state, "task");
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded · Match 1/5 · n/N to cycle")
+    );
+    assert!(!state.status_is_error);
+    assert!(state.status_expiry.is_some());
+
+    state.handle_key(KeyCode::Char('/'));
+    state.set_status("Reloaded".to_string());
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(state.status_message.as_deref(), Some("Reloaded"));
+    assert!(state.status_expiry.is_some());
+
+    state.handle_key(KeyCode::Char('/'));
+    state.set_error("Couldn't open link".to_string());
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Couldn't open link · Match 2/5")
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
 fn paste_into_search_fills_the_query_as_one_line() {
     let mut state = AppState::new(two_list_document());
     state.handle_key(KeyCode::Char('/'));

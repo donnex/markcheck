@@ -238,7 +238,7 @@ impl AppState {
     }
 
     pub(super) fn dispatch_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        self.clear_status();
+        self.clear_status_outside_search();
 
         // Ctrl-Z suspends from every screen, overlays and search input
         // included, as in other full-screen terminal programs.
@@ -258,10 +258,12 @@ impl AppState {
         // would act as `s` and Ctrl-Y would confirm the reset like `y`.
         if !self.is_bound_chord(code, modifiers) {
             self.clear_pending_chords();
-            self.set_error(format!(
-                "{} is not bound (? lists every key)",
-                chord_name(code, modifiers)
-            ));
+            self.keeping_status(|state| {
+                state.set_error(format!(
+                    "{} is not bound (? lists every key)",
+                    chord_name(code, modifiers)
+                ));
+            });
             return;
         }
 
@@ -449,7 +451,7 @@ impl AppState {
     pub(super) fn handle_search_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         match code {
             KeyCode::Esc => self.cancel_search(),
-            KeyCode::Enter => self.commit_search(),
+            KeyCode::Enter => self.keeping_status(Self::commit_search),
             KeyCode::Backspace => {
                 self.search.query.pop();
                 self.update_search();

@@ -1616,6 +1616,30 @@ fn status_bar_shows_the_search_prompt_while_searching() {
 }
 
 #[test]
+fn a_message_raised_during_search_shows_above_the_prompt() {
+    let mut state = sample_state();
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_key(KeyCode::Char('g'));
+    state.set_error("File was deleted".to_string());
+    let width = 100u16;
+    let height = 30u16;
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| render(f, &mut state)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let row = |y: u16| -> String { (0..width).map(|x| buffer[(x, y)].symbol()).collect() };
+    assert!(
+        row(height - 2).contains("File was deleted"),
+        "message on its own row"
+    );
+    assert!(row(height - 1).contains("/g"), "prompt on the bottom row");
+    assert_eq!(
+        buffer[(0, height - 2)].style().fg,
+        Some(state.palette.error),
+        "error keeps its color"
+    );
+}
+
+#[test]
 fn search_status_bar_shows_match_count_and_no_match() {
     // The search prompt reports how many tasks match, and an explicit
     // no-match state when the query hits nothing.
@@ -2755,7 +2779,23 @@ fn status_bar_grows_only_for_a_long_message_and_stays_capped() {
     assert_eq!(statusbar::height(&state, 10, 8), 2, "capped by height");
     assert_eq!(statusbar::height(&state, 10, 3), 1, "never below one row");
     state.overlay = Some(Overlay::Search);
-    assert_eq!(statusbar::height(&state, 10, 30), 1, "search stays one row");
+    assert_eq!(
+        statusbar::height(&state, 10, 30),
+        6,
+        "message rows above the prompt"
+    );
+    state.set_error("Nothing to copy".to_string());
+    assert_eq!(
+        statusbar::height(&state, 80, 30),
+        2,
+        "short message plus prompt"
+    );
+    state.status_message = None;
+    assert_eq!(
+        statusbar::height(&state, 80, 30),
+        1,
+        "prompt alone stays one row"
+    );
 }
 
 #[test]

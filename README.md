@@ -489,6 +489,12 @@ ignored, with a "Paste ignored" message in the status bar, so a command pasted
 into the wrong pane can't toggle, reset or quit anything. This relies on your
 terminal supporting bracketed paste, which almost all current terminals do.
 
+A message that arrives while `/` search is open, such as the summary of a
+reload or a git sync failure, is shown on its own row above the search prompt,
+and typing the query doesn't clear it. When you press `Enter` the match
+position is added after it (`Reloaded: 1 done ("Verify") · Match 2/5 · n/N to cycle`);
+`Esc` leaves the message showing.
+
 When you finish a list a summary card appears — `l` / `Enter` moves to
 the next list that still has incomplete tasks (skipping any already
 done), `h` reviews the one you just finished. If you go back to review, you
