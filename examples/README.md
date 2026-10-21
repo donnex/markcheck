@@ -21,7 +21,10 @@ markcheck examples/basics.md
   `2)` delimiter, kept as written), plus
   an uppercase `[X]` that counts as done. The `> [!IMPORTANT]` alert under
   `## Ordered steps` and the `> [!CAUTION]` one under `## Wrap-up` show in the
-  warning color like the `[!WARNING]` one, each with its label.
+  warning color like the `[!WARNING]` one, each with its label. Under
+  `## Verify`, the log-tailing task links to `#prepare` and to `#roll-back`,
+  the anchor of the `- ## Roll back` note card (a heading inside a list item),
+  so `o` jumps to a heading and to a card.
 - **`nested.md`** — nested / sub-lists under both a task and a plain note,
   at several depths, with the color-coded depth guides in the overview and the
   matching color-coded parent-chain breadcrumb shown on sub-item cards.

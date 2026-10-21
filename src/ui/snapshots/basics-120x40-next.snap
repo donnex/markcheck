@@ -21,17 +21,17 @@ expression: "screen(&mut state, width, height)"
                              ▪ Do not run against production                              │   ☐ Tail the logs and wat… │
                                                                                           │   ☑ Record the start time… │
             ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │   ⊘ Restart the replica —… │
-┌ ◐ ────────┃                                                             ┃────────────┐  │ • [3] Ordered steps        │
-│           ┃                Check out the release branch:                ┃Build the   │  │   Task states work the sa… │
-│   Warm the┃                                                             ┃artifact    │  │   ▪ Important: Announce c… │
-│  build cac┃                    git checkout release                     ┃            │  │   ☑ 1. Confirm the change… │
-│           ┃                                                             ┃ompile and  │  │   ◐ 2. Notify the on-call… │
-└───────────┃                                                             ┃────────────┘  │   ☐ 3. Announce completion │
-            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │ • [4] Wrap-up              │
+┌ ◐ ────────┃                                                             ┃────────────┐  │   ▪ Roll back              │
+│           ┃                Check out the release branch:                ┃Build the   │  │ • [3] Ordered steps        │
+│   Warm the┃                                                             ┃artifact    │  │   Task states work the sa… │
+│  build cac┃                    git checkout release                     ┃            │  │   ▪ Important: Announce c… │
+│           ┃                                                             ┃ompile and  │  │   ☑ 1. Confirm the change… │
+└───────────┃                                                             ┃────────────┘  │   ◐ 2. Notify the on-call… │
+            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ 3. Announce completion │
+                                                                                          │ • [4] Wrap-up              │
                                                                                           │   ▪ Caution: Keep the old… │
                                                                                           │   ☐ 1) Remove the old rel… │
                                                                                           │   ☐ 2) Close the change w… │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

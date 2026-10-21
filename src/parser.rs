@@ -601,8 +601,11 @@ struct ParseState<'a> {
     heading: Option<(HeadingLevel, String)>,
     /// The open heading's source line, for its anchor.
     heading_line: LineNumber,
-    /// Every structural heading's GitHub-style anchor and line, in order.
+    /// Every heading's GitHub-style anchor and the line its target is
+    /// searched from, in order.
     anchors: Vec<(String, LineNumber)>,
+    /// The text of a heading inside a list item, read so far, for its anchor.
+    item_heading: Option<String>,
     /// The anchors already in `anchors`, so a repeat is checked in O(1).
     taken_anchors: HashSet<String>,
     /// The next `-N` suffix to try for each slug, so the k-th repeat of a
@@ -688,6 +691,7 @@ impl<'a> ParseState<'a> {
             heading: None,
             heading_line: 0,
             anchors: Vec::new(),
+            item_heading: None,
             taken_anchors: HashSet::new(),
             next_anchor_suffix: HashMap::new(),
             critical: Default::default(),
@@ -765,8 +769,10 @@ impl<'a> ParseState<'a> {
 
     /// Records the heading's anchor the way GitHub derives it, numbering a
     /// repeat `-1`, `-2`, …, so `[Rollback](#rollback)` links work as they do
-    /// there (#139).
-    fn add_anchor(&mut self, text: &str) {
+    /// there (#139). Every rendered heading takes part, quoted and in-item
+    /// ones included, so the numbering matches GitHub's (#186); `target` is
+    /// the line the jump searches for a task from.
+    fn add_anchor(&mut self, text: &str, target: LineNumber) {
         let base = slug(text);
         let repeat = self.next_anchor_suffix.entry(base.clone()).or_insert(0);
         let mut anchor = match *repeat {
@@ -779,7 +785,7 @@ impl<'a> ParseState<'a> {
         }
         *repeat += 1;
         self.taken_anchors.insert(anchor.clone());
-        self.anchors.push((anchor, self.heading_line));
+        self.anchors.push((anchor, target));
     }
 
     /// The first task after a heading takes the preamble written above it.
@@ -895,6 +901,7 @@ impl<'a> ParseState<'a> {
         if let Some(item) = self.item_stack.last_mut() {
             item.mark_boundary();
             item.start_strong();
+            self.item_heading = Some(String::new());
         } else {
             self.heading = Some((level, String::new()));
             self.heading_line = self.line_counter.line_at(offset, self.source);
@@ -908,15 +915,24 @@ impl<'a> ParseState<'a> {
                 item.end_strong();
                 item.mark_boundary();
             });
+            if let (Some(text), Some(line)) = (
+                self.item_heading.take(),
+                self.item_stack.last().map(|item| item.line),
+            ) {
+                self.add_anchor(text.trim(), line);
+            }
             return;
         };
         let quoted = std::mem::take(&mut self.heading_quoted);
-        if open_level != level || quoted {
+        if open_level != level {
             return;
         }
         let text = text.trim();
+        self.add_anchor(text, self.heading_line + 1);
+        if quoted {
+            return;
+        }
         self.open_preamble_scope(heading_level_number(level));
-        self.add_anchor(text);
         match level {
             HeadingLevel::H2 => self.start_list(text),
             HeadingLevel::H1 => {
@@ -1084,6 +1100,7 @@ impl<'a> ParseState<'a> {
                 prose.text.push_str(text);
             }
         } else {
+            self.push_item_heading(text);
             self.with_item(|item| item.push_text(text));
         }
     }
@@ -1101,6 +1118,7 @@ impl<'a> ParseState<'a> {
                 prose.text.push(' ');
             }
         } else {
+            self.push_item_heading(" ");
             self.with_item(ItemBuilder::push_break);
         }
     }
@@ -1113,7 +1131,14 @@ impl<'a> ParseState<'a> {
                 prose.text.push_str(text);
             }
         } else {
+            self.push_item_heading(text);
             self.with_item(|item| item.push_code(text));
+        }
+    }
+
+    fn push_item_heading(&mut self, text: &str) {
+        if let Some(heading) = &mut self.item_heading {
+            heading.push_str(text);
         }
     }
 

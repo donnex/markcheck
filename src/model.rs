@@ -536,6 +536,32 @@ impl Unshown {
     }
 }
 
+/// `%C3%A9` as `é`, the form a browser gives a copied link to a heading;
+/// text that doesn't decode to UTF-8 is kept as written.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .filter(|pair| bytes[i] == b'%' && pair.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|pair| std::str::from_utf8(pair).ok())
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+        match hex {
+            Some(byte) => {
+                decoded.push(byte);
+                i += 3;
+            }
+            None => {
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| text.to_string())
+}
+
 #[derive(Debug, Clone)]
 pub struct Document {
     pub file_path: PathBuf,
@@ -552,8 +578,10 @@ pub struct Document {
     pub preambles: std::collections::BTreeMap<LineNumber, Vec<PreambleBlock>>,
     /// What the file has outside task lists that markcheck can't show.
     pub unshown: Unshown,
-    /// Each structural heading's GitHub-style anchor (`rollback` for
-    /// `## Rollback`) and its line, in document order (#114, #139).
+    /// Each heading's GitHub-style anchor (`rollback` for `## Rollback`) and
+    /// the line its first task is searched from: the line after the heading,
+    /// or a card's own line for a heading inside it, in document order
+    /// (#114, #139, #186).
     pub anchors: Vec<(String, LineNumber)>,
     /// The lines of critical tasks, whose bold title started with `!`:
     /// checking one takes a second, deliberate press (#95).
@@ -573,13 +601,13 @@ impl Document {
             .fold(Progress::default(), Progress::plus)
     }
 
-    /// The first task after the heading `anchor` names (without its `#`),
-    /// as `(list, item)`. `None` when no heading has that anchor or nothing
-    /// follows it.
+    /// The first task after the heading `anchor` names (without its `#`,
+    /// percent-encoded or not), as `(list, item)`. `None` when no heading has
+    /// that anchor or nothing follows it.
     pub fn anchor_target(&self, anchor: &str) -> Option<(usize, usize)> {
-        let wanted = anchor.to_lowercase();
+        let wanted = percent_decode(anchor).to_lowercase();
         let (_, line) = self.anchors.iter().find(|(taken, _)| *taken == wanted)?;
-        self.first_task_from(*line + 1)
+        self.first_task_from(*line)
     }
 
     /// The first item on or after source line `line`, as `(list, item)`.

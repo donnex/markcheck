@@ -160,6 +160,17 @@ fn examples_cover_every_alert_and_the_paren_delimiter() {
 }
 
 #[test]
+fn example_links_reach_a_heading_and_a_card_with_a_heading() {
+    let document = example_document("basics.md");
+    let (list, item) = document.anchor_target("roll-back").expect("#roll-back");
+    assert_eq!(
+        document.lists[list].items[item].header.as_deref(),
+        Some("Roll back")
+    );
+    assert!(document.anchor_target("prepare").is_some());
+}
+
+#[test]
 fn example_handover_has_a_heading_banner_and_a_quote_and_code_preamble() {
     let document = example_document("sub-sections.md");
     let handover = example_list(&document, "Handover");
@@ -2421,9 +2432,10 @@ fn headings_get_github_style_anchors_numbered_when_repeated() {
             "server-upgrade",
             "roll-back-v2",
             "roll-back-v2-1",
+            "quoted",
             "step_3--check"
         ],
-        "a quoted heading has no anchor"
+        "a quoted heading has an anchor too, as on GitHub"
     );
     assert_eq!(document.anchor_target("roll-back-v2-1"), Some((1, 0)));
     assert_eq!(
@@ -2435,6 +2447,51 @@ fn headings_get_github_style_anchors_numbered_when_repeated() {
     assert_eq!(document.first_task_from(4), Some((0, 0)));
     assert_eq!(document.first_task_from(6), Some((1, 0)));
     assert_eq!(document.first_task_from(99), None);
+}
+
+#[test]
+fn a_percent_encoded_anchor_matches_its_heading() {
+    let document = parse("## Intro\n\n- [ ] a\n\n## Déploiement\n\n- [ ] b\n");
+    assert_eq!(document.anchor_target("d%C3%A9ploiement"), Some((1, 0)));
+    assert_eq!(document.anchor_target("D%c3%a9ploiement"), Some((1, 0)));
+    assert_eq!(document.anchor_target("déploiement"), Some((1, 0)));
+    assert_eq!(
+        document.anchor_target("d%C3ploiement"),
+        None,
+        "not UTF-8 once decoded: kept as written"
+    );
+    assert_eq!(document.anchor_target("intro%"), None);
+    assert_eq!(document.anchor_target("intro%+1"), None);
+    assert_eq!(document.anchor_target("%69ntro"), Some((0, 0)));
+}
+
+#[test]
+fn a_quoted_heading_counts_in_the_repeat_numbering() {
+    let document = parse("## Prep\n\n> ## Verify\n\n- [ ] a\n\n## Verify\n\n- [ ] b\n");
+    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    assert_eq!(anchors, vec!["prep", "verify", "verify-1"]);
+    assert_eq!(document.anchor_target("verify"), Some((0, 0)));
+    assert_eq!(document.anchor_target("verify-1"), Some((1, 0)));
+    assert_eq!(
+        document.lists.len(),
+        2,
+        "a quoted heading still opens no list"
+    );
+}
+
+#[test]
+fn a_heading_inside_a_list_item_anchors_its_card() {
+    let document = parse(
+        "## Steps\n\n- [ ] a\n- ## Roll *back*\n\n  Undo it.\n- [ ] c\n\n## Roll back\n\n- [ ] d\n",
+    );
+    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    assert_eq!(anchors, vec!["steps", "roll-back", "roll-back-1"]);
+    assert_eq!(document.anchor_target("roll-back"), Some((0, 1)));
+    assert_eq!(document.anchor_target("roll-back-1"), Some((1, 0)));
+    assert_eq!(
+        document.lists[0].items[1].header.as_deref(),
+        Some("Roll back")
+    );
 }
 
 #[test]

@@ -21,8 +21,8 @@ expression: "screen(&mut state, width, height)"
 ┃                                              ┃  │   ☐ Tail the logs and wat… │
 ┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☑ Record the start time… │
                                                   │   ⊘ Restart the replica —… │
+                                                  │   ▪ Roll back              │
                                                   │ • [3] Ordered steps        │
-                                                  │   Task states work the sa… │
-                                                  │   ▪ Important: Announce c… ▼
+                                                  │   Task states work the sa… ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

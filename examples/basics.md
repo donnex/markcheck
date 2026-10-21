@@ -28,10 +28,16 @@ a note card.
 - [ ] **! Switch traffic to the new release** — a critical step: its title
   starts with `!`, so `Space` (or `-`) asks for a second, unhurried press
   before checking (or skipping) it
-- [ ] Tail the logs and watch for errors; if they show a failure, go back to
-  [Prepare](#prepare) (`o` follows the link, `Ctrl-O` comes back)
+- [ ] Tail the logs and watch for errors; if they show a failure,
+  [roll back](#roll-back) or go back to [Prepare](#prepare) (`o` follows a
+  link, `Ctrl-O` comes back)
 - [X] Record the start time — an uppercase `[X]` counts as done too
 - [-] Restart the replica — skipped (`[-]`): there is no replica this time
+
+- ## Roll back
+
+  A heading inside a list item makes a titled note card, and a link to its
+  anchor jumps straight to this card.
 
 ## Ordered steps
 
