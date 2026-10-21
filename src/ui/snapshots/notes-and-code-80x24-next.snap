@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/29
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/30
 ────────────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Reference            ▲
@@ -13,7 +13,7 @@ expression: "screen(&mut state, width, height)"
   assumes the service has already been drained    │   ❯ Restart the primary a… ▓
              from the load balancer               │   ☐ Restart example-servi… ▓
                                                   │   ☐ A task with a fenced … ▓
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/29 ┓  │   ☐ A task with an indent… ▓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/29 ┓  │   ☐ A task with an indent… │
 ┃   ▪ Restart the primary application service  ┃  │   ☐ A task with a short o… │
 ┃  and confirm that every health check passes  ┃  │   ☐ A task with fenced li… │
 ┃                                              ┃  │   ☐ A task with a tab-ind… │

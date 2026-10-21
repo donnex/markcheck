@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/29
+ ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/30
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Reference            ▲
@@ -32,10 +32,10 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ Check the dashboard a… ▓
                                                                                           │   ☐ Check the mirror at w… ▓
                                                                                           │   ☐ Compare the dashboard… ▓
-                                                                                          │   ☐ Press Enter at the pr… ▓
-                                                                                          │   ☐ A task with an HTML b… ▓
-                                                                                          │   ☐ Mail the on-call owne… ▓
-                                                                                          │   ▪ A quoted example from… ▓
+                                                                                          │   ☐ Press Enter at the pr… │
+                                                                                          │   ☐ A task with an HTML b… │
+                                                                                          │   ☐ Mail the on-call owne… │
+                                                                                          │   ▪ A quoted example from… │
                                                                                           │   ▪ Neither does a quoted… │
                                                                                           │ • [2] Precondition with a  │
                                                                                           │   ▪ Export the environmen… │

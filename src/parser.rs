@@ -651,6 +651,26 @@ fn as_alert(block: PreambleBlock) -> PreambleBlock {
     block
 }
 
+/// A plain bullet inside a preamble quote, as a line of the quote: its
+/// marker, its text, and any code under it indented below.
+fn quoted_bullet(item: &Item) -> String {
+    let indent = "  ".repeat(item.depth);
+    let marker = item.ordinal.as_deref().unwrap_or("-");
+    let text = [
+        item.header.as_deref().unwrap_or_default(),
+        &item.display_text,
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ");
+    let mut line = format!("{indent}{marker} {text}");
+    for code_line in item.code_blocks.iter().flat_map(|block| block.lines()) {
+        line.push_str(&format!("\n{indent}    {code_line}"));
+    }
+    line
+}
+
 fn strip_trailing_newline(content: String) -> String {
     content
         .strip_suffix('\n')
@@ -741,6 +761,9 @@ struct ParseState<'a> {
 
     /// The paragraph or quote being read outside any list (#80).
     prose: Option<PreambleBlock>,
+    /// Set when the open quote resumes after a code block inside it, so its
+    /// alert marker, read before the code, isn't looked for again.
+    quote_resumed: bool,
     /// Whether blocks read now are a preamble: after a heading (or the start
     /// of the file) and before its first task. Anything else is unshown.
     preamble_open: bool,
@@ -788,6 +811,7 @@ impl<'a> ParseState<'a> {
             code_block: None,
             item_stack: Vec::new(),
             prose: None,
+            quote_resumed: false,
             preamble_open: true,
             scope_level: 0,
             pending_preamble: Vec::new(),
@@ -808,18 +832,35 @@ impl<'a> ParseState<'a> {
         });
     }
 
-    fn finish_prose(&mut self) {
-        let Some(mut block) = self.prose.take() else {
-            return;
-        };
+    /// Adds the open paragraph or quote as a preamble block, and returns its
+    /// kind once an alert marker is read, for a quote resuming after code.
+    fn finish_prose(&mut self) -> Option<PreambleKind> {
+        let mut block = self.prose.take()?;
         block.text = block.text.trim().to_string();
-        if block.text.is_empty() {
-            return;
-        }
-        if block.kind == PreambleKind::Quote {
+        let resumed = std::mem::take(&mut self.quote_resumed);
+        if block.kind == PreambleKind::Quote && !resumed {
             block = as_alert(block);
         }
-        self.add_block(block);
+        let kind = block.kind;
+        if !block.text.is_empty() {
+            self.add_block(block);
+        }
+        Some(kind)
+    }
+
+    /// Inside a `>` quote read as preamble: its headings, lists and code
+    /// are part of the quote, not blocks or tasks of their own (#241).
+    fn in_preamble_quote(&self) -> bool {
+        self.blockquote_depth > 0 && self.prose.is_some()
+    }
+
+    fn push_quote_line(&mut self, line: &str) {
+        if let Some(quote) = self.prose.as_mut() {
+            if !quote.text.is_empty() {
+                quote.text.push('\n');
+            }
+            quote.text.push_str(line);
+        }
     }
 
     fn add_block(&mut self, block: PreambleBlock) {
@@ -1034,6 +1075,9 @@ impl<'a> ParseState<'a> {
         }
         self.add_anchor(text, self.heading_line + 1, number);
         if quoted {
+            if self.in_preamble_quote() && !text.is_empty() {
+                self.push_quote_line(text);
+            }
             return;
         }
         self.open_preamble_scope(number);
@@ -1096,6 +1140,11 @@ impl<'a> ParseState<'a> {
         } else if self.blockquote_depth == 0 {
             let top_level = items.iter().filter(|item| item.depth == 0).count();
             self.unshown.bullets += top_level + usize::from(pending_banner.is_some());
+        } else if self.in_preamble_quote() {
+            items.sort_by_key(|item| item.line_number);
+            for item in &items {
+                self.push_quote_line(&quoted_bullet(item));
+            }
         }
     }
 
@@ -1108,7 +1157,7 @@ impl<'a> ParseState<'a> {
         // `list_depth` was already incremented by the enclosing Start(List),
         // so depth 0 = top-level.
         let line = self.line_counter.line_at(offset, self.source);
-        if self.item_stack.is_empty() {
+        if self.item_stack.is_empty() && !self.in_preamble_quote() {
             self.claim_preamble(line);
         }
         self.item_stack.push(ItemBuilder {
@@ -1179,10 +1228,19 @@ impl<'a> ParseState<'a> {
         } else if fenced && self.attach_fence_to_last_item {
             self.attach_trailing_fence(content);
         } else if self.at_top_level() && !content.trim().is_empty() {
+            let quote = if self.in_preamble_quote() {
+                self.finish_prose()
+            } else {
+                None
+            };
             self.add_block(PreambleBlock {
                 kind: PreambleKind::Code,
                 text: content,
             });
+            if let Some(kind) = quote {
+                self.start_prose(kind);
+                self.quote_resumed = true;
+            }
         }
     }
 

@@ -163,6 +163,23 @@ the list's last card.
 smoke-test --all
 ```
 
+## Quoted callout
+
+> [!WARNING]
+>
+> ### Before you deploy
+>
+> Take a snapshot of the volume first:
+>
+> ```sh
+> snap-tool create example-volume
+> ```
+>
+> - wait until the snapshot shows as complete
+> - then start the deploy
+
+- [ ] Deploy the new release
+
 ## Notes only (this section is dropped)
 
 - This section has no checkboxes, so markcheck drops it entirely.

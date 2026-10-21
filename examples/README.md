@@ -67,7 +67,9 @@ markcheck examples/basics.md
   `line one<br>line two` as `line one line two`), an HTML block under a task
   that isn't shown,
   a fenced block placed directly after a list that attaches to the list's last
-  card, and a no-checkbox section that gets dropped (its bullets are counted
+  card, a `> [!WARNING]` callout above a task whose quoted heading, fenced
+  command and bullets all stay in the quote, shown in order above the card,
+  and a no-checkbox section that gets dropped (its bullets are counted
   in the startup note of what isn't shown).
 - **`sub-sections.md`** — `### H3`+ sub-sections *within* a list: items
   before the first sub-heading (directly under the H2), an `### H3` group, an

@@ -2,9 +2,9 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/29
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/30
 ────────────────────────────────────────────────────────────────────────────────
-╭ Go to task ──────────────────────── 33 items ╮  ┌ Overview ──────────────────┐
+╭ Go to task ──────────────────────── 34 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Reference            ▲
 │   ▪ A note with a command but …  — Reference │  │   ▪ Read before proceedin… ▓
 │ ❯ ☐ A task with a single inlin…  — Reference │  │   Non-task content and th… ▓
@@ -13,7 +13,7 @@ expression: "screen(&mut state, width, 24)"
 │   ☐ A task with a fenced block:  — Reference │  │   ☐ Restart the primary a… ▓
 │   ☐ A task with an indented co…  — Reference │  │   ☐ Restart example-servi… ▓
 │   ☐ A task with a short one-li…  — Reference │  │   ☐ A task with a fenced … ▓
-│   ☐ A task with fenced lines t…  — Reference │  │   ☐ A task with an indent… ▓
+│   ☐ A task with fenced lines t…  — Reference │  │   ☐ A task with an indent… │
 │   ☐ A task with a tab-indented…  — Reference │  │   ☐ A task with a short o… │
 │   ☐ A task with two commands f…  — Reference │  │   ☐ A task with fenced li… │
 │   ☐ A task with a command for …  — Reference │  │   ☐ A task with a tab-ind… │

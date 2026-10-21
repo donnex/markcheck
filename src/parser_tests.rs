@@ -2828,3 +2828,110 @@ fn a_deep_chain_of_hidden_started_sub_tasks_stops_after_the_round_cap() {
         "{kinds:?}"
     );
 }
+
+// --- A quote's headings, code and bullets stay in the quote (#241).
+
+#[test]
+fn a_quoted_heading_is_a_line_of_its_preamble_quote() {
+    let document = parse(
+        "## Deploy\n\n> ### Before you start\n> Take a snapshot of the volume.\n\n- [ ] deploy step\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 6),
+        vec![(
+            PreambleKind::Quote,
+            "Before you start\nTake a snapshot of the volume.".to_string()
+        )]
+    );
+    assert!(document.unshown.is_empty());
+}
+
+#[test]
+fn code_inside_a_preamble_alert_stays_between_its_text() {
+    let document = parse(
+        "## Deploy\n\n> [!WARNING]\n> Take a snapshot first:\n>\n> ```\n> snap-tool create vol1\n> ```\n>\n> Then wait for it to finish.\n\n- [ ] deploy step\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 12),
+        vec![
+            (
+                PreambleKind::Alert,
+                "Warning: Take a snapshot first:".to_string()
+            ),
+            (PreambleKind::Code, "snap-tool create vol1".to_string()),
+            (
+                PreambleKind::Alert,
+                "Then wait for it to finish.".to_string()
+            ),
+        ]
+    );
+    assert!(document.unshown.is_empty());
+}
+
+#[test]
+fn a_marker_after_code_in_a_quote_is_not_an_alert() {
+    let document = parse("## A\n\n> ```\n> cmd\n> ```\n>\n> [!WARNING] late\n\n- [ ] t\n");
+    assert_eq!(
+        preamble_of(&document, 9),
+        vec![
+            (PreambleKind::Code, "cmd".to_string()),
+            (PreambleKind::Quote, "[!WARNING] late".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_quoted_plain_bullet_is_a_line_of_its_preamble_quote() {
+    let document = parse(
+        "## Deploy\n\n> Snapshot first:\n>\n> ```\n> snap-tool create vol1\n> ```\n>\n> - plain quoted bullet\n> - **Bold** rest\n>   1. nested `step`\n>\n>      ```\n>      sub-cmd\n>      ```\n>\n> Done.\n\n- [ ] deploy step\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 19),
+        vec![
+            (PreambleKind::Quote, "Snapshot first:".to_string()),
+            (PreambleKind::Code, "snap-tool create vol1".to_string()),
+            (
+                PreambleKind::Quote,
+                "- plain quoted bullet\n- Bold rest\n  1. nested step\n      sub-cmd\nDone."
+                    .to_string()
+            ),
+        ]
+    );
+    assert!(document.unshown.is_empty());
+    assert_eq!(document.lists[0].items.len(), 1);
+}
+
+#[test]
+fn a_quoted_checkbox_in_a_preamble_quote_leaves_the_preamble_to_the_task() {
+    let document = parse("## S\n\n> Example:\n> - [ ] quoted example\n\n- [ ] real\n");
+    let items = &document.lists[0].items;
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].kind, ItemKind::DisplayOnly);
+    assert_eq!(
+        preamble_of(&document, 6),
+        vec![(PreambleKind::Quote, "Example:".to_string())]
+    );
+}
+
+#[test]
+fn example_quoted_callout_keeps_its_heading_code_and_bullets_in_order() {
+    let document = example_document("notes-and-code.md");
+    let list = example_list(&document, "Quoted callout");
+    assert_eq!(
+        preamble_of(&document, list.items[0].line_number),
+        vec![
+            (
+                PreambleKind::Alert,
+                "Warning: Before you deploy\nTake a snapshot of the volume first:".to_string()
+            ),
+            (
+                PreambleKind::Code,
+                "snap-tool create example-volume".to_string()
+            ),
+            (
+                PreambleKind::Alert,
+                "- wait until the snapshot shows as complete\n- then start the deploy".to_string()
+            ),
+        ]
+    );
+}
