@@ -1609,3 +1609,108 @@ fn a_marker_left_under_this_pid_is_taken_over_and_a_directory_is_not() {
     drop(marker);
     fs::remove_dir(&own).unwrap();
 }
+
+#[test]
+fn save_route_follows_what_the_file_and_folder_allow() {
+    use std::os::unix::fs::PermissionsExt;
+    let own = write_temp_file(EXAMPLE);
+    assert_eq!(save_route(&own), SaveRoute::Replace);
+    fs::remove_file(&own).ok();
+
+    let Some((dir, path)) = read_only_dir_with("list.md", "- [ ] a\n") else {
+        return;
+    };
+    assert_eq!(save_route(&path), SaveRoute::InPlace);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+    assert_eq!(save_route(&path), SaveRoute::Refused);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
+fn a_bare_file_name_is_judged_by_the_current_folder() {
+    let missing = Path::new("markcheck-no-such-checklist.md");
+    assert_eq!(save_route(missing), SaveRoute::Replace);
+    assert!(!may_access(Path::new("nul\0byte"), libc::W_OK));
+}
+
+#[test]
+fn a_root_owned_file_in_a_root_owned_folder_cannot_be_saved() {
+    let target = Path::new("/etc/hostname");
+    if !target.exists() || current_uid() == 0 {
+        eprintln!("skipped: needs a root-owned file and a non-root user");
+        return;
+    }
+    assert_eq!(save_route(target), SaveRoute::Refused);
+}
+
+#[test]
+fn save_route_for_prefers_a_rename_then_in_place() {
+    assert_eq!(save_route_for(true, true, false), SaveRoute::Replace);
+    assert_eq!(save_route_for(false, true, false), SaveRoute::Replace);
+    assert_eq!(save_route_for(true, true, true), SaveRoute::InPlace);
+    assert_eq!(save_route_for(true, false, false), SaveRoute::InPlace);
+    assert_eq!(save_route_for(false, true, true), SaveRoute::Refused);
+    assert_eq!(save_route_for(false, false, false), SaveRoute::Refused);
+}
+
+#[test]
+fn a_sticky_folder_refuses_only_a_stranger_the_rename() {
+    let sticky = 0o41777;
+    assert!(sticky_refuses_rename(sticky, 0, 2000, 1000));
+    assert!(!sticky_refuses_rename(0o40777, 0, 2000, 1000), "not sticky");
+    assert!(!sticky_refuses_rename(sticky, 0, 1000, 1000), "own file");
+    assert!(
+        !sticky_refuses_rename(sticky, 1000, 2000, 1000),
+        "own folder"
+    );
+    assert!(!sticky_refuses_rename(sticky, 3000, 2000, 0), "root");
+}
+
+#[test]
+fn user_label_names_a_known_user_and_numbers_an_unknown_one() {
+    assert_eq!(user_label(0), "root");
+    assert_eq!(user_label(4_000_000_123), "4000000123");
+}
+
+#[test]
+fn a_refused_rename_falls_back_to_writing_in_place() {
+    let target = write_temp_file("- [ ] a\n");
+    let temp = target.with_extension("tmp");
+    fs::write(&temp, "- [x] a\n").unwrap();
+    let refused = Err(io::Error::from(io::ErrorKind::PermissionDenied));
+
+    assert!(settle_rename(refused, &temp, &target, "- [x] a\n").unwrap());
+
+    assert_eq!(fs::read_to_string(&target).unwrap(), "- [x] a\n");
+    assert!(!temp.exists(), "the temp file is removed");
+    fs::remove_file(&target).ok();
+}
+
+#[test]
+fn a_rename_failing_otherwise_is_reported_and_cleaned_up() {
+    let target = write_temp_file("- [ ] a\n");
+    let temp = target.with_extension("tmp");
+    fs::write(&temp, "- [x] a\n").unwrap();
+    let failed = Err(io::Error::from(io::ErrorKind::StorageFull));
+
+    let err = settle_rename(failed, &temp, &target, "- [x] a\n").unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::StorageFull);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "- [ ] a\n");
+    assert!(!temp.exists(), "the temp file is removed");
+    assert!(!settle_rename(Ok(()), &temp, &target, "").unwrap());
+    fs::remove_file(&target).ok();
+}
+
+#[test]
+fn a_refused_rename_of_a_file_nobody_may_write_stays_a_failure() {
+    let missing = write_temp_file("").with_extension("gone");
+    let temp = missing.with_extension("tmp");
+    let refused = Err(io::Error::from(io::ErrorKind::PermissionDenied));
+
+    let err = settle_rename(refused, &temp, &missing, "- [x] a\n").unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
+}

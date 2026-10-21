@@ -537,14 +537,20 @@ a runbook in a shared group directory stays writable by the rest of the
 group after you save it (as long as you are in that group yourself). But a
 file that belongs to someone else becomes yours on the first save, because
 only root can give a file away; opening one shows a warning up front ("this
-file belongs to user N — saving makes it yours"), so you can quit first. In
-a sticky directory (`chmod +t`) the save of someone else's file is refused
-outright and reported as a write failure.
+file belongs to user example-user — saving makes it yours", or the user's number
+when it has no name), so you can quit first. Where that can't happen the
+warning says what will: a file you may write in a folder that won't let
+markcheck replace it, such as a sticky directory (`chmod +t`) holding
+someone else's file, is saved in place and stays theirs ("changes will be
+saved in place, so it stays theirs"), and a file you can't write at all
+(someone else's file in their folder, or a read-only mount) shows "you
+can't save this file (no write permission) — changes won't be saved".
 Opening the file through a symlink writes through to the real target and
 keeps the link intact.
 
-A checklist in a folder you can't write to, but which is itself writable,
-is saved **in place** instead: the file is rewritten directly, since there
+A checklist in a folder you can't write to (or a sticky folder that won't
+let you replace someone else's file), but which is itself writable, is saved
+**in place** instead: the file is rewritten directly, since there
 is nowhere beside it to put the temp file. That keeps its inode, owner and
 permissions, and the status bar says so the first time it happens in a
 session (`Saved in place: ...`). The new content is written over the old

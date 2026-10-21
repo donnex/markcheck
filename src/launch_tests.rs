@@ -561,25 +561,47 @@ fn startup_message_is_sticky_only_when_something_needs_attention() {
 
 #[test]
 fn startup_warning_names_each_hazard() {
-    assert_eq!(startup_warning(false, None, None), None);
-    assert_eq!(startup_warning(false, Some(1), None), None);
+    use crate::writer::SaveRoute::{InPlace, Replace};
+    assert_eq!(startup_warning(false, Replace, None, None), None);
+    assert_eq!(startup_warning(false, Replace, Some(1), None), None);
+    assert_eq!(startup_warning(false, InPlace, None, None), None);
     assert_eq!(
-        startup_warning(true, None, None).as_deref(),
+        startup_warning(true, Replace, None, None).as_deref(),
         Some(
             "Warning: this file is read-only — changes won't be saved (chmod u+w to allow \
                  saving)"
         )
     );
     assert_eq!(
-        startup_warning(false, Some(3), None).as_deref(),
+        startup_warning(false, Replace, Some(3), None).as_deref(),
         Some("Warning: 3 hard links to this file — a save leaves the others behind")
     );
     assert_eq!(
-        startup_warning(false, None, Some(1001)).as_deref(),
+        startup_warning(false, Replace, None, Some("1001")).as_deref(),
         Some("Warning: this file belongs to user 1001 — saving makes it yours")
     );
-    let both = startup_warning(false, Some(2), Some(1001)).unwrap();
+    let both = startup_warning(false, Replace, Some(2), Some("1001")).unwrap();
     assert!(both.contains("2 hard links") && both.contains("; this file belongs to user 1001"));
+}
+
+#[test]
+fn startup_warning_says_when_another_users_file_cant_be_taken_over() {
+    use crate::writer::SaveRoute::{InPlace, Refused, Replace};
+    assert_eq!(
+        startup_warning(false, Refused, Some(2), Some("root")).as_deref(),
+        Some("Warning: you can't save this file (no write permission) — changes won't be saved")
+    );
+    assert_eq!(
+        startup_warning(false, InPlace, Some(2), Some("example-user")).as_deref(),
+        Some(
+            "Warning: this file belongs to user example-user — changes will be saved in place, \
+             so it stays theirs"
+        )
+    );
+    let read_only = startup_warning(true, Replace, Some(2), Some("example-user")).unwrap();
+    assert!(read_only.contains("read-only"), "{read_only}");
+    assert!(!read_only.contains("belongs to"), "{read_only}");
+    assert!(!read_only.contains("hard links"), "{read_only}");
 }
 
 #[test]

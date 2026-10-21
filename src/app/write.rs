@@ -21,7 +21,7 @@ pub(super) const READ_ONLY_MESSAGE: &str =
 /// repeat from a held key, or a reflex double press, can't confirm it (#219).
 pub(super) const CRITICAL_PAUSE: Duration = Duration::from_millis(500);
 
-pub(super) const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
+pub(super) const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck replace the file, \
      so the checklist is overwritten directly";
 
 impl AppState {

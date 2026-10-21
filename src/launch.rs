@@ -542,31 +542,43 @@ pub fn startup_message(
     (!parts.is_empty()).then(|| (parts.join("; "), is_error))
 }
 
-/// The sticky warning shown at startup when the file is write-protected, so
-/// no save will happen, or a save would leave hard-linked aliases behind or
-/// take the file from another user (see `writer::is_read_only`,
+/// The sticky warning shown at startup when no save will happen (the file
+/// is write-protected, or `route` is refused), or a save would leave
+/// hard-linked aliases behind (only a replacing save does) or take the file from `foreign_owner`, the
+/// other user who owns it (see `writer::is_read_only`, `writer::save_route`,
 /// `writer::hard_link_count` and `writer::foreign_owner`).
 pub fn startup_warning(
     read_only: bool,
+    route: crate::writer::SaveRoute,
     hard_links: Option<u64>,
-    foreign_owner: Option<u32>,
+    foreign_owner: Option<&str>,
 ) -> Option<String> {
+    use crate::writer::SaveRoute;
     let mut warnings = Vec::new();
     if read_only {
         warnings.push(
             "this file is read-only — changes won't be saved (chmod u+w to allow saving)"
                 .to_string(),
         );
+    } else if route == SaveRoute::Refused {
+        warnings.push(
+            "you can't save this file (no write permission) — changes won't be saved".to_string(),
+        );
     }
-    if let Some(links) = hard_links.filter(|links| *links > 1) {
+    let route = if read_only { SaveRoute::Refused } else { route };
+    if let Some(links) = hard_links.filter(|links| *links > 1 && route == SaveRoute::Replace) {
         warnings.push(format!(
             "{links} hard links to this file — a save leaves the others behind"
         ));
     }
-    if let Some(owner) = foreign_owner {
-        warnings.push(format!(
+    match (foreign_owner, route) {
+        (Some(owner), SaveRoute::Replace) => warnings.push(format!(
             "this file belongs to user {owner} — saving makes it yours"
-        ));
+        )),
+        (Some(owner), SaveRoute::InPlace) => warnings.push(format!(
+            "this file belongs to user {owner} — changes will be saved in place, so it stays theirs"
+        )),
+        _ => {}
     }
     (!warnings.is_empty()).then(|| format!("Warning: {}", warnings.join("; ")))
 }

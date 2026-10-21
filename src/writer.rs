@@ -144,6 +144,89 @@ fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// How a save of the checklist will go, so the startup warning can say so
+/// before the first keypress rather than at it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveRoute {
+    /// A temp file renamed over the checklist, which the saver then owns.
+    Replace,
+    /// Written over the checklist in place, which keeps its owner: the
+    /// directory refuses the temp file or the rename, but the file is writable.
+    InPlace,
+    /// Neither works: no save will happen.
+    Refused,
+}
+
+/// Predicts [`write_back`]'s route for `target` from what this user may do
+/// to it and its directory. Unlike [`is_read_only`] it also catches a file
+/// only someone else may write and a read-only mount.
+pub fn save_route(target: &Path) -> SaveRoute {
+    use std::os::unix::fs::MetadataExt;
+    let dir = match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let uid = current_uid();
+    let rename_refused = match (fs::metadata(dir), fs::metadata(target)) {
+        (Ok(dir_meta), Ok(file_meta)) => {
+            sticky_refuses_rename(dir_meta.mode(), dir_meta.uid(), file_meta.uid(), uid)
+        }
+        _ => false,
+    };
+    save_route_for(
+        may_access(target, libc::W_OK),
+        may_access(dir, libc::W_OK | libc::X_OK),
+        rename_refused,
+    )
+}
+
+fn save_route_for(file_writable: bool, dir_writable: bool, rename_refused: bool) -> SaveRoute {
+    if dir_writable && !rename_refused {
+        SaveRoute::Replace
+    } else if file_writable {
+        SaveRoute::InPlace
+    } else {
+        SaveRoute::Refused
+    }
+}
+
+/// A sticky directory lets only the file's owner, the directory's owner or
+/// root rename over a file in it.
+fn sticky_refuses_rename(dir_mode: u32, dir_owner: u32, file_owner: u32, uid: u32) -> bool {
+    dir_mode & 0o1000 != 0 && uid != 0 && dir_owner != uid && file_owner != uid
+}
+
+/// Whether the effective user may access `path` in `mode` (`W_OK`, ...).
+fn may_access(path: &Path, mode: libc::c_int) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a NUL-terminated string that outlives the call.
+    unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), mode, libc::AT_EACCESS) == 0 }
+}
+
+/// `uid`'s user name, or the number when it has none.
+pub fn user_label(uid: u32) -> String {
+    let mut buf = vec![0 as libc::c_char; 16 * 1024];
+    // SAFETY: an all-zero `passwd` is a valid value for `getpwuid_r` to fill.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: every pointer is valid for the call and `buf.len()` is its size;
+    // `entry`'s strings point into `buf`, which outlives their use below.
+    let status =
+        unsafe { libc::getpwuid_r(uid, &mut entry, buf.as_mut_ptr(), buf.len(), &mut found) };
+    if status != 0 || found.is_null() || entry.pw_name.is_null() {
+        return uid.to_string();
+    }
+    // SAFETY: on success `pw_name` is a NUL-terminated string inside `buf`.
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.pw_name) };
+    match name.to_str() {
+        Ok(name) if !name.is_empty() => name.to_string(),
+        _ => uid.to_string(),
+    }
+}
+
 /// One lock file per checklist, named by the digest of its canonical path so
 /// every spelling of one file (symlink, `..`) shares a lock (`path_digest`).
 /// `None` when there is no private directory to put it in.
@@ -485,7 +568,7 @@ pub struct Saved {
     pub contents: String,
     /// Written over the file in place rather than renamed into place,
     /// because no temp file could be created beside it (a directory the user
-    /// can't write to). The old bytes are overwritten rather than truncated,
+    /// can't write to) or the rename was refused (a sticky directory). The old bytes are overwritten rather than truncated,
     /// so a failed write leaves a mix of old and new markers.
     pub in_place: bool,
 }
@@ -496,8 +579,8 @@ pub struct Saved {
 /// setuid, setgid or sticky) and, where the user may set it, the group are
 /// kept; hard links and another user's ownership
 /// are not. A read-only file is refused untouched. When the directory
-/// refuses the temp file but the file itself is writable, it is written in
-/// place instead (`Saved::in_place`).
+/// refuses the temp file or the rename but the file itself is writable, it
+/// is written in place instead (`Saved::in_place`).
 pub fn write_back(document: &Document) -> io::Result<Saved> {
     let mut lines = document.raw_lines.clone();
     for list in &document.lists {
@@ -556,18 +639,32 @@ pub fn write_back(document: &Document) -> io::Result<Saved> {
         }
         Err(err) => return Err(err),
     };
-    // Untested: the target was just checked to be a regular file in a
-    // directory the temp file was written to, so only a concurrent swap of
-    // the target can make this rename fail.
-    if let Err(err) = fs::rename(&temp_path, &document.file_path) {
-        let _ = fs::remove_file(&temp_path);
+    let renamed = fs::rename(&temp_path, &document.file_path);
+    let in_place = settle_rename(renamed, &temp_path, &document.file_path, &contents)?;
+    if !in_place {
+        sync_parent_dir(&document.file_path);
+    }
+    Ok(Saved { contents, in_place })
+}
+
+/// Cleans up after the rename of a save's temp file over `target`. A rename
+/// refused for permission (a sticky directory guarding another user's file)
+/// falls back to writing `target` in place. Whether it was written in place.
+fn settle_rename(
+    renamed: io::Result<()>,
+    temp_path: &Path,
+    target: &Path,
+    contents: &str,
+) -> io::Result<bool> {
+    let Err(err) = renamed else {
+        return Ok(false);
+    };
+    let _ = fs::remove_file(temp_path);
+    if err.kind() != io::ErrorKind::PermissionDenied {
         return Err(err);
     }
-    sync_parent_dir(&document.file_path);
-    Ok(Saved {
-        contents,
-        in_place: false,
-    })
+    write_in_place(target, contents)?;
+    Ok(true)
 }
 
 /// Rewrites `path` through a handle that refuses a symlink and is checked to

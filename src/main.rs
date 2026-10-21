@@ -273,13 +273,16 @@ fn main() -> anyhow::Result<()> {
     // for why this warns rather than refuses.
     // Likewise a file owned by someone else: the save's new file is the
     // runner's, which can lock its owner out (see `writer::foreign_owner`).
-    // A write-protected file is refused on save (`writer::write_back`), so say
-    // so before the first keypress rather than at it.
+    // A write-protected file is refused on save (`writer::write_back`), and
+    // a file or folder this user can't write may refuse it too
+    // (`writer::save_route`), so say so before the first keypress rather
+    // than at it.
     // Held until exit, so another session opening this checklist can tell.
     let (_session_marker, other_sessions) = writer::SessionMarker::register(&document.file_path);
     let read_only = writer::is_read_only(&document.file_path);
     let hard_links = writer::hard_link_count(&document.file_path);
-    let foreign_owner = writer::foreign_owner(&document.file_path);
+    let save_route = writer::save_route(&document.file_path);
+    let foreign_owner = writer::foreign_owner(&document.file_path).map(writer::user_label);
 
     let mut state = AppState::new(document);
     let settings = Settings::resolve(&cli, &config);
@@ -329,7 +332,7 @@ fn main() -> anyhow::Result<()> {
             .map_or(0, git_sync::GitSync::sweep_interrupted_syncs);
     let warnings = [
         config::unknown_keys_warning(&unknown_keys),
-        launch::startup_warning(read_only, hard_links, foreign_owner),
+        launch::startup_warning(read_only, save_route, hard_links, foreign_owner.as_deref()),
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
         launch::leftovers_warning(leftovers),
