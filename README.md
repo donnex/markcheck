@@ -478,7 +478,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `R` | reset tasks to not-done (asks first): `y` resets everything, `l` only the current list, `s` only the sub-list the cursor is in |
 | `1`–`9` | jump to list N |
 | `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the `o`/`y` digit prompt, the list-complete screen). It uses the full width, with the overview hidden while it's open, and a long description wraps onto the next row. Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
-| `q` | quit; while git sync is running, wait for it (`q` again stops it) |
+| `q` | quit; with every task done, first offer to reset them (`q` again quits without resetting); while git sync is running, wait for it (`q` again stops it) |
 | `Esc` | doesn't quit: as in vim, it cancels search, an overlay, a prompt or a confirmation, and otherwise shows a "Type q to quit" hint |
 
 The `1`–`9` list jump only reaches the first nine lists — a document with a
@@ -1067,7 +1067,7 @@ bar lists the same keys. `s` outside a sub-list keeps the dialog open with
 `No sub-list here: y resets everything`; any other key cancels. When
 you quit with every task already done, `markcheck` first asks whether to
 reset the checklist so it's ready to run again: `y` resets and quits, `n`
-quits as-is, `Esc` stays in the app. If the reset can't be saved, markcheck
+(or `q` again) quits as-is, `Esc` stays in the app. If the reset can't be saved, markcheck
 stays open and shows why instead of quitting.
 
 ## Architecture

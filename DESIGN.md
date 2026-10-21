@@ -238,7 +238,7 @@ pub enum Effect {
     Redraw,                                               // Ctrl-L
     OpenLink(String),                                     // o on an http(s)/mailto link
     GitSync(PendingSync),                                 // every successful write, and an edit made in `e`
-    Quit,                                                 // q, or the quit-reset prompt's y (after a successful reset) / n
+    Quit,                                                 // q, or the quit-reset prompt's y (after a successful reset) / n / q
 }
 ```
 
@@ -554,7 +554,7 @@ The base `view` (`Checklist`, `ListComplete`, `AllComplete`) and the optional `o
 | `R` | reset (all, list or sub-list) | same | same |
 | `u` / `Ctrl-R` | undo / redo the last state change | same | same |
 | `?` | help | same | same |
-| `q` | quit (all done: offer a reset first; waits for a running git sync, `q` again abandons it) | same | same |
+| `q` | quit (all done: offer a reset first, where `q` again quits without it; waits for a running git sync, `q` again abandons it) | same | same |
 | `Esc`, `Ctrl-C` | sticky `Type q to quit` hint | same | same |
 | `Ctrl-Z` | suspend to the shell | same | same |
 | `Ctrl-L` | repaint the whole screen | same | same |
@@ -580,7 +580,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 
 **Clicks.** `handle_left_click` tries, in order: the picker's rows (`picker_click`); on a content screen, the overview rows (`Item` → `focus_item` as navigation, `List` → `jump_to_list`, `Toggle` → `toggle_item` in place); on `Checklist`, the card's `layout.code_regions` (one per copy target, so a click copies exactly that command, even on a card `y` would ask about), then `layout.card_rect` (the whole card: behaves like `y`). Anything else is ignored. `body_layout` produces the copy targets in lockstep with the body lines, so a chip split over two rows copies its whole text from either fragment. Every row of one command holds the same shared (`Rc<str>`) copy of its text rather than its own, and the wrappers check whether a word fits by scanning at most one row's worth of it, so a long block or command costs time and memory in proportion to its size, not to its size times its row count (#245).
 
-**Confirmations.** `ConfirmReset`: `y` all, `l` the list, `s` the sub-list; `s` outside a sub-list keeps the dialog open behind the error `No sub-list here: y resets everything`; any other key, `Enter` included, cancels. Its legend (`confirm_legend`) is built from the same conditions as the dialog's own key lines, so it offers `l` only with several lists and `s` only inside a sub-list. `ConfirmQuitReset`: `y` resets then quits (only when the reset reached disk; a refusal keeps markcheck open with the reason shown), `n` quits as is, anything else cancels.
+**Confirmations.** `ConfirmReset`: `y` all, `l` the list, `s` the sub-list; `s` outside a sub-list keeps the dialog open behind the error `No sub-list here: y resets everything`; any other key, `Enter` included, cancels. Its legend (`confirm_legend`) is built from the same conditions as the dialog's own key lines, so it offers `l` only with several lists and `s` only inside a sub-list. `ConfirmQuitReset`: `y` resets then quits (only when the reset reached disk; a refusal keeps markcheck open with the reason shown), `n` or `q` quits as is (so a repeated `q` still quits), anything else cancels.
 
 ---
 

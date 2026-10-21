@@ -625,3 +625,18 @@ fn r_then_s_on_a_parent_resets_that_parent_and_its_sub_tasks() {
     );
     assert!(written.contains("- [x] other"), "{written}");
 }
+
+#[test]
+fn q_twice_on_an_all_done_checklist_quits_without_resetting() {
+    let mut state = AppState::new(all_done_document());
+    let done_before = state.document.progress().done;
+    state.handle_key(KeyCode::Char('q'));
+    assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
+    state.handle_key(KeyCode::Char('q'));
+    assert!(state.quit_requested(), "a second q quits");
+    assert_eq!(
+        state.document.progress().done,
+        done_before,
+        "q must not reset"
+    );
+}

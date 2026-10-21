@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pressing `q` twice now quits a finished checklist. With every task done, `q` asks whether to reset the tasks before quitting, and a second `q` closed that question and went back to the checklist, so each `q` opened and closed it in turn and markcheck looked stuck. `q` in that question now quits without resetting, like `n`, and the question says so; `Esc` still goes back to the checklist. (#209)
 - The startup warning for a checklist that belongs to another user no longer promises that saving will work when it won't. It always said `this file belongs to user N — saving makes it yours`, so in a folder owned by that user, or on a read-only mount, the first toggle came as a surprise: `Write failed — change not saved to disk: no permission to write the file or its folder`, on every toggle after it too. It now says `you can't save this file (no write permission) — changes won't be saved` there, so you can quit before you start, and names the owner by user name where there is one. (#208)
 
   In a shared sticky folder (`chmod +t`, like `/tmp`), another user's checklist that you may write was refused outright, although the file itself could be written. It is now saved in place, keeping its owner, the warning says `changes will be saved in place, so it stays theirs`, and the first save shows the `Saved in place` notice.

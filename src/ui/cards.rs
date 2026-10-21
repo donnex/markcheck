@@ -328,7 +328,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("y", "reset all tasks (and quit, after q)"),
             ("l", "after R: reset only the current list"),
             ("s", "after R: reset only the current sub-list"),
-            ("n", "after q: quit without resetting"),
+            ("n / q", "after q: quit without resetting"),
             ("Esc", "cancel (so does any other key)"),
         ],
     ),
@@ -2187,7 +2187,7 @@ fn render_confirm_quit_reset(frame: &mut Frame, area: Rect, state: &AppState) {
     let keys = vec![
         Line::from(""),
         Line::from("Press  y  to reset and quit"),
-        Line::from("Press  n  to quit without resetting"),
+        Line::from("Press  n  or  q  to quit without resetting"),
         Line::from("Press  Esc  to keep working"),
     ];
     modal_card(

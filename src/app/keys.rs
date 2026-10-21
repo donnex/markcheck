@@ -437,14 +437,15 @@ impl AppState {
             }
         } else {
             // ConfirmQuitReset, offered on quit when all done: y resets
-            // then quits, n quits without resetting, Esc/anything else cancels.
+            // then quits, n or q quits without resetting, Esc/anything else
+            // cancels.
             match code {
                 KeyCode::Char('y') => {
                     if self.reset_all() {
                         self.effects.push(Effect::Quit);
                     }
                 }
-                KeyCode::Char('n') => self.effects.push(Effect::Quit),
+                KeyCode::Char('n' | 'q') => self.effects.push(Effect::Quit),
                 _ => self.overlay = None,
             }
         }

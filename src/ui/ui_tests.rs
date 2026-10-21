@@ -2666,7 +2666,7 @@ fn confirm_dialogs_show_every_key_prompt_on_an_80x24_terminal() {
     assert!(text.contains("ready to run again?"), "{text}");
     assert!(text.contains("Press  y  to reset and quit"), "{text}");
     assert!(
-        text.contains("Press  n  to quit without resetting"),
+        text.contains("Press  n  or  q  to quit without resetting"),
         "{text}"
     );
     assert!(text.contains("Press  Esc  to keep working"), "{text}");
