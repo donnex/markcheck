@@ -22,7 +22,7 @@ expression: "screen(&mut state, width, 24)"
 │  Ctrl-O             go back after o followed a #section link                 │
 │  Tab                jump to the next unfinished task                         │
 │  Shift-H / Shift-L  previous / next unfinished list                          │
-│  /                  search tasks by text                                     │
+│  /                  search tasks by text, matches highlighted                │
 │  n / N              next / previous search match                             ▼
 ╰──────────────────────────────────────────────────────────────────────────────╯
 j/k ↑↓: scroll  ·  any other key: close help

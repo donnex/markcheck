@@ -3925,3 +3925,153 @@ fn the_update_tag_is_dim_only_on_a_dark_theme() {
         assert_eq!(cell.modifier.contains(Modifier::DIM), dim);
     }
 }
+
+/// The text of every cell in columns `cols` drawn with `modifier`, one
+/// `|`-separated run per row, so a test can see which words are marked.
+fn marked_text(
+    state: &mut AppState,
+    width: u16,
+    height: u16,
+    cols: std::ops::Range<u16>,
+    modifier: Modifier,
+) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| render(f, state)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let mut rows = Vec::new();
+    for y in 0..height {
+        let row: String = cols
+            .clone()
+            .filter(|&x| buffer[(x, y)].modifier.contains(modifier))
+            .map(|x| buffer[(x, y)].symbol().to_string())
+            .collect();
+        if !row.trim().is_empty() {
+            rows.push(row);
+        }
+    }
+    rows.join("|")
+}
+
+fn search_card_state() -> AppState {
+    let mut item = checkbox(1, "Bring the service back", false);
+    item.header = Some("Restart step".to_string());
+    item.code_blocks = vec!["systemctl restart api".into()];
+    state_with(vec![List {
+        title: "Ops".to_string(),
+        banner: None,
+        items: vec![item, checkbox(2, "check disk space", false)],
+    }])
+}
+
+fn commit_search(state: &mut AppState, query: &str) {
+    state.handle_key(KeyCode::Char('/'));
+    for c in query.chars() {
+        state.handle_key(KeyCode::Char(c));
+    }
+    state.handle_key(KeyCode::Enter);
+}
+
+#[test]
+fn a_search_marks_its_matches_on_the_card_title_and_code_in_reverse_video() {
+    let mut state = search_card_state();
+    let before = marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED);
+    commit_search(&mut state, "restart");
+    let marked = marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED);
+    assert_eq!(
+        marked.replace(&before, ""),
+        "Restart|restart",
+        "the title's and the command's match, smart-case"
+    );
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(
+        marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED),
+        before,
+        "Esc clears the marks"
+    );
+}
+
+#[test]
+fn the_live_query_is_marked_while_typing_under_no_color_too() {
+    let mut state = search_card_state();
+    state.palette = crate::model::Palette::mono();
+    state.handle_key(KeyCode::Char('/'));
+    for c in "back".chars() {
+        state.handle_key(KeyCode::Char(c));
+    }
+    let marked = marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED);
+    assert!(marked.contains("back"), "{marked:?}");
+}
+
+#[test]
+fn a_match_in_reversed_code_is_underlined_so_it_still_shows() {
+    let mut item = checkbox(1, "Run deploy --now", false);
+    item.body = vec![
+        crate::model::BodySpan::Text("Run ".into()),
+        crate::model::BodySpan::Code("deploy --now".into()),
+    ];
+    let mut state = state_with(vec![List {
+        title: "Ops".to_string(),
+        banner: None,
+        items: vec![item],
+    }]);
+    state.palette = crate::model::Palette::mono();
+    commit_search(&mut state, "now");
+    let underlined = marked_text(&mut state, 58, 20, 0..58, Modifier::UNDERLINED);
+    assert_eq!(underlined, "now");
+}
+
+#[test]
+fn a_committed_search_scrolls_the_card_to_its_first_match() {
+    let body: Vec<String> = (1..=30).map(|n| format!("echo step {n}")).collect();
+    let mut item = checkbox(1, "Long runbook", false);
+    item.code_blocks = vec![format!("{}\nsystemctl restart api", body.join("\n")).into()];
+    let mut state = state_with(vec![List {
+        title: "Ops".to_string(),
+        banner: None,
+        items: vec![item],
+    }]);
+    buffer_text(&mut state, 58, 20);
+    assert_eq!(state.card_scroll, 0);
+    commit_search(&mut state, "restart");
+    let marked = marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED);
+    assert!(state.card_scroll > 0, "scrolled down to the match");
+    assert!(marked.contains("restart"), "{marked:?}");
+    assert!(!state.search.reveal, "the scroll happens once");
+    // Scrolling back up afterwards is not undone by the next frame.
+    state.handle_key_with_mods(KeyCode::Char('u'), crossterm::event::KeyModifiers::CONTROL);
+    let scrolled = state.card_scroll;
+    buffer_text(&mut state, 58, 20);
+    assert_eq!(state.card_scroll, scrolled);
+}
+
+#[test]
+fn the_overview_marks_matching_rows_and_underlines_on_the_current_one() {
+    let mut state = search_card_state();
+    state.document.lists[0]
+        .items
+        .push(checkbox(3, "restart the worker", false));
+    commit_search(&mut state, "restart");
+    assert_eq!(state.current_item_index, 0);
+    // The current row is drawn reversed, so its match is underlined; another
+    // row's match is reversed.
+    let underlined = marked_text(&mut state, 100, 20, 70..100, Modifier::UNDERLINED);
+    assert_eq!(underlined, "Restart");
+    let reversed = marked_text(&mut state, 100, 20, 70..100, Modifier::REVERSED);
+    assert!(reversed.ends_with("|restart"), "{reversed:?}");
+}
+
+#[test]
+fn the_picker_marks_its_filter_matches() {
+    let mut state = search_card_state();
+    state.document.lists[0]
+        .items
+        .push(checkbox(3, "check the disk again", false));
+    state.handle_key(KeyCode::Char('T'));
+    for c in "disk".chars() {
+        state.handle_key(KeyCode::Char(c));
+    }
+    let underlined = marked_text(&mut state, 58, 20, 0..58, Modifier::UNDERLINED);
+    assert_eq!(underlined, "disk", "on the highlighted row");
+    let reversed = marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED);
+    assert!(reversed.ends_with("|disk"), "{reversed:?}");
+}

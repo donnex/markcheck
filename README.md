@@ -524,7 +524,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Ctrl-O` | go back to where you were before `o` followed a `#section` link, as in vim |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around, and the status bar says when it does) |
 | `Shift-H` / `Shift-L` | jump to the previous / next list with unfinished tasks |
-| `/` | search tasks by text — jump to the next match from the cursor as you type |
+| `/` | search tasks by text — jump to the next match from the cursor as you type, with the matches highlighted |
 | `n` / `N` | jump to the next / previous search match (wraps around, and says so) |
 | `}` / `{` | jump to the first task of the next / previous sub-section (within the current list) |
 | `T` | open the "go to task" overlay: a filterable list of every task |
@@ -540,7 +540,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `1`–`9` | jump to list N |
 | `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the `o`/`y` digit prompt, the list-complete screen). It uses the full width, with the overview hidden while it's open, and a long description wraps onto the next row. Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
 | `q` | quit; with every task done, first offer to reset them (`q` again quits without resetting); while git sync is running, wait for it (`q` again stops it) |
-| `Esc` | doesn't quit: as in vim, it cancels search, an overlay, a prompt or a confirmation, and otherwise shows a "Type q to quit" hint |
+| `Esc` | doesn't quit: as in vim, it cancels search, an overlay, a prompt or a confirmation, clears a search highlight (as `:noh`), and otherwise shows a "Type q to quit" hint |
 
 The `1`–`9` list jump only reaches the first nine lists — a document with a
 10th `## H2` list has no single-keypress shortcut for it. Reach a distant list
@@ -1092,6 +1092,16 @@ never triggers `--auto-copy`. Matching is
 covers a task's title, its body text, *and* its commands — so you can find a
 step by the command it runs, not just its description.
 
+The matches are **highlighted** in reverse video, as vim's `hlsearch` does: in
+the card's title, body and code blocks, and in the overview's task rows (on the
+current row, which is already reversed, a match is underlined and bold instead,
+as it is in code that `NO_COLOR` draws reversed). They show while you type and
+stay after `Enter`, and a search that lands on a long card scrolls it so the
+first highlighted line is on screen. `n` / `N` keep the highlight (and bring it
+back after it was cleared), and so does scrolling the card; `Esc` clears it
+(`Search highlight cleared`), as vim's `:noh` does, and so does any other
+action, such as moving to another task or checking one.
+
 `T` opens a **"go to task" overlay** — a filterable list of every card (tasks
 and note cards alike) with its state marker and a dim `— {list} › {sub-section}`
 suffix (the list name, when there's more than one, then the item's `### H3`+
@@ -1101,8 +1111,9 @@ and marked with `❯` in a column of its own, so the mark stays visible after
 the highlight moves; `Enter` there leaves you where you were
 (`Already on this task`). Type to filter (same smart-case matching, with a
 live `N items` / match count — and you can filter by a sub-section name to
-find the tasks under it; each edit of the filter highlights the first match
-at or after your task, as `/` does), move the highlight with the arrows or
+find the tasks under it; the filter's matches are marked in each row, and
+each edit of the filter highlights the first match at or after your task, as
+`/` does), move the highlight with the arrows or
 `Ctrl-N`/`Ctrl-P` (and `Ctrl-D`/`Ctrl-U` for half-page jumps; letters go to
 the filter, so `j`/`k` type rather than move; the mouse wheel moves it too;
 `Ctrl-W` deletes the last word of the filter),

@@ -1,7 +1,7 @@
 //! Incremental search (`/`), the go-to-task picker (`T`) and help-overlay
 //! scrolling.
 
-use crate::model::{AppState, Item, Overlay};
+use crate::model::{AppState, Item, Overlay, smart_case_ranges};
 
 use super::*;
 
@@ -9,14 +9,7 @@ use super::*;
 /// query contains an uppercase letter, in which case the match is exact. An
 /// empty query never matches.
 pub(super) fn smart_case_contains(haystack: &str, query: &str) -> bool {
-    if query.is_empty() {
-        return false;
-    }
-    if query.chars().any(char::is_uppercase) {
-        haystack.contains(query)
-    } else {
-        haystack.to_lowercase().contains(query)
-    }
+    !smart_case_ranges(haystack, query).is_empty()
 }
 
 /// Match source for the `T` go-to-task picker filter: an item's regular
@@ -48,6 +41,33 @@ pub(super) fn delete_last_word(query: &mut String) {
 }
 
 impl AppState {
+    /// The query whose matches are highlighted on screen: the live query while
+    /// the `/` prompt is open, else the last committed one until `Esc` or the
+    /// next non-search action clears it (#244). `None` when nothing is
+    /// highlighted.
+    pub fn search_highlight(&self) -> Option<&str> {
+        if self.overlay == Some(Overlay::Search) {
+            Some(self.search.query.as_str()).filter(|query| !query.is_empty())
+        } else if self.search.highlight {
+            self.search.last.as_deref()
+        } else {
+            None
+        }
+    }
+
+    /// Stop highlighting the last search's matches, as vim's `:noh` does.
+    pub(super) fn clear_search_highlight(&mut self) {
+        self.search.highlight = false;
+        self.search.reveal = false;
+    }
+
+    /// Keep the matches highlighted after a search landed on one, and scroll
+    /// the card so its first match shows.
+    fn show_search_highlight(&mut self) {
+        self.search.highlight = true;
+        self.search.reveal = true;
+    }
+
     /// All `(list_index, item_index)` whose text matches `query`, in document
     /// order. Matching is smart-case containment over each item's
     /// [`Item::search_text`]; an empty query yields no matches.
@@ -120,6 +140,7 @@ impl AppState {
         self.search.last = Some(self.search.query.clone());
         match self.search_target(&matches) {
             None => {
+                self.clear_search_highlight();
                 self.set_error(format!("No matches for \"{}\"", self.search.query));
                 return;
             }
@@ -132,6 +153,7 @@ impl AppState {
                 self.set_status(format!("Match {position}/{} · n/N to cycle", matches.len()));
             }
         }
+        self.show_search_highlight();
         // A successful auto-copy (if enabled) overrides with its own message.
         self.maybe_auto_copy();
     }
@@ -140,6 +162,7 @@ impl AppState {
     /// cursor.
     pub(super) fn cancel_search(&mut self) {
         self.overlay = None;
+        self.clear_search_highlight();
         let (list_index, item_index) = self.search.origin;
         self.focus_item(list_index, item_index, CursorMove::Quiet);
     }
@@ -158,6 +181,7 @@ impl AppState {
         let Some(&first) = matches.first() else {
             // The query no longer matches anything (e.g. the file changed under
             // us) — say so rather than move nowhere silently.
+            self.clear_search_highlight();
             self.set_error(format!("No matches for \"{query}\""));
             return;
         };
@@ -190,6 +214,7 @@ impl AppState {
             });
         }
         self.focus_and_report(target, Some(msg));
+        self.show_search_highlight();
     }
 
     /// Open the "go to task" overlay (`T`): clear the filter and highlight

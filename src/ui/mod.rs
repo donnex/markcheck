@@ -137,6 +137,74 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
 /// Filled cell count for a progress bar of `width`, proportional to
 /// `done/total` (0 when there's nothing to complete).
+/// How a search match is marked: reverse video, which needs no color and so
+/// also shows under `NO_COLOR` (#244).
+const MATCH_STYLE: Style = Style::new().add_modifier(Modifier::REVERSED);
+
+/// How a match is marked on a row that is already drawn in reverse video (the
+/// overview's current row, the `T` picker's highlighted one), where a second
+/// reverse would not show: underlined and bold instead.
+const MATCH_ON_REVERSED_STYLE: Style =
+    Style::new().add_modifier(Modifier::UNDERLINED.union(Modifier::BOLD));
+
+/// The match style for a row, by whether the row is drawn reversed.
+fn match_style(reversed_row: bool) -> Style {
+    if reversed_row {
+        MATCH_ON_REVERSED_STYLE
+    } else {
+        MATCH_STYLE
+    }
+}
+
+/// Marks the smart-case matches of `query` in `line` with `mark`, splitting
+/// spans at the match edges so a match may run across differently styled
+/// spans. A span already in reverse video (code under `NO_COLOR`) gets the
+/// underline-and-bold mark instead, so its match still shows. Returns whether
+/// anything matched.
+fn highlight_matches(line: &mut Line<'static>, query: &str, mark: Style) -> bool {
+    let text: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    let ranges = crate::model::smart_case_ranges(&text, query);
+    if ranges.is_empty() {
+        return false;
+    }
+    let mut spans = Vec::with_capacity(line.spans.len() + 2 * ranges.len());
+    let mut offset = 0;
+    for span in std::mem::take(&mut line.spans) {
+        let (start, end) = (offset, offset + span.content.len());
+        offset = end;
+        let shown = line.style.patch(span.style);
+        let mark = if shown.add_modifier.contains(Modifier::REVERSED) {
+            MATCH_ON_REVERSED_STYLE
+        } else {
+            mark
+        };
+        let mut pos = start;
+        for range in &ranges {
+            let (from, to) = (range.start.max(pos), range.end.min(end));
+            if from >= to {
+                continue;
+            }
+            if from > pos {
+                spans.push(Span::styled(text[pos..from].to_string(), span.style));
+            }
+            spans.push(Span::styled(
+                text[from..to].to_string(),
+                span.style.patch(mark),
+            ));
+            pos = to;
+        }
+        if pos < end {
+            spans.push(Span::styled(text[pos..end].to_string(), span.style));
+        }
+    }
+    line.spans = spans;
+    true
+}
+
 fn progress_fill(width: usize, done: usize, total: usize) -> usize {
     (width * done).checked_div(total).unwrap_or(0)
 }

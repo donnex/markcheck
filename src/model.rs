@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
@@ -15,6 +16,37 @@ pub type LineNumber = usize;
 /// last seen. Not a security boundary.
 pub(crate) fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
+}
+
+/// The byte ranges of `haystack` that smart-case (vim `smartcase`) match
+/// `query`, in order and without overlap: case-insensitive unless the query
+/// holds an uppercase letter, then exact. An empty query matches nothing. A
+/// range always covers whole characters of `haystack`, so it can be sliced
+/// out and highlighted (#244).
+pub fn smart_case_ranges(haystack: &str, query: &str) -> Vec<Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    if query.chars().any(char::is_uppercase) {
+        return haystack
+            .match_indices(query)
+            .map(|(start, found)| start..start + found.len())
+            .collect();
+    }
+    // Lowercasing can change a character's byte length, so each lowered byte
+    // remembers the original character it came from.
+    let mut lowered = String::with_capacity(haystack.len());
+    let mut origin: Vec<Range<usize>> = Vec::with_capacity(haystack.len());
+    for (start, c) in haystack.char_indices() {
+        let before = lowered.len();
+        lowered.extend(c.to_lowercase());
+        let source = start..start + c.len_utf8();
+        origin.extend(std::iter::repeat_n(source, lowered.len() - before));
+    }
+    lowered
+        .match_indices(query)
+        .map(|(start, found)| origin[start].start..origin[start + found.len() - 1].end)
+        .collect()
 }
 
 /// A checkbox task's progress. `Started` is persisted with the `[/]`
@@ -1701,6 +1733,13 @@ pub struct SearchState {
     /// Cursor `(list, item)` when the current search began; restored if the
     /// search is cancelled with `Esc`.
     pub origin: (usize, usize),
+    /// Whether the matches of [`Self::last`] stay highlighted after the
+    /// prompt closed: set by a search or `n`/`N` that found a match, cleared
+    /// by `Esc` or the next non-search action, like vim's `:noh` (#244).
+    pub highlight: bool,
+    /// Set when a search lands on a card, so the next frame scrolls that
+    /// card's first highlighted row into view; the renderer clears it.
+    pub reveal: bool,
 }
 
 /// Geometry the renderer measures while drawing a frame and the key and

@@ -99,6 +99,7 @@ impl AppState {
         match (self.overlay, self.view) {
             (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_up(),
             (None, View::Checklist) => {
+                self.clear_search_highlight();
                 self.navigate_backward();
             }
             (Some(Overlay::Help), _) => self.scroll_help_up_by(1),
@@ -113,6 +114,7 @@ impl AppState {
         match (self.overlay, self.view) {
             (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_down(),
             (None, View::Checklist) => {
+                self.clear_search_highlight();
                 self.navigate_forward();
             }
             (Some(Overlay::Help), _) => self.scroll_help_down_by(1),
@@ -164,6 +166,9 @@ impl AppState {
 
     pub(super) fn dispatch_left_click(&mut self, col: u16, row: u16) {
         self.clear_pending_chords();
+        if self.overlay != Some(Overlay::Search) {
+            self.clear_search_highlight();
+        }
 
         if self.overlay == Some(Overlay::ListPicker) {
             self.picker_click(col, row);
@@ -294,6 +299,17 @@ impl AppState {
             return;
         }
 
+        // As vim's `:noh`: Esc clears a search highlight before it does
+        // anything else, and any other non-search action clears it too.
+        if code == KeyCode::Esc && self.overlay.is_none() && self.search.highlight {
+            self.clear_search_highlight();
+            self.set_status("Search highlight cleared".to_string());
+            return;
+        }
+        if !self.keeps_search_highlight(code, modifiers) {
+            self.clear_search_highlight();
+        }
+
         // Confirmation modals are handled before the global q/Esc quit
         // check, so Esc cancels rather than quits.
         // An open overlay takes every key, before the global keys, so `Esc`
@@ -328,6 +344,24 @@ impl AppState {
             View::Checklist => self.handle_checklist_key(code, pending_g),
             View::ListComplete => self.handle_list_complete_key(code),
             View::AllComplete => self.handle_all_complete_key(code),
+        }
+    }
+
+    /// Whether a key leaves a search highlight on screen: the search keys
+    /// themselves (`/`, `n`, `N` and the prompt's keys) and the card-body
+    /// scroll keys, which only move the view over the highlighted card.
+    pub(super) fn keeps_search_highlight(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        match self.overlay {
+            Some(Overlay::Search) => true,
+            Some(_) => false,
+            None if self.view != View::Checklist => false,
+            None if modifiers.contains(KeyModifiers::CONTROL) => {
+                matches!(code, KeyCode::Char('e' | 'y' | 'd' | 'u'))
+            }
+            None => matches!(
+                code,
+                KeyCode::Char('/' | 'n' | 'N') | KeyCode::PageDown | KeyCode::PageUp
+            ),
         }
     }
 

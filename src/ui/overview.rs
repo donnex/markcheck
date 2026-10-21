@@ -379,10 +379,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 ));
                 label_budget = label_budget.saturating_sub(2);
             }
-            spans.push(Span::styled(
+            let mut text = Line::from(Span::styled(
                 super::truncate(&label, label_budget),
                 text_style,
             ));
+            if let Some(query) = state.search_highlight() {
+                super::highlight_matches(&mut text, query, super::match_style(is_current));
+            }
+            spans.extend(text.spans);
             list_items.push(ListItem::new(Line::from(spans)));
             // On a checkbox row only the state icon toggles; the rest of the
             // row navigates. A display-only row navigates whole.

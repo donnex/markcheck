@@ -724,3 +724,157 @@ fn picker_filter_edits_select_the_next_match_from_the_cursor() {
     assert_eq!(state.picker.query, "");
     assert_eq!(state.picker.selection, 3, "back on the cursor's row");
 }
+
+fn restart_document() -> Document {
+    document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![
+            text_item(1, "Restart the API"),
+            text_item(2, "check disk space"),
+            text_item(3, "restart the worker"),
+        ],
+    }])
+}
+
+#[test]
+fn the_live_query_is_highlighted_while_the_prompt_is_open() {
+    let mut state = AppState::new(restart_document());
+    state.handle_key(KeyCode::Char('/'));
+    assert_eq!(state.search_highlight(), None, "nothing typed yet");
+    type_str(&mut state, "rest");
+    assert_eq!(state.search_highlight(), Some("rest"));
+}
+
+#[test]
+fn a_committed_search_stays_highlighted_until_esc_clears_it() {
+    let mut state = AppState::new(restart_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "restart");
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(state.search_highlight(), Some("restart"));
+    assert!(state.search.reveal, "the landing card scrolls to its match");
+    // Search keys and card scrolling keep it.
+    state.handle_key(KeyCode::Char('n'));
+    state.handle_key_with_mods(KeyCode::Char('e'), KeyModifiers::CONTROL);
+    state.handle_key(KeyCode::PageDown);
+    assert_eq!(state.search_highlight(), Some("restart"));
+    // Esc clears it and says so, rather than hinting how to quit.
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(state.search_highlight(), None);
+    assert!(!state.search.reveal);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Search highlight cleared")
+    );
+    assert!(!state.status_is_error);
+    // With nothing highlighted, Esc is back to the quit hint.
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(crate::app::keys::QUIT_HINT)
+    );
+}
+
+#[test]
+fn n_brings_the_highlight_back_after_it_was_cleared() {
+    let mut state = AppState::new(restart_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "restart");
+    state.handle_key(KeyCode::Enter);
+    state.handle_key(KeyCode::Esc);
+    state.handle_key(KeyCode::Char('n'));
+    assert_eq!(state.search_highlight(), Some("restart"));
+    assert!(state.search.reveal);
+}
+
+#[test]
+fn a_non_search_action_clears_the_highlight() {
+    let mut state = AppState::new(restart_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "restart");
+    state.handle_key(KeyCode::Enter);
+    state.handle_key(KeyCode::Char('j'));
+    assert_eq!(state.search_highlight(), None);
+}
+
+#[test]
+fn cancelling_or_missing_leaves_nothing_highlighted() {
+    let mut state = AppState::new(restart_document());
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "restart");
+    state.handle_key(KeyCode::Enter);
+    // A new search that is cancelled drops the old highlight, as Esc does.
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "disk");
+    state.handle_key(KeyCode::Esc);
+    assert_eq!(state.search_highlight(), None);
+    // A committed search that matches nothing highlights nothing.
+    state.search.highlight = true;
+    state.handle_key(KeyCode::Char('/'));
+    type_str(&mut state, "zzz");
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(state.search_highlight(), None);
+    // `n` on a query that no longer matches clears it too.
+    state.search.highlight = true;
+    state.handle_key(KeyCode::Char('n'));
+    assert_eq!(state.search_highlight(), None);
+}
+
+#[test]
+fn only_search_and_card_scroll_keys_keep_the_highlight() {
+    let mut state = AppState::new(restart_document());
+    let ctrl = KeyModifiers::CONTROL;
+    let none = KeyModifiers::NONE;
+    for (code, mods) in [
+        (KeyCode::Char('/'), none),
+        (KeyCode::Char('n'), none),
+        (KeyCode::Char('N'), none),
+        (KeyCode::PageUp, none),
+        (KeyCode::Char('y'), ctrl),
+        (KeyCode::Char('d'), ctrl),
+        (KeyCode::Char('u'), ctrl),
+    ] {
+        assert!(state.keeps_search_highlight(code, mods), "{code:?}");
+    }
+    for (code, mods) in [
+        (KeyCode::Char('y'), none),
+        (KeyCode::Char(' '), none),
+        (KeyCode::Char('o'), ctrl),
+        (KeyCode::Char('T'), none),
+    ] {
+        assert!(!state.keeps_search_highlight(code, mods), "{code:?}");
+    }
+    state.overlay = Some(Overlay::Search);
+    assert!(state.keeps_search_highlight(KeyCode::Char('x'), none));
+    state.overlay = Some(Overlay::Help);
+    assert!(!state.keeps_search_highlight(KeyCode::Char('n'), none));
+    state.overlay = None;
+    state.view = View::ListComplete;
+    assert!(!state.keeps_search_highlight(KeyCode::Char('n'), none));
+}
+
+#[test]
+fn clicks_and_wheel_steps_clear_the_highlight_but_card_scrolls_keep_it() {
+    let mut state = AppState::new(restart_document());
+    state.search.last = Some("restart".to_string());
+    state.search.highlight = true;
+    state.layout.card_max_scroll = 3;
+    state.handle_scroll_down();
+    state.handle_scroll_up();
+    assert_eq!(state.search_highlight(), Some("restart"), "card scrolled");
+    state.layout.card_max_scroll = 0;
+    state.handle_scroll_down();
+    assert_eq!(state.search_highlight(), None, "stepped to the next task");
+    state.search.highlight = true;
+    state.handle_scroll_up();
+    assert_eq!(state.search_highlight(), None);
+    state.search.highlight = true;
+    state.handle_left_click(0, 0);
+    assert_eq!(state.search_highlight(), None);
+    // A click while the prompt is open leaves the search alone.
+    state.search.highlight = true;
+    state.overlay = Some(Overlay::Search);
+    state.handle_left_click(0, 0);
+    assert!(state.search.highlight);
+}

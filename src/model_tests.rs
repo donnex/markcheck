@@ -966,3 +966,24 @@ fn expected_output_alone_is_not_a_command_block() {
     item.code_blocks.push("systemctl status".into());
     assert!(item.has_command_blocks());
 }
+
+#[test]
+fn smart_case_ranges_finds_every_match_in_order() {
+    let text = "Restart, then restart again";
+    assert_eq!(smart_case_ranges(text, "restart"), vec![0..7, 14..21]);
+    assert_eq!(smart_case_ranges(text, "Restart"), vec![0..7]);
+    assert!(smart_case_ranges(text, "").is_empty());
+    assert!(smart_case_ranges(text, "stop").is_empty());
+}
+
+#[test]
+fn smart_case_ranges_map_back_to_whole_original_characters() {
+    // `İ` lowercases to two characters, three bytes against its two, so the
+    // lowered offsets must be mapped back to the original text.
+    let text = "İx ok";
+    let ranges = smart_case_ranges(text, "ok");
+    assert_eq!(ranges, vec![4..6]);
+    assert_eq!(&text[ranges[0].clone()], "ok");
+    let ranges = smart_case_ranges(text, "i\u{307}x");
+    assert_eq!(&text[ranges[0].clone()], "İx");
+}

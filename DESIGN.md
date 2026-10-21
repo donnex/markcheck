@@ -551,7 +551,7 @@ The base `view` (`Checklist`, `ListComplete`, `AllComplete`) and the optional `o
 | `Enter`, `Space` | toggle done, then the next open task (on a note: advance) | `Enter`: next unfinished list | — |
 | `s` | toggle started | — | — |
 | `-` | toggle skipped | — | — |
-| `/` | incremental search | — | — |
+| `/` | incremental search, matches highlighted | — | — |
 | `n` / `N` | next / prev search match | — | — |
 | `}` / `{` | next / prev `### H3`+ sub-section, within the list | — | — |
 | `T` | go-to-task picker | same | same |
@@ -566,7 +566,7 @@ The base `view` (`Checklist`, `ListComplete`, `AllComplete`) and the optional `o
 | `u` / `Ctrl-R` | undo / redo the last state change | same | same |
 | `?` | help | same | same |
 | `q` | quit (all done: offer a reset first, where `q` again quits without it; waits for a running git sync, `q` again abandons it) | same | same |
-| `Esc`, `Ctrl-C` | sticky `Type q to quit` hint | same | same |
+| `Esc`, `Ctrl-C` | sticky `Type q to quit` hint (`Esc` first clears a search highlight) | same | same |
 | `Ctrl-Z` | suspend to the shell | same | same |
 | `Ctrl-L` | repaint the whole screen | same | same |
 
@@ -577,7 +577,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 1. `Ctrl-Z` (suspend, from anywhere, search input included).
 2. `Ctrl-C` (`handle_ctrl_c`): raw mode delivers it as a key, not `SIGINT`. As in vim it cancels search, the picker, help, a confirmation and armed chords like `Esc`, and on a content screen shows the sticky `Type q to quit`. `Esc` never quits either, so neither can bypass the all-done reset offer.
 3. **Unbound chords are rejected** (`is_bound_chord`): every handler below matches on `KeyCode` alone, so a key carrying `Ctrl`, `Alt` or another modifier besides `Shift` gets through only where the screen binds it — `Ctrl-E`/`Y`/`D`/`U`/`R`/`O` on `Checklist`, `Ctrl-R` on the completion screens, `Ctrl-E`/`Y`/`D`/`U` in help, `Ctrl-P`/`N`/`D`/`U`/`W` in the picker, `Ctrl-U`/`W` in search, nothing in the confirmations. Anything else cancels armed chords and shows `Ctrl-S is not bound (? lists every key)`. `Shift` passes, since capitals may arrive as `Char('L')` with `SHIFT` set. The table is a second copy of the handlers' `Ctrl` arms, so a test presses every `Ctrl-A`..`Ctrl-Z` on each screen through `dispatch_bound_key` (the dispatch past the gate) and requires the chords that act differently from both an unbound key and their plain letter to be exactly the ones the table lets through: a new arm missing from the table, or an entry left behind by a removed arm, fails it.
-4. The digit prompts (`handle_pending_number_key`), before the global digit jump and `Esc`.
+4. The digit prompts (`handle_pending_number_key`), before the global digit jump and `Esc`; then an `Esc` that clears a search highlight, and the clearing of it by any other non-search key (see Match highlighting).
 5. An open overlay takes every key: `handle_confirm_key`, `handle_help_key`, `handle_search_key`, `handle_picker_key`. So `q`, `j` or `?` typed into search are text.
 6. `handle_checklist_scroll_key` (before `e`/`y`, so `Ctrl-E`/`Ctrl-Y` scroll), then `handle_global_key` (`Tab`, `Shift-H`/`L`, `1`–`9`, `e`, `R`, `u`/`Ctrl-R`, `T`, `Ctrl-O` on the checklist, `?`, `q`, `Esc`), then the view's own handler (`handle_checklist_key`, `handle_list_complete_key`, `handle_all_complete_key`).
 
@@ -600,6 +600,8 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 `/` opens `Overlay::Search`, remembering the cursor in `search.origin`. Each edit re-runs `find_matches` and moves to the first match at or after the origin, wrapping (vim's forward `/`), and the status bar shows `/query  (N matches)` or an error-colored `/query  (no matches)`. A query that matches nothing (or is emptied) returns the cursor to the origin. `Ctrl-W` deletes the last word (`delete_last_word`), `Ctrl-U` the whole query, `Backspace` one character. Input during search leaves the status message alone (`clear_status_outside_search`), so a message that arrived mid-search is not discarded by the next key; it stays until the search closes, and `Enter` (and an unbound chord) run under `keeping_status`, which puts it in front of their own report, sticky and error-colored if either part is.
 
 `Enter` (`commit_search`) reports `Match 7/12 · n/N to cycle`, stores the query in `search.last` and only then runs auto-copy, which is suppressed while typing. A committed query with no match skips auto-copy so the sticky `No matches` stays. An empty `Enter` repeats the last search, as in vim and `less`, or says `No previous search`. `Esc` restores the origin quietly.
+
+**Match highlighting (#244).** `AppState::search_highlight` is the query whose matches are drawn: the live `search.query` while the prompt is open, else `search.last` while `search.highlight` is set. A commit or `n`/`N` that finds a match sets it and `search.reveal`; a miss, `Esc` in the prompt and `clear_search_highlight` clear both. `dispatch_bound_key` clears it on every key `keeps_search_highlight` doesn't name (the prompt's keys, `/`, `n`, `N` and the card-scroll keys on the checklist), and an `Esc` with it set clears only it, with `Search highlight cleared`, as vim's `:noh`; a click and a wheel step to another task clear it too. The renderer marks matches after layout with `ui::highlight_matches`, which joins a `Line`'s spans, finds the ranges with `model::smart_case_ranges` (the rule `smart_case_contains` is built on, mapping lowercased offsets back to the original characters) and splits the spans at their edges, so wrapping and code-row layout are untouched. It runs on the current card's title and body rows (not the breadcrumb), the overview's task labels and the `T` picker's label and suffix (with the picker's own filter). The mark is `MATCH_STYLE` (reverse video, so it needs no color); a row already drawn reversed (the overview's current row, the picker's highlighted one) and a span that already is (mono code) get `MATCH_ON_REVERSED_STYLE`, underlined and bold. A match cut by a row wrap or a `…` truncation is marked only in the part on each row. When `search.reveal` is set, the next frame of the current card takes it and, if the first marked row is outside the viewport, sets `card_scroll` to it before the usual clamp.
 
 `n`/`N` (`search_cycle`) step through `search.last` from the cursor, wrapping, with `Match i/N`, plus `· wrapped to top`/`· wrapped to bottom` when they wrap; with no previous search, `No previous search — press / to search`. Matching is **smart-case** substring containment (`smart_case_contains`: case-insensitive unless the query has a capital) over `Item::search_text`: the title, the body (with inline code) and the code blocks (fenced or indented), so a task is findable by its command.
 

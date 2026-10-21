@@ -91,10 +91,12 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let marker_width = display_width(icons.pending);
     let text_width = (area.width as usize).saturating_sub(4 + gutter_width + marker_width + 1);
     let cursor = (state.current_list_index, state.current_item_index);
+    let selected = state.picker.selection.min(matches.len().saturating_sub(1));
 
     let rows: Vec<ListItem> = matches
         .iter()
-        .map(|&(li, ii)| {
+        .enumerate()
+        .map(|(row, &(li, ii))| {
             let item = &state.document.lists[li].items[ii];
             let is_current = (li, ii) == cursor;
             let (marker, color) = state_marker(item.kind, None, icons, palette);
@@ -137,20 +139,31 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
             } else {
                 (Span::raw(" ".repeat(gutter_width)), Style::default())
             };
+            let mut text = Line::from(Span::styled(
+                super::truncate(&label, label_budget),
+                label_style,
+            ));
+            if !suffix.is_empty() {
+                text.push_span(Span::styled(
+                    super::truncate(&suffix, suffix_budget),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            // The filter's matches are marked in the label and the context
+            // suffix it also searches (#244).
+            super::highlight_matches(
+                &mut text,
+                &state.picker.query,
+                super::match_style(row == selected),
+            );
             let mut spans = vec![
                 gutter,
                 Span::styled(
                     format!("{} ", super::centered(marker, marker_width)),
                     marker_style,
                 ),
-                Span::styled(super::truncate(&label, label_budget), label_style),
             ];
-            if !suffix.is_empty() {
-                spans.push(Span::styled(
-                    super::truncate(&suffix, suffix_budget),
-                    Style::default().add_modifier(Modifier::DIM),
-                ));
-            }
+            spans.extend(text.spans);
             ListItem::new(Line::from(spans))
         })
         .collect();
@@ -250,7 +263,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("Ctrl-O", "go back after o followed a #section link"),
             ("Tab", "jump to the next unfinished task"),
             ("Shift-H / Shift-L", "previous / next unfinished list"),
-            ("/", "search tasks by text"),
+            ("/", "search tasks by text, matches highlighted"),
             ("n / N", "next / previous search match"),
             ("T", "go to task (filterable list)"),
             (
@@ -280,10 +293,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
                 "q",
                 "quit; during a git sync, wait for it (q again abandons)",
             ),
-            (
-                "Esc",
-                "doesn't quit: hints how to (cancels everywhere else)",
-            ),
+            ("Esc", "clear the search highlight; else hints how to quit"),
         ],
     ),
     (
@@ -1221,15 +1231,35 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     ) {
         lines.push(crumb);
     }
+    let n_crumb = lines.len();
     lines.extend(card_title_lines(item, inner.width, icons, palette));
     let n_before = lines.len();
     let (body, code_rows) = body_layout(item, inner.width, palette.code, icons.continuation);
     lines.extend(body);
+    // Search matches are marked in the title and the body, code blocks
+    // included, but not in the parent breadcrumb, which isn't searched (#244).
+    let mut first_match = None;
+    if let Some(query) = state.search_highlight() {
+        for (row, line) in lines.iter_mut().enumerate().skip(n_crumb) {
+            if super::highlight_matches(line, query, super::MATCH_STYLE) && first_match.is_none() {
+                first_match = Some(row);
+            }
+        }
+    }
     let visible = inner.height as usize;
     let total_lines = lines.len();
     let max_scroll = clamp_to_u16(total_lines.saturating_sub(visible));
     state.layout.card_max_scroll = max_scroll;
     state.layout.card_viewport_height = inner.height;
+    // A search that lands here scrolls its first match into view.
+    if std::mem::take(&mut state.search.reveal)
+        && let Some(row) = first_match
+    {
+        let top = state.card_scroll as usize;
+        if row < top || row >= top + visible {
+            state.card_scroll = clamp_to_u16(row);
+        }
+    }
     state.card_scroll = state.card_scroll.min(max_scroll);
 
     // Click-to-copy: map each code target to its on-screen row and columns,
