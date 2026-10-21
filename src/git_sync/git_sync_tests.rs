@@ -638,6 +638,33 @@ fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
 }
 
 #[test]
+fn sweep_interrupted_scratch_removes_a_dead_sync_s_stdio_files() {
+    let work = init_repo_without_remote();
+    let temp = work.parent().unwrap().join("scratch-temp");
+    fs::create_dir_all(&temp).unwrap();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 60);
+    for name in [
+        format!("markcheck-git-stdin-{dead}-1f"),
+        format!("markcheck-git-stdout-{dead}-2e"),
+        format!("markcheck-git-stderr-{dead}-3d"),
+        format!("markcheck-git-other-{dead}-4c"),
+    ] {
+        let file = fs::File::create(temp.join(name)).unwrap();
+        file.set_modified(old).unwrap();
+    }
+    let young = temp.join(format!("markcheck-git-stdout-{dead}-5b"));
+    fs::File::create(&young).unwrap();
+
+    assert_eq!(GitSync::sweep_interrupted_scratch(&temp), 3);
+    assert_eq!(GitSync::sweep_interrupted_scratch(&temp), 0);
+    assert!(young.exists());
+    assert!(temp.join(format!("markcheck-git-other-{dead}-4c")).exists());
+}
+
+#[test]
 fn abandon_stops_the_running_git_and_starts_no_more() {
     let work = init_repo_without_remote();
     let hooks = work.join(".git").join("hooks");

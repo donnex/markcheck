@@ -333,6 +333,7 @@ fn main() -> anyhow::Result<()> {
     // What no signal handler can catch (SIGKILL, the OOM killer, a power
     // loss) still leaves these behind.
     let leftovers = writer::sweep_interrupted_saves(&state.document.file_path)
+        + git_sync::GitSync::sweep_interrupted_scratch(&std::env::temp_dir())
         + git_sync
             .as_ref()
             .map_or(0, git_sync::GitSync::sweep_interrupted_syncs);

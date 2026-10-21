@@ -587,6 +587,14 @@ impl GitSync {
         })
     }
 
+    /// Removes the stdio scratch files (`markcheck-git-std…`) a markcheck
+    /// killed mid-command left in `temp`, the temp directory. Returns how
+    /// many. Needs no repository, since an earlier session may have synced
+    /// a checklist this one doesn't.
+    pub fn sweep_interrupted_scratch(temp: &Path) -> usize {
+        process::sweep_scratch_files(temp)
+    }
+
     /// Gives up on the running sync, for a quit that won't wait for it: the
     /// running git process group gets `SIGTERM`, or `SIGKILL` with `force`,
     /// and no further git process starts, so the worker unwinds through its

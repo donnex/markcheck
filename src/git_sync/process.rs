@@ -121,6 +121,14 @@ impl ScratchFiles {
         Ok((path, file))
     }
 }
+/// Removes the scratch files a markcheck killed mid-command left in `dir`
+/// (see [`crate::writer::remove_leftovers`]). Returns how many.
+pub(super) fn sweep_scratch_files(dir: &Path) -> usize {
+    ["stdin", "stdout", "stderr"]
+        .iter()
+        .map(|purpose| crate::writer::remove_leftovers(dir, &format!("markcheck-git-{purpose}-")))
+        .sum()
+}
 impl Drop for ScratchFiles {
     fn drop(&mut self) {
         for path in &self.paths {
