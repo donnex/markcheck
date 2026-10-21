@@ -2714,9 +2714,9 @@ fn a_sub_section_keeps_its_parents_prose_and_adds_its_own() {
 
 #[test]
 fn prose_markcheck_cannot_place_is_counted_as_unshown() {
-    // Under a heading with no task, between tasks, and after the last one.
+    // Under a heading with no task, and after the last task of a heading.
     let document = parse(
-        "## Empty\n\nOrphan prose.\n\n## Real\n\n- [ ] a\n\nBetween tasks.\n\n> a quote\n\n- [ ] b\n\nAfter.\n\n```\ntrailing\n```\n",
+        "## Empty\n\nOrphan prose.\n\n## Real\n\n- [ ] a\n\nAfter.\n\n> a quote\n\n## Next\n\n- [ ] b\n\nLast.\n\n```\ntrailing\n```\n",
     );
     assert!(document.preambles.is_empty());
     assert_eq!(
@@ -2728,6 +2728,48 @@ fn prose_markcheck_cannot_place_is_counted_as_unshown() {
             code_blocks: 1,
         }
     );
+}
+
+#[test]
+fn prose_between_two_tasks_goes_to_the_next_task() {
+    let document = parse(
+        "## Deploy\n\n- [ ] Stop the service\n\n> [!WARNING]\n> Restore the snapshot first.\n\nThen wait.\n\n    pause\n\n- [ ] Run the migration\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 12),
+        vec![
+            (
+                PreambleKind::Alert,
+                "Warning: Restore the snapshot first.".to_string()
+            ),
+            (PreambleKind::Paragraph, "Then wait.".to_string()),
+            (PreambleKind::Code, "pause".to_string()),
+        ]
+    );
+    assert_eq!(document.unshown, Unshown::default());
+}
+
+#[test]
+fn prose_after_a_task_does_not_carry_into_a_sub_section() {
+    let document = parse("## A\n\n- [ ] a\n\nClosing note.\n\n### Sub\n\n- [ ] b\n");
+    assert!(document.preambles.is_empty());
+    assert_eq!(document.unshown.paragraphs, 1);
+}
+
+#[test]
+fn prose_after_a_dropped_list_goes_to_the_next_task() {
+    let document = parse("## A\n\n- [ ] a\n\n- plain\n\nNote.\n\n1. [ ] b\n");
+    assert_eq!(
+        preamble_of(&document, 9),
+        vec![(PreambleKind::Paragraph, "Note.".to_string())]
+    );
+}
+
+#[test]
+fn a_fence_between_two_lists_attaches_rather_than_leads_the_next_task() {
+    let document = parse("## A\n\n- [ ] a\n\n```sh\nrun\n```\n\n- [ ] b\n");
+    assert!(document.preambles.is_empty());
+    assert_eq!(document.lists[0].items[0].code_blocks.len(), 1);
 }
 
 #[test]

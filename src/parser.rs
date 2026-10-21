@@ -964,8 +964,13 @@ struct ParseState<'a> {
     /// alert marker, read before the code, isn't looked for again.
     quote_resumed: bool,
     /// Whether blocks read now are a preamble: after a heading (or the start
-    /// of the file) and before its first task. Anything else is unshown.
+    /// of the file) and before its first task, or after a list and before the
+    /// next task under the same heading (#187). Anything else is unshown.
     preamble_open: bool,
+    /// Whether a task has been read under the current heading: blocks read
+    /// after one wait for the next task under that heading only, so any
+    /// heading closes their scope.
+    scope_had_task: bool,
     /// The level of the heading whose scope the reader is in (0 before any).
     scope_level: u8,
     /// Preamble blocks waiting for their task, each with the level of the
@@ -1012,6 +1017,7 @@ impl<'a> ParseState<'a> {
             prose: None,
             quote_resumed: false,
             preamble_open: true,
+            scope_had_task: false,
             scope_level: 0,
             pending_preamble: Vec::new(),
             preamble_claims: Vec::new(),
@@ -1064,7 +1070,12 @@ impl<'a> ParseState<'a> {
 
     fn add_block(&mut self, block: PreambleBlock) {
         if self.preamble_open {
-            self.pending_preamble.push((self.scope_level, block));
+            let origin = if self.scope_had_task {
+                u8::MAX
+            } else {
+                self.scope_level
+            };
+            self.pending_preamble.push((origin, block));
         } else {
             self.unshown.add(block.kind);
         }
@@ -1082,6 +1093,7 @@ impl<'a> ParseState<'a> {
         }
         self.pending_preamble = kept;
         self.preamble_open = true;
+        self.scope_had_task = false;
         self.scope_level = level;
     }
 
@@ -1124,9 +1136,11 @@ impl<'a> ParseState<'a> {
         });
     }
 
-    /// The first task after a heading takes the preamble written above it.
+    /// The first task after a heading, or after a list, takes the preamble
+    /// written above it.
     fn claim_preamble(&mut self, line: LineNumber) {
         self.preamble_open = false;
+        self.scope_had_task = true;
         if self.pending_preamble.is_empty() {
             return;
         }
@@ -1323,6 +1337,9 @@ impl<'a> ParseState<'a> {
         if self.list_depth > 0 {
             self.with_item(ItemBuilder::mark_boundary);
             return;
+        }
+        if self.blockquote_depth == 0 {
+            self.preamble_open = true;
         }
         let mut items = std::mem::take(&mut self.current_list_items);
         let pending_banner = self.pending_banner.take();

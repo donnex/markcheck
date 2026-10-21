@@ -11,18 +11,18 @@ expression: "screen(&mut state, width, height)"
                                                   │   │ Note: Keep the change… ▓
                     • Prepare                     │   ☑ Confirm access to exa… ▓
          ▪ Do not run against production          │   ◐ Warm the build cache   ▓
-                                                  │   ☐ Check out the release… ▓
-┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓  │   ☐ Build the artifact     ▓
+                                                  │   ▪ Warning: If the check… ▓
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓  │   ☐ Check out the release… ▓
+┃                                              ┃  │   ☐ Build the artifact     ▓
 ┃                                              ┃  │   ▪ Keep this runbook ope… ▓
-┃                                              ┃  │ • [2] Verify               ▓
-┃             Warm the build cache             ┃  │   ▪ Warning: Run these on… ▓
-┃                                              ┃  │   ☐ Check the health endp… ▓
-┃                                              ┃  │   ☐ Run the smoke tests    ▓
-┃                                              ┃  │   ☐ ! Switch traffic to t… │
-┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☐ Tail the logs and wat… │
+┃             Warm the build cache             ┃  │ • [2] Verify               ▓
+┃                                              ┃  │   ▪ Warning: Run these on… ▓
+┃                                              ┃  │   ☐ Check the health endp… │
+┃                                              ┃  │   ☐ Run the smoke tests    │
+┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☐ ! Switch traffic to t… │
+                                                  │   ☐ Tail the logs and wat… │
                                                   │   ☑ Record the start time… │
                                                   │   ⊘ Restart the replica —… │
-                                                  │   ▪ Roll back              │
-                                                  │ • [3] Ordered steps        ▼
+                                                  │   ▪ Roll back              ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

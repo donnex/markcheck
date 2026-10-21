@@ -11,18 +11,18 @@ expression: "screen(&mut state, width, 24)"
 │   ☐ Check out the release branch…  — Prepare │  │   │ Note: Keep the change… ▓
 │   ☐ Build the artifact  — Prepare            │  │   ☑ Confirm access to exa… ▓
 │   ▪ Keep this runbook open while…  — Prepare │  │   ◐ Warm the build cache   ▓
-│   ☐ Check the health endpoint cur…  — Verify │  │   ☐ Check out the release… ▓
-│   ☐ Run the smoke tests  — Verify            │  │   ☐ Build the artifact     ▓
-│   ☐ Switch traffic to the new rel…  — Verify │  │   ▪ Keep this runbook ope… ▓
-│   ☐ Tail the logs and watch for e…  — Verify │  │ • [2] Verify               ▓
-│   ☑ Record the start time — an up…  — Verify │  │   ▪ Warning: Run these on… ▓
-│   ⊘ Restart the replica — skipped…  — Verify │  │   ☐ Check the health endp… ▓
-│   ▪ Roll back  — Verify                      │  │   ☐ Run the smoke tests    ▓
-│   ☑ 1. Confirm the change …  — Ordered steps │  │   ☐ ! Switch traffic to t… │
-│   ◐ 2. Notify the on-call …  — Ordered steps │  │   ☐ Tail the logs and wat… │
-│   ☐ 3. Announce completion  — Ordered steps  │  │   ☑ Record the start time… │
-│   ☐ 1) Remove the old release  — Wrap-up     │  │   ⊘ Restart the replica —… │
-│   ☐ 2) Close the change window  — Wrap-up    │  │   ▪ Roll back              │
-│                                              │  │ • [3] Ordered steps        ▼
+│   ☐ Check the health endpoint cur…  — Verify │  │   ▪ Warning: If the check… ▓
+│   ☐ Run the smoke tests  — Verify            │  │   ☐ Check out the release… ▓
+│   ☐ Switch traffic to the new rel…  — Verify │  │   ☐ Build the artifact     ▓
+│   ☐ Tail the logs and watch for e…  — Verify │  │   ▪ Keep this runbook ope… ▓
+│   ☑ Record the start time — an up…  — Verify │  │ • [2] Verify               ▓
+│   ⊘ Restart the replica — skipped…  — Verify │  │   ▪ Warning: Run these on… ▓
+│   ▪ Roll back  — Verify                      │  │   ☐ Check the health endp… │
+│   ☑ 1. Confirm the change …  — Ordered steps │  │   ☐ Run the smoke tests    │
+│   ◐ 2. Notify the on-call …  — Ordered steps │  │   ☐ ! Switch traffic to t… │
+│   ☐ 3. Announce completion  — Ordered steps  │  │   ☐ Tail the logs and wat… │
+│   ☐ 1) Remove the old release  — Wrap-up     │  │   ☑ Record the start time… │
+│   ☐ 2) Close the change window  — Wrap-up    │  │   ⊘ Restart the replica —… │
+│                                              │  │   ▪ Roll back              ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

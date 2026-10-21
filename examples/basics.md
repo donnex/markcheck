@@ -12,6 +12,10 @@ a note card.
 - **Do not run against production**
 - [x] Confirm access to `example-host`
 - [/] Warm the build cache
+
+> [!WARNING]
+> If the checkout below fails, clear the build cache before retrying.
+
 - [ ] Check out the release branch: `git checkout release`
 - [ ] **Build the artifact** compile and package the release:
 

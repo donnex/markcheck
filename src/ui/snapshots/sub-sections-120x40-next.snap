@@ -20,17 +20,18 @@ expression: "screen(&mut state, width, height)"
                                         • Deploy                                          │   ☐ check-status example-… ▓
                              Pre-flight checks › Data safety                              │   ▪ Watch the dashboards   ▓
                                                                                           │   ☐ confirm the error rat… ▓
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5/29 ┓               │   ☐ announce the rollout … ▓
-┌ ◐ ────────┃                                                             ┃────────────┐  │   ── Post-rollout ──────── ▓
-│      run  ┃                      take a snapshot:                       ┃onfirm the  │  │   ☐ tail the logs for one… ▓
-│ verify-out┃                                                             ┃napshot is  │  │   ☐ verify-output --final  ▓
-│  t and wai┃                    snapshot-tool create                     ┃ listed     │  │   ── Extended verificati…  ▓
-│   for it t┃                                                             ┃            │  │     ── Line-by-line chec…  ▓
-└───────────┃                                                             ┃────────────┘  │   ☐ verify service A resp… ▓
-            ┗ ···●◉·●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service B resp… ▓
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5/29 ┓               │   │ Caution                ▓
+┌ ◐ ────────┃                                                             ┃────────────┐  │   ☐ announce the rollout … ▓
+│      run  ┃                      take a snapshot:                       ┃onfirm the  │  │   ── Post-rollout ──────── ▓
+│ verify-out┃                                                             ┃napshot is  │  │   ☐ tail the logs for one… ▓
+│  t and wai┃                    snapshot-tool create                     ┃ listed     │  │   ☐ verify-output --final  ▓
+│   for it t┃                                                             ┃            │  │   ── Extended verificati…  ▓
+└───────────┃                                                             ┃────────────┘  │     ── Line-by-line chec…  ▓
+            ┗ ···●◉·●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service A resp… ▓
+                                                                                          │   ☐ verify service B resp… ▓
                                                                                           │   ☐ verify service C resp… ▓
-                                                                                          │   ☐ confirm queue depth i… ▓
-                                                                                          │   ☐ confirm cache hit rat… ▓
+                                                                                          │   ☐ confirm queue depth i… │
+                                                                                          │   ☐ confirm cache hit rat… │
                                                                                           │   ☐ confirm error rate is… │
                                                                                           │   ☐ check disk usage on t… │
                                                                                           │   ☐ check disk usage on t… │
@@ -38,7 +39,6 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ confirm scheduled job… │
                                                                                           │   ☐ confirm overnight bac… │
                                                                                           │   ☐ confirm alerting is a… │
-                                                                                          │   ☐ review the latest dep… │
-                                                                                          │   ☐ spot-check a sample r… ▼
+                                                                                          │   ☐ review the latest dep… ▼
                                                                                           └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

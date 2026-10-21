@@ -11,14 +11,15 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   │ Note: Keep the change… │
                                                                                           │   [x] Confirm access to e… │
                                                                                           │   [/] Warm the build cache │
+                                                                                          │   * Warning: If the check… │
                                                                                           │    >  Check out the relea… │
                                                                                           │   [ ] Build the artifact   │
                                                                                           │    *  Keep this runbook o… │
                                                                                           │ # [2] Verify               │
-                                                                                          │   * Warning: Run these on… │
-                                                                                          │   [ ] Check the health en… │
-                                        # Prepare                                         │   [ ] Run the smoke tests  │
-                             * Do not run against production                              │   [ ] ! Switch traffic to… │
+                                        # Prepare                                         │   * Warning: Run these on… │
+                             * Do not run against production                              │   [ ] Check the health en… │
+              * Warning: If the checkout below fails, clear the build cache               │   [ ] Run the smoke tests  │
+                                    before retrying.                                      │   [ ] ! Switch traffic to… │
                                                                                           │   [ ] Tail the logs and w… │
             ╔ [ ] ═══════════════════════════════════════════════════ 3/5 ╗               │   [x] Record the start ti… │
 ┌ [/] ──────║                                                             ║] ──────────┐  │   [-] Restart the replica… │
@@ -33,7 +34,6 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   * Caution: Keep the old… │
                                                                                           │   [ ] 1) Remove the old r… │
                                                                                           │   [ ] 2) Close the change… │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

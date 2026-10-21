@@ -20,9 +20,9 @@ expression: "screen(&mut state, width, height)"
 ┃                                              ┃  │   ☐ check-status example-… │
 ┃                                              ┃  │   ▪ Watch the dashboards   │
 ┗ ···◉··●······················ ━━━━━━━━━━━━━━━┛  │   ☐ confirm the error rat… │
+                                                  │   │ Caution                │
                                                   │   ☐ announce the rollout … │
                                                   │   ── Post-rollout ──────── │
-                                                  │   ☐ tail the logs for one… │
-                                                  │   ☐ verify-output --final  ▼
+                                                  │   ☐ tail the logs for one… ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

@@ -20,9 +20,9 @@ expression: "screen(&mut state, width, 24)"
 │   ☐ tail the logs for o…  — Deploy › Post-r… │  │   ☐ check-status example-… │
 │   ☐ verify-output --fin…  — Deploy › Post-r… │  │   ▪ Watch the dashboards   │
 │   ☐ verify service A re…  — Deploy › Extend… │  │   ☐ confirm the error rat… │
-│   ☐ verify service B re…  — Deploy › Extend… │  │   ☐ announce the rollout … │
-│   ☐ verify service C re…  — Deploy › Extend… │  │   ── Post-rollout ──────── │
-│   ☐ confirm queue depth…  — Deploy › Extend… │  │   ☐ tail the logs for one… │
-│   ☐ confirm cache hit r…  — Deploy › Extend… │  │   ☐ verify-output --final  ▼
+│   ☐ verify service B re…  — Deploy › Extend… │  │   │ Caution                │
+│   ☐ verify service C re…  — Deploy › Extend… │  │   ☐ announce the rollout … │
+│   ☐ confirm queue depth…  — Deploy › Extend… │  │   ── Post-rollout ──────── │
+│   ☐ confirm cache hit r…  — Deploy › Extend… │  │   ☐ tail the logs for one… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

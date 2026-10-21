@@ -9,6 +9,8 @@ markcheck examples/basics.md
 
 - **`basics.md`** — prose under a heading shown above the first task's card
   (the intro paragraph under the `# H1` and the one under `## Ordered steps`),
+  a `> [!WARNING]` written between two tasks of `## Prepare`, shown above the
+  next task's card (`Check out the release branch`),
   a `> [!WARNING]` alert in the warning color under `## Verify`, the four task
   states (`[ ]` / `[/]` / `[x]` / `[-]`, the skipped one dimmed and
   struck through, counted apart from done), a critical step (a bold title
@@ -90,8 +92,8 @@ markcheck examples/basics.md
   drop), and a following `## H2` that resets the sub-section context. Under
   `Rollout`, a heading inside a bullet (`- #### Watch the dashboards`) is just
   that card's title, and a quoted `> ### Caution` callout starts no group —
-  neither one is a sub-section (and, sitting after the last task, the callout
-  is one of the blocks markcheck reports at startup as not shown). The
+  neither one is a sub-section (written between two tasks, the callout is
+  shown above the next task's card, its heading a line of the quote). The
   paragraph under `### Pre-flight checks` is that group's preamble, shown
   above its first task's card. Each group
   shows a `── divider` in the overview and a dim `Outer › Inner` breadcrumb

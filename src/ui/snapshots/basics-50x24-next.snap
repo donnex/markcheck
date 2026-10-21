@@ -9,9 +9,10 @@ expression: "screen(&mut state, width, height)"
 
 
 
-
                      • Prepare
           ▪ Do not run against production
+ ▪ Warning: If the checkout below fails, clear the
+           build cache before retrying.
 
 ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓
 ┃                                                ┃
@@ -21,7 +22,6 @@ expression: "screen(&mut state, width, height)"
 ┃                                                ┃
 ┃                                                ┃
 ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 
 
 

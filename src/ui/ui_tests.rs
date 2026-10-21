@@ -2347,7 +2347,7 @@ fn sub_sections_example_renders_dividers_and_drops_empty() {
         "a heading inside a bullet titles a card, not a group: {joined}"
     );
     assert!(
-        !joined.contains("Caution"),
+        !joined.contains("── Caution"),
         "a quoted heading starts no group: {joined}"
     );
 }
