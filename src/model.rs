@@ -1066,10 +1066,19 @@ impl IconChoice {
         }
     }
 
+    /// The set `Auto` stands for given the `TERM` value; any other choice
+    /// is itself.
+    pub fn resolve(self, term: Option<&str>) -> IconChoice {
+        match self {
+            IconChoice::Auto if term == Some("linux") => IconChoice::Ascii,
+            IconChoice::Auto => IconChoice::Unicode,
+            other => other,
+        }
+    }
+
     /// The set this choice draws with, given the `TERM` value.
     pub fn icon_set(self, term: Option<&str>) -> IconSet {
-        match self {
-            IconChoice::Auto if term == Some("linux") => IconSet::ascii(),
+        match self.resolve(term) {
             IconChoice::Auto | IconChoice::Unicode => IconSet::unicode(),
             IconChoice::Nerd => IconSet::nerd(),
             IconChoice::Ascii => IconSet::ascii(),

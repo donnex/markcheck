@@ -394,3 +394,44 @@ fn config_flag_reads_the_named_file_instead() {
     let stderr = stderr_with_config("cfg-explicit", "", &[&flag]);
     assert!(stderr.contains("config file not found"), "{stderr:?}");
 }
+
+#[test]
+fn doctor_prints_one_line_per_check_and_exits_without_a_terminal() {
+    let output = markcheck()
+        .args(["--doctor", "--no-config", "--color", "256"])
+        .env("TERM", "xterm-256color")
+        .env_remove("NO_COLOR")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains("ok    config     skipped (--no-config)")
+            && stdout.contains("ok    colors     256 colors (--color, not detected)")
+            && stdout.ends_with("All 9 checks ok\n"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "no color off a terminal: {stdout:?}"
+    );
+}
+
+#[test]
+fn doctor_exits_3_when_a_check_warns() {
+    let path = unique_path("doctor-missing");
+    let output = markcheck()
+        .args(["--doctor", "--no-config"])
+        .arg(&path)
+        .env("TERM", "xterm-256color")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(3), "{stdout}");
+    assert!(
+        stdout.contains("warn  file") && stdout.ends_with("1 of 10 checks warns\n"),
+        "{stdout}"
+    );
+}

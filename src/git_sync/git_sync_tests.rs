@@ -1138,3 +1138,77 @@ fn a_toggle_retried_after_a_pull_publishes_on_top_of_the_pulled_commit() {
         "## S\n\n- [x] one\n- [x] two"
     );
 }
+
+#[test]
+fn doctor_reports_an_up_to_date_tracked_checklist_with_its_push_target() {
+    let (work, _remote) = init_repo_with_remote();
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+
+    let found = sync.doctor();
+
+    assert!(
+        parse_git_version(&format!("git version {}", found.version)).is_some(),
+        "{found:?}"
+    );
+    assert_eq!(found.identity_warning, None);
+    assert_eq!(found.tracked, Ok(true));
+    assert_eq!(found.push_target, Ok("origin/main".to_string()));
+    assert_eq!(found.unpushed, Some(0));
+    assert_eq!(found.remote, RemoteCheck::UpToDate);
+}
+
+#[test]
+fn doctor_counts_unpushed_commits_and_sees_unpulled_remote_work() {
+    let (work, remote) = init_repo_with_remote();
+    fs::write(work.join("other.md"), "local\n").unwrap();
+    run(&work, &["add", "other.md"]);
+    run(&work, &["commit", "-q", "-m", "local only"]);
+    push_from_another_clone(&remote);
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+
+    let found = sync.doctor();
+
+    assert_eq!(found.unpushed, Some(1));
+    assert!(
+        matches!(&found.remote, RemoteCheck::Ahead(message) if message.contains("git pull --rebase")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn doctor_reports_an_untracked_checklist_without_an_upstream() {
+    let work = init_repo_without_remote();
+    fs::write(work.join("loose.md"), "- [ ] one\n").unwrap();
+    let sync = GitSync::detect(&work.join("loose.md")).unwrap();
+
+    let found = sync.doctor();
+
+    assert_eq!(found.tracked, Ok(false));
+    assert!(
+        matches!(&found.push_target, Err(reason) if reason.contains("no upstream")),
+        "{found:?}"
+    );
+    assert_eq!(found.unpushed, None);
+    assert_eq!(found.remote, RemoteCheck::NotChecked);
+}
+
+#[test]
+fn doctor_tells_an_unreachable_remote_from_a_deleted_branch() {
+    let (work, remote, _) = init_repo_with_remote_on_a_topic_branch();
+    run(&remote, &["branch", "-D", "topic"]);
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    assert_eq!(sync.doctor().remote, RemoteCheck::Absent);
+
+    fs::remove_dir_all(&remote).unwrap();
+    assert_eq!(sync.doctor().remote, RemoteCheck::Unreachable);
+}
+
+#[test]
+fn doctor_reports_a_detached_head_as_not_checked() {
+    let (work, _remote) = init_repo_with_remote();
+    let head = current_head(&work).unwrap();
+    run(&work, &["checkout", "-q", "--detach", &head]);
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+
+    assert_eq!(sync.doctor().remote, RemoteCheck::NotChecked);
+}

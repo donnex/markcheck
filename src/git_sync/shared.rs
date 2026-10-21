@@ -23,6 +23,23 @@ pub(super) use super::test_support::race_point;
 #[inline(always)]
 pub(super) fn race_point(_point: RacePoint) {}
 
+/// What the remote a push would reach says about the branch, without
+/// fetching anything (#253).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteCheck {
+    /// Not asked: no upstream, a local upstream, a `git push` that goes
+    /// elsewhere, or no `HEAD` yet.
+    NotChecked,
+    /// The remote couldn't be reached.
+    Unreachable,
+    /// The branch doesn't exist on the remote.
+    Absent,
+    /// The remote's branch is already in this checklist's history.
+    UpToDate,
+    /// The remote has changes not pulled yet: the message says what to do.
+    Ahead(String),
+}
+
 /// Result of one background commit+push attempt, delivered via
 /// [`GitSync::poll`](super::GitSync::poll).
 #[derive(Debug, Clone, PartialEq, Eq)]

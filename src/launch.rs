@@ -1,9 +1,9 @@
 //! Pure resolution for the things markcheck launches or acts on outside
 //! itself: the editor and link-opener commands from the environment, the
 //! editor's jump-to-line argument, the order `o` tries openers in, whether
-//! git-sync applies to a file, and the startup warning about a file a save
-//! would disturb. The spawning itself stays in `main.rs`, passed in as
-//! closures.
+//! git-sync applies to a file (and detecting it when it does), and the
+//! startup warning about a file a save would disturb. The spawning itself
+//! stays in `main.rs`, passed in as closures.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -149,18 +149,30 @@ pub fn link_route(
     wayland_display: Option<&str>,
     remote: bool,
 ) -> LinkRoute {
-    let is_set = |value: Option<&str>| value.is_some_and(|v| !v.trim().is_empty());
-    let browser_set = browser
-        .unwrap_or_default()
-        .split(':')
-        .any(|entry| !entry.trim().is_empty());
-    let graphical = cfg!(target_os = "macos") || is_set(display) || is_set(wayland_display);
+    let browser_set = browser_set(browser);
+    let graphical = graphical_session(display, wayland_display);
     match (browser_set, graphical, remote) {
         (true, _, _) => LinkRoute::Open,
         (false, false, _) => LinkRoute::CopyInstead,
         (false, true, true) => LinkRoute::OpenAndCopy,
         (false, true, false) => LinkRoute::Open,
     }
+}
+
+/// Whether `$BROWSER` names at least one command.
+pub fn browser_set(browser: Option<&str>) -> bool {
+    browser
+        .unwrap_or_default()
+        .split(':')
+        .any(|entry| !entry.trim().is_empty())
+}
+
+/// Whether there is a graphical session to show a window or own a system
+/// clipboard: always on macOS, elsewhere when `$DISPLAY` or
+/// `$WAYLAND_DISPLAY` is set and not blank.
+pub fn graphical_session(display: Option<&str>, wayland_display: Option<&str>) -> bool {
+    let is_set = |value: Option<&str>| value.is_some_and(|v| !v.trim().is_empty());
+    cfg!(target_os = "macos") || is_set(display) || is_set(wayland_display)
 }
 
 /// A command's basename, for status messages: `/usr/bin/xdg-open` → `xdg-open`.
@@ -379,6 +391,21 @@ pub fn git_sync_request(
         by_flag: cli_flag,
         covering,
     }
+}
+
+/// Git sync for `file_path` when `request` asks for it: `None` when it
+/// doesn't, `Err` with the reason when git or the repository's scope refuses.
+/// `detect` runs only `git version` and `rev-parse`, which run no hooks or
+/// helpers, so the scope check comes before any command a nested repository
+/// could hijack.
+pub fn detect_git_sync(
+    request: &GitSyncRequest,
+    file_path: &Path,
+) -> Option<Result<crate::git_sync::GitSync, String>> {
+    request.requested.then(|| {
+        crate::git_sync::GitSync::detect(file_path)
+            .and_then(|sync| git_sync_scope(request, sync.repo_root()).map(|()| sync))
+    })
 }
 
 /// The sticky startup message for a git-sync that was configured but won't

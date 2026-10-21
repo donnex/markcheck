@@ -8,13 +8,13 @@ mod sync;
 #[cfg(test)]
 mod test_support;
 
-pub use shared::SyncOutcome;
 use shared::lock_hash;
+pub use shared::{RemoteCheck, SyncOutcome};
 
 use process::{
     Children, PLUMBING_TIMEOUT, git_command, run_with_timeout, track_children_on_this_thread,
 };
-use push::{catch_up_push, check_remote, retry_commit};
+use push::{catch_up_push, check_remote, push_target, remote_check, retry_commit};
 use sync::{Publish, batch_message, run_sync};
 
 use std::path::{Path, PathBuf};
@@ -103,6 +103,8 @@ fn exit_report_text(last: Option<&SyncOutcome>, still_running: bool) -> Option<S
 /// `git push` never blocks the UI.
 pub struct GitSync {
     repo_root: PathBuf,
+    /// As `git version` printed it, e.g. `2.43.0`, for `--doctor`.
+    version: String,
     file_path: PathBuf,
     sender: mpsc::Sender<SyncOutcome>,
     receiver: mpsc::Receiver<SyncOutcome>,
@@ -134,6 +136,24 @@ pub struct GitSync {
     in_flight: Option<(u64, String)>,
     /// The latest problem no later outcome has resolved, for the exit report.
     unresolved: Option<SyncOutcome>,
+}
+
+/// What [`GitSync::doctor`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Doctor {
+    /// The git version, e.g. `2.43.0`.
+    pub version: String,
+    /// [`GitSync::identity_warning`].
+    pub identity_warning: Option<String>,
+    /// Whether the checklist is tracked, or why git couldn't say.
+    pub tracked: Result<bool, String>,
+    /// Where a push goes, as `remote/branch` (never the URL, which can hold
+    /// a credential), or why git sync can't push.
+    pub push_target: Result<String, String>,
+    /// Commits on `HEAD` not on the upstream, `None` when unknown.
+    pub unpushed: Option<u64>,
+    /// Whether the remote has changes not pulled yet.
+    pub remote: RemoteCheck,
 }
 
 /// Requests folded together while they wait (see `GitSync::queued`).
@@ -227,7 +247,12 @@ impl GitSync {
         cmd.arg("version");
         let output =
             run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| detect_spawn_error(&err))?;
-        check_git_version(&String::from_utf8_lossy(&output.stdout))?;
+        let version_output = String::from_utf8_lossy(&output.stdout);
+        check_git_version(&version_output)?;
+        let version = parse_git_version(&version_output).map_or_else(
+            || version_output.trim().to_string(),
+            |(_, text)| text.to_string(),
+        );
         let mut cmd = git_command(file_dir);
         cmd.args(["rev-parse", "--is-inside-work-tree"]);
         let output =
@@ -251,6 +276,7 @@ impl GitSync {
         let (sender, receiver) = mpsc::channel();
         Ok(GitSync {
             repo_root,
+            version,
             file_path: file_path.to_path_buf(),
             sender,
             receiver,
@@ -582,6 +608,31 @@ impl GitSync {
                 inspect::IDENTITY_FIX
             )
         })
+    }
+
+    /// What `--doctor` reports about this repository (#195). Asks the remote
+    /// over the network, like the startup catch-up does, but changes nothing.
+    pub fn doctor(&self) -> Doctor {
+        let head = inspect::current_head(&self.repo_root);
+        Doctor {
+            version: self.version.clone(),
+            identity_warning: self.identity_warning(),
+            tracked: inspect::index_entry(&self.repo_root, &self.file_path)
+                .map(|entry| entry.is_some()),
+            push_target: push_target(&self.repo_root).map(|target| {
+                let branch = target
+                    .branch_ref
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(&target.branch_ref);
+                format!("{}/{branch}", target.remote)
+            }),
+            unpushed: head
+                .as_deref()
+                .and_then(|head| inspect::commits_ahead_of_upstream(&self.repo_root, head)),
+            remote: head.map_or(RemoteCheck::NotChecked, |head| {
+                remote_check(&self.repo_root, &head)
+            }),
+        }
     }
 
     /// Drives the title bar's "syncing" state, and the wait when quitting.

@@ -12,7 +12,7 @@ use super::inspect::{
     push_goes_to_upstream, push_url, remote_branch_state, resolve_upstream, upstream_parts,
 };
 use super::process::{PUSH_TIMEOUT, command_error, git_command, run_with_timeout};
-use super::shared::{RacePoint, SyncOutcome, race_point};
+use super::shared::{RacePoint, RemoteCheck, SyncOutcome, race_point};
 
 /// Pushes `expected_commit` as an explicit refspec. A failure is
 /// `CommittedNotPushed`, since the commit is safely local.
@@ -24,52 +24,18 @@ pub(super) fn push(repo_root: &Path, expected_commit: &str) -> SyncOutcome {
     if expected_commit.is_empty() {
         return SyncOutcome::Failed("could not work out which commit to push".to_string());
     }
-    // The resolvable `@{u}`, not the config, decides whether there is an
-    // upstream, so this agrees with the unpushed-history guard.
-    let no_upstream = SyncOutcome::CommittedNotPushed {
-        message: "this branch has no upstream yet; \
-                  run `git push -u` once"
-            .to_string(),
-        commit: expected_commit.to_string(),
-    };
-    if !matches!(resolve_upstream(repo_root), Ok(Some(_))) {
-        return no_upstream;
-    }
-    let Some((remote, branch_ref)) = upstream_parts(repo_root) else {
-        return no_upstream;
-    };
-    // A remote of `.` is this repository: the "push" would move another
-    // local branch and publish nothing.
-    if remote == "." {
-        let local = branch_ref
-            .strip_prefix("refs/heads/")
-            .unwrap_or(&branch_ref);
-        return SyncOutcome::CommittedNotPushed {
-            message: format!(
-                "this branch tracks the local branch {local}, not a remote; \
-                 push it yourself"
-            ),
-            commit: expected_commit.to_string(),
-        };
-    }
-    // The upstream is where changes are fetched from, not necessarily where
-    // `git push` sends them (#98).
-    if !push_goes_to_upstream(repo_root, &remote) {
-        return SyncOutcome::CommittedNotPushed {
-            message: format!(
-                "`git push` would not push this branch to {branch_ref} on \
-                 {remote}; push it yourself"
-            ),
-            commit: expected_commit.to_string(),
-        };
-    }
-    // Ask the repository the push will reach, which `pushurl` can make
-    // different from the one `ls-remote <remote>` would ask.
-    let Some(url) = push_url(repo_root, &remote) else {
-        return SyncOutcome::CommittedNotPushed {
-            message: format!("could not work out where {remote} pushes to"),
-            commit: expected_commit.to_string(),
-        };
+    let PushTarget {
+        remote,
+        branch_ref,
+        url,
+    } = match push_target(repo_root) {
+        Ok(target) => target,
+        Err(message) => {
+            return SyncOutcome::CommittedNotPushed {
+                message,
+                commit: expected_commit.to_string(),
+            };
+        }
     };
     // Ask the remote: an explicit-SHA refspec recreates a deleted branch.
     let remote_tip = match remote_branch_state(repo_root, &url, &branch_ref) {
@@ -132,6 +98,54 @@ pub(super) fn push(repo_root: &Path, expected_commit: &str) -> SyncOutcome {
         },
     }
 }
+/// Where a git-sync push goes: the upstream's remote and branch, and the
+/// URL `git push` sends to.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct PushTarget {
+    pub(super) remote: String,
+    pub(super) branch_ref: String,
+    pub(super) url: String,
+}
+
+/// The [`PushTarget`], or why git sync can't push this branch.
+pub(super) fn push_target(repo_root: &Path) -> Result<PushTarget, String> {
+    // The resolvable `@{u}`, not the config, decides whether there is an
+    // upstream, so this agrees with the unpushed-history guard.
+    let no_upstream = || "this branch has no upstream yet; run `git push -u` once".to_string();
+    if !matches!(resolve_upstream(repo_root), Ok(Some(_))) {
+        return Err(no_upstream());
+    }
+    let Some((remote, branch_ref)) = upstream_parts(repo_root) else {
+        return Err(no_upstream());
+    };
+    // A remote of `.` is this repository: the "push" would move another
+    // local branch and publish nothing.
+    if remote == "." {
+        let local = branch_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&branch_ref);
+        return Err(format!(
+            "this branch tracks the local branch {local}, not a remote; push it yourself"
+        ));
+    }
+    // The upstream is where changes are fetched from, not necessarily where
+    // `git push` sends them (#98).
+    if !push_goes_to_upstream(repo_root, &remote) {
+        return Err(format!(
+            "`git push` would not push this branch to {branch_ref} on {remote}; push it yourself"
+        ));
+    }
+    // Ask the repository the push will reach, which `pushurl` can make
+    // different from the one `ls-remote <remote>` would ask.
+    let Some(url) = push_url(repo_root, &remote) else {
+        return Err(format!("could not work out where {remote} pushes to"));
+    };
+    Ok(PushTarget {
+        remote,
+        branch_ref,
+        url,
+    })
+}
 /// Pushes only if `HEAD` is still `expected_commit`; otherwise reports
 /// `CommittedNotPushed` so the retry machinery tries again.
 pub(super) fn push_if_head_unchanged(repo_root: &Path, expected_commit: &str) -> SyncOutcome {
@@ -157,23 +171,33 @@ pub(super) fn retry_commit(repo_root: &Path, expected_commit: &str) -> SyncOutco
 /// A remote that can't be reached, or a branch git-sync wouldn't push, is a
 /// quiet `Skipped`: a tick reports those in its own words.
 pub(super) fn remote_has_moved_on(repo_root: &Path, head: &str) -> SyncOutcome {
+    match remote_check(repo_root, head) {
+        RemoteCheck::Ahead(message) => SyncOutcome::RemoteAhead(message),
+        _ => SyncOutcome::Skipped,
+    }
+}
+/// The [`RemoteCheck`] behind [`remote_has_moved_on`], kept apart so
+/// `--doctor` can tell an unreachable remote from an up-to-date one.
+pub(super) fn remote_check(repo_root: &Path, head: &str) -> RemoteCheck {
     let Some((remote, branch_ref)) = upstream_parts(repo_root) else {
-        return SyncOutcome::Skipped;
+        return RemoteCheck::NotChecked;
     };
     if remote == "." || !push_goes_to_upstream(repo_root, &remote) {
-        return SyncOutcome::Skipped;
+        return RemoteCheck::NotChecked;
     }
     let Some(url) = push_url(repo_root, &remote) else {
-        return SyncOutcome::Skipped;
+        return RemoteCheck::NotChecked;
     };
     match remote_branch_state(repo_root, &url, &branch_ref) {
         RemoteBranch::Present(tip) if !is_ancestor(repo_root, &tip, head) => {
-            SyncOutcome::RemoteAhead(format!(
+            RemoteCheck::Ahead(format!(
                 "{branch_ref} on {remote} has changes this checklist hasn't pulled; \
                  run `git pull --rebase` before ticking"
             ))
         }
-        _ => SyncOutcome::Skipped,
+        RemoteBranch::Present(_) => RemoteCheck::UpToDate,
+        RemoteBranch::Absent => RemoteCheck::Absent,
+        RemoteBranch::Unknown => RemoteCheck::Unreachable,
     }
 }
 /// [`remote_has_moved_on`] for the current `HEAD`, for a reload: the file

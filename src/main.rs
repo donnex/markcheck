@@ -5,6 +5,7 @@ mod app;
 mod cli;
 mod clipboard;
 mod config;
+mod doctor;
 mod effect;
 mod git_sync;
 #[cfg(test)]
@@ -192,6 +193,18 @@ fn main() -> anyhow::Result<()> {
         io::stdout().write_all(&cli::completions(shell))?;
         return Ok(());
     }
+    // Before the config load and the terminal check: the report says what
+    // is wrong with either rather than failing on it.
+    if cli.doctor {
+        let checks = doctor::checks(&cli, &doctor::Env::from_process());
+        let color = doctor::use_color(
+            std::env::var("NO_COLOR").ok().as_deref(),
+            io::stdout().is_terminal(),
+        );
+        io::stdout().write_all(doctor::render(&checks, color).as_bytes())?;
+        io::stdout().flush()?;
+        std::process::exit(doctor::exit_status(&checks));
+    }
     // A passed flag wins, then the config, then the default. A malformed
     // config is an error rather than a silent fallback; an unknown key is
     // only a warning, since it may come from a newer release.
@@ -322,13 +335,7 @@ fn main() -> anyhow::Result<()> {
         &state.document.file_path,
         std::env::var("HOME").ok().as_deref(),
     );
-    // `detect` runs only `git version` and `rev-parse`, which run no hooks or
-    // helpers, so the scope check comes before any command a nested
-    // repository could hijack.
-    let detected = request.requested.then(|| {
-        git_sync::GitSync::detect(&state.document.file_path)
-            .and_then(|sync| launch::git_sync_scope(&request, sync.repo_root()).map(|()| sync))
-    });
+    let detected = launch::detect_git_sync(&request, &state.document.file_path);
     let detect_error = detected.as_ref().and_then(|d| d.as_ref().err()).cloned();
     let mut git_sync = detected.and_then(Result::ok);
     if let Some(sync) = git_sync.as_mut() {

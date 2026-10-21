@@ -31,10 +31,11 @@ const VERSION: &str = concat!(
                   --config PATH reads another file instead; --no-config skips it."
 )]
 pub struct Cli {
-    /// Path to the Markdown file (omit when using --new); FILE#anchor opens at a
+    /// Path to the Markdown file (omit when using --new, optional with
+    /// --doctor); FILE#anchor opens at a
     /// section's first task, and +N before FILE opens at line N
     #[arg(
-        required_unless_present_any = ["new", "generate_man", "generate_completions"],
+        required_unless_present_any = ["new", "doctor", "generate_man", "generate_completions"],
         value_hint = clap::ValueHint::FilePath
     )]
     pub file: Option<PathBuf>,
@@ -48,6 +49,11 @@ pub struct Cli {
     /// already exist and must end in .md)
     #[arg(long, value_name = "PATH", conflicts_with = "file")]
     pub new: Option<PathBuf>,
+    /// Print what markcheck detects (colors, icons, clipboard, config, locks,
+    /// editor, browser and, with FILE, git sync) one check per line, then
+    /// exit without opening the checklist; exit status 3 when a check warns
+    #[arg(long, conflicts_with = "new")]
+    pub doctor: bool,
     /// Icon set: auto uses ascii on the Linux console (TERM=linux) and unicode
     /// elsewhere; unicode, nerd (needs a Nerd Font) or ascii force one
     /// (config: icons = "...")
@@ -289,6 +295,10 @@ the config file is malformed; the reason is printed to standard error.
 .TP
 \fB2\fR
 The command line was invalid.
+.TP
+\fB3\fR
+\fB\-\-doctor\fR found at least one check to warn about (it exits \fB0\fR when
+every check is ok).
 .SH SEE ALSO
 The keybindings (also shown by \fB?\fR in the app) and how each piece of
 Markdown is handled are described in the README:

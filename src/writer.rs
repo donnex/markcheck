@@ -363,11 +363,12 @@ fn marker_is_stale(
 /// Where this user's write locks live, so another user can neither plant a
 /// lock that blocks saving nor read one.
 fn lock_dir() -> Option<PathBuf> {
-    lock_dir_in(
-        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
-        &std::env::temp_dir(),
-        current_uid(),
-    )
+    lock_dir_for(std::env::var_os("XDG_RUNTIME_DIR").as_deref())
+}
+
+/// [`lock_dir`] for a given `$XDG_RUNTIME_DIR` value, for `--doctor`.
+pub(crate) fn lock_dir_for(runtime_dir: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    lock_dir_in(runtime_dir, &std::env::temp_dir(), current_uid())
 }
 
 /// `$XDG_RUNTIME_DIR` when it is private to `uid`, otherwise

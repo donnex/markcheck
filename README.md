@@ -20,6 +20,7 @@ file is the state** — it's still just a text file when you close the app.
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+  - [Checking the setup](#checking-the-setup)
 - [Config file](#config-file)
 - [Markdown](#markdown)
   - [Not supported (and how it degrades)](#not-supported-and-how-it-degrades)
@@ -172,6 +173,7 @@ markcheck --git-sync-delay 0 runbook.md  # commit every change at once instead o
 markcheck --config other.toml runbook.md  # read another config file instead
 markcheck --no-config runbook.md      # ignore the config file for this run
 markcheck --new runbook.md            # create a starter checklist, then open it
+markcheck --doctor runbook.md         # print what markcheck detects, then exit
 markcheck --version                   # print the version and build's git commit
 ```
 
@@ -186,6 +188,54 @@ file that doesn't exist says how to create it (`no such file: notes.md
 (create it with markcheck --new notes.md)`), and `--new` on a file that is
 already there says how to open it (`notes.md already exists (open it with
 markcheck notes.md)`).
+
+### Checking the setup
+
+`markcheck --doctor` prints what markcheck detects about the terminal and
+why, one check per line, and exits without opening anything. Run it when
+colors, copying, the editor, links or git sync don't behave as expected on
+a machine, and paste its output into a bug report:
+
+```text
+$ markcheck --doctor runbook.md
+ok    config     /home/example-user/.config/markcheck/config.toml (HOME; not found; built-in defaults)
+ok    colors     256 colors (COLORTERM unset, TERM=xterm-256color)
+ok    theme      dark (default; never detected)
+ok    icons      unicode (auto: TERM=xterm-256color)
+ok    clipboard  system clipboard and OSC 52 (default; SSH session, where the system clipboard may be the remote machine's); OSC 52 also wrapped for tmux (TMUX is set)
+ok    editor     nvim (from EDITOR)
+ok    browser    w3m (from BROWSER); w3m is a text browser, so it gets the terminal until it exits
+ok    locks      /run/user/1000 (XDG_RUNTIME_DIR)
+ok    temp       /tmp (TMPDIR unset)
+ok    file       /srv/runbooks/runbook.md
+ok    git sync   on (git_sync_paths entry /srv/runbooks); repository /srv/runbooks
+ok    git        git 2.43.0
+ok    identity   user.name and user.email are set
+ok    tracked    the checklist is tracked in git
+ok    push       origin/main; nothing waiting to be pushed
+warn  remote     refs/heads/main on origin has changes this checklist hasn't pulled; run `git pull --rebase` before ticking
+1 of 16 checks warns
+```
+
+It covers the config file used (and any unknown or deprecated keys, or a
+relative `XDG_CONFIG_HOME` or `HOME` that was ignored), the color palette
+and the variables that decided it (`--color`, the config, `NO_COLOR`,
+`COLORTERM`, `TERM`), the theme, the icon set (ASCII on the Linux console),
+where `y` copies to (system clipboard, OSC 52, or both over SSH, and the
+tmux or screen wrapping), the write-lock and temp directories, the editor
+`e` runs (`VISUAL`, then `EDITOR`) and what `o` opens links with
+(`BROWSER`, text browsers, no display). With a `FILE` it also says whether
+git sync would be on for it and why, and with git sync on, the git version,
+whether a git identity is set, whether the file is tracked, where a push
+goes and how many commits wait for it, and whether the remote has changes
+you haven't pulled (this one asks the remote over the network; nothing is
+fetched, committed or written). The other flags apply as they would to a
+real run, so `markcheck --doctor --clipboard osc52 --config other.toml`
+shows what that combination would do.
+
+It exits 0 when every check is `ok` and 3 when any is `warn`. The `ok` and
+`warn` tags are colored on a terminal, and plain when piped or with
+`NO_COLOR` set.
 
 ## Config file
 
