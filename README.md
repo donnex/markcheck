@@ -627,7 +627,10 @@ your editor open or `Ctrl-Z` has you in the shell; markcheck sets its own
 again when it takes the terminal back. After a normal quit,
 one line on the screen says where the run stopped, for notes or a handover:
 `runbook.md — Deployment Runbook: 3/11 done (1 started), stopped at "Warm the
-build cache"`, or `all 11 done`. Turn either off with `terminal_title =
+build cache"`, or `all 11 done` once every task is done or skipped (`all
+resolved (3 skipped)` when all of them were skipped). After `q` `y`, which
+resets a finished run before quitting, the line still says the run finished:
+`all 11 done, reset for the next run`. Turn either off with `terminal_title =
 false` or `exit_summary = false` in the config file, or for one run with
 `--no-terminal-title` or `--no-exit-summary` (`--terminal-title` and
 `--exit-summary` turn them back on over the config).

@@ -566,7 +566,10 @@ pub fn exit_summary(state: &crate::model::AppState) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let progress = state.document.progress();
+    let (progress, reset) = match state.quit_reset_from {
+        Some(finished) => (finished, ", reset for the next run"),
+        None => (state.document.progress(), ""),
+    };
     let (done, started, skipped, total) = (
         progress.done,
         progress.started,
@@ -586,10 +589,13 @@ pub fn exit_summary(state: &crate::model::AppState) -> String {
         format!(" ({})", extras.join(", "))
     };
     let name = document_name(state);
-    if total > 0 && done == total {
-        return crate::printable::printable_line(&format!(
-            "{file} — {name}: all {total} done{extras}"
-        ));
+    if progress.is_finished() {
+        let all = if total > 0 {
+            format!("all {total} done")
+        } else {
+            "all resolved".to_string()
+        };
+        return crate::printable::printable_line(&format!("{file} — {name}: {all}{extras}{reset}"));
     }
     let stopped = state
         .current_item()

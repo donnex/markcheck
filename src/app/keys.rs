@@ -451,7 +451,9 @@ impl AppState {
             // shown over the checklist rather than under a stale question.
             match code {
                 KeyCode::Char('y') => {
+                    let finished = self.document.progress();
                     if self.reset_all() {
+                        self.quit_reset_from = Some(finished);
                         self.effects.push(Effect::Quit);
                         self.overlay = None;
                     }

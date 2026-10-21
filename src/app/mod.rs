@@ -134,6 +134,7 @@ impl AppState {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             history_epoch: 0,
+            quit_reset_from: None,
         }
     }
 

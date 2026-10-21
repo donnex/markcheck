@@ -1323,6 +1323,9 @@ pub struct AppState {
     /// Bumped whenever an external reload clears the undo/redo history, so a
     /// failed undo/redo can tell whether the stack it popped from still exists.
     pub history_epoch: u64,
+    /// How the finished run stood when the all-done quit dialog's `y` reset
+    /// it before quitting, so the exit line still says it finished (#256).
+    pub quit_reset_from: Option<Progress>,
 }
 
 /// Incremental `/` search state.

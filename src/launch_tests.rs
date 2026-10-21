@@ -898,6 +898,42 @@ fn the_exit_summary_says_where_the_run_stopped_or_that_it_finished() {
     assert_eq!(exit_summary(&finished), "deploy.md — Deploy: all 2 done");
 }
 
+#[test]
+fn the_exit_summary_says_a_run_reset_on_quit_had_finished() {
+    use crossterm::event::KeyCode;
+    let mut state = state_from("# Demo\n\n## L\n\n- [ ] one\n- [ ] two\n", "b.md");
+    for key in [' ', ' ', 'q', 'y'] {
+        state.handle_key(KeyCode::Char(key));
+    }
+    assert_eq!(state.document.progress().done, 0);
+    assert_eq!(
+        exit_summary(&state),
+        "b.md — Demo: all 2 done, reset for the next run"
+    );
+}
+
+#[test]
+fn the_exit_summary_treats_a_run_finished_by_skipping_as_finished() {
+    use crossterm::event::KeyCode;
+    let mut state = state_from("# Demo\n\n## L\n\n- [ ] one\n- [ ] two\n", "b.md");
+    for key in ['-', '-'] {
+        state.handle_key(KeyCode::Char(key));
+    }
+    assert_eq!(
+        exit_summary(&state),
+        "b.md — Demo: all resolved (2 skipped)"
+    );
+    for key in ['q', 'y'] {
+        state.handle_key(KeyCode::Char(key));
+    }
+    assert_eq!(
+        exit_summary(&state),
+        "b.md — Demo: all resolved (2 skipped), reset for the next run"
+    );
+    let mixed = state_from("# Demo\n\n- [x] one\n- [-] two\n", "b.md");
+    assert_eq!(exit_summary(&mixed), "b.md — Demo: all 1 done (1 skipped)");
+}
+
 mod opening {
     use super::state_from;
     use crate::launch::{LinkEnv, ShownTitle, open_link};
