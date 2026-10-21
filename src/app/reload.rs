@@ -20,6 +20,10 @@ use super::*;
 /// Shown while `Ctrl-Z` waits for a running git sync before stopping.
 const WAITING_TO_SUSPEND: &str = "Waiting for git sync before suspending…";
 
+/// Shown for `Ctrl-Z` when no job-control shell could take the terminal.
+const NO_JOB_CONTROL: &str =
+    "Can't suspend: markcheck wasn't started from a shell with job control (q quits)";
+
 /// An `e` editor that exits successfully sooner than this, leaving the file
 /// unchanged, is taken to have handed off to a window instead of waiting.
 pub(super) const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
@@ -387,6 +391,12 @@ impl AppState {
         if self.status_message.as_deref() == Some(WAITING_TO_SUSPEND) {
             self.clear_status();
         }
+    }
+
+    /// `Ctrl-Z` where a stop would be discarded: no job-control shell is
+    /// there to go to or to resume markcheck, so it stays on screen.
+    pub fn refuse_suspend(&mut self) {
+        self.set_error(NO_JOB_CONTROL.to_string());
     }
 
     /// Called by the main loop once `fg` has resumed it, or once the suspend

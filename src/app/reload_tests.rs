@@ -1453,3 +1453,14 @@ fn force_reload_of_an_unreadable_file_says_so_and_adopts_nothing() {
     assert!(state.status_is_error);
     assert_eq!(state.current_list().title, "List 1");
 }
+
+#[test]
+fn refuse_suspend_is_a_sticky_error_naming_the_way_out() {
+    let mut state = AppState::new(two_list_document());
+    state.refuse_suspend();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Can't suspend: markcheck wasn't started from a shell with job control (q quits)")
+    );
+    assert!(state.status_is_error);
+}

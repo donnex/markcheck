@@ -679,6 +679,10 @@ where
     }
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
+        if !session::can_stop_for_shell() {
+            state.refuse_suspend();
+            return Ok(());
+        }
         let still_running = match self.git_sync.as_mut() {
             Some(sync) => {
                 let terminal = &mut *self.terminal;

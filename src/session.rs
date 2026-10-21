@@ -24,3 +24,39 @@ pub(crate) fn spawn_in_new_session(mut cmd: Command) -> io::Result<Child> {
     }
     cmd.spawn()
 }
+
+/// Whether a `SIGTSTP` sent to markcheck would stop it. The kernel discards
+/// one sent to an orphaned process group: one started by a shell without job
+/// control, a terminal or tmux running markcheck itself, or `ssh -t`. See
+/// [`stop_takes_effect`].
+pub(crate) fn can_stop_for_shell() -> bool {
+    // SAFETY: `getpgrp`, `getsid` and `getppid` take plain integers and touch
+    // no memory.
+    let (group, session, parent_session) = unsafe {
+        (
+            libc::getpgrp(),
+            libc::getsid(0),
+            libc::getsid(libc::getppid()),
+        )
+    };
+    stop_takes_effect(group, session, parent_session)
+}
+
+/// Whether a process in `group` and `session`, whose parent is in
+/// `parent_session`, can be stopped: its group isn't the session leader's,
+/// and its parent, there to resume it, shares its session. A failed lookup
+/// (`-1`) assumes it can, leaving the stop to be tried.
+fn stop_takes_effect(
+    group: libc::pid_t,
+    session: libc::pid_t,
+    parent_session: libc::pid_t,
+) -> bool {
+    if session == -1 {
+        return true;
+    }
+    group != session && (parent_session == -1 || parent_session == session)
+}
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;

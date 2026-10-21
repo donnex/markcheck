@@ -2653,6 +2653,47 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
     );
 }
 
+/// Ctrl-Z with no job-control shell: the binary, spawned straight into the
+/// pseudo-terminal, leads its own session, so a stop would be discarded. It
+/// must say so and never leave the alternate screen, rather than flash and
+/// report `Resumed`.
+#[test]
+fn ctrl_z_without_job_control_stays_on_screen_and_says_why() {
+    let path = unique_path("suspend-orphaned");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n");
+
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.run(
+        &path,
+        &[
+            Step::Key("\x1a"), // Ctrl-Z
+            Step::WaitForScreen(
+                "Can't suspend: markcheck wasn't started from a shell with job control",
+            ),
+        ],
+    );
+    let before_quit = session.raw_output();
+    session.run(&path, &[Step::Key("q")]);
+    let (ok, _) = session.finish();
+
+    assert!(
+        ok,
+        "the binary should quit cleanly after the refused suspend"
+    );
+    assert!(
+        !before_quit.contains("\x1b[?1049l"),
+        "the alternate screen was left for a suspend that can't happen:\n{}",
+        render_screen(&before_quit)
+    );
+    assert!(
+        !render_screen(&before_quit).contains("Resumed"),
+        "a refused suspend must not report a resume"
+    );
+}
+
 /// A shell running markcheck with `--git-sync` on `path`, which on `Ctrl-Z`
 /// prints `SUSPENDED-IN-SHELL` and the newest commit on `remote`'s `main`,
 /// then runs `fg`.
