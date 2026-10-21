@@ -8,7 +8,7 @@ use std::path::Path;
 use super::inspect::{
     blob_sha_for, current_branch_ref, git_dir, index_blob, parse_first_parent, resolve_upstream,
 };
-use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout};
+use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_git, run_with_timeout};
 use super::shared::SyncOutcome;
 
 /// The trailer every commit markcheck makes carries, so its own commit can
@@ -115,11 +115,7 @@ fn range_commits(repo_root: &Path, range: &str) -> Result<Vec<RangeCommit>, Stri
         range,
         "--",
     ]);
-    let output =
-        run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git log failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git log", &output));
-    }
+    let output = run_git(cmd, PLUMBING_TIMEOUT, "git log")?;
     parse_range_commits(&output.stdout)
 }
 fn parse_range_commits(stdout: &[u8]) -> Result<Vec<RangeCommit>, String> {
@@ -224,11 +220,7 @@ pub(super) fn carries_own_trailer(repo_root: &Path, sha: &str) -> Result<bool, S
     let format = format!("--format=%(trailers:key={OWN_TRAILER_KEY},valueonly,separator=%x00)");
     let mut cmd = git_command(repo_root);
     cmd.args(["log", "-1", &format, sha]);
-    let output =
-        run_with_timeout(cmd, PLUMBING_TIMEOUT).map_err(|err| format!("git log failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git log", &output));
-    }
+    let output = run_git(cmd, PLUMBING_TIMEOUT, "git log")?;
     Ok(String::from_utf8_lossy(&output.stdout)
         .split('\0')
         .any(|value| value.trim() == OWN_TRAILER_VALUE))
@@ -357,11 +349,7 @@ pub(super) fn verify_commit_scope(
 pub(super) fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), String> {
     let mut cmd = git_command(repo_root);
     cmd.args(["rev-list", "--parents", "-n", "1", created_commit]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git rev-list failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git rev-list", &output));
-    }
+    let output = run_git(cmd, PLUMBING_TIMEOUT, "git rev-list")?;
     let listing = String::from_utf8_lossy(&output.stdout);
     let first_parent = parse_first_parent(&listing).ok_or_else(|| {
         format!(
@@ -382,11 +370,8 @@ pub(super) fn undo_commit(repo_root: &Path, created_commit: &str) -> Result<(), 
             cmd.args(["update-ref", "-d", &branch_ref, created_commit]);
         }
     }
-    match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => Err(command_error("git update-ref", &output)),
-        Err(err) => Err(format!("git update-ref failed: {err}")),
-    }
+    run_git(cmd, PLUMBING_TIMEOUT, "git update-ref")?;
+    Ok(())
 }
 /// Refuses while a merge, cherry-pick, revert, bisect, sequencer run or
 /// rebase is in progress, `HEAD` is detached, or any path is conflicted — and

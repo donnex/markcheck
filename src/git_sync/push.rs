@@ -165,7 +165,7 @@ pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
     }
     // A lookup error only matters once there is something to push.
     let relpath = match index_entry(repo_root, file_path) {
-        Ok(Some((_mode, relpath))) => Ok(relpath),
+        Ok(Some(entry)) => Ok(entry.path),
         Ok(None) => return SyncOutcome::SkippedUntracked,
         Err(err) => Err(err),
     };

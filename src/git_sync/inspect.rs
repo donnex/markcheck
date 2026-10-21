@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use super::process::{
-    PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, literal_pathspec_command,
-    run_with_timeout, run_with_timeout_and_stdin,
+    PLUMBING_TIMEOUT, PUSH_TIMEOUT, command_error, git_command, literal_pathspec_command, run_git,
+    run_git_with_stdin, run_with_timeout,
 };
 
 /// Fails open (`true`), so a push is attempted and its real failure
@@ -156,16 +156,10 @@ fn git_config(repo_root: &Path, key: &str) -> Option<String> {
 }
 /// The blob SHA the real index holds for `relpath`.
 pub(super) fn index_blob(repo_root: &Path, relpath: &str) -> Option<String> {
-    let mut cmd = literal_pathspec_command(repo_root);
-    cmd.args(["ls-files", "--stage", "-z", "--"]).arg(relpath);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let record = output.stdout.split(|&b| b == 0).find(|r| !r.is_empty())?;
-    let record = String::from_utf8_lossy(record);
-    let (info, _path) = record.split_once('\t')?;
-    info.split_whitespace().nth(1).map(str::to_string)
+    index_entry(repo_root, Path::new(relpath))
+        .ok()
+        .flatten()
+        .map(|entry| entry.blob)
 }
 /// `None` when the listing is empty, which must not be read as a root
 /// commit: undoing a root commit deletes the branch ref.
@@ -188,18 +182,22 @@ pub(super) fn git_dir(repo_root: &Path) -> Option<PathBuf> {
         repo_root.join(path)
     })
 }
+/// One real-index record from `git ls-files --stage`.
+#[derive(Debug, PartialEq)]
+pub(super) struct IndexEntry {
+    pub(super) mode: String,
+    pub(super) blob: String,
+    /// Relative to the repository root.
+    pub(super) path: String,
+}
 pub(super) fn index_entry(
     repo_root: &Path,
     file_path: &Path,
-) -> Result<Option<(String, String)>, String> {
+) -> Result<Option<IndexEntry>, String> {
     let mut cmd = literal_pathspec_command(repo_root);
     cmd.args(["ls-files", "--stage", "--full-name", "-z", "--"])
         .arg(file_path);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git ls-files failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git ls-files", &output));
-    }
+    let output = run_git(cmd, PLUMBING_TIMEOUT, "git ls-files")?;
     // `-z` keeps paths with newlines or quotable characters intact. No record
     // means untracked, which is not an error.
     let mut records = output.stdout.split(|&b| b == 0).filter(|r| !r.is_empty());
@@ -221,14 +219,17 @@ pub(super) fn index_entry(
             file_path.display()
         )
     })?;
-    let (info, path) = record
-        .split_once('\t')
-        .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
-    let mode = info
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| format!("git ls-files: unexpected output {record:?}"))?;
-    Ok(Some((mode.to_string(), path.to_string())))
+    let unexpected = || format!("git ls-files: unexpected output {record:?}");
+    let (info, path) = record.split_once('\t').ok_or_else(unexpected)?;
+    let mut fields = info.split_whitespace();
+    let (Some(mode), Some(blob)) = (fields.next(), fields.next()) else {
+        return Err(unexpected());
+    };
+    Ok(Some(IndexEntry {
+        mode: mode.to_string(),
+        blob: blob.to_string(),
+        path: path.to_string(),
+    }))
 }
 pub(super) fn blob_at(repo_root: &Path, commit: &str, relpath: &str) -> Option<String> {
     git_stdout_line(repo_root, &["rev-parse", &format!("{commit}:{relpath}")])
@@ -258,11 +259,7 @@ fn hash_object_inner(
         cmd.arg("-w");
     }
     cmd.args(["--path", relpath, "--stdin"]);
-    let output = run_with_timeout_and_stdin(cmd, PLUMBING_TIMEOUT, content)
-        .map_err(|err| format!("git hash-object failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git hash-object", &output));
-    }
+    let output = run_git_with_stdin(cmd, PLUMBING_TIMEOUT, content, "git hash-object")?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 /// `None` is ambiguous between "no commits yet" and a failed check; see

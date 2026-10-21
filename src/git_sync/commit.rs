@@ -12,7 +12,7 @@ use super::guards::{
 };
 use super::inspect::{IDENTITY_FIX, blob_at, current_head, git_dir, index_blob};
 use super::process::{
-    COMMIT_TIMEOUT, PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout,
+    COMMIT_TIMEOUT, PLUMBING_TIMEOUT, command_error, git_command, run_git, run_with_timeout,
 };
 use super::shared::{RacePoint, race_point};
 
@@ -77,11 +77,7 @@ fn populate_temp_index(repo_root: &Path, temp_index: &Path, parent: &str) -> Res
     let mut cmd = git_command(repo_root);
     cmd.env("GIT_INDEX_FILE", temp_index)
         .args(["read-tree", parent]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git read-tree failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git read-tree", &output));
-    }
+    run_git(cmd, PLUMBING_TIMEOUT, "git read-tree")?;
     Ok(())
 }
 fn stage_into_temp_index(
@@ -100,11 +96,7 @@ fn stage_into_temp_index(
         blob,
         relpath,
     ]);
-    let output = run_with_timeout(cmd, PLUMBING_TIMEOUT)
-        .map_err(|err| format!("git update-index failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error("git update-index", &output));
-    }
+    run_git(cmd, PLUMBING_TIMEOUT, "git update-index")?;
     Ok(())
 }
 /// Points the real index's entry for `relpath` at the committed blob, as a

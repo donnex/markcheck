@@ -26,6 +26,46 @@ fn run_with_timeout_and_stdin_writes_and_the_command_reads_it_back() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "hello via stdin");
 }
 #[test]
+fn run_git_returns_the_output_of_a_command_that_succeeds() {
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "echo fine"]);
+    let output = run_git(cmd, Duration::from_secs(5), "git step").unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "fine");
+}
+#[test]
+fn run_git_names_the_step_and_its_reason_on_a_nonzero_exit() {
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "echo 'fatal: it broke' >&2; exit 1"]);
+    assert_eq!(
+        run_git(cmd, Duration::from_secs(5), "git step"),
+        Err("git step: fatal: it broke".to_string())
+    );
+}
+#[test]
+fn run_git_names_the_step_when_the_command_cannot_run() {
+    let cmd = Command::new("markcheck-no-such-command");
+    let err = run_git(cmd, Duration::from_secs(5), "git step").unwrap_err();
+    assert!(err.starts_with("git step failed: "), "{err}");
+}
+#[test]
+fn run_git_with_stdin_feeds_the_command_and_checks_its_exit() {
+    let output = run_git_with_stdin(
+        Command::new("cat"),
+        Duration::from_secs(5),
+        "piped",
+        "git step",
+    )
+    .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "piped");
+
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "cat >/dev/null; echo 'error: refused' >&2; exit 2"]);
+    assert_eq!(
+        run_git_with_stdin(cmd, Duration::from_secs(5), "piped", "git step"),
+        Err("git step: error: refused".to_string())
+    );
+}
+#[test]
 fn run_with_timeout_kills_a_process_that_exceeds_the_deadline() {
     // Left running, the child would touch the marker about a second in, well
     // inside the wait below: it appearing means the child was given up on,

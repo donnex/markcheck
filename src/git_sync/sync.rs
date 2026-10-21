@@ -14,9 +14,9 @@ use super::guards::{
     repo_sync_blocked, staged_target_would_be_lost, unpushed_history_blocks,
 };
 use super::inspect::{
-    ahead_of_upstream, blob_at, blob_sha_for, hash_object, index_entry, resolve_parent,
+    IndexEntry, ahead_of_upstream, blob_at, blob_sha_for, hash_object, index_entry, resolve_parent,
 };
-use super::process::{PLUMBING_TIMEOUT, command_error, literal_pathspec_command, run_with_timeout};
+use super::process::{PLUMBING_TIMEOUT, literal_pathspec_command, run_git};
 use super::push::{push, push_if_head_unchanged};
 use super::shared::{RacePoint, SyncOutcome, lock_hash, race_point};
 
@@ -109,13 +109,10 @@ pub(super) fn run_sync(
     // below settles trackedness.
     let mut cmd = literal_pathspec_command(repo_root);
     cmd.args(["status", "--porcelain", "--"]).arg(file_path);
-    let status = match run_with_timeout(cmd, PLUMBING_TIMEOUT) {
+    let status = match run_git(cmd, PLUMBING_TIMEOUT, "git status") {
         Ok(output) => output,
-        Err(err) => return SyncOutcome::Failed(format!("git status failed: {err}")),
+        Err(err) => return SyncOutcome::Failed(err),
     };
-    if !status.status.success() {
-        return SyncOutcome::Failed(command_error("git status", &status));
-    }
     if status.stdout.starts_with(b"??") {
         return SyncOutcome::SkippedUntracked;
     }
@@ -123,7 +120,11 @@ pub(super) fn run_sync(
     // Resolved before the empty-status short-circuit: `git status` is silent
     // about an untracked file under `status.showUntrackedFiles=no` or a
     // matching `.gitignore` rule.
-    let (mode, relpath) = match index_entry(repo_root, file_path) {
+    let IndexEntry {
+        mode,
+        path: relpath,
+        ..
+    } = match index_entry(repo_root, file_path) {
         Ok(Some(entry)) => entry,
         Ok(None) => return SyncOutcome::SkippedUntracked,
         Err(err) => return SyncOutcome::Failed(err),

@@ -148,6 +148,26 @@ pub(super) fn run_with_timeout_and_stdin(
 ) -> io::Result<Output> {
     run_with_optional_stdin(cmd, timeout, Some(stdin_data))
 }
+/// [`run_with_timeout`] for a step whose every failure is an error: git not
+/// running is `"<step> failed: <why>"`, a non-zero exit [`command_error`].
+pub(super) fn run_git(cmd: Command, timeout: Duration, step: &str) -> Result<Output, String> {
+    checked(run_with_timeout(cmd, timeout), step)
+}
+pub(super) fn run_git_with_stdin(
+    cmd: Command,
+    timeout: Duration,
+    stdin_data: &str,
+    step: &str,
+) -> Result<Output, String> {
+    checked(run_with_timeout_and_stdin(cmd, timeout, stdin_data), step)
+}
+fn checked(result: io::Result<Output>, step: &str) -> Result<Output, String> {
+    let output = result.map_err(|err| format!("{step} failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error(step, &output));
+    }
+    Ok(output)
+}
 /// Files rather than pipes: a descendant that outlives `git` (a credential
 /// helper, `ssh`, a hook) can hold a pipe open and block the reader, but a
 /// file has no buffer to fill and nothing has to drain it.

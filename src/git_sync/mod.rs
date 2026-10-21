@@ -363,50 +363,36 @@ impl GitSync {
     }
 
     fn spawn(&mut self, sync: PendingSync, descriptions: Vec<String>) {
-        self.busy = true;
         self.in_flight = Some((sync.base.epoch(), sync.content.clone()));
         let scope = self.publish_scope(sync.base);
-        let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
-        let sender = self.sender.clone();
         let latest_requested_hash = Arc::clone(&self.latest_requested_hash);
-        let children = Arc::clone(&self.children);
-        std::thread::spawn(move || {
-            track_children_on_this_thread(children);
-            let outcome = run_reporting_panics(|| {
-                let message = batch_message(&file_path, &descriptions);
-                let publish = match &scope {
-                    None => Publish::Everything,
-                    Some(base) => Publish::OwnChangesSince(base.as_deref()),
-                };
-                run_sync(
-                    &repo_root,
-                    &file_path,
-                    &sync.content,
-                    &message,
-                    &latest_requested_hash,
-                    sync.previous_content.as_deref(),
-                    publish,
-                )
-            });
-            let _ = sender.send(outcome);
+        self.spawn_worker(move |repo_root| {
+            let message = batch_message(&file_path, &descriptions);
+            let publish = match &scope {
+                None => Publish::Everything,
+                Some(base) => Publish::OwnChangesSince(base.as_deref()),
+            };
+            run_sync(
+                repo_root,
+                &file_path,
+                &sync.content,
+                &message,
+                &latest_requested_hash,
+                sync.previous_content.as_deref(),
+                publish,
+            )
         });
     }
 
     fn spawn_retry(&mut self, commit: String) {
-        self.busy = true;
         self.in_flight = None;
-        let repo_root = self.repo_root.clone();
-        let sender = self.sender.clone();
-        let children = Arc::clone(&self.children);
-        std::thread::spawn(move || {
-            track_children_on_this_thread(children);
-            // Every failure here is the retry's own.
-            let outcome = match run_reporting_panics(|| retry_commit(&repo_root, &commit)) {
+        self.spawn_worker(move |repo_root| {
+            // Every failure here is the retry's own, a panic's included.
+            match run_reporting_panics(|| retry_commit(repo_root, &commit)) {
                 SyncOutcome::Failed(msg) => SyncOutcome::RetryFailed(msg),
                 other => other,
-            };
-            let _ = sender.send(outcome);
+            }
         });
     }
 
@@ -416,15 +402,21 @@ impl GitSync {
         if self.busy {
             return;
         }
-        self.busy = true;
         self.in_flight = None;
-        let repo_root = self.repo_root.clone();
         let file_path = self.file_path.clone();
+        self.spawn_worker(move |repo_root| catch_up_push(repo_root, &file_path));
+    }
+
+    /// Runs `work` on a worker thread whose git children quitting can stop,
+    /// and sends its outcome, a panic reported as a failure, to `poll`.
+    fn spawn_worker(&mut self, work: impl FnOnce(&Path) -> SyncOutcome + Send + 'static) {
+        self.busy = true;
+        let repo_root = self.repo_root.clone();
         let sender = self.sender.clone();
         let children = Arc::clone(&self.children);
         std::thread::spawn(move || {
             track_children_on_this_thread(children);
-            let outcome = run_reporting_panics(|| catch_up_push(&repo_root, &file_path));
+            let outcome = run_reporting_panics(|| work(&repo_root));
             let _ = sender.send(outcome);
         });
     }

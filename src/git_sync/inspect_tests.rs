@@ -36,10 +36,14 @@ fn index_entry_matches_glob_characters_literally() {
     fs::write(work.join("notes1.md"), "x\n").unwrap();
     run(&work, &["add", "notes1.md"]);
 
+    let entry = index_entry(&work, &work.join("notes[1].md"))
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        index_entry(&work, &work.join("notes[1].md")),
-        Ok(Some(("100644".to_string(), "notes[1].md".to_string())))
+        (entry.mode.as_str(), entry.path.as_str()),
+        ("100644", "notes[1].md")
     );
+    assert_eq!(Some(entry.blob), index_blob(&work, "notes[1].md"));
     assert_ne!(
         index_blob(&work, "notes[1].md"),
         index_blob(&work, "notes1.md")
