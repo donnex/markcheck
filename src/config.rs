@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::model::{ClipboardChoice, ColorChoice, IconChoice};
+use crate::model::{ClipboardChoice, ColorChoice, IconChoice, Theme};
 
 /// Defaults for the CLI flags, from a TOML file. Keys use the positive
 /// sense (`mouse`). Unknown keys are ignored here and reported by
@@ -23,6 +23,8 @@ pub struct Config {
     pub auto_copy: Option<bool>,
     /// Palette override, like `--color`: `auto`, `truecolor`, `256` or `16`.
     pub color: Option<ColorChoice>,
+    /// Terminal background, like `--theme`: `dark` or `light`.
+    pub theme: Option<Theme>,
     /// Path prefixes under which git-sync activates, like `--git-sync`.
     pub git_sync_paths: Option<Vec<PathBuf>>,
     /// Seconds git sync waits after the last change before committing, like
@@ -50,6 +52,7 @@ const KNOWN_KEYS: &[&str] = &[
     "primary",
     "auto_copy",
     "color",
+    "theme",
     "git_sync_paths",
     "git_sync_delay",
     "clipboard",

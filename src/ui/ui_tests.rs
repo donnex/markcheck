@@ -3872,3 +3872,51 @@ fn a_preamble_code_block_is_drawn_left_aligned_with_its_indentation() {
     assert_eq!(column("ssh \"$host\"   uptime"), column("for host") + 4);
     assert_eq!(column("done"), column("for host"));
 }
+
+/// The first cell of row `row` whose text starts `needle`.
+fn styled_cell_at(
+    state: &mut AppState,
+    width: u16,
+    height: u16,
+    row: u16,
+    needle: &str,
+) -> ratatui::buffer::Cell {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| render(f, state)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let text: Vec<String> = (0..width)
+        .map(|x| buffer[(x, row)].symbol().to_string())
+        .collect();
+    let joined = text.concat();
+    let byte = joined.find(needle).expect("needle on the row");
+    let col = joined[..byte].chars().count() as u16;
+    buffer[(col, row)].clone()
+}
+
+#[test]
+fn the_current_tab_pill_takes_its_text_color_from_the_palette() {
+    for palette in [Palette::truecolor(), Palette::truecolor_light()] {
+        let mut state = sample_state();
+        state.palette = palette;
+        let cell = styled_cell_at(&mut state, 50, 20, 1, "[1]");
+        assert_eq!(cell.bg, palette.current);
+        assert_eq!(cell.fg, palette.on_current);
+    }
+}
+
+#[test]
+fn the_update_tag_is_dim_only_on_a_dark_theme() {
+    for (palette, dim) in [
+        (Palette::truecolor(), true),
+        (Palette::truecolor_light(), false),
+        (Palette::palette256_light(), false),
+        (Palette::basic(), true),
+    ] {
+        let mut state = sample_state();
+        state.palette = palette;
+        state.last_update_at = Some(SystemTime::now());
+        let cell = styled_cell_at(&mut state, 100, 30, 0, "Updated");
+        assert_eq!(cell.fg, palette.started);
+        assert_eq!(cell.modifier.contains(Modifier::DIM), dim);
+    }
+}

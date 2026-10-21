@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::{Cli, ColorChoice, Settings, config, is_remote_session, resolve_flag};
-use crate::model::{ClipboardChoice, IconChoice};
+use crate::model::{ClipboardChoice, IconChoice, Theme};
 use clap::Parser as _;
 
 #[test]
@@ -43,6 +43,7 @@ fn config_all(value: bool) -> config::Config {
         primary: Some(value),
         auto_copy: Some(value),
         color: None,
+        theme: None,
         git_sync_paths: None,
         git_sync_delay: None,
         clipboard: None,
@@ -62,6 +63,7 @@ fn settings_all(value: bool) -> Settings {
         terminal_title: value,
         exit_summary: value,
         color: ColorChoice::Auto,
+        theme: Theme::Dark,
         clipboard: ClipboardChoice::Auto,
         git_sync_delay: Duration::from_secs(10),
     }
@@ -274,6 +276,28 @@ fn color_flag_beats_the_config_which_beats_auto() {
         );
     }
     assert!(Cli::try_parse_from(["markcheck", "checklist.md", "--color", "rainbow"]).is_err());
+}
+
+#[test]
+fn theme_flag_beats_the_config_which_beats_dark() {
+    let config = |theme| config::Config {
+        theme,
+        ..config::Config::default()
+    };
+    assert_eq!(settings_from(&[], config(None)).theme, Theme::Dark);
+    assert_eq!(
+        settings_from(&[], config(Some(Theme::Light))).theme,
+        Theme::Light
+    );
+    assert_eq!(
+        settings_from(&["--theme", "dark"], config(Some(Theme::Light))).theme,
+        Theme::Dark
+    );
+    assert_eq!(
+        settings_from(&["--theme", "light"], config(Some(Theme::Dark))).theme,
+        Theme::Light
+    );
+    assert!(Cli::try_parse_from(["markcheck", "checklist.md", "--theme", "auto"]).is_err());
 }
 
 #[test]

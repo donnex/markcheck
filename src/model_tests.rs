@@ -340,11 +340,12 @@ fn palette_detect_honours_a_forced_color_choice() {
         (ColorChoice::Basic, ColorDepth::Basic),
     ] {
         assert_eq!(choice.forced_depth(), Some(depth));
-        assert_eq!(Palette::detect(choice).depth, depth);
+        assert_eq!(Palette::detect(choice, Theme::Dark).depth, depth);
+        assert_eq!(Palette::detect(choice, Theme::Light).depth, depth);
     }
     assert_eq!(ColorChoice::Auto.forced_depth(), None);
     assert_eq!(
-        Palette::detect(ColorChoice::Auto).depth,
+        Palette::detect(ColorChoice::Auto, Theme::Dark).depth,
         detect_color_depth()
     );
 }
@@ -369,7 +370,7 @@ fn code_style_pairs_an_explicit_fg_with_its_bg_on_every_color_tier() {
         ColorDepth::Palette256,
         ColorDepth::Basic,
     ] {
-        let code = Palette::for_depth(depth).code;
+        let code = Palette::themed(depth, Theme::Dark).code;
         assert!(code.fg.is_some(), "{depth:?}: code fg left to the theme");
         assert!(code.bg.is_some(), "{depth:?}: code has no background");
     }
@@ -382,7 +383,7 @@ fn error_style_is_the_error_color_or_bold_reverse_without_color() {
         ColorDepth::Palette256,
         ColorDepth::Basic,
     ] {
-        let p = Palette::for_depth(depth);
+        let p = Palette::themed(depth, Theme::Dark);
         assert_eq!(p.error_style(), Style::default().fg(p.error), "{depth:?}");
     }
     let mono = Palette::mono().error_style();
@@ -395,7 +396,7 @@ fn error_style_is_the_error_color_or_bold_reverse_without_color() {
 
 #[test]
 fn mono_palette_has_no_colors() {
-    let p = Palette::for_depth(ColorDepth::Mono);
+    let p = Palette::themed(ColorDepth::Mono, Theme::Dark);
     assert!(p.is_mono());
     for c in [p.done, p.started, p.current, p.note, p.error, p.warning] {
         assert_eq!(c, Color::Reset);
@@ -411,51 +412,57 @@ fn mono_palette_has_no_colors() {
 #[test]
 fn palette_for_depth_uses_the_matching_color_kind() {
     assert!(matches!(
-        Palette::for_depth(ColorDepth::TrueColor).code.bg,
+        Palette::themed(ColorDepth::TrueColor, Theme::Dark).code.bg,
         Some(Color::Rgb(..))
     ));
     assert!(matches!(
-        Palette::for_depth(ColorDepth::Palette256).code.bg,
+        Palette::themed(ColorDepth::Palette256, Theme::Dark).code.bg,
         Some(Color::Indexed(_))
     ));
     assert_eq!(
-        Palette::for_depth(ColorDepth::Basic).code.bg,
+        Palette::themed(ColorDepth::Basic, Theme::Dark).code.bg,
         Some(Color::DarkGray),
         "basic fallback: a subtle gray code background"
     );
     assert!(matches!(
-        Palette::for_depth(ColorDepth::TrueColor).error,
+        Palette::themed(ColorDepth::TrueColor, Theme::Dark).error,
         Color::Rgb(..)
     ));
     assert!(matches!(
-        Palette::for_depth(ColorDepth::Palette256).error,
+        Palette::themed(ColorDepth::Palette256, Theme::Dark).error,
         Color::Indexed(_)
     ));
-    assert_eq!(Palette::for_depth(ColorDepth::Basic).error, Color::Red);
+    assert_eq!(
+        Palette::themed(ColorDepth::Basic, Theme::Dark).error,
+        Color::Red
+    );
     // The warning role (list banner) resolves per depth.
     assert!(matches!(
-        Palette::for_depth(ColorDepth::TrueColor).warning,
+        Palette::themed(ColorDepth::TrueColor, Theme::Dark).warning,
         Color::Rgb(..)
     ));
     assert!(matches!(
-        Palette::for_depth(ColorDepth::Palette256).warning,
+        Palette::themed(ColorDepth::Palette256, Theme::Dark).warning,
         Color::Indexed(_)
     ));
-    assert_eq!(Palette::for_depth(ColorDepth::Basic).warning, Color::Yellow);
+    assert_eq!(
+        Palette::themed(ColorDepth::Basic, Theme::Dark).warning,
+        Color::Yellow
+    );
 }
 
 #[test]
 fn for_depth_records_the_depth() {
     assert_eq!(
-        Palette::for_depth(ColorDepth::TrueColor).depth,
+        Palette::themed(ColorDepth::TrueColor, Theme::Dark).depth,
         ColorDepth::TrueColor
     );
     assert_eq!(
-        Palette::for_depth(ColorDepth::Palette256).depth,
+        Palette::themed(ColorDepth::Palette256, Theme::Dark).depth,
         ColorDepth::Palette256
     );
     assert_eq!(
-        Palette::for_depth(ColorDepth::Basic).depth,
+        Palette::themed(ColorDepth::Basic, Theme::Dark).depth,
         ColorDepth::Basic
     );
 }
@@ -463,35 +470,35 @@ fn for_depth_records_the_depth() {
 #[test]
 fn progress_rgb_hits_the_two_stops() {
     // Yellow at 0% done, green at 100%.
-    assert_eq!(progress_rgb_parts(0.0), STARTED_RGB);
-    assert_eq!(progress_rgb_parts(1.0), DONE_RGB);
+    assert_eq!(progress_rgb_parts(STARTED_RGB, DONE_RGB, 0.0), STARTED_RGB);
+    assert_eq!(progress_rgb_parts(STARTED_RGB, DONE_RGB, 1.0), DONE_RGB);
 }
 
 #[test]
 fn progress_rgb_is_monotonic_between_stops() {
     // Half-way is strictly between yellow and green on the channels that move
     // in one direction (r falls and b falls yellow→green).
-    let (r, _g, b) = progress_rgb_parts(0.5);
+    let (r, _g, b) = progress_rgb_parts(STARTED_RGB, DONE_RGB, 0.5);
     assert!(r < STARTED_RGB.0 && r > DONE_RGB.0);
     assert!(b < STARTED_RGB.2 && b > DONE_RGB.2);
 }
 
 #[test]
 fn progress_rgb_clamps_out_of_range_ratios() {
-    assert_eq!(progress_rgb_parts(-1.0), STARTED_RGB);
-    assert_eq!(progress_rgb_parts(2.0), DONE_RGB);
+    assert_eq!(progress_rgb_parts(STARTED_RGB, DONE_RGB, -1.0), STARTED_RGB);
+    assert_eq!(progress_rgb_parts(STARTED_RGB, DONE_RGB, 2.0), DONE_RGB);
 }
 
 #[test]
 fn truecolor_progress_color_fades_with_completion() {
-    let p = Palette::for_depth(ColorDepth::TrueColor);
+    let p = Palette::themed(ColorDepth::TrueColor, Theme::Dark);
     let (yr, yg, yb) = STARTED_RGB;
     let (er, eg, eb) = DONE_RGB;
     // Starts at yellow (not gray), ends at green.
     assert_eq!(p.progress_color(0, 4).fg, Some(Color::Rgb(yr, yg, yb)));
     assert_eq!(p.progress_color(4, 4).fg, Some(Color::Rgb(er, eg, eb)));
     // Half done is a blend strictly between the yellow and green stops.
-    let (mr, mg, mb) = progress_rgb_parts(0.5);
+    let (mr, mg, mb) = progress_rgb_parts(STARTED_RGB, DONE_RGB, 0.5);
     assert_eq!(p.progress_color(2, 4).fg, Some(Color::Rgb(mr, mg, mb)));
     assert_ne!((mr, mg, mb), STARTED_RGB);
     assert_ne!((mr, mg, mb), DONE_RGB);
@@ -501,14 +508,14 @@ fn truecolor_progress_color_fades_with_completion() {
 fn empty_document_counter_reads_complete() {
     // total == 0 is treated as fully done (green), matching the old
     // done == total semantics rather than the 0%-done yellow.
-    let p = Palette::for_depth(ColorDepth::TrueColor);
+    let p = Palette::themed(ColorDepth::TrueColor, Theme::Dark);
     let (er, eg, eb) = DONE_RGB;
     assert_eq!(p.progress_color(0, 0).fg, Some(Color::Rgb(er, eg, eb)));
 }
 
 #[test]
 fn basic_progress_color_steps_through_named_colors() {
-    let p = Palette::for_depth(ColorDepth::Basic);
+    let p = Palette::themed(ColorDepth::Basic, Theme::Dark);
     assert_eq!(p.progress_color(0, 4).fg, Some(Color::Yellow));
     assert_eq!(p.progress_color(1, 4).fg, Some(Color::Yellow));
     assert_eq!(p.progress_color(2, 4).fg, Some(Color::Green));
@@ -519,7 +526,7 @@ fn basic_progress_color_steps_through_named_colors() {
 
 #[test]
 fn palette256_progress_color_uses_indexed_colors() {
-    let p = Palette::for_depth(ColorDepth::Palette256);
+    let p = Palette::themed(ColorDepth::Palette256, Theme::Dark);
     for (done, total) in [(0, 4), (2, 4), (4, 4)] {
         assert!(matches!(
             p.progress_color(done, total).fg,
@@ -564,9 +571,9 @@ fn document_progress_sums_across_lists() {
 #[test]
 fn the_progress_ramp_runs_between_the_truecolor_started_and_done_colors() {
     let palette = Palette::truecolor();
-    let (r, g, b) = progress_rgb_parts(0.0);
+    let (r, g, b) = progress_rgb_parts(STARTED_RGB, DONE_RGB, 0.0);
     assert_eq!(palette.started, Color::Rgb(r, g, b));
-    let (r, g, b) = progress_rgb_parts(1.0);
+    let (r, g, b) = progress_rgb_parts(STARTED_RGB, DONE_RGB, 1.0);
     assert_eq!(palette.done, Color::Rgb(r, g, b));
 }
 
@@ -752,4 +759,126 @@ fn every_icon_set_keeps_its_markers_one_width_and_its_chrome_one_cell() {
             assert_eq!(width(glyph), 1, "{glyph:?} must fill one cell");
         }
     }
+}
+
+/// The sRGB value of a truecolor or xterm-256 color (cube or gray ramp).
+fn color_rgb(color: Color) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Indexed(i) if i >= 232 => {
+            let v = 8 + (i - 232) * 10;
+            (v, v, v)
+        }
+        Color::Indexed(i) if i >= 16 => {
+            const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+            let i = i - 16;
+            (
+                LEVELS[(i / 36) as usize],
+                LEVELS[(i / 6 % 6) as usize],
+                LEVELS[(i % 6) as usize],
+            )
+        }
+        other => panic!("no fixed RGB for {other:?}"),
+    }
+}
+
+/// WCAG 2 contrast ratio between two sRGB colors.
+fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f64 {
+    let luminance = |(r, g, b): (u8, u8, u8)| {
+        let channel = |c: u8| {
+            let c = c as f64 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    };
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+#[test]
+fn the_contrast_helper_matches_known_ratios() {
+    assert!((contrast((0, 0, 0), (255, 255, 255)) - 21.0).abs() < 0.01);
+    assert!((contrast((255, 255, 255), (255, 255, 255)) - 1.0).abs() < 0.01);
+    assert_eq!(color_rgb(Color::Indexed(231)), (255, 255, 255));
+    assert_eq!(color_rgb(Color::Indexed(244)), (128, 128, 128));
+}
+
+#[test]
+fn every_light_palette_accent_reaches_4_5_to_1_on_white() {
+    const WHITE: (u8, u8, u8) = (255, 255, 255);
+    for depth in [ColorDepth::TrueColor, ColorDepth::Palette256] {
+        let p = Palette::themed(depth, Theme::Light);
+        assert!(p.is_light());
+        let mut accents = vec![
+            ("done", p.done),
+            ("started", p.started),
+            ("current", p.current),
+            ("note", p.note),
+            ("error", p.error),
+            ("warning", p.warning),
+        ];
+        accents.extend((0..4).map(|slot| ("depth guide", p.depth_color(slot))));
+        accents.extend((0..=10).filter_map(|done| {
+            let fg = p.progress_color(done, 10).fg?;
+            Some(("progress", fg))
+        }));
+        for (role, color) in accents {
+            let ratio = contrast(color_rgb(color), WHITE);
+            assert!(
+                ratio >= 4.5,
+                "{depth:?} {role} {color:?} is only {ratio:.2}:1 on white"
+            );
+        }
+        let pill = contrast(color_rgb(p.on_current), color_rgb(p.current));
+        assert!(pill >= 4.5, "{depth:?} tab pill is only {pill:.2}:1");
+    }
+}
+
+#[test]
+fn the_light_theme_only_changes_the_truecolor_and_256_palettes() {
+    for depth in [ColorDepth::Basic, ColorDepth::Mono] {
+        let dark = Palette::themed(depth, Theme::Dark);
+        let light = Palette::themed(depth, Theme::Light);
+        assert!(!light.is_light());
+        assert_eq!(
+            (light.done, light.started, light.current, light.note),
+            (dark.done, dark.started, dark.current, dark.note)
+        );
+        assert_eq!(light.depth_color(1), dark.depth_color(1));
+        assert_eq!(light.progress_color(1, 2), dark.progress_color(1, 2));
+    }
+    for depth in [ColorDepth::TrueColor, ColorDepth::Palette256] {
+        let dark = Palette::themed(depth, Theme::Dark);
+        let light = Palette::themed(depth, Theme::Light);
+        assert_eq!(light.depth, depth);
+        assert_ne!(light.done, dark.done);
+        assert_eq!(light.code, dark.code, "the dark code chip reads on both");
+    }
+}
+
+#[test]
+fn the_light_256_progress_counter_steps_from_started_to_done() {
+    let p = Palette::palette256_light();
+    assert_eq!(p.progress_color(1, 4).fg, Some(p.started));
+    assert_eq!(p.progress_color(2, 4).fg, Some(p.done));
+    let full = p.progress_color(4, 4);
+    assert_eq!(full.fg, Some(p.done));
+    assert!(full.add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn the_light_truecolor_progress_ramp_runs_between_its_own_stops() {
+    let p = Palette::truecolor_light();
+    assert_eq!(p.progress_color(0, 4).fg, Some(p.started));
+    assert_eq!(p.progress_color(4, 4).fg, Some(p.done));
+    assert_eq!(rgb(LIGHT_STARTED_RGB), p.started);
+}
+
+#[test]
+fn the_theme_defaults_to_dark() {
+    assert_eq!(Theme::default(), Theme::Dark);
 }

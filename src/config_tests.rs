@@ -72,7 +72,7 @@ fn load_config_parses_all_fields() {
     fs::write(
         &path,
         "icons = \"ascii\"\nnerd_font = false\nmouse = false\nprimary = true\nauto_copy = true\n\
-             color = \"256\"\ngit_sync_paths = [\"/home/user/checklists\"]\ngit_sync_delay = 30\nclipboard = \"osc52\"\nterminal_title = false\nexit_summary = false\n",
+             color = \"256\"\ntheme = \"light\"\ngit_sync_paths = [\"/home/user/checklists\"]\ngit_sync_delay = 30\nclipboard = \"osc52\"\nterminal_title = false\nexit_summary = false\n",
     )
     .unwrap();
 
@@ -91,6 +91,7 @@ fn load_config_parses_all_fields() {
             primary: Some(true),
             auto_copy: Some(true),
             color: Some(ColorChoice::Palette256),
+            theme: Some(Theme::Light),
             git_sync_paths: Some(vec![PathBuf::from("/home/user/checklists")]),
             git_sync_delay: Some(30),
             clipboard: Some(ClipboardChoice::Osc52),

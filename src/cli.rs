@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 
 use crate::config;
-use crate::model::{ClipboardChoice, ColorChoice, IconChoice, LineNumber};
+use crate::model::{ClipboardChoice, ColorChoice, IconChoice, LineNumber, Theme};
 
 /// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
@@ -81,6 +81,11 @@ pub struct Cli {
     /// force one (config: color = "...")
     #[arg(long, value_name = "PALETTE", value_enum)]
     pub color: Option<ColorChoice>,
+    /// Terminal background the colors are tuned for: dark (the default) or
+    /// light; never detected, and the 16-color palette ignores it
+    /// (config: theme = "...")
+    #[arg(long, value_name = "THEME", value_enum)]
+    pub theme: Option<Theme>,
     /// Where y copies to: auto uses the system clipboard and falls back to
     /// OSC 52 (both over SSH); system or osc52 use only that one
     /// (config: clipboard = "...")
@@ -136,6 +141,7 @@ pub struct Settings {
     pub terminal_title: bool,
     pub exit_summary: bool,
     pub color: ColorChoice,
+    pub theme: Theme,
     pub clipboard: ClipboardChoice,
     pub git_sync_delay: std::time::Duration,
 }
@@ -168,6 +174,7 @@ impl Settings {
                 true,
             ),
             color: cli.color.or(config.color).unwrap_or_default(),
+            theme: cli.theme.or(config.theme).unwrap_or_default(),
             clipboard: cli.clipboard.or(config.clipboard).unwrap_or_default(),
             git_sync_delay: std::time::Duration::from_secs(
                 cli.git_sync_delay

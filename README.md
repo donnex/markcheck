@@ -94,6 +94,13 @@ workflow and file-backed state.
   auto|truecolor|256|16` (or the `color` config key) forces a palette when
   detection gets it wrong. Set `NO_COLOR` (to any non-empty value, per [no-color.org](https://no-color.org/))
   to turn color off entirely
+- **On a light terminal theme, run with `--theme light`** (or set
+  `theme = "light"` in the config). The truecolor and 256-color hues are
+  tuned for a dark background by default, and are pale and hard to read on
+  white; the light theme swaps in darker "One Light" hues, each at least
+  4.5:1 against white. The theme is never detected, so it stays dark until
+  you choose it. The 16-color palette (`--color 16`) and `NO_COLOR` use
+  your terminal's own colors and look the same with either theme
 
 ## Installation
 
@@ -152,6 +159,7 @@ markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
 markcheck --auto-copy runbook.md      # copy a task's command as you navigate to it
 markcheck --no-auto-copy runbook.md   # ...or turn it off for one run, if your config enables it
 markcheck --color 256 runbook.md      # force a palette: auto, truecolor, 256 or 16
+markcheck --theme light runbook.md    # colors for a light terminal background: dark (default) or light
 markcheck --clipboard osc52 runbook.md  # copy through the terminal only: auto, system or osc52
 markcheck --no-terminal-title runbook.md  # leave the terminal title alone
 markcheck --no-exit-summary runbook.md    # print nothing after quitting
@@ -194,6 +202,7 @@ mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
 color = "auto"      # = --color: "auto", "truecolor", "256" or "16" (256 and 16 work unquoted too)
+theme = "dark"      # = --theme: "dark" or "light" (set "light" on a light terminal background)
 clipboard = "auto"  # = --clipboard: "auto", "system" or "osc52"
 terminal_title = true  # false = --no-terminal-title, true = --terminal-title
 exit_summary = true    # false = --no-exit-summary,   true = --exit-summary
@@ -226,8 +235,8 @@ value can always be overridden for a single run:
 `--primary`/`--no-primary`, `--auto-copy`/`--no-auto-copy`,
 `--terminal-title`/`--no-terminal-title`, and
 `--exit-summary`/`--no-exit-summary`.
-`icons`, `color`, `clipboard` and `git_sync_delay` work the same way: `--icons`,
-`--color`, `--clipboard` and `--git-sync-delay` override them, and
+`icons`, `color`, `theme`, `clipboard` and `git_sync_delay` work the same way: `--icons`,
+`--color`, `--theme`, `--clipboard` and `--git-sync-delay` override them, and
 `--icons auto` and `--color auto` go back to detecting the terminal. An explicit `color` (from either) also wins
 over `NO_COLOR`, per [no-color.org](https://no-color.org/).
 

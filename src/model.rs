@@ -1027,6 +1027,21 @@ impl ColorChoice {
     }
 }
 
+/// The `--theme` flag / `theme` config key (#252): the terminal background
+/// the truecolor and 256-color palettes are tuned for. Never detected, so
+/// a light terminal opts in; ANSI-16 and `NO_COLOR` follow the terminal's
+/// own colors and ignore it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+pub enum Theme {
+    #[default]
+    #[value(name = "dark")]
+    #[serde(rename = "dark")]
+    Dark,
+    #[value(name = "light")]
+    #[serde(rename = "light")]
+    Light,
+}
+
 /// `TERM` values of terminals that support 24-bit color but don't put
 /// `256color` in their name, and whose `COLORTERM` is lost over SSH, `sudo`
 /// or a multiplexer started without it.
@@ -1080,7 +1095,8 @@ pub fn detect_color_depth() -> ColorDepth {
 /// representation the terminal supports — a curated 24-bit hue on truecolor
 /// terminals, the nearest 256-palette index on 256-color terminals, or a
 /// named ANSI-16 color as the always-safe fallback (which also respects the
-/// user's own theme). Curated hues are the widely-liked "One Dark" set.
+/// user's own theme). Curated hues are the widely-liked "One Dark" set, or
+/// with `--theme light` darker "One Light" hues that reach 4.5:1 on white.
 /// With `NO_COLOR` every role is `Color::Reset`.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
@@ -1091,7 +1107,9 @@ pub struct Palette {
     pub note: Color,       // display-only note cards
     pub error: Color,      // error text, e.g. a sticky status-bar error
     pub warning: Color,    // list banner — a leading bold-only bullet
+    pub on_current: Color, // text on a `current` background (the current list's tab)
     pub depth: ColorDepth, // the tier this palette was resolved for (gradient, depth guides)
+    pub theme: Theme,      // the background the hues are tuned for (gradient, depth guides)
 }
 
 impl Palette {
@@ -1106,7 +1124,9 @@ impl Palette {
             note: Color::Blue,
             error: Color::Red,
             warning: Color::Yellow, // ANSI-16 has no separate amber
+            on_current: Color::Black,
             depth: ColorDepth::Basic,
+            theme: Theme::Dark,
         }
     }
 
@@ -1120,7 +1140,9 @@ impl Palette {
             note: Color::Indexed(75),     // blue
             error: Color::Indexed(203),   // red
             warning: Color::Indexed(173), // amber/orange
+            on_current: Color::Black,
             depth: ColorDepth::Palette256,
+            theme: Theme::Dark,
         }
     }
 
@@ -1137,7 +1159,40 @@ impl Palette {
             note: Color::Rgb(0x61, 0xaf, 0xef),
             error: Color::Rgb(0xe0, 0x6c, 0x75),   // One Dark red
             warning: Color::Rgb(0xd1, 0x9a, 0x66), // One Dark orange/amber
+            on_current: Color::Black,
             depth: ColorDepth::TrueColor,
+            theme: Theme::Dark,
+        }
+    }
+
+    /// 256-palette indices for a light background, each at least 4.5:1 on
+    /// white. `code` keeps the dark chip, which reads on either theme.
+    pub const fn palette256_light() -> Self {
+        Palette {
+            done: Color::Indexed(28),     // green
+            started: Color::Indexed(94),  // dark yellow
+            current: Color::Indexed(24),  // deep cyan
+            note: Color::Indexed(26),     // blue
+            error: Color::Indexed(160),   // red
+            warning: Color::Indexed(130), // orange
+            on_current: Color::Indexed(231),
+            theme: Theme::Light,
+            ..Self::palette256()
+        }
+    }
+
+    /// One Light hues, darkened where needed to reach 4.5:1 on white.
+    pub const fn truecolor_light() -> Self {
+        Palette {
+            done: rgb(LIGHT_DONE_RGB),
+            started: rgb(LIGHT_STARTED_RGB),
+            current: Color::Rgb(0x01, 0x70, 0xa0),
+            note: Color::Rgb(0x3a, 0x6f, 0xd8),
+            error: Color::Rgb(0xca, 0x12, 0x43),
+            warning: Color::Rgb(0xa0, 0x52, 0x0a),
+            on_current: Color::Rgb(0xff, 0xff, 0xff),
+            theme: Theme::Light,
+            ..Self::truecolor()
         }
     }
 
@@ -1152,17 +1207,29 @@ impl Palette {
             note: Color::Reset,
             error: Color::Reset,
             warning: Color::Reset,
+            on_current: Color::Reset,
             depth: ColorDepth::Mono,
+            theme: Theme::Dark,
         }
     }
 
-    pub const fn for_depth(depth: ColorDepth) -> Self {
-        match depth {
-            ColorDepth::TrueColor => Self::truecolor(),
-            ColorDepth::Palette256 => Self::palette256(),
-            ColorDepth::Basic => Self::basic(),
-            ColorDepth::Mono => Self::mono(),
+    /// The palette for `depth` tuned for `theme`; ANSI-16 and mono are the
+    /// terminal's own colors on either.
+    pub const fn themed(depth: ColorDepth, theme: Theme) -> Self {
+        match (depth, theme) {
+            (ColorDepth::TrueColor, Theme::Dark) => Self::truecolor(),
+            (ColorDepth::TrueColor, Theme::Light) => Self::truecolor_light(),
+            (ColorDepth::Palette256, Theme::Dark) => Self::palette256(),
+            (ColorDepth::Palette256, Theme::Light) => Self::palette256_light(),
+            (ColorDepth::Basic, _) => Self::basic(),
+            (ColorDepth::Mono, _) => Self::mono(),
         }
+    }
+
+    /// Whether the hues are the light-background set, on which dimming an
+    /// accent would wash it out against the background.
+    pub fn is_light(&self) -> bool {
+        self.theme == Theme::Light
     }
 
     pub fn is_mono(&self) -> bool {
@@ -1181,17 +1248,30 @@ impl Palette {
     }
 
     /// The palette `choice` forces, or with `Auto` the one for the current
-    /// terminal's detected capability.
-    pub fn detect(choice: ColorChoice) -> Self {
-        Self::for_depth(choice.forced_depth().unwrap_or_else(detect_color_depth))
+    /// terminal's detected capability, tuned for `theme`.
+    pub fn detect(choice: ColorChoice, theme: Theme) -> Self {
+        Self::themed(
+            choice.forced_depth().unwrap_or_else(detect_color_depth),
+            theme,
+        )
     }
 
     /// Guide color for a nested sub-list, from a small cycle of distinct hues.
     /// `slot` is the document-wide ordinal: `Document::sublist_base` plus the
     /// list-local `sublist_slot`.
     pub fn depth_color(&self, slot: usize) -> Color {
-        match self.depth {
-            ColorDepth::TrueColor => {
+        match (self.depth, self.theme) {
+            (ColorDepth::TrueColor, Theme::Light) => {
+                const RAMP: [(u8, u8, u8); 4] = [
+                    (0x3a, 0x6f, 0xd8), // blue
+                    (0xa6, 0x26, 0xa4), // purple
+                    (0x01, 0x70, 0xa0), // cyan
+                    (0xa0, 0x52, 0x0a), // orange
+                ];
+                let (r, g, b) = RAMP[slot % RAMP.len()];
+                Color::Rgb(r, g, b)
+            }
+            (ColorDepth::TrueColor, Theme::Dark) => {
                 const RAMP: [(u8, u8, u8); 4] = [
                     (0x61, 0xaf, 0xef), // blue
                     (0xc6, 0x78, 0xdd), // purple
@@ -1201,15 +1281,19 @@ impl Palette {
                 let (r, g, b) = RAMP[slot % RAMP.len()];
                 Color::Rgb(r, g, b)
             }
-            ColorDepth::Palette256 => {
+            (ColorDepth::Palette256, Theme::Light) => {
+                const RAMP: [u8; 4] = [26, 127, 24, 130]; // blue, purple, cyan, orange
+                Color::Indexed(RAMP[slot % RAMP.len()])
+            }
+            (ColorDepth::Palette256, Theme::Dark) => {
                 const RAMP: [u8; 4] = [75, 176, 73, 173]; // blue, purple, cyan, orange
                 Color::Indexed(RAMP[slot % RAMP.len()])
             }
-            ColorDepth::Basic => {
+            (ColorDepth::Basic, _) => {
                 const RAMP: [Color; 4] = [Color::Blue, Color::Magenta, Color::Cyan, Color::Yellow];
                 RAMP[slot % RAMP.len()]
             }
-            ColorDepth::Mono => Color::Reset,
+            (ColorDepth::Mono, _) => Color::Reset,
         }
     }
 
@@ -1222,27 +1306,32 @@ impl Palette {
         } else {
             done as f32 / total as f32
         };
-        match self.depth {
-            ColorDepth::TrueColor => Style::default().fg(progress_rgb(ratio)),
-            ColorDepth::Palette256 => {
-                let (r, g, b) = progress_rgb_parts(ratio);
+        match (self.depth, self.theme) {
+            (ColorDepth::TrueColor, Theme::Dark) => {
+                Style::default().fg(progress_rgb(STARTED_RGB, DONE_RGB, ratio))
+            }
+            (ColorDepth::TrueColor, Theme::Light) => {
+                Style::default().fg(progress_rgb(LIGHT_STARTED_RGB, LIGHT_DONE_RGB, ratio))
+            }
+            (ColorDepth::Palette256, Theme::Dark) => {
+                let (r, g, b) = progress_rgb_parts(STARTED_RGB, DONE_RGB, ratio);
                 Style::default().fg(Color::Indexed(rgb_to_256(r, g, b)))
             }
-            // ANSI-16 can't interpolate, so step through named colors instead.
-            // Starts at yellow (never gray) so it's readable at 0% done.
-            ColorDepth::Basic => {
+            // ANSI-16 can't interpolate, so step through its colors instead,
+            // starting at yellow (never gray) so it's readable at 0% done. The
+            // light 256 set steps too: its cube has no in-between hue that
+            // keeps 4.5:1 on white.
+            (ColorDepth::Basic, _) | (ColorDepth::Palette256, Theme::Light) => {
                 if ratio >= 1.0 {
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(self.done).add_modifier(Modifier::BOLD)
                 } else if ratio >= 0.5 {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(self.done)
                 } else {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(self.started)
                 }
             }
-            ColorDepth::Mono if ratio >= 1.0 => Style::default().add_modifier(Modifier::BOLD),
-            ColorDepth::Mono => Style::default(),
+            (ColorDepth::Mono, _) if ratio >= 1.0 => Style::default().add_modifier(Modifier::BOLD),
+            (ColorDepth::Mono, _) => Style::default(),
         }
     }
 }
@@ -1251,26 +1340,29 @@ impl Palette {
 /// ramp's stops: yellow, not gray, so 0% stays readable.
 const DONE_RGB: (u8, u8, u8) = (0x98, 0xc3, 0x79);
 const STARTED_RGB: (u8, u8, u8) = (0xe5, 0xc0, 0x7b);
+/// The light theme's done and started colors and ramp stops (#252).
+const LIGHT_DONE_RGB: (u8, u8, u8) = (0x38, 0x7c, 0x37);
+const LIGHT_STARTED_RGB: (u8, u8, u8) = (0x8c, 0x64, 0x00);
 
 const fn rgb((r, g, b): (u8, u8, u8)) -> Color {
     Color::Rgb(r, g, b)
 }
 
-/// Linear interpolation from started-yellow (0% done) to done-green (100%),
-/// returning raw `(r, g, b)`. `ratio` is clamped to `[0, 1]`.
-fn progress_rgb_parts(ratio: f32) -> (u8, u8, u8) {
+/// Linear interpolation from the started color (0% done) to the done color
+/// (100%), returning raw `(r, g, b)`. `ratio` is clamped to `[0, 1]`.
+fn progress_rgb_parts(started: (u8, u8, u8), done: (u8, u8, u8), ratio: f32) -> (u8, u8, u8) {
     let ratio = ratio.clamp(0.0, 1.0);
     let lerp = |a: u8, b: u8, t: f32| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
     (
-        lerp(STARTED_RGB.0, DONE_RGB.0, ratio),
-        lerp(STARTED_RGB.1, DONE_RGB.1, ratio),
-        lerp(STARTED_RGB.2, DONE_RGB.2, ratio),
+        lerp(started.0, done.0, ratio),
+        lerp(started.1, done.1, ratio),
+        lerp(started.2, done.2, ratio),
     )
 }
 
 /// The progress ramp color as a 24-bit `Color::Rgb`.
-fn progress_rgb(ratio: f32) -> Color {
-    let (r, g, b) = progress_rgb_parts(ratio);
+fn progress_rgb(started: (u8, u8, u8), done: (u8, u8, u8), ratio: f32) -> Color {
+    let (r, g, b) = progress_rgb_parts(started, done, ratio);
     Color::Rgb(r, g, b)
 }
 

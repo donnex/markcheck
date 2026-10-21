@@ -212,12 +212,15 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     // Built as strings first so the width can be measured.
     let mut right_parts: Vec<(String, Style)> = Vec::new();
     if let Some(update_label) = update_label {
-        right_parts.push((
-            update_label,
-            Style::default()
-                .fg(state.palette.started)
-                .add_modifier(Modifier::DIM),
-        ));
+        // Dimming the light theme's darker hue would fade it into the
+        // background, so it's dim only on a dark one.
+        let style = Style::default().fg(state.palette.started);
+        let style = if state.palette.is_light() {
+            style
+        } else {
+            style.add_modifier(Modifier::DIM)
+        };
+        right_parts.push((update_label, style));
     }
     if let Some(sync_section) = sync_section {
         right_parts.push(sync_section);
@@ -277,14 +280,16 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(Line::from(spans)), left_area);
 }
 
-/// Black text on the accent background. `Color::Black` is a deliberate
-/// exception to reading colors from the palette: it reads fine on
-/// `palette.current` at every color depth. Without color, reverse video.
+/// `palette.on_current` text on the accent background: black on the dark
+/// theme's light accent, white on the light theme's dark one. Without
+/// color, reverse video.
 fn current_tab_pill_style(state: &AppState) -> Style {
     if state.palette.is_mono() {
         return Style::default().add_modifier(Modifier::REVERSED);
     }
-    Style::default().fg(Color::Black).bg(state.palette.current)
+    Style::default()
+        .fg(state.palette.on_current)
+        .bg(state.palette.current)
 }
 
 /// The `[N] title` tab row, the current list highlighted as a pill.
