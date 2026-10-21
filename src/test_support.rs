@@ -254,6 +254,7 @@ pub mod fixture {
             lists,
             preambles: Default::default(),
             unshown: Default::default(),
+            unrecognised_markers: Vec::new(),
             anchors: Vec::new(),
             critical: Default::default(),
             raw_lines,

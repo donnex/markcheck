@@ -64,6 +64,35 @@ fn examples_cover_fence_after_list_and_uppercase_done() {
 }
 
 #[test]
+fn only_the_markers_from_other_tools_example_has_unrecognised_markers() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples");
+    for entry in fs::read_dir(&dir).expect("examples/ must exist") {
+        let path = entry.expect("readable entry").path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if !name.ends_with(".md") || name == "README.md" {
+            continue;
+        }
+        let document = parse_document(path.clone()).expect("example parses");
+        let markers: Vec<&str> = document
+            .unrecognised_markers
+            .iter()
+            .map(|marker| marker.marker.as_str())
+            .collect();
+        let expected: &[&str] = if name == "notes-and-code.md" {
+            &["[>]", "[?]"]
+        } else {
+            &[]
+        };
+        assert_eq!(markers, expected, "{name}");
+    }
+    let deferred = example_item("notes-and-code.md", "Run the data migration");
+    assert_eq!(deferred.kind, ItemKind::DisplayOnly);
+}
+
+#[test]
 fn example_phases_get_one_list_each() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/phases.md");
     let document = parse_document(path).expect("example parses");
@@ -3107,4 +3136,89 @@ Applied 3 migrations.
         vec![CodeKind::Console],
         "a trailing fence keeps its kind"
     );
+}
+
+// --- Task markers markcheck doesn't recognise (#215).
+
+fn unrecognised(document: &Document) -> Vec<(LineNumber, &str)> {
+    document
+        .unrecognised_markers
+        .iter()
+        .map(|marker| (marker.line, marker.marker.as_str()))
+        .collect()
+}
+
+#[test]
+fn other_tools_markers_and_typos_are_counted_and_stay_notes() {
+    let document =
+        parse("- [ ] Stop the service\n- [>] Run the migration\n- [ x] Start the service\n");
+    assert_eq!(unrecognised(&document), vec![(2, "[>]"), (3, "[ x]")]);
+    let kinds: Vec<_> = document.lists[0]
+        .items
+        .iter()
+        .map(|item| item.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ItemKind::Checkbox(TaskState::NotStarted),
+            ItemKind::DisplayOnly,
+            ItemKind::DisplayOnly
+        ]
+    );
+    assert_eq!(
+        document.lists[0].items[1].display_text,
+        "[>] Run the migration"
+    );
+    assert_eq!(document.progress().total(), 1);
+}
+
+#[test]
+fn every_marker_shape_is_counted_wherever_an_item_starts() {
+    let document = parse(
+        "- [ ] task\n- [?] a\n- [~] b\n- [!] c\n- [xx] d\n- [x ] e\n  - [>] nested\n1. [<] ordered\n- [é]\n",
+    );
+    assert_eq!(
+        unrecognised(&document),
+        vec![
+            (2, "[?]"),
+            (3, "[~]"),
+            (4, "[!]"),
+            (5, "[xx]"),
+            (6, "[x ]"),
+            (7, "[>]"),
+            (8, "[<]"),
+            (9, "[é]"),
+        ]
+    );
+}
+
+#[test]
+fn recognised_markers_and_bracketed_text_are_not_counted() {
+    let document = parse(
+        "- [ ] a\n- [x] b\n- [X] c\n- [/] d\n- [-] e\n- [abc] three characters\n- [>]glued\n\
+         - \\[>] escaped\n- run [>] later\n- [>](https://example.com) link\n- [] empty\n\
+         - ### [>] heading\n\n> - [>] quoted\n\n[>] a paragraph\n",
+    );
+    assert_eq!(unrecognised(&document), vec![]);
+}
+
+#[test]
+fn a_started_marker_left_as_text_past_the_round_cap_is_counted() {
+    let mut source = String::from("- [ ] task\n- [/]\n");
+    for level in 1..12 {
+        source.push_str(&" ".repeat(2 + 3 * (level - 1)));
+        source.push_str("2. [/]\n");
+    }
+    let document = parse(&source);
+    assert_eq!(
+        unrecognised(&document),
+        vec![(EXTENDED_MARKER_ROUNDS + 2, "[/]")]
+    );
+}
+
+#[test]
+fn an_unrecognised_marker_at_the_end_of_the_file_is_counted() {
+    let document = parse("- [ ] task\r\n\r\n- [?]");
+    assert_eq!(unrecognised(&document), vec![(3, "[?]")]);
 }

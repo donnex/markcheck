@@ -640,6 +640,15 @@ impl Unshown {
     }
 }
 
+/// A bracketed marker at the start of a list item that markcheck doesn't
+/// read as a task (`[>]`, `[?]`, `[ x]`), counted for the startup note (#215).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnrecognisedMarker {
+    pub line: LineNumber,
+    /// The marker as written, brackets included.
+    pub marker: String,
+}
+
 /// `%C3%A9` as `é`, the form a browser gives a copied link to a heading;
 /// text that doesn't decode to UTF-8 is kept as written.
 fn percent_decode(text: &str) -> String {
@@ -682,6 +691,8 @@ pub struct Document {
     pub preambles: std::collections::BTreeMap<LineNumber, Vec<PreambleBlock>>,
     /// What the file has outside task lists that markcheck can't show.
     pub unshown: Unshown,
+    /// Task-marker lookalikes markcheck read as plain text, in line order.
+    pub unrecognised_markers: Vec<UnrecognisedMarker>,
     /// Each heading's GitHub-style anchor (`rollback` for `## Rollback`), in
     /// document order (#114, #139, #186).
     pub anchors: Vec<Anchor>,

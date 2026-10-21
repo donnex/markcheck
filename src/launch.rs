@@ -457,6 +457,24 @@ pub fn unshown_note(unshown: &crate::model::Unshown) -> Option<String> {
     Some(format!("{listed} outside task lists not shown"))
 }
 
+/// The startup note for list items that open with a bracketed marker
+/// markcheck doesn't read as a task (#215), naming the first:
+/// `2 task markers not recognised (line 14: [>])`.
+pub fn unrecognised_markers_note(markers: &[crate::model::UnrecognisedMarker]) -> Option<String> {
+    let first = markers.first()?;
+    let noun = if markers.len() == 1 {
+        "task marker"
+    } else {
+        "task markers"
+    };
+    Some(format!(
+        "{} {noun} not recognised (line {}: {})",
+        markers.len(),
+        first.line,
+        first.marker
+    ))
+}
+
 /// The document's title for the terminal title and the exit line: its
 /// `# H1`, or one made from the file name.
 fn document_name(state: &crate::model::AppState) -> String {

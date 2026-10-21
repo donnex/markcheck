@@ -4,7 +4,7 @@ use super::{
     editor_file_args, exit_summary, expand_tilde, git_sync_path_matches, git_sync_request,
     git_sync_scope, git_sync_warning, is_terminal_browser, leftovers_note, link_route,
     opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
-    terminal_title, unshown_note, watch_warning,
+    terminal_title, unrecognised_markers_note, unshown_note, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -872,6 +872,24 @@ fn unshown_note_lists_what_is_not_shown() {
         })
         .as_deref(),
         Some("1 paragraph and 2 bullet points outside task lists not shown")
+    );
+}
+
+#[test]
+fn unrecognised_markers_note_counts_them_and_names_the_first() {
+    use crate::model::UnrecognisedMarker;
+    let marker = |line, marker: &str| UnrecognisedMarker {
+        line,
+        marker: marker.to_string(),
+    };
+    assert_eq!(unrecognised_markers_note(&[]), None);
+    assert_eq!(
+        unrecognised_markers_note(&[marker(3, "[?]")]).as_deref(),
+        Some("1 task marker not recognised (line 3: [?])")
+    );
+    assert_eq!(
+        unrecognised_markers_note(&[marker(14, "[>]"), marker(20, "[ x]")]).as_deref(),
+        Some("2 task markers not recognised (line 14: [>])")
     );
 }
 

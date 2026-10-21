@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- = Notes, Banners, and Code │ notes-and-code.md                         [x] 0/30
+ = Notes, Banners, and Code │ notes-and-code.md                         [x] 0/31
 --------------------------------------------------------------------------------
                                                   ┌ Overview ──────────────────┐
                                                   │ # [1] Reference            ^

@@ -420,6 +420,16 @@ Finer points:
   `[-]` with nothing after it, over an ordered sub-list starting at 2 whose
   first item is the same again, is recognised only to 8 levels deep; below
   that it stays text.
+- **Other tools' task markers aren't tasks, but they are reported.** Only
+  `[ ]`, `[x]`/`[X]`, `[/]` and `[-]` start a task. An item that opens with
+  any other bracketed one- or two-character marker, such as `[>]`, `[?]`,
+  `[~]` or `[!]` from another task tool, or a typo like `[ x]` or `[xx]`,
+  stays a plain note card with the marker shown as written, outside the
+  progress count. The startup note counts them and names the first, e.g.
+  `2 task markers not recognised (line 14: [>])`, so a step meant as a task
+  doesn't disappear unnoticed; a `[/]` left as text past the 8-level limit
+  above is counted the same way. Markers in a `>` quote or after the `#` of a
+  heading inside a bullet aren't counted, and `\[>]` marks one as plain text.
 - **A blockquoted checkbox is never a live task.** `> - [ ] ...` reads as a
   quoted example (e.g. illustrating another runbook's output) rather than
   something to actually do, so it always renders as a plain, non-toggleable

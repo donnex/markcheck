@@ -69,8 +69,10 @@ markcheck examples/basics.md
   a fenced block placed directly after a list that attaches to the list's last
   card, a `> [!WARNING]` callout above a task whose quoted heading, fenced
   command and bullets all stay in the quote, shown in order above the card,
-  and a no-checkbox section that gets dropped (its bullets are counted
-  in the startup note of what isn't shown).
+  items opening with other tools' markers (`[>]`, `[?]`) that stay notes and
+  are counted in the startup note (`2 task markers not recognised`), and a
+  no-checkbox section that gets dropped (its bullets are counted in the
+  startup note of what isn't shown).
 - **`expected-output.md`** — code blocks labelled by their fence: a ` ```text `
   block of expected output under a ` ```sh ` command (dimmed, under an
   `expected output` label, never copied, so `y` copies the command at once),

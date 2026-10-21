@@ -7,7 +7,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 
 use crate::model::{
     Anchor, BodySpan, CodeBlock, CodeKind, Document, Item, ItemKind, LineNumber, List,
-    PreambleBlock, PreambleKind, SubHeading, TaskState, TextStyle, Unshown,
+    PreambleBlock, PreambleKind, SubHeading, TaskState, TextStyle, UnrecognisedMarker, Unshown,
 };
 
 /// Splits `raw` into lines, keeping each line's own terminator, using
@@ -223,24 +223,102 @@ fn restore_non_markers(raw: &str, processed: &mut String, markers: &mut HashMap<
 
 /// The `[/]` and `[-]` markers one parse of `source` sees, by offset.
 fn extended_markers_in(source: &str) -> Vec<(usize, TaskState)> {
-    let mut markers = Vec::new();
+    item_first_texts(source)
+        .into_iter()
+        .filter_map(|text| {
+            extended_marker_at(source, text.offset).map(|state| (text.offset, state))
+        })
+        .collect()
+}
+
+/// Where a list item's first inline text starts: where pulldown-cmark would
+/// report a task marker had there been one.
+struct ItemFirstText {
+    offset: usize,
+    /// The item sits inside a `>` quote.
+    quoted: bool,
+    /// The text opens a heading inside the item (`- ### [-] h`).
+    in_heading: bool,
+}
+
+/// The first inline text of each list item in one parse of `source`. An
+/// item that opens with a marker pulldown-cmark does report has no entry.
+fn item_first_texts(source: &str) -> Vec<ItemFirstText> {
+    let mut texts = Vec::new();
     let mut awaiting_first_inline = false;
+    let mut in_heading = false;
+    let mut blockquote_depth = 0usize;
     for (event, range) in Parser::new_ext(source, PARSE_OPTIONS).into_offset_iter() {
         match event {
-            Event::Start(Tag::Item) => awaiting_first_inline = true,
+            Event::Start(Tag::Item) => {
+                awaiting_first_inline = true;
+                in_heading = false;
+            }
+            Event::Start(Tag::Paragraph) => {}
             // A `-` line under the task's text makes it a setext heading, and
             // pulldown-cmark still reads `[ ]` there as a task marker.
-            Event::Start(Tag::Paragraph | Tag::Heading { .. }) => {}
+            Event::Start(Tag::Heading { .. }) => in_heading = true,
             Event::Text(_) if awaiting_first_inline => {
                 awaiting_first_inline = false;
-                if let Some(state) = extended_marker_at(source, range.start) {
-                    markers.push((range.start, state));
-                }
+                texts.push(ItemFirstText {
+                    offset: range.start,
+                    quoted: blockquote_depth > 0,
+                    in_heading,
+                });
+            }
+            Event::Start(Tag::BlockQuote(_)) => {
+                awaiting_first_inline = false;
+                blockquote_depth += 1;
+            }
+            Event::End(TagEnd::BlockQuote(_)) => {
+                awaiting_first_inline = false;
+                blockquote_depth = blockquote_depth.saturating_sub(1);
             }
             _ => awaiting_first_inline = false,
         }
     }
-    markers
+    texts
+}
+
+/// Every item of the final `source` that opens with a bracketed one- or
+/// two-character marker but isn't a task (#215): other tools' markers
+/// (`[>]`, `[?]`), typos (`[ x]`, `[xx]`) and a `[/]` or `[-]` left as text
+/// past `EXTENDED_MARKER_ROUNDS`. Quoted items, whose checkboxes are only
+/// ever examples, and headings inside an item, whose text a marker never
+/// starts, are left out.
+fn unrecognised_markers(source: &str) -> Vec<UnrecognisedMarker> {
+    let mut lines = LineCounter::new();
+    item_first_texts(source)
+        .into_iter()
+        .filter(|text| !text.quoted && !text.in_heading)
+        .filter_map(|text| {
+            let marker = marker_lookalike_at(source, text.offset)?;
+            Some(UnrecognisedMarker {
+                line: lines.line_at(text.offset, source),
+                marker: marker.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// A `[` with one or two characters and a `]` at `offset`, followed by
+/// whitespace or the end of the input: the shape of a task marker. A `\[`
+/// is the author saying it isn't one; pulldown-cmark starts the text after
+/// the backslash.
+fn marker_lookalike_at(source: &str, offset: usize) -> Option<&str> {
+    if source[..offset].ends_with('\\') {
+        return None;
+    }
+    let rest = source[offset..].strip_prefix('[')?;
+    let close = rest.find(']')?;
+    let inner = &rest[..close];
+    let marker_shaped = matches!(inner.chars().count(), 1 | 2)
+        && !inner.contains(['[', '\n', '\r'])
+        && rest[close + 1..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace);
+    marker_shaped.then(|| &source[offset..offset + 1 + close + 1])
 }
 
 /// The state of a `[/]` or `[-]` marker at `offset` followed by whitespace —
@@ -1434,7 +1512,12 @@ impl<'a> ParseState<'a> {
         }
     }
 
-    fn finish(mut self, path: PathBuf, raw_lines: Vec<String>) -> Document {
+    fn finish(
+        mut self,
+        path: PathBuf,
+        raw_lines: Vec<String>,
+        unrecognised_markers: Vec<UnrecognisedMarker>,
+    ) -> Document {
         let has_checkbox = |items: &[Item]| {
             items
                 .iter()
@@ -1498,6 +1581,7 @@ impl<'a> ParseState<'a> {
             lists,
             preambles,
             unshown,
+            unrecognised_markers,
             anchors: self.anchors,
             critical: self.critical,
             raw_lines,
@@ -1542,7 +1626,7 @@ fn parse_source(raw: &str, path: PathBuf) -> Document {
     for (event, range) in events {
         state.handle(event, range.start);
     }
-    state.finish(path, raw_lines)
+    state.finish(path, raw_lines, unrecognised_markers(&source))
 }
 
 #[cfg(test)]

@@ -180,6 +180,16 @@ smoke-test --all
 
 - [ ] Deploy the new release
 
+## Markers from other tools
+
+Only `[ ]`, `[x]`, `[/]` and `[-]` start a task. The other two items open
+with markers another task tool uses, so they show as notes and the startup
+note counts them.
+
+- [ ] Stop the worker queue
+- [>] Run the data migration (deferred in another tool)
+- [?] Check whether the cache needs warming
+
 ## Notes only (this section is dropped)
 
 - This section has no checkboxes, so markcheck drops it entirely.
