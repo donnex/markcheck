@@ -556,7 +556,7 @@ fn reload_keeps_search_open_and_typed_keys_stay_query_text() {
     // rather than an index past the end of the new document.
     state.handle_key(KeyCode::Esc);
     assert_eq!(shown(&state), (View::Checklist, None));
-    assert_eq!(state.current_item().unwrap().display_text, "alpha");
+    assert_eq!(state.current_item().unwrap().display_text, "also");
 
     fs::remove_file(&path).ok();
 }
@@ -730,7 +730,108 @@ fn reload_says_so_when_the_cursor_list_is_gone() {
     touch_with_new_mtime(&path, "## A\n\n- [ ] `alpha`\n- [ ] `also`\n");
     assert!(state.reload_if_changed());
 
-    assert_eq!(state.current_item().unwrap().display_text, "alpha");
+    assert_eq!(state.current_item().unwrap().display_text, "also");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 1 added · 1 removed — task not found, cursor moved")
+    );
+}
+
+#[test]
+fn reload_keeps_the_cursor_and_reports_no_change_when_its_heading_is_renamed() {
+    let path =
+        write_real_file("## Prepare\n\n- [ ] alpha\n\n## Deploy\n\n- [x] bravo\n- [ ] charlie\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+    state.current_item_index = 1;
+
+    touch_with_new_mtime(
+        &path,
+        "## Prepare\n\n- [ ] alpha\n\n## Deploy to staging\n\n- [x] bravo\n- [ ] charlie\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_list().title, "Deploy to staging");
+    assert_eq!(state.current_item().unwrap().display_text, "charlie");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
+    );
+}
+
+#[test]
+fn reload_follows_a_renamed_heading_with_lines_added_above() {
+    let path = write_real_file("## Prepare\n\n- [ ] alpha\n\n## Deploy\n\n- [ ] charlie\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+
+    touch_with_new_mtime(
+        &path,
+        "## Prepare\n\n- [ ] alpha\n- [ ] extra\n\nA note.\n\n## Deploy now\n\n- [x] charlie\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_list().title, "Deploy now");
+    assert_eq!(state.current_item().unwrap().display_text, "charlie");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 1 done (\"charlie\") · 1 added")
+    );
+}
+
+#[test]
+fn reload_follows_the_default_list_gaining_a_heading() {
+    let path = write_real_file("# Runbook\n\n- [ ] alpha\n- [ ] bravo\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.current_item_index = 1;
+
+    touch_with_new_mtime(&path, "# Runbook\n\n## Steps\n\n- [ ] alpha\n- [ ] bravo\n");
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_list().title, "Steps");
+    assert_eq!(state.current_item().unwrap().display_text, "bravo");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: file changed on disk")
+    );
+}
+
+#[test]
+fn a_renamed_heading_over_an_edited_task_keeps_the_list_by_position() {
+    let path = write_real_file("## A\n\n- [ ] alpha\n\n## B\n\n- [ ] bravo\n- [ ] charlie\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+    state.current_item_index = 1;
+
+    touch_with_new_mtime(
+        &path,
+        "## A\n\n- [ ] alpha\n\n## B2\n\n- [ ] bravo\n- [ ] charlie two\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_list().title, "B2");
+    assert_eq!(state.current_item().unwrap().display_text, "charlie two");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 1 added · 1 removed")
+    );
+}
+
+#[test]
+fn a_renamed_heading_over_a_removed_task_moves_to_the_nearest_list() {
+    let path = write_real_file("## A\n\n- [ ] alpha\n\n## B\n\n- [ ] bravo\n- [ ] charlie\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.jump_to_list(1);
+    state.current_item_index = 1;
+
+    touch_with_new_mtime(
+        &path,
+        "## A\n\n- [ ] alpha\n\n## B2\n\n- [ ] bravo\n\n## C\n\n- [ ] delta\n",
+    );
+    assert!(state.reload_if_changed());
+
+    assert_eq!(state.current_list().title, "B2");
+    assert_eq!(state.current_item().unwrap().display_text, "bravo");
     assert_eq!(
         state.status_message.as_deref(),
         Some("Reloaded: 1 added · 1 removed — task not found, cursor moved")

@@ -634,8 +634,9 @@ false` or `exit_summary = false` in the config file, or for one run with
 
 If the file changes on disk while the app is open, `markcheck` reloads it
 automatically and keeps your place on the same task, even when lines were
-added or removed above it. If that task is gone, the cursor moves to the
-nearest one and the status bar says so. If the same checklist is already
+added or removed above it or its list's `##` heading was renamed. If that
+task is gone, the cursor moves to the nearest one and the status bar says
+so. If the same checklist is already
 open in another `markcheck` (another terminal, tmux pane or SSH session on
 the same machine and user), the second one warns at startup
 (`already open in another markcheck (pid 4242, opened 12 min ago): its

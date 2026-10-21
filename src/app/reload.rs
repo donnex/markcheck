@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime};
 use crate::effect::Effect;
 use crate::launch::program_name;
 use crate::model::{
-    AppState, Document, FileGone, Item, ItemKind, List, Overlay, PendingChord, PendingSync,
-    SyncBase, TaskState, View, hash_bytes,
+    AppState, Document, FileGone, Item, ItemKind, Overlay, PendingChord, PendingSync, SyncBase,
+    TaskState, View, hash_bytes,
 };
 use crate::parser;
 use crate::writer;
@@ -30,46 +30,79 @@ pub(super) const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
 
 /// What a reload changed in task terms, for its status message (#140):
 /// tasks whose state moved, by direction and named (the first two), and
-/// tasks added or removed. Tasks are matched by list, label and depth, so a
-/// task that only moved lines isn't counted. `None` when no task changed.
+/// tasks added or removed. Tasks are matched by list, label and depth, then
+/// any left over by label and depth alone, so a task that only moved lines
+/// or sits under a renamed heading isn't counted. `None` when no task
+/// changed.
 pub(super) fn reload_changes(old: &Document, new: &Document) -> Option<String> {
-    type Key = (String, String, usize);
-    let key = |list: &List, item: &Item| (list.title.clone(), item.label(), item.depth);
-    let mut before: std::collections::HashMap<Key, Vec<TaskState>> = Default::default();
-    for list in &old.lists {
-        for item in &list.items {
-            if let ItemKind::Checkbox(state) = item.kind {
-                before.entry(key(list, item)).or_default().push(state);
-            }
+    use std::collections::{HashMap, VecDeque};
+    let tasks = |document: &Document| -> Vec<(String, String, usize, TaskState)> {
+        document
+            .lists
+            .iter()
+            .flat_map(|list| {
+                list.items.iter().filter_map(|item| match item.kind {
+                    ItemKind::Checkbox(state) => {
+                        Some((list.title.clone(), item.label(), item.depth, state))
+                    }
+                    ItemKind::DisplayOnly => None,
+                })
+            })
+            .collect()
+    };
+    let old_tasks = tasks(old);
+    let new_tasks = tasks(new);
+    let mut by_list: HashMap<(&str, &str, usize), VecDeque<usize>> = HashMap::new();
+    for (index, (title, label, depth, _)) in old_tasks.iter().enumerate() {
+        by_list
+            .entry((title, label, *depth))
+            .or_default()
+            .push_back(index);
+    }
+    let mut matches: Vec<Option<usize>> = new_tasks
+        .iter()
+        .map(|(title, label, depth, _)| {
+            by_list
+                .get_mut(&(title.as_str(), label.as_str(), *depth))
+                .and_then(VecDeque::pop_front)
+        })
+        .collect();
+    let mut leftover: Vec<usize> = by_list.into_values().flatten().collect();
+    leftover.sort_unstable();
+    let mut by_label: HashMap<(&str, usize), VecDeque<usize>> = HashMap::new();
+    for index in leftover {
+        let (_, label, depth, _) = &old_tasks[index];
+        by_label
+            .entry((label, *depth))
+            .or_default()
+            .push_back(index);
+    }
+    for (found, (_, label, depth, _)) in matches.iter_mut().zip(&new_tasks) {
+        if found.is_none() {
+            *found = by_label
+                .get_mut(&(label.as_str(), *depth))
+                .and_then(VecDeque::pop_front);
         }
     }
     let (mut done, mut started, mut reopened, mut skipped, mut added) = (0, 0, 0, 0, 0);
     let mut names = Vec::new();
-    for list in &new.lists {
-        for item in &list.items {
-            let ItemKind::Checkbox(state) = item.kind else {
-                continue;
-            };
-            let Some(old_state) = before
-                .get_mut(&key(list, item))
-                .and_then(|states| (!states.is_empty()).then(|| states.remove(0)))
-            else {
-                added += 1;
-                continue;
-            };
-            if old_state == state {
-                continue;
-            }
-            *match state {
-                TaskState::Done => &mut done,
-                TaskState::Started => &mut started,
-                TaskState::NotStarted => &mut reopened,
-                TaskState::Skipped => &mut skipped,
-            } += 1;
-            names.push(item.label());
+    for (found, (_, label, _, state)) in matches.iter().zip(&new_tasks) {
+        let Some(old_index) = found else {
+            added += 1;
+            continue;
+        };
+        if old_tasks[*old_index].3 == *state {
+            continue;
         }
+        *match state {
+            TaskState::Done => &mut done,
+            TaskState::Started => &mut started,
+            TaskState::NotStarted => &mut reopened,
+            TaskState::Skipped => &mut skipped,
+        } += 1;
+        names.push(label.clone());
     }
-    let removed: usize = before.values().map(Vec::len).sum();
+    let removed = old_tasks.len() - matches.iter().flatten().count();
     let counted = |count: usize, what: &str| (count > 0).then(|| format!("{count} {what}"));
     let moved: Vec<String> = [
         counted(done, "done"),
@@ -316,7 +349,10 @@ impl AppState {
     /// line number, since inserting a line above it shifts every line number.
     /// With no content match it falls back to the item on the old line (a task
     /// edited in place), then to the nearest one by line number, reporting the
-    /// task as lost; a list that is gone falls back to the first list's start.
+    /// task as lost. A list whose title is gone (a renamed heading) is found
+    /// by content instead: the list now holding the task, else the list at the
+    /// same index when the list count is unchanged, else the list holding the
+    /// line nearest the task's.
     pub(super) fn remapped_with_loss(
         &self,
         (list_index, item_index): (usize, usize),
@@ -348,26 +384,58 @@ impl AppState {
                         .nth(occurrence)
                         .map(|(i, _)| i)
                 });
-        let new_list_index = found_list_index
-            .unwrap_or(0)
-            .min(new_document.lists.len().saturating_sub(1));
+        let same_count = new_document.lists.len() == self.document.lists.len();
+        let last_list = new_document.lists.len().saturating_sub(1);
 
         let Some(old_item) = old_item else {
-            return (new_list_index, 0, false);
+            let fallback = if same_count { list_index } else { 0 };
+            return (
+                found_list_index.unwrap_or(fallback).min(last_list),
+                0,
+                false,
+            );
         };
-        if found_list_index.is_none() {
-            return (new_list_index, 0, true);
-        }
-        let items = &new_document.lists[new_list_index].items;
-        let distance = |index: &usize| items[*index].line_number.abs_diff(old_item.line_number);
-        let same_task = |index: &usize| {
-            let item = &items[*index];
+        let same_task = |item: &Item| {
             item.header == old_item.header
                 && item.display_text == old_item.display_text
                 && item.depth == old_item.depth
         };
+        let distance = |item: &Item| item.line_number.abs_diff(old_item.line_number);
+        let nearest_where = |matches: &dyn Fn(&Item) -> bool| {
+            new_document
+                .lists
+                .iter()
+                .enumerate()
+                .flat_map(|(l, list)| {
+                    list.items
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, item)| (l, i, item))
+                })
+                .filter(|(_, _, item)| matches(item))
+                .min_by_key(|(_, _, item)| distance(item))
+                .map(|(l, i, _)| (l, i))
+        };
 
-        if let Some(index) = (0..items.len()).filter(same_task).min_by_key(distance) {
+        let new_list_index = match found_list_index {
+            Some(index) => index,
+            None => {
+                if let Some((list, item)) = nearest_where(&same_task) {
+                    return (list, item, false);
+                }
+                if same_count {
+                    list_index.min(last_list)
+                } else {
+                    nearest_where(&|_| true).map_or(0, |(list, _)| list)
+                }
+            }
+        };
+        let items = &new_document.lists[new_list_index].items;
+
+        if let Some(index) = (0..items.len())
+            .filter(|&i| same_task(&items[i]))
+            .min_by_key(|&i| distance(&items[i]))
+        {
             return (new_list_index, index, false);
         }
         if let Some(index) =
@@ -375,7 +443,9 @@ impl AppState {
         {
             return (new_list_index, index, false);
         }
-        let nearest = (0..items.len()).min_by_key(distance).unwrap_or(0);
+        let nearest = (0..items.len())
+            .min_by_key(|&i| distance(&items[i]))
+            .unwrap_or(0);
         (new_list_index, nearest, true)
     }
 
