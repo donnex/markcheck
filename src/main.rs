@@ -334,6 +334,9 @@ fn main() -> anyhow::Result<()> {
         config::unknown_keys_warning(&unknown_keys),
         launch::startup_warning(read_only, save_route, hard_links, foreign_owner.as_deref()),
         launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
+        git_sync
+            .as_ref()
+            .and_then(git_sync::GitSync::identity_warning),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
         launch::leftovers_warning(leftovers),
         launch::already_open_warning(&other_sessions),

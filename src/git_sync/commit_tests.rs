@@ -109,7 +109,7 @@ fn commit_temp_index_reports_failure_for_a_tree_unchanged_from_head() {
             &blob,
             PLUMBING_TIMEOUT
         )
-        .is_err()
+        .is_err_and(|err| !err.contains("user.name"))
     );
     let _ = fs::remove_file(&temp_index);
 }
@@ -532,4 +532,22 @@ fn align_real_index_entry_still_realigns_its_own_untouched_entry() {
         Some(committed),
         "an untouched entry is still advanced to the committed blob"
     );
+}
+#[test]
+fn a_commit_is_refused_rather_than_made_under_a_guessed_identity() {
+    let work = init_repo_without_remote();
+    run(&work, &["config", "--unset", "user.email"]);
+    run(&work, &["config", "user.useConfigOnly", "false"]);
+    let head = current_head(&work);
+    let blob = hash_object(&work, "tracked.md", "- [x] one\n").unwrap();
+
+    let err =
+        commit_via_temp_index(&work, &head, "100644", &blob, "tracked.md", "msg").unwrap_err();
+
+    assert!(err.starts_with("git commit: fatal: "), "{err}");
+    assert!(
+        err.ends_with(" — set git config user.name and user.email"),
+        "{err}"
+    );
+    assert_eq!(current_head(&work), head, "nothing was committed");
 }

@@ -567,6 +567,18 @@ impl GitSync {
         &self.repo_root
     }
 
+    /// The sticky startup warning when no git identity is configured, since
+    /// every commit is then refused rather than made under one git guessed
+    /// from the account and host name.
+    pub fn identity_warning(&self) -> Option<String> {
+        inspect::identity_missing(&self.repo_root).then(|| {
+            format!(
+                "Git sync: no git identity set — commits will be refused; {}",
+                inspect::IDENTITY_FIX
+            )
+        })
+    }
+
     /// Drives the title bar's "syncing" state, and the wait when quitting.
     pub fn is_busy(&self) -> bool {
         self.busy

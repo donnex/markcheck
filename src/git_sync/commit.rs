@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::guards::{
     OWN_COMMIT_TRAILER, carries_own_trailer, repo_sync_blocked, verify_commit_scope,
 };
-use super::inspect::{blob_at, current_head, git_dir, index_blob};
+use super::inspect::{IDENTITY_FIX, blob_at, current_head, git_dir, index_blob};
 use super::process::{
     COMMIT_TIMEOUT, PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout,
 };
@@ -143,11 +143,21 @@ fn commit_temp_index(
     timeout: Duration,
 ) -> Result<String, String> {
     let mut cmd = git_command(repo_root);
-    cmd.env("GIT_INDEX_FILE", temp_index)
-        .args(["commit", "-m", message, "-m", OWN_COMMIT_TRAILER]);
+    // Refuse an identity git would guess from the account and host name: a
+    // pushed author line can't be changed, and git's notice of the guess is
+    // output markcheck doesn't show (#224).
+    cmd.env("GIT_INDEX_FILE", temp_index).args([
+        "-c",
+        "user.useConfigOnly=true",
+        "commit",
+        "-m",
+        message,
+        "-m",
+        OWN_COMMIT_TRAILER,
+    ]);
     let timed_out = match run_with_timeout(cmd, timeout) {
         Ok(output) if output.status.success() => None,
-        Ok(output) => return Err(command_error("git commit", &output)),
+        Ok(output) => return Err(commit_error(&output)),
         Err(err) if err.kind() == io::ErrorKind::TimedOut => Some(err),
         Err(err) => return Err(format!("git commit failed: {err}")),
     };
@@ -170,6 +180,16 @@ fn commit_temp_index(
              the branch was left as it is — check it before pushing"
                 .to_string(),
         ),
+    }
+}
+/// A refusal for want of an identity names only the symptom (`empty ident
+/// name`, `no email was given`), so the fix is added.
+fn commit_error(output: &std::process::Output) -> String {
+    let error = command_error("git commit", output);
+    if String::from_utf8_lossy(&output.stderr).contains("Please tell me who you are") {
+        format!("{error} — {}", IDENTITY_FIX)
+    } else {
+        error
     }
 }
 /// The oldest commit on `head`'s first-parent chain since `parent` that

@@ -24,6 +24,26 @@ pub(super) fn commits_ahead_of_upstream(repo_root: &Path, tip: &str) -> Option<u
     }
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
+/// How to set the identity git sync's commits are made under.
+pub(super) const IDENTITY_FIX: &str = "set git config user.name and user.email";
+/// Whether git lacks a configured identity (in config or in `GIT_AUTHOR_*`
+/// and `GIT_COMMITTER_*`), so git sync's commits, made with
+/// `user.useConfigOnly`, are refused. `false` when git can't be asked: the
+/// commit then reports any problem itself.
+pub(super) fn identity_missing(repo_root: &Path) -> bool {
+    ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"]
+        .into_iter()
+        .any(|ident| ident_configured(repo_root, ident) == Some(false))
+}
+/// Whether git has the identity `name` without guessing any of it, `None`
+/// when git couldn't be run.
+fn ident_configured(repo_root: &Path, name: &str) -> Option<bool> {
+    let mut cmd = git_command(repo_root);
+    cmd.args(["-c", "user.useConfigOnly=true", "var", name]);
+    run_with_timeout(cmd, PLUMBING_TIMEOUT)
+        .ok()
+        .map(|output| output.status.success())
+}
 /// Whether a branch exists on the remote, asked of the remote itself: the
 /// local tracking ref survives an upstream deletion, and pushing an explicit
 /// refspec then silently recreates the branch.

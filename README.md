@@ -895,6 +895,23 @@ off for the session and says so at startup, e.g. `Git sync off: git 2.22 or
 newer is needed (found 2.17.1)`. It's developed and tested against modern git
 (2.40+); no specific older version is verified in CI.
 
+**It commits under your git identity.** Set `user.name` and `user.email`
+(`git config --global user.name "Your Name"`, and the same for
+`user.email`) on every machine that syncs, since the commit's author line is
+how `git log` and `git blame` show who did which step, and a pushed commit
+can't be re-attributed later. Where one is missing, git would make it up
+from the account and host name (`root <root@example-host.example.com>`,
+say), so git-sync refuses to commit instead (it runs `git commit` with
+`user.useConfigOnly`): markcheck warns at startup with `Git sync: no git
+identity set — commits will be refused; set git config user.name and
+user.email`, and each sync then fails with git's reason followed by the same
+`set git config user.name and user.email` hint, in the status bar and again
+on exit. The file is still saved; only the commit is skipped.
+`GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
+count as set. The `EMAIL` environment variable alone does not, as with
+git's own `user.useConfigOnly`: set `user.email` (or the `GIT_*_EMAIL`
+variables) as well.
+
 **Git-sync runs the repository's commit hooks.** That's deliberate — it's
 why commits are made with a real `git commit` rather than assembled by hand,
 so `pre-commit`/`commit-msg`/`post-commit` and `commit.gpgsign` all behave

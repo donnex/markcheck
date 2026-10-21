@@ -1003,3 +1003,25 @@ fn a_toggle_after_a_saved_edit_that_failed_to_sync_publishes_the_edit() {
         toggled.trim_end()
     );
 }
+#[test]
+fn identity_warning_is_silent_with_a_configured_identity() {
+    let work = init_repo_without_remote();
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    assert_eq!(sync.identity_warning(), None);
+}
+#[test]
+fn identity_warning_says_commits_are_refused_without_a_name() {
+    let work = init_repo_without_remote();
+    run(&work, &["config", "--unset", "user.name"]);
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    assert_eq!(sync.identity_warning().as_deref(), Some(IDENTITY_REFUSED));
+}
+#[test]
+fn identity_warning_says_commits_are_refused_without_an_email() {
+    let work = init_repo_without_remote();
+    run(&work, &["config", "--unset", "user.email"]);
+    let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    assert_eq!(sync.identity_warning().as_deref(), Some(IDENTITY_REFUSED));
+}
+const IDENTITY_REFUSED: &str = "Git sync: no git identity set — commits will be refused; \
+                                set git config user.name and user.email";
