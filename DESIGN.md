@@ -717,7 +717,7 @@ pub struct Config {
     pub mouse: Option<bool>,
     pub primary: Option<bool>,
     pub auto_copy: Option<bool>,
-    pub color: Option<ColorChoice>,         // "auto" | "truecolor" | "256" | "16"
+    pub color: Option<ColorChoice>,         // "auto" | "truecolor" | "256" | "16", or 256 | 16 unquoted
     pub clipboard: Option<ClipboardChoice>, // "auto" | "system" | "osc52"
     pub git_sync_paths: Option<Vec<PathBuf>>,
     pub git_sync_delay: Option<u64>,        // seconds

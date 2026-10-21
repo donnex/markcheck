@@ -193,7 +193,7 @@ nerd_font = false   # true  = --nerd-font,    false = --no-nerd-font
 mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
-color = "auto"      # = --color: "auto", "truecolor", "256" or "16"
+color = "auto"      # = --color: "auto", "truecolor", "256" or "16" (256 and 16 work unquoted too)
 clipboard = "auto"  # = --clipboard: "auto", "system" or "osc52"
 terminal_title = true  # false = --no-terminal-title, true = --terminal-title
 exit_summary = true    # false = --no-exit-summary,   true = --exit-summary

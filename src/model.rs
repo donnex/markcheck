@@ -843,22 +843,56 @@ impl ClipboardChoice {
 }
 
 /// The `--color` flag / `color` config key: `Auto` detects the terminal's
-/// capability, anything else forces that palette.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+/// capability, anything else forces that palette. The config accepts `256`
+/// and `16` unquoted too, as the flag is written.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum ColorChoice {
     #[default]
     #[value(name = "auto")]
-    #[serde(rename = "auto")]
     Auto,
     #[value(name = "truecolor")]
-    #[serde(rename = "truecolor")]
     TrueColor,
     #[value(name = "256")]
-    #[serde(rename = "256")]
     Palette256,
     #[value(name = "16")]
-    #[serde(rename = "16")]
     Basic,
+}
+
+impl<'de> serde::Deserialize<'de> for ColorChoice {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ColorChoiceVisitor)
+    }
+}
+
+struct ColorChoiceVisitor;
+
+impl serde::de::Visitor<'_> for ColorChoiceVisitor {
+    type Value = ColorChoice;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(r#"one of "auto", "truecolor", "256" or "16""#)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<ColorChoice, E> {
+        match value {
+            "auto" => Ok(ColorChoice::Auto),
+            "truecolor" => Ok(ColorChoice::TrueColor),
+            "256" => Ok(ColorChoice::Palette256),
+            "16" => Ok(ColorChoice::Basic),
+            _ => Err(E::invalid_value(serde::de::Unexpected::Str(value), &self)),
+        }
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<ColorChoice, E> {
+        match value {
+            256 => Ok(ColorChoice::Palette256),
+            16 => Ok(ColorChoice::Basic),
+            _ => Err(E::invalid_value(
+                serde::de::Unexpected::Signed(value),
+                &self,
+            )),
+        }
+    }
 }
 
 impl ColorChoice {

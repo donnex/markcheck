@@ -180,8 +180,34 @@ fn load_config_reads_every_color_value_and_rejects_others() {
 
     let path = unique_temp_path();
     fs::write(&path, "color = \"rainbow\"\n").unwrap();
-    assert!(load_config(&path).is_err());
+    let error = format!("{:#}", load_config(&path).unwrap_err());
+    assert!(
+        error.contains(r#"one of "auto", "truecolor", "256" or "16""#),
+        "{error}"
+    );
     fs::remove_file(&path).ok();
+}
+
+#[test]
+fn load_config_reads_unquoted_color_numbers_and_rejects_others() {
+    for (value, expected) in [("256", ColorChoice::Palette256), ("16", ColorChoice::Basic)] {
+        let path = unique_temp_path();
+        fs::write(&path, format!("color = {value}\n")).unwrap();
+        assert_eq!(load_config(&path).unwrap().config.color, Some(expected));
+        fs::remove_file(&path).ok();
+    }
+
+    for value in ["8", "true", "[256]"] {
+        let path = unique_temp_path();
+        fs::write(&path, format!("color = {value}\n")).unwrap();
+        let error = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(error.contains("invalid config file"), "{value}: {error}");
+        assert!(
+            error.contains(r#"one of "auto", "truecolor", "256" or "16""#),
+            "{value}: {error}"
+        );
+        fs::remove_file(&path).ok();
+    }
 }
 
 #[test]
