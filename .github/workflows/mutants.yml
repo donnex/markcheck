@@ -4,7 +4,8 @@ name: Mutants
 # src/writer.rs (#129), configured by .cargo/mutants.toml. Every mutant
 # must be caught: one that survives is a guard no test pins. It reruns the
 # unit tests once per mutant, so it runs weekly and on demand rather than on
-# every push. Actions are pinned to full commit SHAs, as in check.yml.
+# every push. Actions are pinned to full commit SHAs and the checkout keeps
+# no credentials, as in check.yml.
 on:
   workflow_dispatch:
   schedule:
@@ -20,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch

@@ -17,7 +17,12 @@ on:
 # access. `${{ }}` expressions never appear inside a `run:` script: the tag
 # name is user-controlled text (a ref may contain `$(`, backticks, `;`), so
 # scripts read it from the runner's own GITHUB_REF_NAME environment variable
-# instead of having it pasted into the shell source.
+# instead of having it pasted into the shell source. Actions are pinned to
+# full commit SHAs, and every checkout sets `persist-credentials: false`, as in
+# check.yml: the release job's token can write to the repository, and its
+# build runs every dependency's build script and proc macros, none of which
+# needs git credentials. `gh release create` gets the token through its own
+# GH_TOKEN variable instead (#200).
 permissions:
   contents: read
 
@@ -32,6 +37,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Tag matches Cargo.toml version
         run: |
@@ -60,6 +67,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch
