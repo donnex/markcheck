@@ -1423,6 +1423,43 @@ fn a_burst_of_toggles_waits_then_becomes_one_commit_on_quit() {
 }
 
 #[test]
+fn a_terminal_error_still_syncs_the_pending_change_before_exiting() {
+    // A draw to a terminal that has just hung up fails before the SIGHUP
+    // arrives; the change still in its quiet period must go out regardless.
+    let (path, _pid_file) = repo_with_a_slow_hook("gitsync-draw-error", "true");
+    let work = path.parent().unwrap().to_path_buf();
+    let trigger = work.join("fail-draw");
+
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--git-sync");
+    cmd.arg(&path);
+    cmd.env("MARKCHECK_TEST_FAIL_DRAW", &trigger);
+    let mut session = Session::spawn(cmd);
+    session.key(" ");
+    session.wait_for_screen("git · pending");
+    write_file(&trigger, "");
+    session.key("j");
+    let (ok, output) = session.finish();
+    assert!(!ok, "a terminal error must exit unsuccessfully");
+    assert!(
+        output.contains("forced test draw failure"),
+        "the error is reported:\n{output}"
+    );
+
+    let out = git(&work)
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "checklist.md: Check \"alpha\"",
+        "the pending change must have been committed"
+    );
+    assert_eq!(temp_indexes_left(&work), Vec::<String>::new());
+}
+
+#[test]
 fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes() {
     // The final toggle's sync runs during the exit wait, after the TUI's own
     // error line can no longer be seen, so its failure must reach stderr. The

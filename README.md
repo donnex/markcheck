@@ -742,7 +742,9 @@ doesn't leave the change unsynced. An answered quit-reset confirmation closes
 first, so the notice shows over the checklist. Press `q` again to stop the sync
 instead: its `git` processes (hooks included) are stopped and cleaned up,
 not left running. Closing the terminal or sending `SIGTERM` quits the same
-way, waiting up to 5 seconds for the sync before stopping it. If the latest
+way, waiting up to 5 seconds for the sync before stopping it; so does
+`markcheck` exiting with an error because the terminal went away, which says
+`markcheck: waiting for git sync…` while it waits. If the latest
 change isn't published when `markcheck` exits (its sync failed, the commit
 was made but the push failed, or the sync was stopped), `markcheck` prints
 one line on stderr after the screen closes saying so (e.g. `markcheck: git

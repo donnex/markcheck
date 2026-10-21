@@ -394,12 +394,24 @@ fn main() -> anyhow::Result<()> {
     if result.is_ok() && settings.exit_summary {
         let _ = writeln!(io::stdout(), "{}", launch::exit_summary(&state));
     }
+    // A terminal error ends the loop without its own git-sync teardown, so it
+    // gets the signal path's here.
+    let report = match &result {
+        Ok(report) => report.clone(),
+        Err(_) => git_sync.as_mut().and_then(|sync| {
+            sync.flush();
+            if sync.is_busy() {
+                let _ = writeln!(io::stderr(), "markcheck: waiting for git sync…");
+            }
+            settle_git_sync(sync)
+        }),
+    };
     // Printed only once the alternate screen is gone, so it stays visible.
     // Ignored on failure: after SIGHUP there may be no terminal left.
-    if let Some(report) = result? {
+    if let Some(report) = report {
         let _ = writeln!(io::stderr(), "{report}");
     }
-    Ok(())
+    result.map(|_| ())
 }
 
 /// `SIGTERM`, `SIGHUP` (a closed terminal or dropped SSH session) and a
@@ -490,8 +502,7 @@ where
         if signals.stopped() {
             return Ok(git_sync.as_mut().and_then(|sync| {
                 sync.flush();
-                sync.wait_for_outcomes(QUIT_WAIT);
-                finish_git_sync(sync)
+                settle_git_sync(sync)
             }));
         }
         dirty |= reload.check(state, Instant::now());
@@ -528,6 +539,14 @@ where
         dirty |= state.expire_status(now);
         dirty |= label_due.is_some_and(|due| now >= due);
         if dirty {
+            // Debug builds only: lets `tests/pty.rs` make a draw fail the way
+            // one to a terminal that has just hung up does.
+            #[cfg(debug_assertions)]
+            if std::env::var_os("MARKCHECK_TEST_FAIL_DRAW")
+                .is_some_and(|trigger| std::path::Path::new(&trigger).exists())
+            {
+                anyhow::bail!("forced test draw failure");
+            }
             terminal.draw(|frame| ui::render(frame, state))?;
             title.show(state);
             label_due = ui::next_label_change(state, SystemTime::now());
@@ -675,6 +694,13 @@ fn abandon_git_sync(sync: &mut git_sync::GitSync) {
         sync.abandon(true);
         sync.wait_for_outcomes(ABANDON_GRACE);
     }
+}
+
+/// Gives a running sync up to [`QUIT_WAIT`] to land, then finishes it as
+/// [`finish_git_sync`] does.
+fn settle_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
+    sync.wait_for_outcomes(QUIT_WAIT);
+    finish_git_sync(sync)
 }
 
 /// Abandons whatever is still running, then gives the line to print after
