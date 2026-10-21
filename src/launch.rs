@@ -485,10 +485,7 @@ pub fn exit_summary(state: &crate::model::AppState) -> String {
 /// markcheck session (#101), whose changes will show up here as reloads.
 pub fn already_open_warning(others: &[crate::writer::OtherSession]) -> Option<String> {
     let ago = |other: &crate::writer::OtherSession| match other.open_for {
-        Some(open_for) if open_for.as_secs() >= 120 => {
-            format!(", opened {} min ago", open_for.as_secs() / 60)
-        }
-        Some(_) => ", opened just now".to_string(),
+        Some(open_for) => format!(", opened {}", time_ago(open_for)),
         None => String::new(),
     };
     match others {
@@ -506,6 +503,18 @@ pub fn already_open_warning(others: &[crate::writer::OtherSession]) -> Option<St
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
+    }
+}
+
+/// How long ago, in the largest unit that still reads naturally: minutes up
+/// to two hours, hours up to two days, then days.
+fn time_ago(elapsed: std::time::Duration) -> String {
+    let minutes = elapsed.as_secs() / 60;
+    match minutes {
+        0..2 => "just now".to_string(),
+        2..120 => format!("{minutes} min ago"),
+        120..2880 => format!("{} h ago", minutes / 60),
+        _ => format!("{} days ago", minutes / 1440),
     }
 }
 

@@ -277,23 +277,26 @@ impl SessionMarker {
             if pid == std::process::id().to_string() {
                 continue;
             }
-            if pid_is_gone(pid) {
+            let opened = entry.metadata().ok().and_then(|meta| meta.modified().ok());
+            let recorded = read_lock_token(&entry.path()).unwrap_or_default();
+            if pid_is_gone(pid) || marker_is_stale(Path::new("/proc"), pid, &recorded, opened) {
                 let _ = fs::remove_file(entry.path());
                 continue;
             }
-            let open_for = entry
-                .metadata()
-                .ok()
-                .and_then(|meta| meta.modified().ok())
-                .and_then(|opened| opened.elapsed().ok());
+            let open_for = opened.and_then(|opened| opened.elapsed().ok());
             if let Ok(pid) = pid.parse() {
                 others.push(OtherSession { pid, open_for });
             }
         }
         others.sort_by_key(|other| other.pid);
         let path = dir.join(format!("{prefix}{}", std::process::id()));
-        let recorded = write_new_file(&path, 0o600, "", |_| Ok(())).is_ok()
-            || (path.exists() && fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()));
+        let identity = process_identity(Path::new("/proc"), &std::process::id().to_string())
+            .unwrap_or_default();
+        let create = || write_new_file(&path, 0o600, &identity, |_| Ok(())).is_ok();
+        let recorded = create()
+            || (fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file())
+                && fs::remove_file(&path).is_ok()
+                && create());
         (
             SessionMarker {
                 path: recorded.then_some(path),
@@ -308,6 +311,52 @@ impl Drop for SessionMarker {
         if let Some(path) = &self.path {
             let _ = fs::remove_file(path);
         }
+    }
+}
+
+/// What tells process `pid` apart from a later one given the same PID: the
+/// boot ID and the process's start time in clock ticks since boot (field 22
+/// of `<proc>/<pid>/stat`), as recorded in a session marker. `None` where
+/// `proc` doesn't offer both.
+fn process_identity(proc: &Path, pid: &str) -> Option<String> {
+    let boot_id = fs::read_to_string(proc.join("sys/kernel/random/boot_id")).ok()?;
+    let stat = fs::read_to_string(proc.join(pid).join("stat")).ok()?;
+    let (_, after_name) = stat.rsplit_once(')')?;
+    let start_time = after_name.split_whitespace().nth(19)?;
+    Some(format!("{} {start_time}", boot_id.trim()))
+}
+
+/// Whether a session marker whose PID is still in use belongs to a process
+/// other than the one that wrote it (#213): its recorded identity differs
+/// from the live PID's, or, when no identity can be compared, it was last
+/// written before the system booted. Anything short of that is `false`.
+fn marker_is_stale(
+    proc: &Path,
+    pid: &str,
+    recorded: &str,
+    opened: Option<std::time::SystemTime>,
+) -> bool {
+    let recorded = recorded.trim();
+    if !recorded.is_empty()
+        && let Some(current) = process_identity(proc, pid)
+    {
+        return recorded != current;
+    }
+    let uptime = fs::read_to_string(proc.join("uptime"))
+        .ok()
+        .and_then(|uptime| {
+            uptime
+                .split_whitespace()
+                .next()?
+                .parse::<f64>()
+                .ok()
+                .filter(|secs| secs.is_finite() && *secs >= 0.0)
+        });
+    match (uptime, opened) {
+        (Some(uptime), Some(opened)) => std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs_f64(uptime))
+            .is_some_and(|booted| opened < booted),
+        _ => false,
     }
 }
 

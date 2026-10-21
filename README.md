@@ -605,7 +605,10 @@ open in another `markcheck` (another terminal, tmux pane or SSH session on
 the same machine and user), the second one warns at startup
 (`already open in another markcheck (pid 4242, opened 12 min ago): its
 changes show up here as reloads`), so you can stop before two of you work
-the same procedure. The status bar also says what the
+the same procedure. A long-open session's age reads in hours or days
+(`opened 3 h ago`, `opened 2 days ago`). A session that was killed or lost in
+a reboot is not reported, even once its process number has been handed to an
+unrelated program. The status bar also says what the
 reload changed in task terms, such as `Reloaded: 2 done, 1 reopened
 ("Restart service", "Verify output") · 1 added`, so a step a colleague just
 ticked (or unticked) on a shared checklist doesn't go unnoticed; an edit that

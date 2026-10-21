@@ -1526,6 +1526,117 @@ fn a_second_session_sees_the_live_one_and_clears_a_dead_ones_marker() {
     let _ = fs::remove_file(dir.join(format!("{prefix}{live}")));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_marker_whose_pid_was_reused_by_another_process_is_swept() {
+    let parent = std::os::unix::process::parent_id().to_string();
+    let Some(identity) = process_identity(Path::new("/proc"), &parent) else {
+        eprintln!("skipped: /proc offers no boot ID or start time");
+        return;
+    };
+    let target = write_temp_file(EXAMPLE);
+    let dir = lock_dir().unwrap();
+    let marker = dir.join(format!("markcheck-open-{}-{parent}", path_digest(&target)));
+    let (boot_id, _) = identity.split_once(' ').unwrap();
+    fs::write(&marker, format!("{boot_id} 1")).unwrap();
+
+    let (own, others) = SessionMarker::register(&target);
+
+    assert!(others.is_empty(), "{others:?}");
+    assert!(!marker.exists(), "the reused PID's marker is swept");
+    drop(own);
+
+    fs::write(&marker, &identity).unwrap();
+    let (own, others) = SessionMarker::register(&target);
+    assert_eq!(others.len(), 1, "the same process is still reported");
+    drop(own);
+    let _ = fs::remove_file(marker);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn this_sessions_marker_records_its_identity() {
+    let target = write_temp_file(EXAMPLE);
+    let (marker, _) = SessionMarker::register(&target);
+    let path = marker.path.clone().unwrap();
+    let pid = std::process::id().to_string();
+    assert_eq!(
+        Some(fs::read_to_string(&path).unwrap()),
+        process_identity(Path::new("/proc"), &pid)
+    );
+}
+
+/// A stand-in `/proc` with the given boot ID, uptime and `stat` lines.
+fn fake_proc(boot_id: Option<&str>, uptime: Option<&str>, stats: &[(&str, &str)]) -> PathBuf {
+    let proc = crate::test_support::unique_temp_path("writer", "proc", None);
+    fs::create_dir_all(proc.join("sys/kernel/random")).unwrap();
+    if let Some(boot_id) = boot_id {
+        fs::write(proc.join("sys/kernel/random/boot_id"), boot_id).unwrap();
+    }
+    if let Some(uptime) = uptime {
+        fs::write(proc.join("uptime"), uptime).unwrap();
+    }
+    for (pid, stat) in stats {
+        fs::create_dir_all(proc.join(pid)).unwrap();
+        fs::write(proc.join(pid).join("stat"), stat).unwrap();
+    }
+    proc
+}
+
+const A_STAT: &str =
+    "812 (odd) name)) S 1 812 812 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 98765 1000 10\n";
+
+#[test]
+fn process_identity_reads_the_boot_id_and_start_time() {
+    let proc = fake_proc(
+        Some("abc-123\n"),
+        None,
+        &[("812", A_STAT), ("9", "9 (short) S 1")],
+    );
+    assert_eq!(
+        process_identity(&proc, "812").as_deref(),
+        Some("abc-123 98765")
+    );
+    assert_eq!(process_identity(&proc, "9"), None, "a stat cut short");
+    assert_eq!(process_identity(&proc, "77"), None, "no such process");
+    let no_boot_id = fake_proc(None, None, &[("812", A_STAT)]);
+    assert_eq!(process_identity(&no_boot_id, "812"), None);
+    let _ = fs::remove_dir_all(proc);
+    let _ = fs::remove_dir_all(no_boot_id);
+}
+
+#[test]
+fn a_marker_is_stale_when_its_identity_differs() {
+    let proc = fake_proc(Some("abc-123"), Some("100.5 200.0\n"), &[("812", A_STAT)]);
+    let now = Some(std::time::SystemTime::now());
+    assert!(!marker_is_stale(&proc, "812", "abc-123 98765\n", now));
+    assert!(marker_is_stale(&proc, "812", "abc-123 11111", now));
+    assert!(marker_is_stale(&proc, "812", "other-boot 98765", now));
+    let _ = fs::remove_dir_all(proc);
+}
+
+#[test]
+fn without_an_identity_a_marker_is_stale_only_when_older_than_the_boot() {
+    use std::time::{Duration, SystemTime};
+    let proc = fake_proc(None, Some("3600.25 7200.00\n"), &[]);
+    let before_boot = SystemTime::now().checked_sub(Duration::from_secs(7200));
+    let since_boot = SystemTime::now().checked_sub(Duration::from_secs(60));
+    assert!(marker_is_stale(&proc, "812", "", before_boot));
+    assert!(marker_is_stale(&proc, "812", "abc-123 98765", before_boot));
+    assert!(!marker_is_stale(&proc, "812", "", since_boot));
+    assert!(!marker_is_stale(&proc, "812", "", None));
+
+    for uptime in [None, Some("garbage"), Some("-5 0"), Some("inf 0"), Some("")] {
+        let proc = fake_proc(None, uptime, &[]);
+        assert!(
+            !marker_is_stale(&proc, "812", "", before_boot),
+            "{uptime:?} proves nothing"
+        );
+        let _ = fs::remove_dir_all(proc);
+    }
+    let _ = fs::remove_dir_all(proc);
+}
+
 #[test]
 fn a_file_owned_by_root_is_reported_as_someone_elses() {
     use std::os::unix::fs::MetadataExt;
@@ -1597,9 +1708,10 @@ fn a_marker_left_under_this_pid_is_taken_over_and_a_directory_is_not() {
         path_digest(&target),
         std::process::id()
     ));
-    fs::write(&own, "").unwrap();
+    fs::write(&own, "stale identity").unwrap();
     let (marker, _) = SessionMarker::register(&target);
     assert_eq!(marker.path.as_deref(), Some(own.as_path()));
+    assert_ne!(fs::read_to_string(&own).unwrap(), "stale identity");
     drop(marker);
     assert!(!own.exists());
 

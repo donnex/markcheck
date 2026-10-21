@@ -268,7 +268,7 @@ Edits made outside markcheck (another terminal, `git pull`, a colleague's sessio
 
 It then clears undo/redo (and bumps `history_epoch`), the jump stack and any armed critical step, cancels a queued git-sync request, disarms pending chords, and takes `file_content_hash` from the adopted document. A reload never auto-copies.
 
-**Another session on the same checklist (#101).** At startup `writer::SessionMarker::register` writes `markcheck-open-<digest>-<pid>` in the lock directory and lists the other markers for that file. Markers whose PID is provably gone are removed; each live one adds `already open in another markcheck (pid 4242, opened 12 min ago): its changes show up here as reloads` to the startup message. The marker is removed on exit. Same user and machine only.
+**Another session on the same checklist (#101).** At startup `writer::SessionMarker::register` writes `markcheck-open-<digest>-<pid>` in the lock directory and lists the other markers for that file. The marker holds the session's identity, the boot ID (`/proc/sys/kernel/random/boot_id`) and the process start time (field 22 of `/proc/<pid>/stat`), so a PID reused after a `SIGKILL` or a reboot is told apart from the session that wrote the marker (#213). Markers whose PID is provably gone, whose identity differs from the live PID's, or, where no identity can be compared (no `/proc`, an empty marker), whose mtime is older than the boot (`/proc/uptime`) are removed; each live one adds `already open in another markcheck (pid 4242, opened 12 min ago): its changes show up here as reloads` to the startup message, the age in minutes up to two hours, then hours up to two days, then days. The marker is removed on exit. Same user and machine only.
 
 ---
 

@@ -759,6 +759,17 @@ fn already_open_warning_names_the_other_sessions() {
             "already open in another markcheck (pid 7, opened just now): its changes show up here as reloads"
         )
     );
+    let opened = |secs| {
+        already_open_warning(&[OtherSession {
+            pid: 812,
+            open_for: Some(Duration::from_secs(secs)),
+        }])
+        .unwrap()
+    };
+    assert!(opened(119 * 60).contains("(pid 812, opened 119 min ago)"));
+    assert!(opened(120 * 60).contains("(pid 812, opened 2 h ago)"));
+    assert!(opened(47 * 3600 + 59 * 60).contains("(pid 812, opened 47 h ago)"));
+    assert!(opened(4320 * 60).contains("(pid 812, opened 3 days ago)"));
     let two = [
         OtherSession {
             pid: 1,
