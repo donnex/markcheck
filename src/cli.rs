@@ -11,8 +11,8 @@ use crate::model::{ClipboardChoice, ColorChoice, LineNumber};
 
 /// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
-/// compile time and falls back to "unknown" outside a git checkout (e.g. a
-/// source tarball).
+/// compile time and falls back to "unknown" outside a markcheck checkout
+/// (e.g. a source tarball, even one unpacked inside another repository).
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",

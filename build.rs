@@ -33,10 +33,32 @@ fn git_path(manifest_dir: &Path, name: &str) -> Option<PathBuf> {
     })
 }
 
+/// Whether the crate is the root of the work tree git answers for. Git walks
+/// up from the crate's directory, so an unpacked source tarball inside some
+/// other repository (a packaging repository, a monorepo, a dotfiles home)
+/// would otherwise be stamped with that repository's commit.
+fn is_own_checkout(manifest_dir: &Path) -> bool {
+    let Some(toplevel) = git(manifest_dir, &["rev-parse", "--show-toplevel"]) else {
+        return false;
+    };
+    match (
+        Path::new(&toplevel).canonicalize(),
+        manifest_dir.canonicalize(),
+    ) {
+        (Ok(toplevel), Ok(manifest_dir)) => toplevel == manifest_dir,
+        _ => false,
+    }
+}
+
 fn main() {
     let manifest_dir: PathBuf = std::env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
+
+    if !is_own_checkout(&manifest_dir) {
+        println!("cargo:rustc-env=MARKCHECK_GIT_SHA=unknown");
+        return;
+    }
 
     let sha = git(&manifest_dir, &["rev-parse", "--short", "HEAD"])
         .unwrap_or_else(|| "unknown".to_string());
