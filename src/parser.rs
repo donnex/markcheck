@@ -321,9 +321,9 @@ impl ItemBuilder {
     }
 
     /// A leading bold-only run is the card title; a bold run anywhere else
-    /// is inline strong styling in the body.
+    /// is inline strong styling in the body, as is bold inside a link.
     fn start_strong(&mut self) {
-        if !self.header_done && self.text.trim().is_empty() {
+        if !self.header_done && self.link.is_none() && self.text.trim().is_empty() {
             self.capturing_header = true;
         } else {
             self.style.strong = true;

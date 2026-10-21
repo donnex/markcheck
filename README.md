@@ -440,6 +440,10 @@ Finer points:
   other bold title, but the link's URL is discarded — `o` can't open it (only
   links in the body are openable). Put the link after the bold title instead
   if it needs to be openable.
+- **Bold link text is not a card title.** `- [ ] [**Dashboard**](url) rest`
+  starts with a link, not a bold title: the card has no title, the body shows
+  the underlined link text `Dashboard`, and `o` opens it (the bold itself
+  isn't drawn inside a link).
 - **Front matter is skipped, not read.** A `title:` key does not become the
   document title; use a `# H1` for that. A `---` ... `---` pair anywhere but
   the first line is ordinary Markdown (a horizontal rule, and possibly an

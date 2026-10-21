@@ -56,7 +56,8 @@ markcheck examples/basics.md
   off at the card edge, links whose URL shows
   centered below the card rather than on it — including a long URL that
   no longer wraps and a two-link task with `[1]`/`[2]` markers keyed to the
-  numbered list below the card, a twelve-link task whose `[10]`–`[12]` are
+  numbered list below the card, a task opening with a bold-text link
+  (`[**text**](url)`) that stays a link rather than the card title, a twelve-link task whose `[10]`–`[12]` are
   opened by typing both digits after `o` — an `https://` and a `mailto:` one that `o`
   opens, plus a `file://` one that `o` refuses as an unsupported scheme, a
   bare URL in the task text that `o` opens just the same,

@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/28
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/29
 ────────────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Reference            ▲
@@ -13,14 +13,14 @@ expression: "screen(&mut state, width, height)"
   assumes the service has already been drained    │   ❯ Restart the primary a… ▓
              from the load balancer               │   ☐ Restart example-servi… ▓
                                                   │   ☐ A task with a fenced … ▓
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/28 ┓  │   ☐ A task with an indent… ▓
-┃   ▪ Restart the primary application service  ┃  │   ☐ A task with a short o… ▓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/29 ┓  │   ☐ A task with an indent… ▓
+┃   ▪ Restart the primary application service  ┃  │   ☐ A task with a short o… │
 ┃  and confirm that every health check passes  ┃  │   ☐ A task with fenced li… │
 ┃                                              ┃  │   ☐ A task with a tab-ind… │
 ┃   — a card title too long for one row wraps  ┃  │   ☐ A task with two comma… │
 ┃     inside the card instead of being cut     ┃  │   ☐ A task with a command… │
 ┃                                              ┃  │   ☐ Fetch curl -fsSL http… │
-┗ ··◉························· ━━━━━━━━━━━━━━━━┛  │   ☐ A task with emphasis,… │
+┗ ··◉·························· ━━━━━━━━━━━━━━━┛  │   ☐ A task with emphasis,… │
                                                   │   ☐ A task whose text run… │
                                                   │   ☐ A task in wide (two-c… │
                                                   │   ☐ Open the project runb… ▼

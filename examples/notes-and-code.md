@@ -96,6 +96,9 @@ Non-task content and the ways code is handled.
   [wiki](https://example.com/wiki) — each link text is tagged with a `[1]`/`[2]`
   marker that matches the numbered URLs listed below the card; press `o` then
   the number (`o` `2`) to open a specific one
+- [ ] [**Status board**](https://example.com/status-board) first — a link
+  whose text is bold stays a link even at the start of a task, not the card
+  title, so it keeps its `[1]` marker beside the [second link](https://example.com/help)
 - [ ] See also every service dashboard: [api](https://example.com/d/api),
   [web](https://example.com/d/web), [db](https://example.com/d/db),
   [cache](https://example.com/d/cache), [queue](https://example.com/d/queue),

@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/28
+ ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/29
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Reference            ▲
@@ -21,24 +21,24 @@ expression: "screen(&mut state, width, height)"
              ▪ Read before proceeding: every step below assumes the service               │   ☐ A task with a command… ▓
                      has already been drained from the load balancer                      │   ☐ Fetch curl -fsSL http… ▓
                                                                                           │   ☐ A task with emphasis,… ▓
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/28 ┓               │   ☐ A task whose text run… ▓
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/29 ┓               │   ☐ A task whose text run… ▓
 ┌ ☐ ────────┃ ▪ Restart the primary application service and confirm that  ┃────────────┐  │   ☐ A task in wide (two-c… ▓
 │  A task wi┃                  every health check passes                  ┃ Restart    │  │   ☐ Open the project runb… ▓
 │   a single┃                                                             ┃ample-servi │  │   ☐ A task with a very lo… ▓
 │    inline ┃  — a card title too long for one row wraps inside the card  ┃   ce       │  │   ☐ A task with two links… ▓
-│    command┃                    instead of being cut                     ┃            │  │   ☐ See also every servic… ▓
-└───────────┃                                                             ┃────────────┘  │   ☐ A task linking to a l… ▓
-            ┗ ··◉························· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ Check the dashboard a… ▓
+│    command┃                    instead of being cut                     ┃            │  │   ☐ Status board first — … ▓
+└───────────┃                                                             ┃────────────┘  │   ☐ See also every servic… ▓
+            ┗ ··◉·························· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ A task linking to a l… ▓
+                                                                                          │   ☐ Check the dashboard a… ▓
                                                                                           │   ☐ Check the mirror at w… ▓
                                                                                           │   ☐ Compare the dashboard… ▓
                                                                                           │   ☐ Press Enter at the pr… ▓
                                                                                           │   ☐ A task with an HTML b… ▓
                                                                                           │   ☐ Mail the on-call owne… ▓
                                                                                           │   ▪ A quoted example from… ▓
-                                                                                          │   ▪ Neither does a quoted… ▓
+                                                                                          │   ▪ Neither does a quoted… │
                                                                                           │ • [2] Precondition with a  │
                                                                                           │   ▪ Export the environmen… │
-                                                                                          │   ☐ Run the step that nee… │
-                                                                                          │ • [3] Fence after a list   ▼
+                                                                                          │   ☐ Run the step that nee… ▼
                                                                                           └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

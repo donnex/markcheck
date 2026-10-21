@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/28
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/29
 ────────────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Reference            ▲
@@ -13,14 +13,14 @@ expression: "screen(&mut state, width, height)"
   assumes the service has already been drained    │   ☐ Restart the primary a… ▓
              from the load balancer               │   ☐ Restart example-servi… ▓
                                                   │   ☐ A task with a fenced … ▓
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/28 ┓  │   ☐ A task with an indent… ▓
-┃                                              ┃  │   ☐ A task with a short o… ▓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/29 ┓  │   ☐ A task with an indent… ▓
+┃                                              ┃  │   ☐ A task with a short o… │
 ┃      A task with a single inline command     ┃  │   ☐ A task with fenced li… │
 ┃                                              ┃  │   ☐ A task with a tab-ind… │
 ┃              apply-config --now              ┃  │   ☐ A task with two comma… │
 ┃                                              ┃  │   ☐ A task with a command… │
 ┃                                              ┃  │   ☐ Fetch curl -fsSL http… │
-┗ ·◉·························· ━━━━━━━━━━━━━━━━┛  │   ☐ A task with emphasis,… │
+┗ ·◉··························· ━━━━━━━━━━━━━━━┛  │   ☐ A task with emphasis,… │
                                                   │   ☐ A task whose text run… │
                                                   │   ☐ A task in wide (two-c… │
                                                   │   ☐ Open the project runb… ▼

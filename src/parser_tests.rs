@@ -893,6 +893,60 @@ fn link_inside_the_title_loses_its_url_documented_limitation() {
 }
 
 #[test]
+fn bold_link_text_at_the_start_stays_the_link_not_the_title() {
+    let document = parse("## S\n\n- [ ] [**Runbook**](https://example.com) do it\n");
+    let item = &document.lists[0].items[0];
+    assert_eq!(item.header, None);
+    assert_eq!(
+        item.body,
+        vec![
+            BodySpan::Link {
+                text: "Runbook".to_string(),
+                url: "https://example.com".to_string(),
+            },
+            BodySpan::Text(" do it".to_string()),
+        ]
+    );
+    assert_eq!(item.display_text, "Runbook do it");
+}
+
+#[test]
+fn two_bold_text_links_each_keep_their_text() {
+    let document = parse(
+        "## S\n\n- [ ] [**One**](https://example.com/1) and [**Two**](https://example.com/2)\n",
+    );
+    let item = &document.lists[0].items[0];
+    assert_eq!(item.header, None);
+    assert_eq!(
+        item.body,
+        vec![
+            BodySpan::Link {
+                text: "One".to_string(),
+                url: "https://example.com/1".to_string(),
+            },
+            BodySpan::Text(" and ".to_string()),
+            BodySpan::Link {
+                text: "Two".to_string(),
+                url: "https://example.com/2".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn example_bold_text_link_keeps_its_marker() {
+    let item = example_item("notes-and-code.md", "Status board first");
+    assert_eq!(item.header, None);
+    assert_eq!(
+        item.link_urls(),
+        [
+            "https://example.com/status-board",
+            "https://example.com/help"
+        ]
+    );
+}
+
+#[test]
 fn soft_line_break_is_treated_as_a_space() {
     // An item wrapped across two source lines must not fuse the words at
     // the break ("beta"+"gamma") in display_text/search or the body.
