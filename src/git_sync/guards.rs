@@ -163,10 +163,11 @@ fn publishable(commit: &RangeCommit, relpath: &str, rule: Publishable) -> bool {
     }
     let own =
         matches!(commit.paths.as_slice(), [path] if is_checklist_path(path)) && commit.own_trailer;
-    let this_checklist = commit
-        .paths
-        .iter()
-        .all(|path| path.as_slice() == relpath.as_bytes());
+    let this_checklist = !commit.paths.is_empty()
+        && commit
+            .paths
+            .iter()
+            .all(|path| path.as_slice() == relpath.as_bytes());
     own || (rule == Publishable::OwnOrThisChecklist && this_checklist)
 }
 fn is_checklist_path(path: &[u8]) -> bool {

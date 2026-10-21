@@ -746,7 +746,9 @@ or drop it first`. Push it yourself, then the next toggle syncs normally.
 Commits that only change this checklist don't block a toggle, and neither
 do *markcheck's own* commits for any checklist: several of them piling up
 while offline, or one left behind by another checklist in the same
-repository, are pushed together with the new change.
+repository, are pushed together with the new change. An empty commit
+(`git commit --allow-empty`, such as a "trigger CI" marker) changes no
+checklist, so it blocks like any other commit of yours.
 If the checklist itself has **staged changes** that differ from the file on
 disk, git-sync refuses rather than committing: `Git sync failed: the
 checklist has staged changes that differ from the file on disk;

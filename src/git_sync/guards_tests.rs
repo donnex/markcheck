@@ -542,6 +542,37 @@ fn an_unpushed_merge_is_never_published() {
 }
 
 #[test]
+fn an_unpushed_empty_commit_is_never_published() {
+    for (rule, trailer) in [
+        (Publishable::OwnOrThisChecklist, "plain"),
+        (Publishable::OwnOrThisChecklist, OWN_COMMIT_TRAILER),
+        (Publishable::OwnOnly, OWN_COMMIT_TRAILER),
+    ] {
+        let (work, _remote) = init_repo_with_remote();
+        run(
+            &work,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "trigger deploy",
+                "-m",
+                trailer,
+            ],
+        );
+        let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+        assert!(
+            matches!(
+                unpushed_history(&work, Some(&tip), "tracked.md", rule),
+                Ok(UnpushedHistory::Blocked(blocking)) if blocking.subject == "trigger deploy"
+            ),
+            "{rule:?} with {trailer:?}"
+        );
+    }
+}
+
+#[test]
 fn a_markcheck_commit_to_a_non_markdown_file_is_not_its_own() {
     let (work, _remote) = init_repo_with_remote();
     fs::write(work.join("notes.txt"), "x\n").unwrap();
