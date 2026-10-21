@@ -505,35 +505,22 @@ fn a_configured_but_unfetched_upstream_still_counts_as_no_upstream() {
 }
 
 #[test]
-fn only_a_markdown_path_counts_as_a_checklist() {
-    assert!(is_checklist_path(b"runbook.md"));
-    assert!(is_checklist_path(b"docs/Runbook.MD"));
-    assert!(
-        !is_checklist_path(b".md"),
-        "a bare extension is no file name"
-    );
-    assert!(!is_checklist_path(b"notes.txt"));
-    assert!(!is_checklist_path(b"md"));
-}
-
-#[test]
 fn an_unpushed_merge_is_never_published() {
     let (work, _remote) = init_repo_with_remote();
     run(&work, &["checkout", "-q", "-b", "side"]);
     fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
-    run(
+    commit_as_markcheck(
         &work,
         &["commit", "-q", "-am", "side", "-m", OWN_COMMIT_TRAILER],
     );
     run(&work, &["checkout", "-q", "main"]);
     fs::write(work.join("other.md"), "- [ ] two\n").unwrap();
     run(&work, &["add", "other.md"]);
-    run(
+    commit_as_markcheck(
         &work,
         &["commit", "-q", "-m", "main side", "-m", OWN_COMMIT_TRAILER],
     );
-    run(&work, &["merge", "-q", "--no-edit", "side", "-m", "merge"]);
-    let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
+    let tip = commit_as_markcheck(&work, &["merge", "-q", "--no-edit", "side", "-m", "merge"]);
 
     assert!(matches!(
         unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOrThisChecklist),
@@ -549,7 +536,7 @@ fn an_unpushed_empty_commit_is_never_published() {
         (Publishable::OwnOnly, OWN_COMMIT_TRAILER),
     ] {
         let (work, _remote) = init_repo_with_remote();
-        run(
+        let tip = commit_as_markcheck(
             &work,
             &[
                 "commit",
@@ -561,7 +548,6 @@ fn an_unpushed_empty_commit_is_never_published() {
                 trailer,
             ],
         );
-        let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
         assert!(
             matches!(
                 unpushed_history(&work, Some(&tip), "tracked.md", rule),
@@ -573,19 +559,109 @@ fn an_unpushed_empty_commit_is_never_published() {
 }
 
 #[test]
-fn a_markcheck_commit_to_a_non_markdown_file_is_not_its_own() {
+fn a_recorded_commit_to_any_checklist_is_markchecks_own() {
     let (work, _remote) = init_repo_with_remote();
-    fs::write(work.join("notes.txt"), "x\n").unwrap();
-    run(&work, &["add", "notes.txt"]);
+    fs::write(work.join("TODO.txt"), "- [x] one\n").unwrap();
+    run(&work, &["add", "TODO.txt"]);
+    let tip = commit_as_markcheck(
+        &work,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "TODO.txt: Check",
+            "-m",
+            OWN_COMMIT_TRAILER,
+        ],
+    );
+    for rule in [Publishable::OwnOnly, Publishable::OwnOrThisChecklist] {
+        assert_eq!(
+            unpushed_history(&work, Some(&tip), "tracked.md", rule),
+            Ok(UnpushedHistory::Safe(1)),
+            "{rule:?}"
+        );
+    }
+}
+
+#[test]
+fn a_trailer_alone_does_not_make_a_commit_markchecks_own() {
+    let (work, _remote) = init_repo_with_remote();
+    fs::write(work.join("README.md"), "x\n").unwrap();
+    run(&work, &["add", "README.md"]);
     run(
         &work,
-        &["commit", "-q", "-m", "notes", "-m", OWN_COMMIT_TRAILER],
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "README.md: Reword",
+            "-m",
+            OWN_COMMIT_TRAILER,
+        ],
     );
     let tip = git_stdout(&work, &["rev-parse", "HEAD"]);
-    assert!(matches!(
-        unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOnly),
-        Ok(UnpushedHistory::Blocked(_))
-    ));
+    for rule in [Publishable::OwnOnly, Publishable::OwnOrThisChecklist] {
+        assert!(
+            matches!(
+                unpushed_history(&work, Some(&tip), "tracked.md", rule),
+                Ok(UnpushedHistory::Blocked(blocking)) if blocking.sha == tip
+            ),
+            "{rule:?}"
+        );
+    }
+}
+
+#[test]
+fn the_own_commit_record_keeps_the_latest_commits_once_each() {
+    let work = init_repo_without_remote();
+    let shas: Vec<String> = (0..OWN_COMMITS_KEPT + 2)
+        .map(|n| format!("{n:040x}"))
+        .collect();
+    for sha in &shas {
+        record_own_commit(&work, sha);
+    }
+    record_own_commit(&work, &shas[5]);
+    let own = own_commits(&work).unwrap();
+    assert_eq!(own.len(), OWN_COMMITS_KEPT);
+    assert!(own.contains(&shas[5]), "a re-recorded commit is the newest");
+    assert!(!own.contains(&shas[0]) && !own.contains(&shas[1]));
+    assert!(own.contains(&shas[2]));
+    assert!(own.contains(shas.last().unwrap()));
+    let leftovers: Vec<_> = fs::read_dir(git_dir(&work).unwrap())
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("markcheck-own-commits-")
+        })
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn an_unreadable_own_commit_record_refuses_instead_of_guessing() {
+    let (work, _remote) = init_repo_with_remote();
+    fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+    let tip = commit_as_markcheck(&work, &["commit", "-q", "-am", "toggle"]);
+    let record = git_dir(&work).unwrap().join(OWN_COMMITS_FILE);
+    fs::remove_file(&record).unwrap();
+    fs::create_dir(&record).unwrap();
+
+    let err = unpushed_history(&work, Some(&tip), "tracked.md", Publishable::OwnOnly)
+        .expect_err("a record that can't be read has no answer");
+    assert!(err.contains("record of its commits"), "{err}");
+    record_own_commit(&work, &tip);
+    assert!(record.is_dir(), "a failed rewrite leaves the record alone");
+}
+
+#[test]
+fn a_repository_without_a_git_dir_has_no_own_commits_to_read_or_record() {
+    let dir = unique_dir("no-git-dir");
+    fs::create_dir_all(&dir).unwrap();
+    record_own_commit(&dir, &"a".repeat(40));
+    assert!(own_commits(&dir).is_err());
 }
 
 #[test]
@@ -668,25 +744,20 @@ fn a_path_named_like_a_commit_is_not_read_as_one() {
 
 #[test]
 fn a_log_listing_is_split_into_commits_without_guessing() {
-    let listing = b"\0aaaa\0\0markcheck\n\0own\0\n\nodd.md\0bbbb\0\
-\0cccc\0aaaa\0\0empty\0\
-\0dddd\0aaaa cccc\0\0merge\0";
+    let listing = b"\0aaaa\0\0own\0\n\nodd.md\0bbbb\0\
+\0cccc\0aaaa\0empty\0\
+\0dddd\0aaaa cccc\0merge\0";
     let commits = parse_range_commits(listing).unwrap();
     let summary: Vec<_> = commits
         .iter()
-        .map(|c| (c.sha.as_str(), c.is_merge, c.paths.clone(), c.own_trailer))
+        .map(|c| (c.sha.as_str(), c.is_merge, c.paths.clone()))
         .collect();
     assert_eq!(
         summary,
         [
-            (
-                "aaaa",
-                false,
-                vec![b"\nodd.md".to_vec(), b"bbbb".to_vec()],
-                true
-            ),
-            ("cccc", false, vec![], false),
-            ("dddd", true, vec![], false),
+            ("aaaa", false, vec![b"\nodd.md".to_vec(), b"bbbb".to_vec()]),
+            ("cccc", false, vec![]),
+            ("dddd", true, vec![]),
         ]
     );
     assert_eq!(commits[2].subject, "merge");
@@ -697,7 +768,7 @@ fn a_log_listing_is_split_into_commits_without_guessing() {
 fn an_unexpected_log_listing_is_an_error() {
     for listing in [
         &b"stray\0"[..],
-        b"\0aaaa\0\0",
+        b"\0aaaa\0",
         b"\0not-hex\0\0\0subject\0",
         b"\0\0\0\0subject\0",
     ] {

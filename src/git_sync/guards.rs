@@ -1,6 +1,8 @@
 //! The refusals: everything that decides a sync must not proceed. They fail
 //! closed — when safety can't be established, the sync refuses.
 
+use std::collections::HashSet;
+use std::io;
 use std::path::Path;
 
 use super::inspect::{
@@ -9,9 +11,15 @@ use super::inspect::{
 use super::process::{PLUMBING_TIMEOUT, command_error, git_command, run_with_timeout};
 use super::shared::SyncOutcome;
 
-/// The trailer every commit markcheck makes carries, so a later sync can
-/// tell its own stranded commits from the user's (#62, #99).
+/// The trailer every commit markcheck makes carries, so its own commit can
+/// be found on the branch right after `git commit` (#62, #99, #232).
 pub(super) const OWN_COMMIT_TRAILER: &str = "Synced-by: markcheck";
+/// The file in the git directory listing the commits git sync made, which
+/// is what makes a commit markcheck's own: a trailer is text any patch can
+/// carry (#247).
+pub(super) const OWN_COMMITS_FILE: &str = "markcheck-own-commits";
+/// How many of the latest own commits the record keeps.
+const OWN_COMMITS_KEPT: usize = 1024;
 const OWN_TRAILER_KEY: &str = "Synced-by";
 const OWN_TRAILER_VALUE: &str = "markcheck";
 
@@ -63,10 +71,11 @@ pub(super) fn unpushed_history(
         return Ok(UnpushedHistory::NoUpstream);
     };
     let commits = range_commits(repo_root, &format!("{upstream}..{tip}"))?;
+    let own_commits = own_commits(repo_root)?;
     // Oldest first, so a refusal names the commit that has waited longest.
     match commits
         .iter()
-        .find(|commit| !publishable(commit, relpath, rule))
+        .find(|commit| !publishable(commit, &own_commits, relpath, rule))
     {
         Some(commit) => Ok(UnpushedHistory::Blocked(Blocking {
             sha: commit.sha.clone(),
@@ -82,7 +91,6 @@ struct RangeCommit {
     is_merge: bool,
     /// Empty for a merge, which is never diffed.
     paths: Vec<Vec<u8>>,
-    own_trailer: bool,
     subject: String,
 }
 /// Every commit in `range`, oldest first, from one `git log`. The format
@@ -91,9 +99,6 @@ struct RangeCommit {
 /// otherwise flip (renames, the root diff, colour, signatures, submodule
 /// hiding, the output encoding) are pinned.
 fn range_commits(repo_root: &Path, range: &str) -> Result<Vec<RangeCommit>, String> {
-    let format = format!(
-        "--format=%x00%H%x00%P%x00%(trailers:key={OWN_TRAILER_KEY},valueonly,unfold)%x00%s"
-    );
     let mut cmd = git_command(repo_root);
     cmd.args([
         "log",
@@ -106,7 +111,7 @@ fn range_commits(repo_root: &Path, range: &str) -> Result<Vec<RangeCommit>, Stri
         "--encoding=UTF-8",
         "--name-only",
         "-z",
-        &format,
+        "--format=%x00%H%x00%P%x00%s",
         range,
         "--",
     ]);
@@ -128,9 +133,7 @@ fn parse_range_commits(stdout: &[u8]) -> Result<Vec<RangeCommit>, String> {
         let Some(sha) = fields.next() else {
             break;
         };
-        let (Some(parents), Some(trailers), Some(subject)) =
-            (fields.next(), fields.next(), fields.next())
-        else {
+        let (Some(parents), Some(subject)) = (fields.next(), fields.next()) else {
             return Err(unreadable());
         };
         if sha.is_empty() || !sha.iter().all(u8::is_ascii_hexdigit) {
@@ -148,30 +151,74 @@ fn parse_range_commits(stdout: &[u8]) -> Result<Vec<RangeCommit>, String> {
             sha: String::from_utf8_lossy(sha).into_owned(),
             is_merge: parents.split(|&b| b == b' ').count() > 1,
             paths,
-            own_trailer: String::from_utf8_lossy(trailers)
-                .lines()
-                .any(|value| value.trim() == OWN_TRAILER_VALUE),
             subject: String::from_utf8_lossy(subject).trim().to_string(),
         });
     }
     Ok(commits)
 }
-/// Whether one commit may be published under `rule`. A merge never may.
-fn publishable(commit: &RangeCommit, relpath: &str, rule: Publishable) -> bool {
-    if commit.is_merge {
+/// Whether one commit may be published under `rule`. A merge never may, nor
+/// an empty commit, which git sync never makes.
+fn publishable(
+    commit: &RangeCommit,
+    own_commits: &HashSet<String>,
+    relpath: &str,
+    rule: Publishable,
+) -> bool {
+    if commit.is_merge || commit.paths.is_empty() {
         return false;
     }
-    let own =
-        matches!(commit.paths.as_slice(), [path] if is_checklist_path(path)) && commit.own_trailer;
-    let this_checklist = !commit.paths.is_empty()
-        && commit
-            .paths
-            .iter()
-            .all(|path| path.as_slice() == relpath.as_bytes());
+    let own = own_commits.contains(&commit.sha);
+    let this_checklist = commit
+        .paths
+        .iter()
+        .all(|path| path.as_slice() == relpath.as_bytes());
     own || (rule == Publishable::OwnOrThisChecklist && this_checklist)
 }
-fn is_checklist_path(path: &[u8]) -> bool {
-    path.len() > 3 && path[path.len() - 3..].eq_ignore_ascii_case(b".md")
+/// The commits git sync recorded as its own in this repository. No record
+/// yet is an empty set; one that can't be read is an error, so the guard
+/// refuses rather than calling markcheck's commits the user's.
+pub(super) fn own_commits(repo_root: &Path) -> Result<HashSet<String>, String> {
+    let git_dir = git_dir(repo_root)
+        .ok_or_else(|| "could not find the repository's git directory".to_string())?;
+    match std::fs::read_to_string(git_dir.join(OWN_COMMITS_FILE)) {
+        Ok(record) => Ok(record_entries(&record).map(str::to_string).collect()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(HashSet::new()),
+        Err(err) => Err(format!(
+            "could not read markcheck's record of its commits: {err}"
+        )),
+    }
+}
+fn record_entries(record: &str) -> impl Iterator<Item = &str> {
+    record
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && line.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+/// Adds `sha` to the record of git sync's commits, keeping the latest
+/// [`OWN_COMMITS_KEPT`], through a temp file renamed over the record. Best
+/// effort: a commit left out is only ever treated as the user's.
+pub(super) fn record_own_commit(repo_root: &Path, sha: &str) {
+    let Some(git_dir) = git_dir(repo_root) else {
+        return;
+    };
+    let path = git_dir.join(OWN_COMMITS_FILE);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut entries: Vec<&str> = record_entries(&existing)
+        .filter(|entry| *entry != sha)
+        .collect();
+    entries.push(sha);
+    let kept = &entries[entries.len().saturating_sub(OWN_COMMITS_KEPT)..];
+    let contents: String = kept.iter().map(|entry| format!("{entry}\n")).collect();
+    let temp = git_dir.join(format!(
+        "{OWN_COMMITS_FILE}-{}-{:x}",
+        std::process::id(),
+        crate::writer::random_suffix()
+    ));
+    if let Ok(temp) = crate::writer::write_new_temp(&temp, 0o600, &contents, |_| Ok(()))
+        && std::fs::rename(&temp, &path).is_err()
+    {
+        let _ = std::fs::remove_file(temp);
+    }
 }
 pub(super) fn carries_own_trailer(repo_root: &Path, sha: &str) -> Result<bool, String> {
     let format = format!("--format=%(trailers:key={OWN_TRAILER_KEY},valueonly,separator=%x00)");

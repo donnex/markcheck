@@ -617,7 +617,7 @@ fn a_push_outcome_does_not_hide_a_content_sync_that_failed() {
 }
 
 #[test]
-fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
+fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_files() {
     let work = init_repo_without_remote();
     let mut child = std::process::Command::new("true").spawn().unwrap();
     let dead = child.id();
@@ -627,13 +627,19 @@ fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
     for name in [
         format!("markcheck-index-{dead}-1f"),
         format!("markcheck-index-{dead}-1f.lock"),
+        format!("markcheck-own-commits-{dead}-2e"),
+        "markcheck-own-commits".to_string(),
     ] {
         let file = fs::File::create(git_dir.join(name)).unwrap();
         file.set_modified(old).unwrap();
     }
 
     let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
-    assert_eq!(sync.sweep_interrupted_syncs(), 2);
+    assert_eq!(sync.sweep_interrupted_syncs(), 3);
+    assert!(
+        git_dir.join("markcheck-own-commits").exists(),
+        "the record itself is kept"
+    );
     assert_eq!(sync.sweep_interrupted_syncs(), 0);
 }
 

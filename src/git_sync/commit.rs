@@ -7,7 +7,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::guards::{
-    OWN_COMMIT_TRAILER, carries_own_trailer, repo_sync_blocked, verify_commit_scope,
+    OWN_COMMIT_TRAILER, carries_own_trailer, record_own_commit, repo_sync_blocked,
+    verify_commit_scope,
 };
 use super::inspect::{IDENTITY_FIX, blob_at, current_head, git_dir, index_blob};
 use super::process::{
@@ -60,6 +61,7 @@ pub(super) fn commit_via_temp_index(
             COMMIT_TIMEOUT,
         )?;
         verify_commit_scope(repo_root, parent, relpath, &created_commit)?;
+        record_own_commit(repo_root, &created_commit);
         race_point(RacePoint::BeforeIndexAlignment);
         align_real_index_entry(repo_root, mode, blob, relpath, index_before.as_deref());
         Ok(created_commit)

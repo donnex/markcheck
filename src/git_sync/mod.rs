@@ -579,11 +579,15 @@ impl GitSync {
         self.busy
     }
 
-    /// Removes the temporary indexes (`markcheck-index-…`) a markcheck killed
-    /// mid-sync left in the repository's git directory. Returns how many.
+    /// Removes the temporary indexes (`markcheck-index-…`) and own-commit
+    /// record rewrites (`markcheck-own-commits-…`) a markcheck killed mid-sync
+    /// left in the repository's git directory. Returns how many.
     pub fn sweep_interrupted_syncs(&self) -> usize {
         inspect::git_dir(&self.repo_root).map_or(0, |git_dir| {
-            crate::writer::remove_leftovers(&git_dir, "markcheck-index-")
+            ["markcheck-index-", "markcheck-own-commits-"]
+                .iter()
+                .map(|prefix| crate::writer::remove_leftovers(&git_dir, prefix))
+                .sum()
         })
     }
 

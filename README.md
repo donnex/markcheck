@@ -739,8 +739,11 @@ saying so, and nothing is committed. Commit messages name the
 actual change (`checklist.md: Check "Restart service"`, `checklist.md:
 Reset all tasks to not done`, …) rather than a generic "updated by
 markcheck", so `git log`/`git blame` stay useful across hosts. Each one
-also ends with a `Synced-by: markcheck` trailer line, which is how
-`markcheck` later tells its own commits from yours. A failed
+also ends with a `Synced-by: markcheck` trailer line. markcheck tells its
+own commits from yours by a list of the commits it made, kept in the
+repository's `.git` directory, not by that trailer, which anyone can write:
+a commit you applied from a patch or picked from someone else's branch is
+yours, whatever its message says. A failed
 commit (diverged history, mid-merge, …) is reported as a red status-bar
 message — `markcheck` never attempts to resolve it for you (no auto
 `git pull --rebase`), so fix it in a terminal as usual. A commit that
@@ -755,8 +758,8 @@ commits (`Pushed 2 earlier markcheck commits`): if a commit you made
 yourself is waiting to be pushed, opening the checklist pushes nothing and
 the status bar names that commit, so a change you kept local on purpose is
 never published just by looking at the file. Commits made by markcheck
-versions before the trailer existed count as yours here; push those by
-hand once. If a retry fails for a new reason, the status
+versions that didn't keep this list yet, or in another clone or worktree,
+count as yours here; push those by hand once. If a retry fails for a new reason, the status
 bar says `Push retry failed: ... (will keep retrying)`; one that fails the
 same way as before stays quiet, so it doesn't replace whatever message you
 are reading, and the title bar keeps showing `not pushed` (see below). When

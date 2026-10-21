@@ -27,6 +27,14 @@ pub(super) fn git_stdout(dir: &Path, args: &[&str]) -> String {
         .expect("git command failed to run");
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
+/// Commits as `args` say and records the commit as git sync's own, the way
+/// a commit markcheck made is. Returns its SHA.
+pub(super) fn commit_as_markcheck(dir: &Path, args: &[&str]) -> String {
+    run(dir, args);
+    let sha = git_stdout(dir, &["rev-parse", "HEAD"]);
+    guards::record_own_commit(dir, &sha);
+    sha
+}
 /// What [`init_repo`] sets up: `file` committed with one open task in a
 /// repository under its own unique root, plus what the fixture adds.
 pub(super) struct RepoFixture<'a> {

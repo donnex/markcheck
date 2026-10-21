@@ -328,7 +328,7 @@ fn retry_commit_pushes_when_head_still_matches() {
 fn an_unrelated_commit_landing_after_validation_is_not_published_by_catch_up() {
     let (work, remote) = init_repo_with_remote();
     fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
-    run(
+    commit_as_markcheck(
         &work,
         &["commit", "-q", "-am", "checklist", "-m", OWN_COMMIT_TRAILER],
     );
@@ -387,7 +387,7 @@ fn catch_up_push_pushes_a_local_only_commit_without_committing_a_dirty_tree() {
     let (work, remote) = init_repo_with_remote();
     let file = work.join("tracked.md");
     fs::write(&file, "- [x] one\n").unwrap();
-    run(
+    commit_as_markcheck(
         &work,
         &[
             "commit",
@@ -669,7 +669,7 @@ fn catch_up_push_counts_every_earlier_markcheck_commit_it_pushes() {
     let file = work.join("tracked.md");
     for content in ["- [x] one\n", "- [ ] one\n"] {
         fs::write(&file, content).unwrap();
-        run(
+        commit_as_markcheck(
             &work,
             &["commit", "-q", "-am", "toggle", "-m", OWN_COMMIT_TRAILER],
         );
@@ -685,12 +685,62 @@ fn catch_up_push_counts_every_earlier_markcheck_commit_it_pushes() {
     );
 }
 #[test]
+fn catch_up_push_leaves_a_commit_that_only_claims_to_be_markchecks_alone() {
+    // A patch applied for review keeps its author and its trailer, but git
+    // sync never made it (#247).
+    let (work, remote) = init_repo_with_remote();
+    fs::write(work.join("README.md"), "changed by someone else\n").unwrap();
+    run(&work, &["add", "README.md"]);
+    run(
+        &work,
+        &[
+            "-c",
+            "user.name=someone",
+            "-c",
+            "user.email=someone@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "README.md: Reword",
+            "-m",
+            OWN_COMMIT_TRAILER,
+        ],
+    );
+
+    let outcome = catch_up_push(&work, &work.join("tracked.md"));
+
+    assert!(
+        matches!(&outcome, SyncOutcome::NotCaughtUp(msg) if msg.contains("\"README.md: Reword\"")),
+        "{outcome:?}"
+    );
+    assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
+}
+#[test]
+fn catch_up_push_pushes_markchecks_stranded_commit_to_a_checklist_not_named_md() {
+    let (work, remote) = init_repo_with_remote_named("runbook.markdown");
+    let file = work.join("runbook.markdown");
+    fs::write(&file, "- [x] one\n").unwrap();
+    commit_as_markcheck(
+        &work,
+        &["commit", "-q", "-am", "toggle", "-m", OWN_COMMIT_TRAILER],
+    );
+
+    assert_eq!(
+        catch_up_push(&work, &file),
+        SyncOutcome::CaughtUp { pushed: 1 }
+    );
+    assert_eq!(
+        git_stdout(&remote, &["log", "--format=%s", "main"]),
+        "toggle\ninit"
+    );
+}
+#[test]
 fn a_catch_up_push_the_remote_rejects_is_reported_with_the_commit_left_behind() {
     use std::os::unix::fs::PermissionsExt as _;
     let (work, remote) = init_repo_with_remote();
     let file = work.join("tracked.md");
     fs::write(&file, "- [x] one\n").unwrap();
-    run(
+    commit_as_markcheck(
         &work,
         &["commit", "-q", "-am", "checklist", "-m", OWN_COMMIT_TRAILER],
     );
