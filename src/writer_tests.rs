@@ -38,6 +38,16 @@ fn a_dead_pid() -> u32 {
     pid
 }
 
+fn age_past_the_sweep(path: &Path) {
+    let old = std::time::SystemTime::now() - LEFTOVER_MIN_AGE - std::time::Duration::from_secs(60);
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+}
+
 /// The premise behind the startup hard-link warning, pinned so it cannot
 /// quietly stop being true: an ordinary checklist has one link, a
 /// hard-linked one reports more, and the atomic write really does break
@@ -1091,6 +1101,7 @@ fn remove_leftovers_removes_only_a_dead_markcheck_s_files() {
     ];
     for name in &names {
         fs::write(dir.join(name), "").unwrap();
+        age_past_the_sweep(&dir.join(name));
     }
     fs::create_dir(dir.join(format!("markcheck-index-{dead}-6e"))).unwrap();
 
@@ -1116,6 +1127,56 @@ fn remove_leftovers_removes_only_a_dead_markcheck_s_files() {
 }
 
 #[test]
+fn remove_leftovers_keeps_a_young_file_whose_pid_looks_gone() {
+    let dir = crate::test_support::unique_temp_path("writer", "leftovers-young", None);
+    fs::create_dir(&dir).unwrap();
+    let dead = a_dead_pid();
+    let young = dir.join(format!("markcheck-index-{dead}-1f"));
+    fs::write(&young, "").unwrap();
+
+    assert_eq!(
+        remove_leftovers(&dir, "markcheck-index-"),
+        0,
+        "another host's or namespace's live sync can look like a dead PID"
+    );
+    assert!(young.exists());
+
+    age_past_the_sweep(&young);
+    assert_eq!(remove_leftovers(&dir, "markcheck-index-"), 1);
+    assert!(!young.exists());
+}
+
+#[test]
+fn remove_leftovers_keeps_another_user_s_file() {
+    let dir = crate::test_support::unique_temp_path("writer", "leftovers-owner", None);
+    fs::create_dir(&dir).unwrap();
+    let dead = a_dead_pid();
+    let file = dir.join(format!("markcheck-index-{dead}-1f"));
+    fs::write(&file, "").unwrap();
+    let other_uid = current_uid().wrapping_add(1);
+
+    assert_eq!(
+        remove_leftovers_owned_by(
+            &dir,
+            "markcheck-index-",
+            other_uid,
+            std::time::Duration::ZERO
+        ),
+        0
+    );
+    assert!(file.exists());
+    assert_eq!(
+        remove_leftovers_owned_by(
+            &dir,
+            "markcheck-index-",
+            current_uid(),
+            std::time::Duration::ZERO
+        ),
+        1
+    );
+}
+
+#[test]
 fn sweep_interrupted_saves_removes_a_dead_save_s_temp_files_beside_the_checklist() {
     let dir = crate::test_support::unique_temp_path("writer", "sweep", None);
     fs::create_dir(&dir).unwrap();
@@ -1128,7 +1189,8 @@ fn sweep_interrupted_saves_removes_a_dead_save_s_temp_files_beside_the_checklist
         format!(".runbook.md.markcheck-new-{dead}-3d"),
         format!(".other.md.markcheck-tmp-{dead}-4c"),
     ] {
-        fs::write(dir.join(name), "- [x] a\n").unwrap();
+        fs::write(dir.join(&name), "- [x] a\n").unwrap();
+        age_past_the_sweep(&dir.join(name));
     }
 
     assert_eq!(sweep_interrupted_saves(&checklist), 3);

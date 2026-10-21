@@ -446,11 +446,30 @@ fn pid_is_gone(pid: &str) -> bool {
     ps_reports_gone(Command::new("ps"), pid)
 }
 
+/// How old a leftover must be before the sweep removes it: comfortably past
+/// the longest a live save or sync keeps one (a commit's 300-second timeout
+/// plus the kill grace), so a file whose PID only looks gone because its
+/// process is on another host, in another PID namespace or hidden by
+/// `hidepid` is never pulled from under it.
+const LEFTOVER_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 /// Removes the regular files in `dir` named `<prefix><pid>-<hex>…` (more
-/// `-<hex>` groups and a final `.lock` allowed) whose process is provably
-/// gone: what a markcheck killed mid-save or mid-sync leaves behind, which
-/// nothing else would ever remove. Returns how many were removed.
+/// `-<hex>` groups and a final `.lock` allowed) that this user owns, that
+/// are older than [`LEFTOVER_MIN_AGE`] and whose process is provably gone:
+/// what a markcheck killed mid-save or mid-sync leaves behind, which nothing
+/// else would ever remove. Returns how many were removed.
 pub(crate) fn remove_leftovers(dir: &Path, prefix: &str) -> usize {
+    remove_leftovers_owned_by(dir, prefix, current_uid(), LEFTOVER_MIN_AGE)
+}
+
+fn remove_leftovers_owned_by(
+    dir: &Path,
+    prefix: &str,
+    uid: u32,
+    min_age: std::time::Duration,
+) -> usize {
+    use std::os::unix::fs::MetadataExt;
+
     let Ok(entries) = fs::read_dir(dir) else {
         return 0;
     };
@@ -468,10 +487,18 @@ pub(crate) fn remove_leftovers(dir: &Path, prefix: &str) -> usize {
             let well_formed = suffix
                 .split('-')
                 .all(|group| !group.is_empty() && group.bytes().all(|b| b.is_ascii_hexdigit()));
-            well_formed
-                && entry.file_type().is_ok_and(|kind| kind.is_file())
-                && pid_is_gone(pid)
-                && fs::remove_file(entry.path()).is_ok()
+            let abandoned = || {
+                fs::symlink_metadata(entry.path()).is_ok_and(|meta| {
+                    meta.is_file()
+                        && meta.uid() == uid
+                        && meta
+                            .modified()
+                            .ok()
+                            .and_then(|modified| modified.elapsed().ok())
+                            .is_some_and(|age| age >= min_age)
+                })
+            };
+            well_formed && abandoned() && pid_is_gone(pid) && fs::remove_file(entry.path()).is_ok()
         })
         .count()
 }

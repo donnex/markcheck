@@ -623,8 +623,14 @@ fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
     let dead = child.id();
     child.wait().unwrap();
     let git_dir = work.join(".git");
-    fs::write(git_dir.join(format!("markcheck-index-{dead}-1f")), "").unwrap();
-    fs::write(git_dir.join(format!("markcheck-index-{dead}-1f.lock")), "").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 60);
+    for name in [
+        format!("markcheck-index-{dead}-1f"),
+        format!("markcheck-index-{dead}-1f.lock"),
+    ] {
+        let file = fs::File::create(git_dir.join(name)).unwrap();
+        file.set_modified(old).unwrap();
+    }
 
     let sync = GitSync::detect(&work.join("tracked.md")).unwrap();
     assert_eq!(sync.sweep_interrupted_syncs(), 2);
