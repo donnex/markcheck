@@ -63,9 +63,7 @@ impl AppState {
         let state = match kind {
             // An info card can't be toggled, so page past it like `l`.
             ItemKind::DisplayOnly => {
-                let before = (self.current_list_index, self.current_item_index);
-                self.navigate_forward();
-                if (self.current_list_index, self.current_item_index) == before {
+                if !self.navigate_forward() {
                     self.set_error(
                         "Nothing to toggle: this is a note, and it's the last card".to_string(),
                     );

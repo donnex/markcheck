@@ -224,27 +224,67 @@ impl AppState {
     /// `l`/→: step to the next item, or — at the last item of a list —
     /// move sequentially into the next list (landing on its first
     /// not-done item), so review isn't a dead-end. Clamps at the last
-    /// item of the last list.
-    pub fn navigate_forward(&mut self) {
+    /// item of the last list, returning whether the cursor moved.
+    pub fn navigate_forward(&mut self) -> bool {
         let last_index = self.current_list().items.len().saturating_sub(1);
         if self.current_item_index < last_index {
             self.navigate_next();
         } else if self.current_list_index + 1 < self.document.lists.len() {
             self.jump_to_list(self.current_list_index + 1);
+        } else {
+            return false;
         }
+        true
     }
 
     /// `h`/←: mirror of `navigate_forward` — step to the previous item, or —
     /// at the first item of a list — move into the previous list,
     /// landing on its first not-done item (or its first item when all done),
     /// via `jump_to_list`. Clamps at the first item of the first
-    /// list.
-    pub fn navigate_backward(&mut self) {
+    /// list, returning whether the cursor moved.
+    pub fn navigate_backward(&mut self) -> bool {
         if self.current_item_index > 0 {
             self.navigate_prev();
         } else if self.current_list_index > 0 {
             self.jump_to_list(self.current_list_index - 1);
+        } else {
+            return false;
         }
+        true
+    }
+
+    /// `l`/`j`/→/↓ from the keyboard: `navigate_forward`, reporting a sticky
+    /// `Already at the last task` when the cursor is at the very end.
+    pub fn step_forward(&mut self) {
+        if !self.navigate_forward() {
+            self.report_edge("Already at the last task");
+        }
+    }
+
+    /// `h`/`k`/←/↑ from the keyboard: mirror of `step_forward`.
+    pub fn step_backward(&mut self) {
+        if !self.navigate_backward() {
+            self.report_edge("Already at the first task");
+        }
+    }
+
+    fn report_edge(&mut self, msg: &str) {
+        let here = (self.current_list_index, self.current_item_index);
+        let others_unfinished = self.document.lists.iter().enumerate().any(|(s, list)| {
+            list.items.iter().enumerate().any(|(i, item)| {
+                (s, i) != here
+                    && matches!(
+                        item.kind,
+                        ItemKind::Checkbox(TaskState::NotStarted | TaskState::Started)
+                    )
+            })
+        });
+        let msg = if others_unfinished {
+            format!("{msg} · Tab finds unfinished ones")
+        } else {
+            msg.to_string()
+        };
+        self.set_error(msg);
     }
 
     pub(super) fn reset_card_scroll(&mut self) {

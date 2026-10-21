@@ -494,7 +494,10 @@ the next list that still has incomplete tasks (skipping any already
 done), `h` reviews the one you just finished. If you go back to review, you
 can still move on: `Tab` jumps to the next unfinished task anywhere (wrapping
 around to the top, with a `Wrapped to the first unfinished task` notice), `Shift-L` jumps to the next unfinished list (`Shift-H` the
-previous), and `l` at the end of a list steps into the next list.
+previous), and `l` at the end of a list steps into the next list. At the
+very last task `l`/`j` say `Already at the last task` (and `h`/`k` at the
+very first, `Already at the first task`), adding `· Tab finds unfinished ones`
+when any other task is still open; the mouse wheel stops there quietly.
 Finishing every list shows an all-done summary. Jumping to a list (or
 starting up) lands on its first not-done task.
 

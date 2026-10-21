@@ -21,6 +21,79 @@ fn navigate_forward_clamps_at_last_list_end() {
 }
 
 #[test]
+fn moving_past_the_last_task_says_so() {
+    for code in [
+        KeyCode::Char('l'),
+        KeyCode::Char('j'),
+        KeyCode::Right,
+        KeyCode::Down,
+    ] {
+        let mut state = AppState::new(two_list_document());
+        state.current_list_index = 1;
+        state.current_item_index = 1;
+        state.handle_key(code);
+        assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Already at the last task · Tab finds unfinished ones"),
+            "{code:?}"
+        );
+        assert!(state.status_is_error);
+    }
+}
+
+#[test]
+fn moving_past_the_first_task_says_so() {
+    for code in [
+        KeyCode::Char('h'),
+        KeyCode::Char('k'),
+        KeyCode::Left,
+        KeyCode::Up,
+    ] {
+        let mut state = AppState::new(two_list_document());
+        state.handle_key(code);
+        assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Already at the first task · Tab finds unfinished ones"),
+            "{code:?}"
+        );
+        assert!(state.status_is_error);
+    }
+}
+
+#[test]
+fn edge_message_omits_the_tab_hint_when_nothing_else_is_unfinished() {
+    let mut state = AppState::new(all_done_document());
+    state.current_list_index = state.document.lists.len() - 1;
+    state.current_item_index = state.current_list().items.len() - 1;
+    state.view = View::Checklist;
+    state.handle_key(KeyCode::Char('l'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Already at the last task")
+    );
+}
+
+#[test]
+fn moving_within_the_checklist_reports_nothing() {
+    let mut state = AppState::new(two_list_document());
+    state.handle_key(KeyCode::Char('l'));
+    assert_eq!(state.current_item_index, 1);
+    assert_eq!(state.status_message, None);
+}
+
+#[test]
+fn wheel_past_the_last_task_stays_quiet() {
+    let mut state = AppState::new(two_list_document());
+    state.current_list_index = 1;
+    state.current_item_index = 1;
+    state.handle_scroll_down();
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    assert_eq!(state.status_message, None);
+}
+
+#[test]
 fn navigate_backward_within_list_steps_one_item() {
     let mut state = AppState::new(two_list_document());
     state.current_item_index = 2;

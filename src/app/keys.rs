@@ -77,7 +77,9 @@ impl AppState {
         self.clear_pending_chords();
         match (self.overlay, self.view) {
             (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_up(),
-            (None, View::Checklist) => self.navigate_backward(),
+            (None, View::Checklist) => {
+                self.navigate_backward();
+            }
             (Some(Overlay::Help), _) => self.scroll_help_up_by(1),
             (Some(Overlay::ListPicker), _) => self.picker_move(-1),
             _ => {}
@@ -89,7 +91,9 @@ impl AppState {
         self.clear_pending_chords();
         match (self.overlay, self.view) {
             (None, View::Checklist) if self.layout.card_max_scroll > 0 => self.scroll_card_down(),
-            (None, View::Checklist) => self.navigate_forward(),
+            (None, View::Checklist) => {
+                self.navigate_forward();
+            }
             (Some(Overlay::Help), _) => self.scroll_help_down_by(1),
             (Some(Overlay::ListPicker), _) => self.picker_move(1),
             _ => {}
@@ -636,10 +640,10 @@ impl AppState {
     pub(super) fn handle_checklist_key(&mut self, code: KeyCode, pending_g: bool) {
         match code {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
-                self.navigate_backward()
+                self.step_backward()
             }
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('j') | KeyCode::Down => {
-                self.navigate_forward()
+                self.step_forward()
             }
             // `gg` (two presses) → first task; `G` → last task.
             KeyCode::Char('g') => {
