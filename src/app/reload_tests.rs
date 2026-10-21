@@ -1283,9 +1283,13 @@ fn ctrl_e_on_a_completion_screen_does_not_open_the_editor() {
 }
 
 #[test]
-fn every_screen_help_lists_ctrl_c_and_ctrl_z() {
+fn every_screen_help_lists_ctrl_c_ctrl_l_and_ctrl_z() {
     let words = help_words(&[""]);
-    assert!(words.contains(&"Ctrl-C") && words.contains(&"Ctrl-Z"));
+    assert!(
+        ["Ctrl-C", "Ctrl-L", "Ctrl-Z"]
+            .iter()
+            .all(|key| words.contains(key))
+    );
 }
 
 #[test]

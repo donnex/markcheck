@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Ctrl-L` redraws the whole screen, as in vim, less and the shell. Anything written to the terminal behind markcheck's back, such as a background job started from the same shell, a `wall` broadcast or console messages, stayed on screen over the cards until those cells happened to change, and `Ctrl-L` was rejected as `Ctrl-L is not bound`, so the only fix was resizing the window or `Ctrl-Z` then `fg`. It works on every screen and overlay and leaves everything else as it was. (#205)
 - `--no-terminal-title` and `--no-exit-summary` turn off the terminal title and the line printed after quitting for one run, and `--terminal-title` and `--exit-summary` turn them back on over a config file that sets `terminal_title = false` or `exit_summary = false`. These two settings could only be changed in the config file, although the 1.3.0 notes and the README said every on/off setting has a flag in both directions, so a shared config that turned the exit line off couldn't be overridden, and there was no way to leave the title alone without writing a config file. (#163)
 
 ### Fixed

@@ -35,6 +35,7 @@ fn every_effect_reaches_the_host_in_order_and_quit_is_reported() {
     state.effects = vec![
         Effect::OpenEditor { line: Some(5) },
         Effect::Suspend,
+        Effect::Redraw,
         Effect::OpenLink("https://example.com".to_string()),
         Effect::CancelGitSync,
         Effect::Quit,
@@ -51,6 +52,7 @@ fn every_effect_reaches_the_host_in_order_and_quit_is_reported() {
     );
     assert_eq!(host.editor_lines, vec![Some(5)]);
     assert_eq!(host.suspends, 1);
+    assert_eq!(host.redraws, 1);
     assert_eq!(host.links, vec!["https://example.com".to_string()]);
     assert_eq!(host.cancelled_syncs, 1);
     assert_eq!(
@@ -92,6 +94,10 @@ impl Host for LinkFallbackHost {
     }
 
     fn suspend(&mut self, _: &mut AppState) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn redraw(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 

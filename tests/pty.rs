@@ -2586,3 +2586,42 @@ fn checklist_text_cannot_inject_escapes_through_the_title_or_exit_line() {
         "the exit line comes without the escapes: {tail:?}"
     );
 }
+
+/// Ctrl-L repaints over output written behind markcheck's back: a background
+/// job prints into the middle of the screen once the toggle lands, and only a
+/// full repaint takes it away, since ratatui otherwise redraws just the cells
+/// its own frames changed.
+#[test]
+fn ctrl_l_repaints_over_output_written_behind_the_tui() {
+    let path = unique_path("redraw");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+
+    let mut cmd = CommandBuilder::new("sh");
+    cmd.arg("-c");
+    cmd.arg(concat!(
+        "( i=0; until grep -q '\\[x\\]' \"$1\" || [ $i -ge 1500 ]; do ",
+        "sleep 0.1; i=$((i+1)); done; ",
+        "printf '\\033[14;30HJUNK-FROM-OUTSIDE' ) & ",
+        "exec \"$0\" --no-nerd-font \"$1\"",
+    ));
+    cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg(&path);
+    isolate(&mut cmd);
+    let mut session = Session::spawn(cmd);
+    session.run(
+        &path,
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::WaitForScreen("JUNK-FROM-OUTSIDE"),
+            Step::Key("\x0c"), // Ctrl-L
+        ],
+    );
+    poll_until("Ctrl-L to repaint over the junk", || {
+        let screen = render_screen(&session.raw_output());
+        (!screen.contains("JUNK-FROM-OUTSIDE") && screen.contains("beta")).then_some(())
+    });
+    session.key("q");
+    let (ok, _) = session.finish();
+    assert!(ok, "the binary should exit cleanly");
+}

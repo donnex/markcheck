@@ -20,6 +20,9 @@ pub enum Effect {
     },
     /// `Ctrl-Z`: hand the terminal back to the shell until `fg`.
     Suspend,
+    /// `Ctrl-L`: repaint the whole screen, over anything written behind the
+    /// TUI's back.
+    Redraw,
     OpenLink(String),
     GitSync(PendingSync),
     /// A reload replaced the content a request still waiting in the worker
@@ -46,6 +49,7 @@ pub trait Host {
     fn open_editor(&mut self, state: &mut AppState, line: Option<LineNumber>)
     -> anyhow::Result<()>;
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()>;
+    fn redraw(&mut self) -> anyhow::Result<()>;
     fn open_link(&mut self, state: &mut AppState, url: &str);
     fn git_sync(&mut self, sync: PendingSync);
     /// Whether a waiting request was dropped.
@@ -77,6 +81,7 @@ pub fn drain(state: &mut AppState, host: &mut impl Host) -> anyhow::Result<Drain
             }
             Effect::OpenEditor { line } => host.open_editor(state, line)?,
             Effect::Suspend => host.suspend(state)?,
+            Effect::Redraw => host.redraw()?,
             Effect::OpenLink(url) => host.open_link(state, &url),
             Effect::GitSync(sync) => host.git_sync(sync),
             Effect::CancelGitSync => {

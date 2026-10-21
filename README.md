@@ -468,6 +468,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `o` then a number | when a card has several links, open link `[N]` (see below for `[10]` and up) |
 | `e` | edit the file in `$EDITOR` (at the current task's line for editors that support it) |
 | `Ctrl-Z` | suspend to the shell, as in vim or less; `fg` brings markcheck back, picking up any change made to the file meanwhile |
+| `Ctrl-L` | redraw the whole screen, as in vim or the shell, when something outside markcheck (a background job, a `wall` message, console output) has written over it; works on every screen and overlay, and leaves a pending key or an armed critical step as it was |
 | `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
 | `R` | reset tasks to not-done (asks first): `y` resets everything, `l` only the current list, `s` only the sub-list the cursor is in |
 | `1`–`9` | jump to list N |

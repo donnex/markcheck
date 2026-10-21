@@ -235,6 +235,7 @@ pub enum Effect {
     Copy { text: String, primary: bool, kind: CopyKind }, // y, click, y+digit, --auto-copy, o's no-browser fallback
     OpenEditor { line: Option<LineNumber> },              // e, at the current task's line
     Suspend,                                              // Ctrl-Z
+    Redraw,                                               // Ctrl-L
     OpenLink(String),                                     // o on an http(s)/mailto link
     GitSync(PendingSync),                                 // every successful write, and an edit made in `e`
     Quit,                                                 // q, or the quit-reset prompt's y (after a successful reset) / n
@@ -555,10 +556,11 @@ The base `view` (`Checklist`, `ListComplete`, `AllComplete`) and the optional `o
 | `q` | quit (all done: offer a reset first; waits for a running git sync, `q` again abandons it) | same | same |
 | `Esc`, `Ctrl-C` | sticky `Type q to quit` hint | same | same |
 | `Ctrl-Z` | suspend to the shell | same | same |
+| `Ctrl-L` | repaint the whole screen | same | same |
 
 A `—` cell is never silent: any key a completion screen doesn't bind shows a sticky hint naming that screen's keys (`List complete — press l for the next list or h to review`, `All tasks complete — press h to review, R to reset or q to quit`).
 
-**Dispatch order.** `handle_key_with_mods` first lets `Esc` disarm an armed critical step (`Critical step not checked`), then runs `dispatch_key`, then disarms a critical step the key didn't use (`disarm_unless_used`) and shows a pending in-place-save notice. `dispatch_key` tries, front to back:
+**Dispatch order.** `handle_key_with_mods` first takes `Ctrl-L` (`redraw_screen`, on every screen and overlay, search input included): it queues `Effect::Redraw` and returns before anything else, so a pending chord, an armed critical step and the status message stay as they were, and only an empty status bar gets an ephemeral `Screen redrawn`. `TerminalHost::redraw` calls `repaint`, the same `terminal.resize(current_size)` `enter_tui` uses after the editor and `Ctrl-Z`: ratatui then forgets its last frame and clears the screen, so the next draw sends every cell and overwrites whatever a background job, `wall` or the console printed behind it. Next it lets `Esc` disarm an armed critical step (`Critical step not checked`), then runs `dispatch_key`, then disarms a critical step the key didn't use (`disarm_unless_used`) and shows a pending in-place-save notice. `dispatch_key` tries, front to back:
 
 1. `Ctrl-Z` (suspend, from anywhere, search input included).
 2. `Ctrl-C` (`handle_ctrl_c`): raw mode delivers it as a key, not `SIGINT`. As in vim it cancels search, the picker, help, a confirmation and armed chords like `Esc`, and on a content screen shows the sticky `Type q to quit`. `Esc` never quits either, so neither can bypass the all-done reset offer.
@@ -749,6 +751,7 @@ Manual checks on a real terminal, with an `examples/` file:
 - `y` copies a single command (check the paste, locally and over SSH); several ask for a number; none says so
 - `o` opens a web link, follows a `#anchor` and `Ctrl-O` returns; over SSH without a browser the link is copied
 - `e` opens the editor on the task's line and reloads on return; `Ctrl-Z` and `fg` repaint and pick up an edit
+- Output written behind markcheck's back (`sleep 2; echo junk &` started before it, or a `wall` message) stays until `Ctrl-L`, which repaints the whole screen
 - `Esc` and `Ctrl-C` show `Type q to quit`; `q` restores the terminal (cursor, no raw mode, mouse released, title restored) and prints the exit line
 - `R` resets the chosen scope; `u` and `Ctrl-R` undo and redo
 - An external edit reloads within two seconds with a change summary and the cursor kept; our own toggles never show `Reloaded`; emptying the file keeps the last document with `Reload skipped`

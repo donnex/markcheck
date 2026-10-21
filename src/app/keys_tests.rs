@@ -332,7 +332,7 @@ fn help_key_names(code: KeyCode, modifiers: KeyModifiers) -> Vec<String> {
 }
 
 /// Every key the probe tries: named keys, printable ASCII (unless `typing`,
-/// where letters are text input), and Ctrl-a..z. Ctrl-C and Ctrl-Z act on
+/// where letters are text input), and Ctrl-a..z. Ctrl-C, Ctrl-L and Ctrl-Z act on
 /// every screen and are checked against the main rows separately.
 fn probe_keys(typing: bool) -> Vec<(KeyCode, KeyModifiers)> {
     let none = KeyModifiers::NONE;
@@ -362,7 +362,7 @@ fn probe_keys(typing: bool) -> Vec<(KeyCode, KeyModifiers)> {
     }
     keys.extend(
         ('a'..='z')
-            .filter(|c| !matches!(c, 'c' | 'z'))
+            .filter(|c| !matches!(c, 'c' | 'l' | 'z'))
             .map(|c| (KeyCode::Char(c), KeyModifiers::CONTROL)),
     );
     keys
@@ -624,7 +624,7 @@ fn ctrl_chords_with_own_arm(setup: impl Fn() -> AppState) -> (Vec<char>, Vec<cha
     let unbound = ungated_outcome(&setup, KeyCode::F(12), KeyModifiers::NONE);
     let mut handled = Vec::new();
     let mut gated = Vec::new();
-    for c in ('a'..='z').filter(|c| !matches!(c, 'c' | 'z')) {
+    for c in ('a'..='z').filter(|c| !matches!(c, 'c' | 'l' | 'z')) {
         let code = KeyCode::Char(c);
         let chord = ungated_outcome(&setup, code, KeyModifiers::CONTROL);
         if chord != unbound && chord != ungated_outcome(&setup, code, KeyModifiers::NONE) {
@@ -697,4 +697,85 @@ fn every_ctrl_chord_a_handler_acts_on_is_let_through_and_no_other() {
              the ones is_bound_chord lets through (right)"
         );
     }
+}
+
+fn ctrl_l(state: &mut AppState) {
+    state.handle_key_with_mods(KeyCode::Char('l'), KeyModifiers::CONTROL);
+}
+
+#[test]
+fn ctrl_l_redraws_from_every_screen_and_overlay_and_changes_nothing_else() {
+    let screens: [Screen; 6] = [
+        ("checklist", || AppState::new(two_list_document())),
+        ("list complete", || {
+            let mut state = AppState::new(two_list_document_first_list_almost_done());
+            state.view = View::ListComplete;
+            state
+        }),
+        ("help", || {
+            let mut state = AppState::new(two_list_document());
+            state.handle_key(KeyCode::Char('?'));
+            state
+        }),
+        ("search", || {
+            let mut state = AppState::new(two_list_document());
+            state.handle_key(KeyCode::Char('/'));
+            type_str(&mut state, "a task");
+            state
+        }),
+        ("picker", || {
+            let mut state = AppState::new(two_list_document());
+            state.handle_key(KeyCode::Char('T'));
+            state
+        }),
+        ("reset dialog", || {
+            let mut state = AppState::new(two_list_document_first_list_almost_done());
+            state.overlay = Some(Overlay::ConfirmReset);
+            state
+        }),
+    ];
+    for (screen, setup) in screens {
+        let mut state = setup();
+        let before = observable(&state);
+        ctrl_l(&mut state);
+        assert_eq!(
+            std::mem::take(&mut state.effects),
+            vec![Effect::Redraw],
+            "{screen}"
+        );
+        state.status_message = None;
+        assert_eq!(observable(&state), before, "{screen}");
+    }
+}
+
+#[test]
+fn ctrl_l_confirms_the_redraw_without_replacing_a_message() {
+    let mut state = AppState::new(two_list_document());
+    ctrl_l(&mut state);
+    assert_eq!(state.status_message.as_deref(), Some("Screen redrawn"));
+    assert!(!state.status_is_error);
+
+    state.set_error("Couldn't save".to_string());
+    ctrl_l(&mut state);
+    assert_eq!(state.status_message.as_deref(), Some("Couldn't save"));
+    assert!(state.status_is_error);
+}
+
+#[test]
+fn ctrl_l_keeps_a_pending_g_and_an_armed_critical_step() {
+    let mut state = AppState::new(two_list_document());
+    state.current_item_index = 1;
+    state.handle_key(KeyCode::Char('g'));
+    ctrl_l(&mut state);
+    state.handle_key(KeyCode::Char('g'));
+    assert_eq!(state.current_item_index, 0, "g, Ctrl-L, g still runs gg");
+
+    let path = write_real_file("## S\n\n- [ ] **! Fail over**\n- [ ] next\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char(' '));
+    let armed = state.critical_armed;
+    assert!(armed.is_some());
+    ctrl_l(&mut state);
+    assert_eq!(state.critical_armed, armed);
+    fs::remove_file(&path).ok();
 }

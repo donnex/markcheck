@@ -119,6 +119,7 @@ mod tests {
 pub(crate) struct RecordingHost {
     pub(crate) editor_lines: Vec<Option<crate::model::LineNumber>>,
     pub(crate) suspends: usize,
+    pub(crate) redraws: usize,
     pub(crate) links: Vec<String>,
     pub(crate) syncs: Vec<crate::model::PendingSync>,
     pub(crate) cancelled_syncs: usize,
@@ -138,6 +139,11 @@ impl crate::effect::Host for RecordingHost {
 
     fn suspend(&mut self, _state: &mut crate::model::AppState) -> anyhow::Result<()> {
         self.suspends += 1;
+        Ok(())
+    }
+
+    fn redraw(&mut self) -> anyhow::Result<()> {
+        self.redraws += 1;
         Ok(())
     }
 

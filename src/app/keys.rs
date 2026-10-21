@@ -218,6 +218,10 @@ impl AppState {
     /// Top-level key dispatch: modal overlays first, then card scroll, then
     /// global keys, then the view's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        if code == KeyCode::Char('l') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.redraw_screen();
+            return;
+        }
         let armed = self.critical_armed;
         if armed.is_some() && code == KeyCode::Esc {
             self.critical_armed = None;
@@ -342,6 +346,16 @@ impl AppState {
             (Some(Overlay::ConfirmReset | Overlay::ConfirmQuitReset), _) => &[],
         };
         bound.contains(&c)
+    }
+
+    /// `Ctrl-L`, as in vim and the shell: repaints the screen from every
+    /// screen and overlay, leaving the status, armed chords and an armed
+    /// critical step as they were.
+    pub(super) fn redraw_screen(&mut self) {
+        self.effects.push(Effect::Redraw);
+        if self.status_message.is_none() {
+            self.set_status("Screen redrawn".to_string());
+        }
     }
 
     /// Raw mode delivers Ctrl-C as a key, not `SIGINT`. As in vim, it cancels

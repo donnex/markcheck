@@ -146,8 +146,16 @@ where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
     take_terminal(mouse)?;
-    // Force a full repaint by resizing: `Terminal::clear` queries the cursor,
-    // which hangs on terminals that don't answer.
+    repaint(terminal)
+}
+
+/// Forgets what is on screen so the next draw sends every cell. Resizing does
+/// it: `Terminal::clear` queries the cursor, which hangs on terminals that
+/// don't answer.
+fn repaint<B: Backend>(terminal: &mut Terminal<B>) -> anyhow::Result<()>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let size = terminal.size()?;
     terminal.resize(Rect::new(0, 0, size.width, size.height))?;
     Ok(())
@@ -629,6 +637,10 @@ where
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
         suspend_to_shell(self.terminal, state, self.mouse, self.title)
+    }
+
+    fn redraw(&mut self) -> anyhow::Result<()> {
+        repaint(self.terminal)
     }
 
     fn open_link(&mut self, state: &mut AppState, url: &str) {

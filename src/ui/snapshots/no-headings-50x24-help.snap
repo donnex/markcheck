@@ -8,7 +8,7 @@ expression: "screen(&mut state, width, 24)"
 │                                                ▲
 │  h j k l  ← → ↑ ↓   prev / next task (crosses  ▓
 │                     lists)                     ▓
-│  gg / G             first / last task in the   ▓
+│  gg / G             first / last task in the   │
 │                     document                   │
 │  } / {              next / previous sub-section│
 │  Ctrl-E / Ctrl-Y    scroll card body one line  │

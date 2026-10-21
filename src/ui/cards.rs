@@ -252,6 +252,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("o then N", "open link [N] when a card has several"),
             ("e", "edit the file in $EDITOR"),
             ("Ctrl-Z", "suspend to the shell (fg to come back)"),
+            ("Ctrl-L", "redraw the screen (any screen or overlay)"),
             ("Ctrl-C", "cancel like Esc; elsewhere hints how to quit"),
             ("R", "reset all, the list or the sub-list (asks first)"),
             ("1-9", "jump to list N"),
