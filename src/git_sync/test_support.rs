@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::shared::{RACE_HOOKS, RacePoint};
+use super::shared::RacePoint;
 use super::*;
 
 pub(super) fn unique_dir(name_hint: &str) -> PathBuf {
@@ -154,6 +154,19 @@ pub(super) fn pending_sync(content: &str, description: &str) -> PendingSync {
         base: SyncBase::Edited { epoch: 0 },
     }
 }
+thread_local! {
+    static RACE_HOOKS: std::cell::RefCell<
+        std::collections::HashMap<RacePoint, Box<dyn Fn()>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(super) fn race_point(point: RacePoint) {
+    // Taken out while it runs, so a hook reaching a sync point can't recurse.
+    let hook = RACE_HOOKS.with(|h| h.borrow_mut().remove(&point));
+    if let Some(hook) = hook {
+        hook();
+    }
+}
 /// Removed on drop, so a hook never leaks into the next test on the thread.
 pub(super) struct RaceHook;
 impl RaceHook {
@@ -198,3 +211,11 @@ pub(super) fn reached_the_remote(remote: &Path, sha: &str) -> bool {
 pub(super) const HOOK_RACE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Outlives `HOOK_RACE_TIMEOUT`; the group is killed first.
 pub(super) const HOOK_RACE_SLEEP: &str = "30";
+impl GitSync {
+    /// Polls until no sync is running, the requests a finishing one starts
+    /// included, or `timeout` passes, and returns every outcome seen in
+    /// order; [`GitSync::is_busy`] afterwards says whether it gave up.
+    pub fn wait_for_outcomes(&mut self, timeout: Duration) -> Vec<SyncOutcome> {
+        self.wait_for_outcomes_unless(timeout, || false)
+    }
+}

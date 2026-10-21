@@ -44,6 +44,7 @@ markcheck/
     ├── session.rs       # spawn_in_new_session: a child in a session of its own (git, link openers)
     ├── watcher.rs       # File watch plus timed recheck for external changes
     ├── clipboard.rs     # Copy: system clipboard and/or OSC 52 along a CopyRoute
+    ├── clipboard_test_support.rs # The per-thread fake clipboard every copy test goes through
     ├── git_env.rs       # REDIRECTING_GIT_VARS, include!d by git_sync/process.rs and build.rs
     ├── test_support.rs  # Shared test fixtures and the property-test Markdown generator
     ├── temp_test_support.rs # Self-removing temp paths, shared with tests/common by #[path]
@@ -450,7 +451,7 @@ The sequence lives in `quit.rs`, against a `SyncWorker` trait that `GitSync` imp
 
 ### Testing races
 
-`RacePoint` names points inside a sync (after history validation, before the commit, before index alignment, before the push) where a test runs a real concurrent git process at exactly that moment (`RaceHook`). Hooks are thread-local, and outside `cfg(test)` `race_point` is empty. Interleaving found defects that pre-arranged state never could.
+`RacePoint` names points inside a sync (after history validation, before the commit, before index alignment, before the push) where a test runs a real concurrent git process at exactly that moment (`RaceHook`). Hooks are thread-local and live in `git_sync/test_support.rs`, which `shared.rs` re-exports `race_point` from in test builds; outside `cfg(test)` `race_point` is empty. Interleaving found defects that pre-arranged state never could.
 
 **Not covered:** there is no repository-wide lock across processes. Each step's own check (the parent re-check, the exact-SHA scope check, the CAS undo, the `HEAD` checks before pushing, the explicit refspec and lease) fails safe on interference from another process, but a new git-sync feature must bring its own guard.
 
@@ -575,7 +576,7 @@ A `—` cell is never silent: any key a completion screen doesn't bind shows a s
 5. An open overlay takes every key: `handle_confirm_key`, `handle_help_key`, `handle_search_key`, `handle_picker_key`. So `q`, `j` or `?` typed into search are text.
 6. `handle_checklist_scroll_key` (before `e`/`y`, so `Ctrl-E`/`Ctrl-Y` scroll), then `handle_global_key` (`Tab`, `Shift-H`/`L`, `1`–`9`, `e`, `R`, `u`/`Ctrl-R`, `T`, `Ctrl-O` on the checklist, `?`, `q`, `Esc`), then the view's own handler (`handle_checklist_key`, `handle_list_complete_key`, `handle_all_complete_key`).
 
-`main.rs` passes the real `KeyModifiers`; `handle_key(code)` is the unmodified wrapper tests use.
+`main.rs` passes the real `KeyModifiers`; `handle_key(code)`, defined in `app/test_support.rs`, is the unmodified wrapper tests use.
 
 **Chords.** The armed chord is one field, `pending_chord: PendingChord` (`None`, `G`, `OpenLink { typed }`, `CopyCode { typed }`), so two can never be armed at once and one assignment clears it. `gg` arms `PendingChord::G`, shown as `g… press g for the first task · any other key cancels`; any other key resets it. The digit prompts collect a number (below). Mouse input cancels every armed chord first (`clear_pending_chords`), so a click that changes the card can't leave a prompt armed against the new one.
 
@@ -653,7 +654,7 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 
 **`--primary`** also sets the X11 PRIMARY selection (best effort) and emits a second OSC 52 sequence for `p`. **`--auto-copy`** runs `maybe_auto_copy` after each navigation: one candidate is copied and the success appended to the motion's message; no or several candidates stay silent; a hidden-characters refusal is always reported.
 
-**Testing.** `copy_text_with` takes the system write and the OSC 52 stream as parameters; test builds route them to `clipboard::fake`, a per-thread recorder whose system clipboard is off unless a test turns it on, so no test touches the developer's clipboard or the harness's stdout. `set_via_arboard` isn't compiled into tests; the real path is checked by hand. `tests/pty.rs` removes `DISPLAY`/`WAYLAND_DISPLAY`, so its copies use OSC 52.
+**Testing.** `copy_text_with` takes the system write and the OSC 52 stream as parameters; test builds route them to `clipboard::fake` (`src/clipboard_test_support.rs`), a per-thread recorder whose system clipboard is off unless a test turns it on, so no test touches the developer's clipboard or the harness's stdout. `set_via_arboard` isn't compiled into tests; the real path is checked by hand. `tests/pty.rs` removes `DISPLAY`/`WAYLAND_DISPLAY`, so its copies use OSC 52.
 
 ---
 
@@ -733,10 +734,10 @@ pub struct Config {
 
 ## Testing
 
-- **Unit tests** live in `<module>_tests.rs` beside each module (`#[cfg(test)] #[path = …] mod tests;`), so coverage leaves them out. UI tests render to ratatui's `TestBackend` and assert on content, not style, unless the style is the state.
+- **Unit tests** live in `<module>_tests.rs` beside each module (`#[cfg(test)] #[path = …] mod tests;`), so coverage leaves them out. Test-only items a production module needs (a fake, a hook, a test wrapper) live in a `test_support.rs` or `<module>_test_support.rs` file too, never inline under `cfg(test)`, since the coverage gate excludes files by name. UI tests render to ratatui's `TestBackend` and assert on content, not style, unless the style is the state.
 - **`tests/cli.rs`** runs the binary for the paths that exit before the terminal (bad path, unreadable file, no tasks, stdout not a terminal, `--help`).
 - **`tests/pty.rs`** drives the binary under a pseudo-terminal (`portable-pty`) for `main.rs`'s wiring: the loop, editor and suspend round trips, signals, git sync end to end, the nested-repository refusal (a planted `uploadpack` and hook must not run). A `Session` waits for the alternate screen before typing; `Step::Key` paces keys, `Step::WaitForFile` and `Step::WaitForScreen` poll for a condition (the screen is replayed onto a grid, since ratatui redraws only changed cells). **No test synchronizes on a fixed sleep, and every wait has a deadline**, the child's exit included: every wait goes through one `poll_within` helper, and every condition (screen, file, hook marker, the remote's log) shares one generous `WAIT_TIMEOUT`, since a wait that succeeds returns at once. Each `Session` holds a file-wide lock, serializing the PTY tests (many at once starved git sync's thread on CI) while unit tests stay parallel.
-- **git sync's tests** build real repositories (a bare remote and a clone) and run real `git`, hermetically: fixture commands and, under `cfg(test)`, markcheck's own go through `isolate_git`, which strips the redirecting variables and config parameters, points global and system config at nothing and `HOME` at an empty directory. The variable list comes from `src/git_test_support.rs`, which `include!`s the same `git_env.rs` as `git_command` and is shared with `tests/common` by `#[path]`, so a variable added there is stripped from every test's processes too. Most call `run_sync` directly; the few that exercise the thread write every file change before the first request and wait with `settle`, which uses `GitSync::wait_for_outcomes` (test-only; the quit path's `wait_for_outcomes_unless` with nothing to give up for) and fails with what it saw if the worker is still busy. `git_sync/test_support.rs` builds every repository with one `init_repo(RepoFixture { .. })` and has the race harness that pauses a sync at a named point.
+- **git sync's tests** build real repositories (a bare remote and a clone) and run real `git`, hermetically: fixture commands and, under `cfg(test)`, markcheck's own go through `isolate_git`, which strips the redirecting variables and config parameters, points global and system config at nothing and `HOME` at an empty directory. The variable list comes from `src/git_test_support.rs`, which `include!`s the same `git_env.rs` as `git_command` and is shared with `tests/common` by `#[path]`, so a variable added there is stripped from every test's processes too. Most call `run_sync` directly; the few that exercise the thread write every file change before the first request and wait with `settle`, which uses `GitSync::wait_for_outcomes` (defined in `git_sync/test_support.rs`; the quit path's `wait_for_outcomes_unless` with nothing to give up for) and fails with what it saw if the worker is still busy. `git_sync/test_support.rs` builds every repository with one `init_repo(RepoFixture { .. })` and has the race harness that pauses a sync at a named point.
 - **Property tests (#79).** `test_support::markdown::document()` generates Markdown from the constructs markcheck treats specially and the ones it must leave alone (headings, bullets and numbered items with every marker, space and tab indentation, quotes, fences, indented code, HTML, setext underlines; LF, CRLF or CR; with or without a BOM). `parsing_and_writing_back_unchanged_keeps_every_byte` and `one_toggle_changes_one_marker_and_nothing_else` run 256 cases each (`PROPTEST_CASES` raises it). Failure persistence is off: a shrunk counterexample becomes a named test.
 - **Golden screens (#105).** `ui/golden_tests.rs` renders every `examples/` file at 50×24, 80×24 and 120×40, on the start card and after `j`, plus the picker and help, and compares the symbols with `insta` snapshots in `src/ui/snapshots/`. Unicode icons and a basic palette keep them machine-independent. Review a change with `cargo insta review`; on CI nothing is written, so an unreviewed change fails.
 - **Mutation tests (#129):** see Verifying the guards.

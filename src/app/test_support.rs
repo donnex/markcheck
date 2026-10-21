@@ -12,6 +12,14 @@ pub(super) use crate::model::*;
 pub(super) use crate::parser;
 pub(super) use crate::test_support::{RecordingHost, shown};
 
+impl AppState {
+    /// Treats the key as unmodified, so tests can drive input without
+    /// constructing `KeyModifiers`.
+    pub fn handle_key(&mut self, code: KeyCode) {
+        self.handle_key_with_mods(code, KeyModifiers::NONE);
+    }
+}
+
 /// Peeks at and takes the effects a test cares about, the way the main loop
 /// would drain them.
 impl AppState {

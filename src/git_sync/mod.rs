@@ -452,14 +452,6 @@ impl GitSync {
     }
 
     /// Polls until no sync is running, the requests a finishing one starts
-    /// included, or `timeout` passes, and returns every outcome seen in
-    /// order; [`GitSync::is_busy`] afterwards says whether it gave up.
-    #[cfg(test)]
-    pub fn wait_for_outcomes(&mut self, timeout: Duration) -> Vec<SyncOutcome> {
-        self.wait_for_outcomes_unless(timeout, || false)
-    }
-
-    /// Polls until no sync is running, the requests a finishing one starts
     /// included, `timeout` passes or `give_up` returns true, and returns
     /// every outcome seen in order; [`GitSync::is_busy`] afterwards says
     /// whether it gave up.

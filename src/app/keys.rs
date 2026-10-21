@@ -227,15 +227,6 @@ impl AppState {
         }
     }
 
-    /// Convenience entry that treats the key as unmodified. Kept so headless
-    /// tests can drive input without constructing `KeyModifiers`; the main
-    /// loop calls [`handle_key_with_mods`] with the real modifiers so that
-    /// Ctrl combos (card scrolling) are distinguishable.
-    #[cfg(test)]
-    pub fn handle_key(&mut self, code: KeyCode) {
-        self.handle_key_with_mods(code, KeyModifiers::NONE);
-    }
-
     /// Top-level key dispatch: modal overlays first, then card scroll, then
     /// global keys, then the view's bindings. The order matters.
     pub fn handle_key_with_mods(&mut self, code: KeyCode, modifiers: KeyModifiers) {

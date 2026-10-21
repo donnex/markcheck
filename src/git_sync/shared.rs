@@ -1,6 +1,7 @@
 //! The leaf every other `git_sync` submodule may import: the outcome type,
-//! the request-hash lock and the test race points. It imports nothing from
-//! its siblings, so the layering stays one-directional.
+//! the request-hash lock and the race points, whose test hooks live in
+//! `test_support`. Outside tests it imports nothing from its siblings, so
+//! the layering stays one-directional.
 
 use std::sync::Mutex;
 
@@ -16,20 +17,7 @@ pub(crate) enum RacePoint {
 }
 
 #[cfg(test)]
-thread_local! {
-    pub(super) static RACE_HOOKS: std::cell::RefCell<
-        std::collections::HashMap<RacePoint, Box<dyn Fn()>>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-#[cfg(test)]
-pub(super) fn race_point(point: RacePoint) {
-    // Taken out while it runs, so a hook reaching a sync point can't recurse.
-    let hook = RACE_HOOKS.with(|h| h.borrow_mut().remove(&point));
-    if let Some(hook) = hook {
-        hook();
-    }
-}
+pub(super) use super::test_support::race_point;
 
 #[cfg(not(test))]
 #[inline(always)]
