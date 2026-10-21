@@ -139,6 +139,26 @@ fn help_names_the_config_file() {
 }
 
 #[test]
+fn help_names_the_start_targets() {
+    let output = markcheck().arg("--help").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("FILE#anchor"), "{stdout:?}");
+    assert!(stdout.contains("+N before FILE"), "{stdout:?}");
+}
+
+#[test]
+fn exit_status_is_one_for_a_startup_failure_and_two_for_a_bad_command_line() {
+    let missing = markcheck().arg(unique_path("missing")).output().unwrap();
+    assert_eq!(missing.status.code(), Some(1), "documented in the man page");
+    let bad_flag = markcheck().arg("--no-such-flag").output().unwrap();
+    assert_eq!(
+        bad_flag.status.code(),
+        Some(2),
+        "documented in the man page"
+    );
+}
+
+#[test]
 fn version_flag_prints_cargo_version_and_git_sha_then_exits_cleanly() {
     let output = markcheck().arg("--version").output().unwrap();
 

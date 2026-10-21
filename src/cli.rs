@@ -31,7 +31,8 @@ const VERSION: &str = concat!(
                   --config PATH reads another file instead; --no-config skips it."
 )]
 pub struct Cli {
-    /// Path to the Markdown file (omit when using --new)
+    /// Path to the Markdown file (omit when using --new); FILE#anchor opens at a
+    /// section's first task, and +N before FILE opens at line N
     #[arg(
         required_unless_present_any = ["new", "generate_man", "generate_completions"],
         value_hint = clap::ValueHint::FilePath
@@ -94,9 +95,9 @@ pub struct Cli {
     /// Print nothing after quitting (config: exit_summary = false)
     #[arg(long)]
     pub no_exit_summary: bool,
-    /// Commit and push this file's changes after every toggle, when it's inside a
-    /// git repo (config: git_sync_paths matches this file's path; --no-git-sync
-    /// turns it off)
+    /// Commit and push this file's changes once they settle (see
+    /// --git-sync-delay), when it's inside a git repo (config: git_sync_paths
+    /// matches this file's path; --no-git-sync turns it off)
     #[arg(long, conflicts_with = "no_git_sync")]
     pub git_sync: bool,
     /// Never commit or push, even when git_sync_paths matches this file's path
@@ -206,7 +207,7 @@ pub fn split_anchor(path: &Path) -> Option<(PathBuf, String)> {
 }
 
 /// The man page (#90): the flags from the clap definition, the config file's
-/// location, and a pointer to the README for keybindings and the Markdown
+/// location, the environment and exit status (#173), and a pointer to the README for keybindings and the Markdown
 /// handling, rather than another copy of them to keep in step.
 pub fn man_page() -> std::io::Result<Vec<u8>> {
     use clap::CommandFactory;
@@ -219,6 +220,49 @@ pub fn man_page() -> std::io::Result<Vec<u8>> {
 Defaults for the flags, one key per flag (for example \fBnerd_font = true\fR).
 Without \fBXDG_CONFIG_HOME\fR, \fI~/.config/markcheck/config.toml\fR.
 \fB\-\-config\fR reads another file; \fB\-\-no\-config\fR skips it.
+.SH ENVIRONMENT
+.TP
+\fBNO_COLOR\fR
+When set to a non\-empty value, nothing is colored (unless \fB\-\-color\fR forces a palette).
+.TP
+\fBCOLORTERM\fR, \fBTERM\fR
+Pick the color palette when \fB\-\-color\fR is \fBauto\fR: \fBCOLORTERM=truecolor\fR
+or a known truecolor \fBTERM\fR gives truecolor, a \fBTERM\fR containing
+\fB256color\fR gives 256 colors, anything else 16.
+.TP
+\fBVISUAL\fR, \fBEDITOR\fR
+The editor \fBe\fR opens the checklist in, in that order; \fBvi\fR without either.
+.TP
+\fBBROWSER\fR
+The program \fBo\fR opens a link with: a colon\-separated list tried in order,
+\fB%s\fR marking the link's place. Without it, \fBxdg\-open\fR (\fBopen\fR on macOS).
+.TP
+\fBDISPLAY\fR, \fBWAYLAND_DISPLAY\fR
+On Linux, with neither set and no \fBBROWSER\fR, \fBo\fR copies the link to the
+clipboard instead of opening it.
+.TP
+\fBSSH_CONNECTION\fR, \fBSSH_TTY\fR
+Mark an SSH session, where \fB\-\-clipboard auto\fR also sends the copy through
+the terminal (OSC 52).
+.TP
+\fBXDG_CONFIG_HOME\fR, \fBHOME\fR
+Where the config file is looked for (see FILES).
+.TP
+\fBXDG_RUNTIME_DIR\fR, \fBTMPDIR\fR
+Where the write lock lives (\fBXDG_RUNTIME_DIR\fR when it is private to the
+user, otherwise a private directory under \fBTMPDIR\fR), and where git sync
+keeps its scratch files (\fBTMPDIR\fR).
+.SH "EXIT STATUS"
+.TP
+\fB0\fR
+Normal quit, \fB\-\-help\fR or \fB\-\-version\fR, or a file with no checklist items.
+.TP
+\fB1\fR
+markcheck could not start, for example the file is missing or unreadable, or
+the config file is malformed; the reason is printed to standard error.
+.TP
+\fB2\fR
+The command line was invalid.
 .SH SEE ALSO
 The keybindings (also shown by \fB?\fR in the app) and how each piece of
 Markdown is handled are described in the README:

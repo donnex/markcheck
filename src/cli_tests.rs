@@ -320,6 +320,37 @@ fn the_man_page_covers_the_flags_the_config_file_and_points_to_the_readme() {
 }
 
 #[test]
+fn the_man_page_lists_the_environment_and_the_exit_status() {
+    let page = String::from_utf8(super::man_page().unwrap()).unwrap();
+    let environment = page.split(".SH ENVIRONMENT").nth(1).expect("section");
+    for var in [
+        "NO_COLOR",
+        "COLORTERM",
+        "VISUAL",
+        "EDITOR",
+        "BROWSER",
+        "WAYLAND_DISPLAY",
+        "SSH_CONNECTION",
+        "XDG_CONFIG_HOME",
+        "XDG_RUNTIME_DIR",
+        "TMPDIR",
+    ] {
+        assert!(environment.contains(var), "{var}");
+    }
+    assert!(page.contains(".SH \"EXIT STATUS\""));
+}
+
+#[test]
+fn the_help_names_the_start_targets_and_the_git_sync_delay() {
+    use clap::CommandFactory;
+    let help = super::Cli::command().render_help().to_string();
+    assert!(help.contains("FILE#anchor") && help.contains("+N before FILE"));
+    assert!(!help.contains("after every toggle"), "{help}");
+    let git_sync = help.split("--git-sync ").nth(1).unwrap();
+    assert!(git_sync.contains("--git-sync-delay"), "{git_sync}");
+}
+
+#[test]
 fn completions_are_generated_for_each_shell() {
     for shell in [
         clap_complete::Shell::Bash,

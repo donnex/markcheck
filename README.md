@@ -116,9 +116,13 @@ platform, build from source: that needs Rust 1.88 or newer (`rustc
 --version`; install or update it with [rustup](https://rustup.rs)).
 
 ```sh
+# install straight from the repository into ~/.cargo/bin:
+cargo install --git https://github.com/donnex/markcheck
+# or from a checkout:
+git clone https://github.com/donnex/markcheck
+cd markcheck
 cargo build --release        # binary at target/release/markcheck
-# or install into ~/.cargo/bin:
-cargo install --path .
+cargo install --path .       # or install it into ~/.cargo/bin
 ```
 
 Clipboard copy uses the system clipboard when an X11 or Wayland session is
