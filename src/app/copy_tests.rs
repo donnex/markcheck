@@ -597,3 +597,83 @@ fn an_auto_copy_confirmation_previews_the_command_too() {
         Some("Copied to clipboard: make (+1 line)")
     );
 }
+
+#[test]
+fn the_first_osc52_copy_inside_tmux_says_what_tmux_needs() {
+    let mut state = AppState::new(two_list_document());
+    state.multiplexer = Multiplexer::Tmux;
+    state.apply_copy_outcome(CopyKind::Command, "make", CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(
+            "Sent to clipboard (OSC 52): make · in tmux this needs set-clipboard on or allow-passthrough on"
+        )
+    );
+    state.apply_copy_outcome(CopyKind::Command, "make", CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sent to clipboard (OSC 52): make"),
+        "only once a session"
+    );
+}
+
+#[test]
+fn the_tmux_hint_waits_for_a_copy_that_used_osc52() {
+    let mut state = AppState::new(two_list_document());
+    state.multiplexer = Multiplexer::Tmux;
+    state.apply_copy_outcome(CopyKind::Command, "ls", CopyOutcome::CopiedSystem);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Copied to clipboard: ls")
+    );
+    state.set_error("Something failed".to_string());
+    state.apply_copy_outcome(CopyKind::Auto, "ls", CopyOutcome::CopiedOsc52);
+    assert!(
+        !state.tmux_hint_shown,
+        "a hidden auto-copy doesn't use it up"
+    );
+    state.clear_status();
+    state.apply_copy_outcome(CopyKind::Auto, "ls", CopyOutcome::CopiedBoth);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(&*format!(
+            "Copied (system clipboard + OSC 52): ls{TMUX_HINT}"
+        ))
+    );
+}
+
+#[test]
+fn every_osc52_copy_kind_carries_the_tmux_hint() {
+    let cases = [
+        (CopyKind::Auto, CopyOutcome::CopiedOsc52),
+        (CopyKind::Command, CopyOutcome::CopiedBoth),
+        (CopyKind::LinkFallback, CopyOutcome::CopiedOsc52),
+        (CopyKind::LinkFallback, CopyOutcome::CopiedBoth),
+        (CopyKind::LinkAlso, CopyOutcome::CopiedOsc52),
+        (CopyKind::LinkAlso, CopyOutcome::CopiedBoth),
+    ];
+    for (kind, outcome) in cases {
+        let mut state = AppState::new(two_list_document());
+        state.multiplexer = Multiplexer::Tmux;
+        state.apply_copy_outcome(kind, "https://example.com", outcome.clone());
+        let status = state.status_message.clone().unwrap_or_default();
+        assert!(
+            status.ends_with(TMUX_HINT),
+            "{kind:?} {outcome:?}: {status}"
+        );
+        assert!(!state.status_is_error, "{kind:?} {outcome:?}");
+    }
+}
+
+#[test]
+fn outside_tmux_an_osc52_copy_has_no_hint() {
+    for multiplexer in [Multiplexer::None, Multiplexer::Screen] {
+        let mut state = AppState::new(two_list_document());
+        state.multiplexer = multiplexer;
+        state.apply_copy_outcome(CopyKind::Command, "make", CopyOutcome::CopiedOsc52);
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Sent to clipboard (OSC 52): make")
+        );
+    }
+}

@@ -882,3 +882,20 @@ fn the_light_truecolor_progress_ramp_runs_between_its_own_stops() {
 fn the_theme_defaults_to_dark() {
     assert_eq!(Theme::default(), Theme::Dark);
 }
+
+#[test]
+fn the_multiplexer_comes_from_tmux_then_a_screen_term() {
+    let detect = Multiplexer::detect;
+    assert_eq!(
+        detect(Some("/tmp/tmux-1000/default,1,0"), Some("screen")),
+        Multiplexer::Tmux
+    );
+    assert_eq!(detect(Some("x"), None), Multiplexer::Tmux);
+    assert_eq!(
+        detect(None, Some("screen.xterm-256color")),
+        Multiplexer::Screen
+    );
+    assert_eq!(detect(Some(""), Some("screen")), Multiplexer::Screen);
+    assert_eq!(detect(None, Some("xterm-256color")), Multiplexer::None);
+    assert_eq!(detect(None, None), Multiplexer::None);
+}

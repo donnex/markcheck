@@ -2,7 +2,7 @@ use std::io::Write;
 
 use base64::Engine;
 
-use crate::model::{CopyRoute, Item};
+use crate::model::{CopyRoute, Item, Multiplexer};
 
 /// tmux truncates OSC 52 payloads around 74 KB. Measures the base64 payload
 /// only.
@@ -86,20 +86,21 @@ pub fn candidates(item: &Item) -> &[String] {
 }
 
 /// Copies `text` along `route`, also to the X11 PRIMARY selection when
-/// `primary` is set.
-pub fn copy(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
-    copy_text(text, primary, route)
+/// `primary` is set, wrapping OSC 52 for `multiplexer`.
+pub fn copy(text: &str, primary: bool, route: CopyRoute, multiplexer: Multiplexer) -> CopyOutcome {
+    copy_text(text, primary, route, multiplexer)
 }
 
 /// arboard is verifiable and works locally; the OSC 52 escape travels
 /// through SSH to the local terminal emulator, the only option on headless
 /// servers. `route` says which to use (see [`CopyRoute`]).
 #[cfg(not(test))]
-fn copy_text(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
+fn copy_text(text: &str, primary: bool, route: CopyRoute, multiplexer: Multiplexer) -> CopyOutcome {
     copy_text_with(
         text,
         primary,
         route,
+        multiplexer,
         set_via_arboard,
         &mut std::io::stdout(),
     )
@@ -109,6 +110,7 @@ fn copy_text_with(
     text: &str,
     primary: bool,
     route: CopyRoute,
+    multiplexer: Multiplexer,
     set_system: impl FnOnce(&str, bool) -> bool,
     osc52_out: &mut impl Write,
 ) -> CopyOutcome {
@@ -139,9 +141,9 @@ fn copy_text_with(
             CopyOutcome::TooLarge
         };
     }
-    let osc52_ok = emit_osc52(osc52_out, text, 'c');
+    let osc52_ok = emit_osc52(osc52_out, text, 'c', multiplexer);
     if primary {
-        let _ = emit_osc52(osc52_out, text, 'p');
+        let _ = emit_osc52(osc52_out, text, 'p', multiplexer);
     }
     match (system_ok, osc52_ok) {
         (true, true) => CopyOutcome::CopiedBoth,
@@ -211,14 +213,43 @@ fn osc52_sequence(text: &str, selection: char) -> Option<String> {
     (encoded.len() <= OSC52_MAX_BASE64_BYTES).then(|| format!("\x1b]52;{selection};{encoded}\x07"))
 }
 
+/// GNU screen drops a string sequence longer than 768 bytes, so its
+/// passthrough is split into pieces well under that.
+const SCREEN_CHUNK_BYTES: usize = 76;
+
+/// The bytes that carry `sequence` through `multiplexer`. The bare sequence
+/// always goes first: tmux with `set-clipboard on` and a multiplexer on the
+/// far side of SSH (where `TMUX` isn't set) take it as is. Inside tmux a
+/// copy wrapped in its DCS passthrough (inner escapes doubled) follows, for
+/// `allow-passthrough on`; inside screen, its DCS passthrough in pieces.
+/// Each multiplexer ignores the other's wrapping.
+fn wrap_for(sequence: &str, multiplexer: Multiplexer) -> String {
+    let mut out = sequence.to_string();
+    match multiplexer {
+        Multiplexer::None => {}
+        Multiplexer::Tmux => {
+            out.push_str("\x1bPtmux;");
+            out.push_str(&sequence.replace('\x1b', "\x1b\x1b"));
+            out.push_str("\x1b\\");
+        }
+        Multiplexer::Screen => {
+            for chunk in sequence.as_bytes().chunks(SCREEN_CHUNK_BYTES) {
+                out.push_str("\x1bP");
+                out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+                out.push_str("\x1b\\");
+            }
+        }
+    }
+    out
+}
+
 /// Writing directly to stdout is safe here: it happens synchronously
-/// between ratatui draws and produces no visible output. Bare OSC 52 is
-/// emitted (no tmux passthrough wrapping) — tmux needs `set-clipboard on`.
-fn emit_osc52(out: &mut impl Write, text: &str, selection: char) -> bool {
+/// between ratatui draws and produces no visible output.
+fn emit_osc52(out: &mut impl Write, text: &str, selection: char, multiplexer: Multiplexer) -> bool {
     let Some(sequence) = osc52_sequence(text, selection) else {
         return false;
     };
-    out.write_all(sequence.as_bytes())
+    out.write_all(wrap_for(&sequence, multiplexer).as_bytes())
         .and_then(|_| out.flush())
         .is_ok()
 }

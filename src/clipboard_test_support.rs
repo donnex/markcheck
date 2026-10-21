@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 
 use super::CopyOutcome;
-use crate::model::CopyRoute;
+use crate::model::{CopyRoute, Multiplexer};
 
 #[derive(Default)]
 pub(crate) struct Clipboard {
@@ -26,7 +26,12 @@ pub(crate) fn with<R>(f: impl FnOnce(&mut Clipboard) -> R) -> R {
     CLIPBOARD.with(|c| f(&mut c.borrow_mut()))
 }
 
-pub(super) fn copy(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
+pub(super) fn copy(
+    text: &str,
+    primary: bool,
+    route: CopyRoute,
+    multiplexer: Multiplexer,
+) -> CopyOutcome {
     with(|c| {
         let available = c.system_available;
         let mut system_attempts = std::mem::take(&mut c.system_attempts);
@@ -34,6 +39,7 @@ pub(super) fn copy(text: &str, primary: bool, route: CopyRoute) -> CopyOutcome {
             text,
             primary,
             route,
+            multiplexer,
             |t, p| {
                 system_attempts.push((t.to_string(), p));
                 available

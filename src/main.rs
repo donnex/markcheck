@@ -300,6 +300,10 @@ fn main() -> anyhow::Result<()> {
         std::env::var("SSH_CONNECTION").ok().as_deref(),
         std::env::var("SSH_TTY").ok().as_deref(),
     ));
+    state.multiplexer = model::Multiplexer::detect(
+        std::env::var("TMUX").ok().as_deref(),
+        std::env::var("TERM").ok().as_deref(),
+    );
     state.auto_copy = settings.auto_copy;
     // Pick the richest color representation the terminal supports, unless
     // `--color`/`color` forces one, in the hues for `--theme`/`theme`.

@@ -83,7 +83,7 @@ pub fn drain(state: &mut AppState, host: &mut impl Host) -> anyhow::Result<Drain
                 primary,
                 kind,
             } => {
-                let outcome = clipboard::copy(&text, primary, state.copy_route);
+                let outcome = clipboard::copy(&text, primary, state.copy_route, state.multiplexer);
                 state.apply_copy_outcome(kind, &text, outcome);
             }
             Effect::OpenEditor { line } => host.open_editor(state, line)?,

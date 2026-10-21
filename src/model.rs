@@ -950,6 +950,31 @@ pub enum CopyRoute {
     Osc52Only,
 }
 
+/// The terminal multiplexer markcheck runs inside, which decides how an
+/// OSC 52 copy is wrapped to reach the terminal in front of it (#196).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Multiplexer {
+    #[default]
+    None,
+    /// `TMUX` is set.
+    Tmux,
+    /// `TERM` starts with `screen` and `TMUX` isn't set.
+    Screen,
+}
+
+impl Multiplexer {
+    /// From the `TMUX` and `TERM` variables; an empty one counts as unset.
+    pub fn detect(tmux: Option<&str>, term: Option<&str>) -> Self {
+        if tmux.is_some_and(|value| !value.is_empty()) {
+            Multiplexer::Tmux
+        } else if term.is_some_and(|value| value.starts_with("screen")) {
+            Multiplexer::Screen
+        } else {
+            Multiplexer::None
+        }
+    }
+}
+
 impl ClipboardChoice {
     /// `remote` is whether this is an SSH session.
     pub fn route(self, remote: bool) -> CopyRoute {
@@ -1502,6 +1527,11 @@ pub struct AppState {
     pub jump_back: Vec<(usize, usize)>,
     /// Where `y` copies to (`--clipboard`).
     pub copy_route: CopyRoute,
+    /// The multiplexer OSC 52 copies are wrapped for (`TMUX`, `TERM`).
+    pub multiplexer: Multiplexer,
+    /// Whether an OSC 52 copy inside tmux has said what tmux needs, which
+    /// it does once a session.
+    pub tmux_hint_shown: bool,
     /// Auto-copy an item's code when navigating to its card (`--auto-copy`);
     /// announces a successful copy, silent otherwise.
     pub auto_copy: bool,

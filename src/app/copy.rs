@@ -3,11 +3,15 @@
 
 use crate::clipboard::{self, CopyOutcome};
 use crate::effect::{CopyKind, Effect};
-use crate::model::{AppState, PendingChord};
+use crate::model::{AppState, Multiplexer, PendingChord};
 use crate::printable::printable_line;
 
 pub(super) const HIDDEN_CHARACTERS_MESSAGE: &str =
     "Not copied: command contains hidden control characters";
+
+/// Added to the first OSC 52 copy inside tmux: markcheck can't tell
+/// whether tmux passes the sequence on.
+pub(super) const TMUX_HINT: &str = " · in tmux this needs set-clipboard on or allow-passthrough on";
 
 /// Most characters of a copied command's first line a confirmation shows.
 const PREVIEW_MAX_CHARS: usize = 60;
@@ -65,24 +69,25 @@ impl AppState {
         const BOTH: &str = "Copied (system clipboard + OSC 52)";
         const SYSTEM_ONLY: &str =
             "Copied to the system clipboard only — too large to send through the terminal (OSC 52)";
+        let hint = self.tmux_hint(kind, &outcome);
         match (kind, outcome) {
             (CopyKind::Auto, CopyOutcome::CopiedSystem) => {
                 self.report_auto_copy(&with_preview(COPIED, text))
             }
             (CopyKind::Auto, CopyOutcome::CopiedOsc52) => {
-                self.report_auto_copy(&with_preview(SENT, text))
+                self.report_auto_copy(&(with_preview(SENT, text) + hint))
             }
             (CopyKind::Auto, CopyOutcome::CopiedBoth) => {
-                self.report_auto_copy(&with_preview(BOTH, text))
+                self.report_auto_copy(&(with_preview(BOTH, text) + hint))
             }
             (CopyKind::Command, CopyOutcome::CopiedSystem) => {
                 self.set_status(with_preview(COPIED, text))
             }
             (CopyKind::Command, CopyOutcome::CopiedOsc52) => {
-                self.set_status(with_preview(SENT, text))
+                self.set_status(with_preview(SENT, text) + hint)
             }
             (CopyKind::Command, CopyOutcome::CopiedBoth) => {
-                self.set_status(with_preview(BOTH, text))
+                self.set_status(with_preview(BOTH, text) + hint)
             }
             (CopyKind::Auto, CopyOutcome::CopiedSystemOnlyTooLarge) => {
                 self.report_auto_copy_problem(SYSTEM_ONLY)
@@ -104,11 +109,11 @@ impl AppState {
                 self.set_status("No browser here — link copied to clipboard".to_string())
             }
             (CopyKind::LinkFallback, CopyOutcome::CopiedOsc52) => {
-                self.set_status("No browser here — link sent to clipboard (OSC 52)".to_string())
+                self.set_status(format!("No browser here — link sent to clipboard (OSC 52){hint}"))
             }
-            (CopyKind::LinkFallback, CopyOutcome::CopiedBoth) => self.set_status(
-                "No browser here — link copied (system clipboard + OSC 52)".to_string(),
-            ),
+            (CopyKind::LinkFallback, CopyOutcome::CopiedBoth) => self.set_status(format!(
+                "No browser here — link copied (system clipboard + OSC 52){hint}"
+            )),
             (CopyKind::LinkFallback, CopyOutcome::CopiedSystemOnlyTooLarge) => self.set_error(
                 "No browser here — link copied to the system clipboard only, too large to send through the terminal (OSC 52)"
                     .to_string(),
@@ -127,10 +132,13 @@ impl AppState {
                 self.report_link_also("link also copied to clipboard", false)
             }
             (CopyKind::LinkAlso, CopyOutcome::CopiedOsc52) => {
-                self.report_link_also("link also sent to clipboard (OSC 52)", false)
+                self.report_link_also(&format!("link also sent to clipboard (OSC 52){hint}"), false)
             }
             (CopyKind::LinkAlso, CopyOutcome::CopiedBoth) => {
-                self.report_link_also("link also copied (system clipboard + OSC 52)", false)
+                self.report_link_also(
+                    &format!("link also copied (system clipboard + OSC 52){hint}"),
+                    false,
+                )
             }
             (CopyKind::LinkAlso, CopyOutcome::CopiedSystemOnlyTooLarge) => self.report_link_also(
                 "link also copied, but only to the system clipboard: too large to send through the terminal (OSC 52)",
@@ -148,6 +156,18 @@ impl AppState {
                 self.report_link_also("link not copied: no clipboard available", true)
             }
         }
+    }
+
+    /// [`TMUX_HINT`] for the first OSC 52 copy inside tmux that will be
+    /// shown, empty otherwise. An auto-copy behind an error isn't shown.
+    fn tmux_hint(&mut self, kind: CopyKind, outcome: &CopyOutcome) -> &'static str {
+        let sent = matches!(outcome, CopyOutcome::CopiedOsc52 | CopyOutcome::CopiedBoth);
+        let hidden = kind == CopyKind::Auto && self.status_is_error;
+        if self.multiplexer != Multiplexer::Tmux || self.tmux_hint_shown || !sent || hidden {
+            return "";
+        }
+        self.tmux_hint_shown = true;
+        TMUX_HINT
     }
 
     /// Copies an exact code fragment (a specific clicked row), bypassing

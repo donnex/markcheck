@@ -7,8 +7,9 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::model::{
-    AppState, CopyRoute, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List, Overlay,
-    Palette, PendingChord, PickerState, SearchState, TaskState, View, ViewLayout, hash_bytes,
+    AppState, CopyRoute, Document, GitSyncState, HelpState, IconSet, Item, ItemKind, List,
+    Multiplexer, Overlay, Palette, PendingChord, PickerState, SearchState, TaskState, View,
+    ViewLayout, hash_bytes,
 };
 use crate::writer;
 
@@ -121,6 +122,8 @@ impl AppState {
             jump_back: Vec::new(),
             critical_armed: None,
             copy_route: CopyRoute::default(),
+            multiplexer: Multiplexer::default(),
+            tmux_hint_shown: false,
             auto_copy: false,
             // Named ANSI by default (theme-respecting); main.rs upgrades this
             // to the terminal's detected capability at startup.

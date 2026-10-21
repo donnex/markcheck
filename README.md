@@ -1097,8 +1097,17 @@ card title is not a command: it shows as plain title text, so `y` and
 which (see below). Copy uses
 the system clipboard when available and otherwise emits an OSC 52 escape,
 which travels over SSH to your local terminal emulator (kitty, alacritty,
-wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
-bar distinguishes a system-clipboard copy from an OSC 52 one.
+wezterm, foot, and others). The status bar distinguishes a system-clipboard
+copy from an OSC 52 one.
+
+Inside tmux or GNU screen, the escape is also sent wrapped in the
+multiplexer's passthrough, so it reaches the terminal outside it. In tmux
+(when `TMUX` is set) one of two settings has to be on, in `~/.tmux.conf`:
+`set -g set-clipboard on`, or `set -g allow-passthrough on` (tmux 3.3 or
+later). markcheck can't check them, so the first OSC 52 copy in a session
+ends with a reminder: `Sent to clipboard (OSC 52): make · in tmux this needs
+set-clipboard on or allow-passthrough on`. GNU screen (when `TERM` starts
+with `screen` and `TMUX` isn't set) passes it on with no setting.
 
 The confirmation also shows what was copied: the command's first line, cut
 to 60 characters with `…`, plus how many more lines it has, so you can check

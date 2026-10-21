@@ -67,7 +67,7 @@ fn an_oversized_payload_is_reported_as_too_large_not_as_a_missing_clipboard() {
         "test setup: payload must exceed the cap once base64-encoded"
     );
     assert_eq!(
-        copy_text(&huge, false, CopyRoute::SystemThenOsc52),
+        copy_text(&huge, false, CopyRoute::SystemThenOsc52, Multiplexer::None),
         CopyOutcome::TooLarge
     );
     assert!(fake::with(|c| c.osc52.is_empty()), "nothing is emitted");
@@ -77,7 +77,12 @@ fn an_oversized_payload_is_reported_as_too_large_not_as_a_missing_clipboard() {
 fn the_system_clipboard_is_used_when_available() {
     fake::with(|c| c.system_available = true);
     assert_eq!(
-        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        copy_text(
+            "hello",
+            false,
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
+        ),
         CopyOutcome::CopiedSystem
     );
     fake::with(|c| {
@@ -89,7 +94,12 @@ fn the_system_clipboard_is_used_when_available() {
 #[test]
 fn osc52_is_the_fallback_without_a_system_clipboard() {
     assert_eq!(
-        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        copy_text(
+            "hello",
+            false,
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
+        ),
         CopyOutcome::CopiedOsc52
     );
     fake::with(|c| assert_eq!(c.osc52, b"\x1b]52;c;aGVsbG8=\x07"));
@@ -105,7 +115,7 @@ fn osc52_sequence_refuses_oversized_payload() {
 fn emit_osc52_refuses_oversized_payload_without_writing() {
     let big = "x".repeat(OSC52_MAX_BASE64_BYTES);
     let mut out = Vec::new();
-    assert!(!emit_osc52(&mut out, &big, 'c'));
+    assert!(!emit_osc52(&mut out, &big, 'c', Multiplexer::None));
     assert!(out.is_empty());
 }
 
@@ -125,6 +135,7 @@ fn a_failed_terminal_write_is_reported_as_failed() {
             "hello",
             false,
             CopyRoute::SystemThenOsc52,
+            Multiplexer::None,
             |_, _| false,
             &mut Broken
         ),
@@ -136,7 +147,7 @@ fn a_failed_terminal_write_is_reported_as_failed() {
 fn copy_text_with_primary_also_targets_the_primary_selection() {
     fake::with(|c| c.system_available = true);
     assert_eq!(
-        copy_text("hello", true, CopyRoute::SystemThenOsc52),
+        copy_text("hello", true, CopyRoute::SystemThenOsc52, Multiplexer::None),
         CopyOutcome::CopiedSystem
     );
     fake::with(|c| {
@@ -146,7 +157,7 @@ fn copy_text_with_primary_also_targets_the_primary_selection() {
     });
 
     assert_eq!(
-        copy_text("hello", true, CopyRoute::SystemThenOsc52),
+        copy_text("hello", true, CopyRoute::SystemThenOsc52, Multiplexer::None),
         CopyOutcome::CopiedOsc52
     );
     fake::with(|c| {
@@ -158,7 +169,12 @@ fn copy_text_with_primary_also_targets_the_primary_selection() {
 #[test]
 fn without_primary_only_the_clipboard_selection_is_targeted() {
     assert_eq!(
-        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        copy_text(
+            "hello",
+            false,
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
+        ),
         CopyOutcome::CopiedOsc52
     );
     fake::with(|c| {
@@ -171,7 +187,12 @@ fn without_primary_only_the_clipboard_selection_is_targeted() {
 fn releasing_the_system_clipboard_leaves_copying_working() {
     release_system_clipboard();
     assert_eq!(
-        copy_text("hello", false, CopyRoute::SystemThenOsc52),
+        copy_text(
+            "hello",
+            false,
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
+        ),
         CopyOutcome::CopiedOsc52
     );
 }
@@ -221,7 +242,8 @@ fn copy_refuses_zero_width_characters() {
         copy(
             "systemctl restart ng\u{200B}inx",
             false,
-            CopyRoute::SystemThenOsc52
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
         ),
         CopyOutcome::HiddenCharacters
     );
@@ -230,11 +252,21 @@ fn copy_refuses_zero_width_characters() {
 #[test]
 fn copy_refuses_escape_and_carriage_return_tricks() {
     assert_eq!(
-        copy("ls\x1b[201~\nrm -rf ~", false, CopyRoute::SystemThenOsc52),
+        copy(
+            "ls\x1b[201~\nrm -rf ~",
+            false,
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
+        ),
         CopyOutcome::HiddenCharacters
     );
     assert_eq!(
-        copy("echo ok\rrm -rf ~", true, CopyRoute::SystemThenOsc52),
+        copy(
+            "echo ok\rrm -rf ~",
+            true,
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
+        ),
         CopyOutcome::HiddenCharacters
     );
 }
@@ -245,7 +277,8 @@ fn copy_refuses_backspace_overwrites() {
         copy(
             "safe\x08\x08\x08\x08evil",
             false,
-            CopyRoute::SystemThenOsc52
+            CopyRoute::SystemThenOsc52,
+            Multiplexer::None
         ),
         CopyOutcome::HiddenCharacters
     );
@@ -257,7 +290,7 @@ fn fake_copy(text: &str, system_available: bool, route: CopyRoute) -> (CopyOutco
         c.system_attempts.clear();
         c.osc52.clear();
     });
-    let outcome = copy_text(text, false, route);
+    let outcome = copy_text(text, false, route, Multiplexer::None);
     fake::with(|c| (outcome, c.system_attempts.len(), !c.osc52.is_empty()))
 }
 
@@ -301,4 +334,61 @@ fn too_large_for_osc52_says_only_the_system_clipboard_took_it() {
         fake_copy(&huge, true, CopyRoute::Osc52Only).0,
         CopyOutcome::TooLarge
     );
+}
+
+#[test]
+fn outside_a_multiplexer_only_the_bare_sequence_is_sent() {
+    let mut out = Vec::new();
+    assert!(emit_osc52(&mut out, "hello", 'c', Multiplexer::None));
+    assert_eq!(out, b"\x1b]52;c;aGVsbG8=\x07");
+}
+
+#[test]
+fn inside_tmux_the_sequence_is_also_sent_through_its_passthrough() {
+    let mut out = Vec::new();
+    assert!(emit_osc52(&mut out, "hello", 'c', Multiplexer::Tmux));
+    assert_eq!(
+        out,
+        b"\x1b]52;c;aGVsbG8=\x07\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\"
+    );
+}
+
+#[test]
+fn inside_screen_the_sequence_is_also_sent_through_its_passthrough() {
+    let mut out = Vec::new();
+    assert!(emit_osc52(&mut out, "hello", 'c', Multiplexer::Screen));
+    assert_eq!(
+        out,
+        b"\x1b]52;c;aGVsbG8=\x07\x1bP\x1b]52;c;aGVsbG8=\x07\x1b\\"
+    );
+}
+
+#[test]
+fn screen_passthrough_comes_in_pieces_that_rejoin_into_the_sequence() {
+    let text = "x".repeat(300);
+    let sequence = osc52_sequence(&text, 'c').unwrap();
+    let wrapped = wrap_for(&sequence, Multiplexer::Screen);
+    let passthrough = wrapped.strip_prefix(sequence.as_str()).unwrap();
+    let pieces: Vec<&str> = passthrough
+        .split("\x1b\\")
+        .filter(|piece| !piece.is_empty())
+        .map(|piece| piece.strip_prefix("\x1bP").unwrap())
+        .collect();
+    assert!(pieces.len() > 1, "split into several string sequences");
+    assert!(pieces.iter().all(|piece| piece.len() <= SCREEN_CHUNK_BYTES));
+    assert_eq!(pieces.concat(), sequence);
+}
+
+#[test]
+fn the_primary_selection_is_wrapped_the_same_way() {
+    fake::with(|c| c.osc52.clear());
+    assert_eq!(
+        copy_text("hi", true, CopyRoute::Osc52Only, Multiplexer::Tmux),
+        CopyOutcome::CopiedOsc52
+    );
+    fake::with(|c| {
+        let sent = String::from_utf8(c.osc52.clone()).unwrap();
+        assert_eq!(sent.matches("\x1bPtmux;").count(), 2, "{sent:?}");
+        assert!(sent.contains("\x1bPtmux;\x1b\x1b]52;p;aGk=\x07\x1b\\"));
+    });
 }

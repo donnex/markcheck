@@ -152,6 +152,7 @@ fn markcheck_command() -> CommandBuilder {
 fn isolate(cmd: &mut CommandBuilder) {
     cmd.env_remove("DISPLAY");
     cmd.env_remove("WAYLAND_DISPLAY");
+    cmd.env_remove("TMUX");
     for var in common::ambient_git_vars() {
         cmd.env_remove(var);
     }
@@ -1078,6 +1079,27 @@ fn navigation_copies_nothing_without_auto_copy() {
     assert!(
         !output.contains("\x1b]52;"),
         "navigation copied without auto-copy enabled:\n{}",
+        tail(&output)
+    );
+}
+
+#[test]
+fn inside_tmux_a_copy_also_goes_through_its_passthrough() {
+    let path = unique_path("autocopy-tmux");
+    write_file(&path, AUTO_COPY_CHECKLIST);
+
+    let (ok, output) = drive_auto_copy_navigation(
+        &path,
+        &["--auto-copy"],
+        &[("TMUX", "/tmp/tmux-example/default,1,0")],
+        true,
+    );
+    assert!(ok, "binary should exit successfully inside tmux");
+    assert!(
+        output.contains(&format!(
+            "{ALPHA_OSC52}\x1bPtmux;\x1b\x1b]52;c;YWxwaGE=\x07\x1b\\"
+        )),
+        "no tmux passthrough after the bare OSC 52; output tail:\n{}",
         tail(&output)
     );
 }
