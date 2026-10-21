@@ -548,6 +548,74 @@ fn exit_report_flags_a_sync_cut_off_by_the_exit_wait() {
     }
 }
 
+/// Hands `outcome` to `poll` as if a worker had just finished.
+fn deliver(sync: &mut GitSync, outcome: SyncOutcome) {
+    sync.sender.send(outcome).unwrap();
+    sync.poll().expect("the outcome just sent");
+}
+
+#[test]
+fn a_failure_polled_before_quitting_is_still_reported_on_exit() {
+    let work = init_repo_without_remote();
+    let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    assert_eq!(exit_report(sync.unresolved(), false), None);
+
+    deliver(&mut sync, SyncOutcome::Failed("hook said no".into()));
+    assert!(sync.wait_for_outcomes(Duration::ZERO).is_empty());
+    let report = exit_report(sync.unresolved(), sync.is_busy());
+    assert!(
+        report.is_some_and(|m| m.contains("git sync failed: hook said no")),
+        "a failure seen before the quit must still be reported"
+    );
+}
+
+#[test]
+fn a_later_sync_that_lands_resolves_the_standing_problem() {
+    let work = init_repo_without_remote();
+    let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    for resolving in [SyncOutcome::Synced, SyncOutcome::Skipped] {
+        deliver(&mut sync, SyncOutcome::SkippedUntracked);
+        deliver(&mut sync, resolving);
+        assert_eq!(sync.unresolved(), None);
+    }
+
+    let not_pushed = SyncOutcome::CommittedNotPushed {
+        message: "offline".into(),
+        commit: "abc".into(),
+    };
+    deliver(&mut sync, not_pushed.clone());
+    assert_eq!(sync.unresolved(), Some(&not_pushed));
+    deliver(&mut sync, SyncOutcome::RetryFailed("still offline".into()));
+    assert_eq!(
+        sync.unresolved(),
+        Some(&SyncOutcome::RetryFailed("still offline".into()))
+    );
+    deliver(&mut sync, SyncOutcome::NotCaughtUp("someone else's".into()));
+    assert!(sync.unresolved().is_some(), "NotCaughtUp resolves nothing");
+    deliver(&mut sync, SyncOutcome::RetryAbandoned);
+    assert_eq!(sync.unresolved(), None);
+
+    deliver(&mut sync, not_pushed);
+    deliver(&mut sync, SyncOutcome::CaughtUp { pushed: 1 });
+    assert_eq!(sync.unresolved(), None);
+}
+
+#[test]
+fn a_push_outcome_does_not_hide_a_content_sync_that_failed() {
+    let work = init_repo_without_remote();
+    let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    let failed = SyncOutcome::Failed("hook said no".into());
+    deliver(&mut sync, failed.clone());
+    for push in [
+        SyncOutcome::RetryFailed("offline".into()),
+        SyncOutcome::RetryAbandoned,
+        SyncOutcome::CaughtUp { pushed: 1 },
+    ] {
+        deliver(&mut sync, push);
+        assert_eq!(sync.unresolved(), Some(&failed));
+    }
+}
+
 #[test]
 fn sweep_interrupted_syncs_removes_a_dead_sync_s_temp_index() {
     let work = init_repo_without_remote();

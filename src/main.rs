@@ -482,18 +482,16 @@ where
     let mut dirty = true;
     let mut label_due: Option<SystemTime> = None;
     let (opener_failures, opener_failure_rx) = std::sync::mpsc::channel();
-    // Set once `q` found a sync still running; the outcome it then waits for
-    // is the one reported after the TUI closes.
+    // Set once `q` found a sync still running, which it then waits for.
     let mut quitting = false;
-    let mut last_outcome = None;
     let mut title = TerminalTitle::new(show_title);
     loop {
         // Nothing is drawn from here on: after SIGHUP the terminal is gone.
         if signals.stopped() {
             return Ok(git_sync.as_mut().and_then(|sync| {
                 sync.flush();
-                let last = sync.wait_for_outcomes(QUIT_WAIT).pop().or(last_outcome);
-                finish_git_sync(sync, last)
+                sync.wait_for_outcomes(QUIT_WAIT);
+                finish_git_sync(sync)
             }));
         }
         dirty |= reload.check(state, Instant::now());
@@ -508,9 +506,6 @@ where
         if let Some(sync) = git_sync.as_mut() {
             if let Some(outcome) = sync.poll() {
                 state.apply_git_sync_outcome(&outcome);
-                if quitting {
-                    last_outcome = Some(outcome);
-                }
                 dirty = true;
             }
             // Not gated on the outcome above: a retry can come due on a
@@ -554,8 +549,7 @@ where
                 Event::Key(key) if quitting && key.kind == KeyEventKind::Press => {
                     if key.code == KeyCode::Char('q') {
                         let sync = git_sync.as_mut().expect("quitting waits only on a sync");
-                        let last = abandon_git_sync(sync).or(last_outcome);
-                        return Ok(finish_git_sync(sync, last));
+                        return Ok(finish_git_sync(sync));
                     }
                     state.set_notice(WAITING_FOR_SYNC.to_string());
                 }
@@ -603,9 +597,7 @@ where
         }
     }
 
-    Ok(git_sync
-        .as_mut()
-        .and_then(|sync| finish_git_sync(sync, last_outcome)))
+    Ok(git_sync.as_mut().and_then(finish_git_sync))
 }
 
 /// Carries out `AppState`'s effects against the real terminal, processes
@@ -675,29 +667,24 @@ const QUIT_WAIT: Duration = Duration::from_secs(5);
 const ABANDON_GRACE: Duration = Duration::from_secs(2);
 
 /// Stops a running sync's git processes, then waits for the worker to remove
-/// its temporary index and scratch files. Returns the last outcome seen.
-fn abandon_git_sync(sync: &mut git_sync::GitSync) -> Option<git_sync::SyncOutcome> {
+/// its temporary index and scratch files.
+fn abandon_git_sync(sync: &mut git_sync::GitSync) {
     sync.abandon(false);
-    let mut last = sync.wait_for_outcomes(ABANDON_GRACE).pop();
+    sync.wait_for_outcomes(ABANDON_GRACE);
     if sync.is_busy() {
         sync.abandon(true);
-        last = sync.wait_for_outcomes(ABANDON_GRACE).pop().or(last);
+        sync.wait_for_outcomes(ABANDON_GRACE);
     }
-    last
 }
 
 /// Abandons whatever is still running, then gives the line to print after
-/// the TUI closes when the last sync didn't land cleanly.
-fn finish_git_sync(
-    sync: &mut git_sync::GitSync,
-    last: Option<git_sync::SyncOutcome>,
-) -> Option<String> {
-    let last = if sync.is_busy() {
-        abandon_git_sync(sync).or(last)
-    } else {
-        last
-    };
-    git_sync::exit_report(last.as_ref(), sync.is_busy())
+/// the TUI closes for a sync problem still standing, however long before the
+/// quit it was reported.
+fn finish_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
+    if sync.is_busy() {
+        abandon_git_sync(sync);
+    }
+    git_sync::exit_report(sync.unresolved(), sync.is_busy())
 }
 
 /// Opens `url` without suspending the TUI, trying each resolved opener in

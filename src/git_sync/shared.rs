@@ -37,7 +37,7 @@ pub(super) fn race_point(_point: RacePoint) {}
 
 /// Result of one background commit+push attempt, delivered via
 /// [`GitSync::poll`](super::GitSync::poll).
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncOutcome {
     Synced,
     /// The startup catch-up pushed `pushed` commits an earlier session left

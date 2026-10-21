@@ -59,9 +59,8 @@ pub fn status_message(outcome: &SyncOutcome) -> Option<String> {
     }
 }
 
-/// The line to print on stderr after quitting, for a final sync that didn't
-/// land cleanly: `last` is the last outcome seen while waiting, and
-/// `still_running` says the wait gave up before the worker finished. The TUI
+/// The line to print on stderr after quitting, for a sync problem still
+/// standing: `last` is [`GitSync::unresolved`], and `still_running` says the wait gave up before the worker finished. The TUI
 /// is already gone by then, so this is the only place the user can learn it.
 pub fn exit_report(last: Option<&SyncOutcome>, still_running: bool) -> Option<String> {
     exit_report_text(last, still_running).map(|report| crate::printable::printable(&report))
@@ -130,6 +129,8 @@ pub struct GitSync {
     landed: Option<(u64, String)>,
     /// The base and content of the running content sync, for `landed`.
     in_flight: Option<(u64, String)>,
+    /// The latest problem no later outcome has resolved, for the exit report.
+    unresolved: Option<SyncOutcome>,
 }
 
 /// Requests folded together while they wait (see `GitSync::queued`).
@@ -260,6 +261,7 @@ impl GitSync {
             edited_epoch: None,
             landed: None,
             in_flight: None,
+            unresolved: None,
         })
     }
 
@@ -443,6 +445,7 @@ impl GitSync {
                 self.landed = Some(synced);
             }
             self.apply_outcome(outcome);
+            self.track_unresolved(outcome);
             self.spawn_if_due(Instant::now());
         }
         outcome
@@ -494,6 +497,37 @@ impl GitSync {
             SyncOutcome::Failed(_) => {}
             SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::NotCaughtUp(_) => {}
         }
+    }
+
+    /// A push outcome settles only an earlier push problem: a content sync
+    /// that failed is still uncommitted whatever happens to an older commit.
+    fn track_unresolved(&mut self, outcome: &SyncOutcome) {
+        let push_problem = matches!(
+            self.unresolved,
+            None | Some(SyncOutcome::CommittedNotPushed { .. } | SyncOutcome::RetryFailed(_))
+        );
+        match outcome {
+            SyncOutcome::Synced | SyncOutcome::Skipped => self.unresolved = None,
+            SyncOutcome::CaughtUp { .. } | SyncOutcome::RetryAbandoned if push_problem => {
+                self.unresolved = None;
+            }
+            SyncOutcome::Failed(_)
+            | SyncOutcome::SkippedUntracked
+            | SyncOutcome::CommittedNotPushed { .. } => self.unresolved = Some(outcome.clone()),
+            SyncOutcome::RetryFailed(_) if push_problem => {
+                self.unresolved = Some(outcome.clone());
+            }
+            SyncOutcome::CaughtUp { .. }
+            | SyncOutcome::RetryAbandoned
+            | SyncOutcome::RetryFailed(_)
+            | SyncOutcome::NotCaughtUp(_) => {}
+        }
+    }
+
+    /// The latest sync problem nothing since has resolved: what the user
+    /// still needs to hear about when markcheck exits.
+    pub fn unresolved(&self) -> Option<&SyncOutcome> {
+        self.unresolved.as_ref()
     }
 
     fn grown_retry_interval(&self) -> Duration {

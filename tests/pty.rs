@@ -1472,6 +1472,55 @@ fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes()
 }
 
 #[test]
+fn quitting_after_a_sync_already_failed_still_says_so_after_the_tui_closes() {
+    // The failure lands and is shown before `q`, so nothing is running when
+    // markcheck quits; the exit report must still name it.
+    let root = unique_path("gitsync-exit-report-earlier");
+    let work = root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+
+    let hook = work.join(".git/hooks/pre-commit");
+    write_file(
+        &hook,
+        "#!/bin/sh\necho 'pre-commit hook rejected this' >&2\nexit 1\n",
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg("--git-sync");
+    cmd.arg(&path);
+    let (ok, output) = run_with_pty_capturing(
+        cmd,
+        &path,
+        &[
+            Step::Key(" "),
+            Step::WaitForFile(|s| s.contains("[x] `alpha`")),
+            Step::WaitForScreen("not synced"),
+            Step::Key("q"),
+        ],
+    );
+
+    assert!(ok, "binary should still exit successfully");
+    let tail = output.rsplit("\x1b[?1049l").next().unwrap_or_default();
+    assert!(
+        tail.contains("markcheck: git sync failed:") && tail.contains("not committed"),
+        "an earlier failure must be printed after the TUI closes; output after it was:\n{tail}"
+    );
+}
+
+#[test]
 fn git_sync_does_not_commit_uncommitted_changes_just_because_the_file_was_opened() {
     // Deep review, round 3. Startup asks git-sync to catch up a pending
     // push; that used to be expressed as an ordinary *content* request
