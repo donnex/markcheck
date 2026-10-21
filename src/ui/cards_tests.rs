@@ -1266,3 +1266,42 @@ fn wrap_tokens_marks_a_split_chip_and_maps_every_piece_to_it() {
     assert_eq!(rows[1].1, vec![Some(1), Some(1)]);
     assert_eq!(rows[3].1, vec![Some(1)]);
 }
+
+#[test]
+fn a_preamble_longer_than_the_limit_is_cut_with_an_ellipsis() {
+    let text = (1..=8)
+        .map(|n| format!("line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let blocks = [PreambleBlock {
+        kind: PreambleKind::Paragraph,
+        text,
+    }];
+    let rows = preamble_rows(&blocks, IconSet::unicode(), Palette::truecolor(), 40);
+    let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        ["line 1", "line 2", "line 3", "line 4", "line 5", "line 6…"]
+    );
+}
+
+#[test]
+fn quote_and_code_preambles_keep_their_own_look() {
+    let palette = Palette::truecolor();
+    let blocks = [
+        PreambleBlock {
+            kind: PreambleKind::Quote,
+            text: "quoted".to_string(),
+        },
+        PreambleBlock {
+            kind: PreambleKind::Code,
+            text: "make all".to_string(),
+        },
+    ];
+    let rows = preamble_rows(&blocks, IconSet::unicode(), palette, 40);
+    assert_eq!(rows[0].text, "│ quoted");
+    assert!(rows[0].style.add_modifier.contains(Modifier::ITALIC));
+    assert_eq!(rows[1].text, "make all");
+    assert_eq!(rows[1].style, palette.code);
+    assert!(rows.iter().all(|r| !r.alert));
+}

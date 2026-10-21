@@ -454,3 +454,41 @@ fn a_copy_too_large_for_osc52_says_only_the_system_clipboard_has_it() {
     );
     assert!(state.status_is_error);
 }
+
+#[test]
+fn each_copy_outcome_that_falls_short_is_reported_as_an_error() {
+    let cases = [
+        (
+            CopyKind::Command,
+            CopyOutcome::TooLarge,
+            "Not copied: this command is too large for the terminal clipboard",
+        ),
+        (
+            CopyKind::Command,
+            CopyOutcome::Failed,
+            "Copy failed: no clipboard available",
+        ),
+        (
+            CopyKind::LinkFallback,
+            CopyOutcome::Failed,
+            "No browser or clipboard here — link: https://example.com/x",
+        ),
+    ];
+    for (kind, outcome, expected) in cases {
+        let mut state = AppState::new(two_list_document());
+        state.apply_copy_outcome(kind, "https://example.com/x", outcome);
+        assert_eq!(state.status_message.as_deref(), Some(expected));
+        assert!(state.status_is_error, "{expected}");
+    }
+}
+
+#[test]
+fn an_auto_copy_to_both_clipboards_says_so() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_copy_outcome(CopyKind::Auto, "ls", CopyOutcome::CopiedBoth);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Copied (system clipboard + OSC 52)")
+    );
+    assert!(!state.status_is_error);
+}

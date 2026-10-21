@@ -1915,3 +1915,34 @@ fn run_sync_refuses_a_toggle_whose_base_could_not_be_read() {
     );
     assert_eq!(git_stdout(&remote, &["log", "--format=%s", "main"]), "init");
 }
+#[test]
+fn run_sync_fails_without_committing_when_the_clean_filter_fails() {
+    let work = init_repo_without_remote();
+    let head = current_head(&work).unwrap();
+    let file = work.join("tracked.md");
+    let content = "- [x] one\n";
+    fs::write(&file, content).unwrap();
+    run(&work, &["config", "filter.broken.clean", "false"]);
+    run(&work, &["config", "filter.broken.required", "true"]);
+    fs::write(
+        work.join(".git").join("info").join("attributes"),
+        "*.md filter=broken\n",
+    )
+    .unwrap();
+
+    let outcome = run_sync(
+        &work,
+        &file,
+        content,
+        &commit_message(&file, "Check \"one\""),
+        &no_race(content),
+        None,
+        Publish::Everything,
+    );
+
+    assert!(
+        matches!(&outcome, SyncOutcome::Failed(message) if message.starts_with("git ")),
+        "{outcome:?}"
+    );
+    assert_eq!(current_head(&work), Some(head), "nothing may be committed");
+}

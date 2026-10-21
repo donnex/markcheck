@@ -600,3 +600,28 @@ fn a_scoped_reset_with_nothing_to_reset_says_so_and_stays_open() {
             .is_some_and(|m| m.starts_with("Nothing to reset there"))
     );
 }
+
+#[test]
+fn r_then_s_on_a_parent_resets_that_parent_and_its_sub_tasks() {
+    let path = write_real_file(
+        "## A\n\n- [x] parent\n  - [x] child one\n  - [/] child two\n- [x] other\n",
+    );
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.focus_item(0, 0, CursorMove::Quiet);
+    assert_eq!(
+        state.sub_list_root(),
+        Some(0),
+        "a parent's sub-list is its own"
+    );
+    state.handle_key(KeyCode::Char('R'));
+    assert_eq!(state.reset_count(ResetScope::SubList), 3);
+    state.handle_key(KeyCode::Char('s'));
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains("- [ ] parent")
+            && written.contains("  - [ ] child one")
+            && written.contains("  - [ ] child two"),
+        "{written}"
+    );
+    assert!(written.contains("- [x] other"), "{written}");
+}

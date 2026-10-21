@@ -3555,3 +3555,21 @@ fn a_card_with_a_huge_fenced_block_renders_quickly() {
         "visible rows share one copy of the block"
     );
 }
+
+#[test]
+fn the_nerd_font_icon_set_replaces_the_plain_unicode_glyphs() {
+    let mut state = state_with(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items: vec![checkbox(1, "first", true), checkbox(2, "second", false)],
+    }]);
+    state.icons = IconSet::nerd();
+    let text = buffer_text(&mut state, 60, 20);
+    let nerd = IconSet::nerd();
+    assert!(text.contains(nerd.done), "done glyph shown: {text}");
+    assert!(text.contains(nerd.pending), "pending glyph shown: {text}");
+    assert!(
+        !text.contains(IconSet::unicode().pending),
+        "no plain Unicode box left: {text}"
+    );
+}

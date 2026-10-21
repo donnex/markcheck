@@ -556,6 +556,9 @@ pub fn write_back(document: &Document) -> io::Result<Saved> {
         }
         Err(err) => return Err(err),
     };
+    // Untested: the target was just checked to be a regular file in a
+    // directory the temp file was written to, so only a concurrent swap of
+    // the target can make this rename fail.
     if let Err(err) = fs::rename(&temp_path, &document.file_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(err);

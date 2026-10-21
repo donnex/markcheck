@@ -684,3 +684,44 @@ fn catch_up_push_counts_every_earlier_markcheck_commit_it_pushes() {
         "toggle\ntoggle\ninit"
     );
 }
+#[test]
+fn a_catch_up_push_the_remote_rejects_is_reported_with_the_commit_left_behind() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    fs::write(&file, "- [x] one\n").unwrap();
+    run(
+        &work,
+        &["commit", "-q", "-am", "checklist", "-m", OWN_COMMIT_TRAILER],
+    );
+    let local = current_head(&work).unwrap();
+    let hook = remote.join("hooks").join("pre-receive");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho rejected by the remote >&2\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let outcome = catch_up_push(&work, &file);
+
+    assert!(
+        matches!(&outcome, SyncOutcome::CommittedNotPushed { message, commit }
+            if commit == &local && message.contains("git push")),
+        "a refused catch-up push must arm a retry for the commit: {outcome:?}"
+    );
+    assert!(!reached_the_remote(&remote, &local));
+}
+#[test]
+fn catch_up_push_skips_a_checklist_staged_on_an_unborn_branch() {
+    let work = unique_dir("repo-unborn").join("work");
+    fs::create_dir_all(&work).unwrap();
+    run(&work, &["init", "-q", "-b", "main"]);
+    fs::write(work.join("tracked.md"), "- [ ] one\n").unwrap();
+    run(&work, &["add", "tracked.md"]);
+
+    assert_eq!(
+        catch_up_push(&work, &work.join("tracked.md")),
+        SyncOutcome::Skipped
+    );
+}

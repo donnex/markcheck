@@ -677,3 +677,116 @@ fn an_unexpected_log_listing_is_an_error() {
         );
     }
 }
+#[test]
+fn the_own_trailer_check_fails_on_an_unknown_commit() {
+    let work = init_repo_without_remote();
+    let err = carries_own_trailer(&work, &"0".repeat(40))
+        .expect_err("a commit git can't read has no answer");
+    assert!(err.contains("git log"), "{err}");
+}
+#[test]
+fn the_scope_check_counts_a_merge_as_unrelated() {
+    let work = init_repo_without_remote();
+    let base = current_head(&work).unwrap();
+    run(&work, &["checkout", "-q", "-b", "side"]);
+    fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "side"]);
+    run(&work, &["checkout", "-q", "main"]);
+    run(&work, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
+    let tip = current_head(&work).unwrap();
+    assert_eq!(
+        range_has_unrelated_commits(&work, Some(&base), &tip, "tracked.md"),
+        Ok(true),
+        "a merge touching only the checklist must still count as unrelated"
+    );
+}
+#[test]
+fn a_scope_check_git_cannot_answer_leaves_the_commit_and_says_so() {
+    let work = init_repo_without_remote();
+    let bogus = "0".repeat(40);
+    let err = verify_commit_scope(&work, &None, "tracked.md", &bogus)
+        .expect_err("an unreadable commit must not pass the scope check");
+    assert!(err.contains("could not check what commit"), "{err}");
+    assert!(err.contains("left on the branch"), "{err}");
+}
+#[test]
+fn the_staged_target_guard_fails_closed_when_the_loaded_content_cannot_be_hashed() {
+    let work = init_repo_without_remote();
+    let head_blob = blob_at(&work, &current_head(&work).unwrap(), "tracked.md");
+    fs::write(work.join("tracked.md"), "- [ ] one\n- [ ] staged\n").unwrap();
+    run(&work, &["add", "tracked.md"]);
+    run(&work, &["config", "filter.broken.clean", "false"]);
+    run(&work, &["config", "filter.broken.required", "true"]);
+    fs::write(
+        work.join(".git").join("info").join("attributes"),
+        "*.md filter=broken\n",
+    )
+    .unwrap();
+    assert!(
+        staged_target_would_be_lost(
+            &work,
+            "tracked.md",
+            head_blob.as_deref(),
+            Some("- [ ] one\n- [ ] staged\n")
+        ),
+        "a loaded content git can't hash can't be cleared as matching the index"
+    );
+}
+#[test]
+fn undo_commit_refuses_a_commit_git_cannot_list() {
+    let work = init_repo_without_remote();
+    let head = current_head(&work).unwrap();
+    let err = undo_commit(&work, &"0".repeat(40)).expect_err("nothing to rewind");
+    assert!(err.contains("git rev-list"), "{err}");
+    assert_eq!(current_head(&work), Some(head));
+}
+#[test]
+fn undo_commit_refuses_when_the_history_listing_is_empty() {
+    let work = init_repo_without_remote();
+    let head = current_head(&work).unwrap();
+    let err = undo_commit(&work, "HEAD..HEAD").expect_err("an empty listing is not a root");
+    assert!(err.contains("could not read commit"), "{err}");
+    assert_eq!(
+        current_head(&work),
+        Some(head),
+        "the branch must be untouched"
+    );
+}
+#[test]
+fn undo_commit_refuses_to_delete_a_root_commit_on_a_detached_head() {
+    let work = init_repo_without_remote();
+    let root = current_head(&work).unwrap();
+    run(&work, &["checkout", "-q", "--detach"]);
+    let err = undo_commit(&work, &root).expect_err("no branch to delete");
+    assert!(err.contains("branch reference could not be read"), "{err}");
+    assert_eq!(current_head(&work), Some(root));
+}
+#[test]
+fn repo_sync_blocked_refuses_when_a_marker_cannot_be_checked() {
+    let work = init_repo_without_remote();
+    let marker = work.join(".git").join("MERGE_HEAD");
+    std::os::unix::fs::symlink(&marker, &marker).unwrap();
+    let reason = repo_sync_blocked(&work);
+    assert!(
+        reason
+            .as_ref()
+            .is_some_and(|r| r.contains("could not check for a merge in progress")),
+        "{reason:?}"
+    );
+}
+#[test]
+fn repo_sync_blocked_refuses_when_the_branch_check_fails() {
+    let work = init_repo_without_remote();
+    fs::write(
+        work.join(".git").join("HEAD"),
+        "ref: refs/heads/bad..name\n",
+    )
+    .unwrap();
+    let reason = repo_sync_blocked(&work);
+    assert!(
+        reason
+            .as_ref()
+            .is_some_and(|r| r.contains("could not check whether the repository is on a branch")),
+        "{reason:?}"
+    );
+}
