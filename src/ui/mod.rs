@@ -510,10 +510,7 @@ fn sync_section(state: &AppState, now: SystemTime, show_synced: bool) -> (String
     let prefix = format!("{} git", state.icons.sync);
     let palette = &state.palette;
     if let Some(problem) = state.git_sync.problem {
-        return (
-            format!("{prefix} · {problem}"),
-            Style::default().fg(palette.error),
-        );
+        return (format!("{prefix} · {problem}"), palette.error_style());
     }
     if state.git_sync.busy {
         return (

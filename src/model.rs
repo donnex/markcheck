@@ -990,6 +990,17 @@ impl Palette {
         self.depth == ColorDepth::Mono
     }
 
+    /// Style for error and empty-state text: the error color, or bold
+    /// reverse video under `NO_COLOR`, where the color alone would leave a
+    /// failure looking like a confirmation.
+    pub fn error_style(&self) -> Style {
+        if self.is_mono() {
+            Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            Style::default().fg(self.error)
+        }
+    }
+
     /// The palette `choice` forces, or with `Auto` the one for the current
     /// terminal's detected capability.
     pub fn detect(choice: ColorChoice) -> Self {

@@ -182,11 +182,7 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
             "No matching items"
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                msg,
-                Style::default().fg(palette.error),
-            )))
-            .centered(),
+            Paragraph::new(Line::from(Span::styled(msg, palette.error_style()))).centered(),
             list_area,
         );
         return;

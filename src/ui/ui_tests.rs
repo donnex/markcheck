@@ -2833,6 +2833,76 @@ fn error_status_message_is_rendered_in_error_color() {
     );
 }
 
+fn style_of_text(state: &mut AppState, needle: &str) -> ratatui::style::Style {
+    let (width, height) = (100u16, 30u16);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| render(f, state)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    for y in 0..height {
+        let row: Vec<&str> = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+        let text: String = row.concat();
+        if let Some(byte) = text.find(needle) {
+            let x = text[..byte].chars().count() as u16;
+            return buffer[(x, y)].style();
+        }
+    }
+    panic!("{needle:?} not rendered");
+}
+
+#[test]
+fn no_color_sets_error_states_apart_from_confirmations() {
+    let error_modifiers = Modifier::BOLD | Modifier::REVERSED;
+
+    let mut state = sample_state();
+    state.palette = crate::model::Palette::mono();
+    state.set_error("Write failed".to_string());
+    assert!(
+        style_of_text(&mut state, "Write failed")
+            .add_modifier
+            .contains(error_modifiers),
+        "a sticky error stands out without color"
+    );
+
+    let mut state = sample_state();
+    state.palette = crate::model::Palette::mono();
+    state.set_status("Copied to clipboard".to_string());
+    assert!(
+        !style_of_text(&mut state, "Copied to clipboard")
+            .add_modifier
+            .intersects(error_modifiers),
+        "a confirmation stays plain"
+    );
+
+    let mut state = sample_state();
+    state.palette = crate::model::Palette::mono();
+    state.handle_key(KeyCode::Char('/'));
+    state.handle_key(KeyCode::Char('a'));
+    assert!(
+        !style_of_text(&mut state, "/a")
+            .add_modifier
+            .intersects(error_modifiers),
+        "a search with matches stays plain"
+    );
+    state.handle_key(KeyCode::Char('z'));
+    assert!(
+        style_of_text(&mut state, "(no matches)")
+            .add_modifier
+            .contains(error_modifiers),
+        "the no-match state stands out without color"
+    );
+
+    let mut state = sample_state();
+    state.palette = crate::model::Palette::mono();
+    state.overlay = Some(Overlay::ListPicker);
+    state.picker.query = "zzzz".to_string();
+    assert!(
+        style_of_text(&mut state, "No matching items")
+            .add_modifier
+            .contains(error_modifiers),
+        "the picker's empty state stands out without color"
+    );
+}
+
 #[test]
 fn renders_tiny_terminal_without_panic() {
     let mut state = sample_state();

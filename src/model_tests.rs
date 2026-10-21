@@ -416,6 +416,24 @@ fn code_style_pairs_an_explicit_fg_with_its_bg_on_every_color_tier() {
 }
 
 #[test]
+fn error_style_is_the_error_color_or_bold_reverse_without_color() {
+    for depth in [
+        ColorDepth::TrueColor,
+        ColorDepth::Palette256,
+        ColorDepth::Basic,
+    ] {
+        let p = Palette::for_depth(depth);
+        assert_eq!(p.error_style(), Style::default().fg(p.error), "{depth:?}");
+    }
+    let mono = Palette::mono().error_style();
+    assert_eq!(mono.fg, None);
+    assert!(
+        mono.add_modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED)
+    );
+}
+
+#[test]
 fn mono_palette_has_no_colors() {
     let p = Palette::for_depth(ColorDepth::Mono);
     assert!(p.is_mono());

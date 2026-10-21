@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Stylize as _;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
@@ -61,7 +60,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         } else {
             let count = state.find_matches(query).len();
             if count == 0 {
-                Line::raw(format!("/{query}  (no matches)")).fg(state.palette.error)
+                Line::raw(format!("/{query}  (no matches)")).style(state.palette.error_style())
             } else {
                 let noun = if count == 1 { "match" } else { "matches" };
                 Line::raw(format!("/{query}  ({count} {noun})"))
@@ -123,7 +122,7 @@ fn render_message(frame: &mut Frame, area: Rect, state: &AppState) -> bool {
         .into_iter()
         .map(|line| {
             if state.status_is_error {
-                Line::raw(line).fg(state.palette.error)
+                Line::raw(line).style(state.palette.error_style())
             } else {
                 Line::raw(line)
             }

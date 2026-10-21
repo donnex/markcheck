@@ -369,7 +369,9 @@ Finer points:
 - **With `NO_COLOR` set**, nothing is colored: commands (chips and boxes) are
   shown in reverse video, and the card's position-dot strip marks a started
   item with a half dot `◐` (a done one stays `●`), so state still reads from the
-  icons and glyphs alone.
+  icons and glyphs alone. Error and empty-state text (a failed save, a git
+  sync problem, a search's `(no matches)`, the `T` picker's `No matching items`)
+  is drawn in bold reverse video, so a failure never looks like a confirmation.
 - **`[/]` (started / in-progress)** is markcheck's own convention, and `[-]`
   (skipped) the one Obsidian's task plugins use; GitHub and most other tools
   render both as literal text rather than a checkbox. Either one is a state
