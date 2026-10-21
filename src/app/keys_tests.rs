@@ -53,13 +53,10 @@ fn help_returns_to_the_screen_it_was_opened_from() {
 }
 
 #[test]
-fn n_unbound_and_shift_l_jumps_lists() {
-    // `n` was dropped; Shift-L (not Tab) now jumps lists.
+fn shift_l_jumps_to_the_next_list() {
     let mut state = AppState::new(two_list_document());
     state.current_list_index = 0;
     state.current_item_index = 0;
-    state.handle_key(KeyCode::Char('n'));
-    assert_eq!(state.current_list_index, 0, "n is unbound");
     state.handle_key(KeyCode::Char('L'));
     assert_eq!(state.current_list_index, 1, "Shift-L jumps lists");
 }

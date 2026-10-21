@@ -1921,7 +1921,6 @@ fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
 
 #[test]
 fn card_shows_fenced_code_block() {
-    // Fenced blocks (previously copy-only) now render in the card.
     let item = Item {
         ordinal: None,
         line_number: 1,
@@ -3174,8 +3173,8 @@ fn overflowing_help_overlay_scrolls_and_shows_a_scrollbar() {
 fn card_title_text_uses_default_fg_for_readability() {
     // The leading bold shows inside the card (not the
     // border). Its text is bold in the terminal's *default* foreground so it
-    // stays legible on any background (previously blue, which could
-    // wash out); the leading note icon keeps the blue accent.
+    // stays legible on any background; the leading note icon keeps the
+    // blue accent.
     let mut item = checkbox(1, "do the thing", false);
     item.header = Some("Reboot".to_string());
     let mut state = state_with(vec![List {

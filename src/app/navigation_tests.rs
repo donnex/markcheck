@@ -114,14 +114,13 @@ fn navigate_backward_clamps_at_first_list_start() {
 
 #[test]
 fn completing_last_item_with_earlier_incomplete_stays_in_list() {
-    // Regression guard: the toggle-driven advance uses navigate_next
-    // (which clamps), NOT navigate_forward, so completing the last item
-    // while an earlier one is unchecked must not skip to the next
-    // list.
+    // Completing the last item while an earlier one is still open wraps
+    // to the list's first open task instead of crossing to the next list.
     let mut state = AppState::new(two_list_document());
     state.current_item_index = 2; // items 0 and 1 remain not done
     state.toggle_current();
     assert_eq!(state.current_list_index, 0, "does not cross lists");
+    assert_eq!(state.current_item_index, 0, "wraps to the first open task");
     assert_eq!(shown(&state), (View::Checklist, None));
 }
 

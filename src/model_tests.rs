@@ -531,7 +531,7 @@ fn empty_document_counter_reads_complete() {
 #[test]
 fn basic_progress_color_steps_through_named_colors() {
     let p = Palette::for_depth(ColorDepth::Basic);
-    assert_eq!(p.progress_color(0, 4).fg, Some(Color::Yellow)); // was DarkGray
+    assert_eq!(p.progress_color(0, 4).fg, Some(Color::Yellow));
     assert_eq!(p.progress_color(1, 4).fg, Some(Color::Yellow));
     assert_eq!(p.progress_color(2, 4).fg, Some(Color::Green));
     let full = p.progress_color(4, 4);

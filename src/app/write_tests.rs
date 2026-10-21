@@ -284,7 +284,7 @@ fn a_later_write_replaces_a_sync_not_yet_handed_over() {
 fn click_inside_card_copies_current_command() {
     use ratatui::layout::Rect;
     // A click inside the card behaves like `y`. No-code item →
-    // the same "nothing to copy" hint (success paths are manual-only).
+    // the same "nothing to copy" hint.
     let mut state = AppState::new(two_list_document());
     state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.handle_left_click(15, 8);

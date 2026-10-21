@@ -39,8 +39,7 @@ fn an_auto_copy_confirmation_never_hides_an_error() {
 #[test]
 fn auto_copy_stays_silent_without_a_single_candidate() {
     // Auto-copy announces only a successful copy. With no code
-    // candidate, or an ambiguous set, it stays silent (the success paths
-    // touch a real clipboard backend, so they're manual-only).
+    // candidate, or an ambiguous set, it stays silent.
     let mut state = AppState::new(two_list_document());
     state.auto_copy = true;
     state.maybe_auto_copy();
@@ -211,10 +210,6 @@ fn quiet_cursor_moves_do_not_auto_copy() {
     assert_eq!(shown(&state), (View::Checklist, None));
     crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
 }
-
-// Copy alert paths (0 or many candidates) never touch a clipboard
-// backend, so they are safe to test headless. The Copied* paths are
-// manual verification.
 
 #[test]
 fn copy_with_no_code_shows_alert() {
