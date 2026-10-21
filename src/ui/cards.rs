@@ -716,6 +716,18 @@ fn preamble_rows(
     let mut rows: Vec<PreambleRow> = Vec::new();
     for block in blocks {
         let (prefix, style) = preamble_style(block.kind, icons, palette);
+        if block.kind == PreambleKind::Code {
+            rows.extend(
+                preamble_code_rows(&block.text, width)
+                    .into_iter()
+                    .map(|text| PreambleRow {
+                        text,
+                        style,
+                        alert: false,
+                    }),
+            );
+            continue;
+        }
         for line in block.text.lines() {
             for text in wrap_text(&format!("{prefix}{line}"), width) {
                 rows.push(PreambleRow {
@@ -733,6 +745,28 @@ fn preamble_rows(
         }
     }
     rows
+}
+
+/// A preamble code block as rows of one shared width, so the block centers
+/// as a unit while its lines stay left-aligned: tabs expanded, indentation
+/// and spacing kept, a line too long for `width` hard-wrapped with `↩` in
+/// the last cell, one space of padding on either side.
+fn preamble_code_rows(block: &str, width: u16) -> Vec<String> {
+    let chunks: Vec<(String, bool)> =
+        soft_wrapped(block, (width as usize).saturating_sub(2).max(1)).collect();
+    let block_w = chunks
+        .iter()
+        .map(|(c, _)| display_width(c))
+        .max()
+        .unwrap_or(0);
+    chunks
+        .into_iter()
+        .map(|(c, wraps)| {
+            let pad = " ".repeat(block_w - display_width(&c));
+            let end = if wraps { CONTINUATION } else { " " };
+            format!(" {c}{pad}{end}")
+        })
+        .collect()
 }
 
 /// Ends `row` in `…`, cut to `width`, to show that rows after it were

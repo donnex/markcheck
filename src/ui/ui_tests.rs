@@ -3757,3 +3757,36 @@ fn every_view_draws_a_task_state_with_the_same_glyph() {
         assert!(picker.contains(glyph), "{task_state:?} picker: {picker:?}");
     }
 }
+
+#[test]
+fn a_preamble_code_block_is_drawn_left_aligned_with_its_indentation() {
+    use crate::model::{PreambleBlock, PreambleKind};
+    let mut state = state_with(vec![List {
+        title: "Deploy".to_string(),
+        banner: None,
+        items: vec![checkbox(1, "first step", false)],
+    }]);
+    state.document.preambles.insert(
+        1,
+        vec![PreambleBlock {
+            kind: PreambleKind::Code,
+            text: "for host in a b; do\n    ssh \"$host\"   uptime\ndone".to_string(),
+        }],
+    );
+    let width = 100;
+    let text = buffer_text(&mut state, width, 30);
+    let rows: Vec<String> = text
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(width as usize)
+        .map(|row| row.iter().collect())
+        .collect();
+    let column = |needle: &str| {
+        rows.iter()
+            .rev()
+            .find_map(|row| row.rfind(needle).map(|b| row[..b].chars().count()))
+            .unwrap_or_else(|| panic!("{needle:?} not drawn:\n{text}"))
+    };
+    assert_eq!(column("ssh \"$host\"   uptime"), column("for host") + 4);
+    assert_eq!(column("done"), column("for host"));
+}

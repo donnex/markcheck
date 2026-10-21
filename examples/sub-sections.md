@@ -70,7 +70,9 @@ Run these on the staging host before touching production.
 > Hand over to the next shift only once every group above is signed off.
 
 ```sh
-handover-tool status --all
+for group in pre-flight verification; do
+    handover-tool status "$group"   --all
+done
 ```
 
 <!-- markdownlint-disable MD022 -->

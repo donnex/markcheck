@@ -87,7 +87,8 @@ markcheck examples/basics.md
   deliberately long: scroll into it in a short window to see the sticky overview
   header pin the full path, and use `}` / `{` to jump between groups.
   Under `## Handover`, a plain quote (behind a `│` bar) and a fenced code
-  block are the list's preamble, shown above its first card; a heading-only
+  block are the list's preamble, shown above its first card, the code block
+  left-aligned in the code style with its indented line and its spacing kept; a heading-only
   `- ## …` bullet as the list's first item is its banner, and a later one
   (`- ## Share the note`) is a titled note card, not a sub-section.
 - **`quick-tasks.md`** — items before any heading (the default section, with

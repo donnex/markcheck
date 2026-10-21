@@ -1283,7 +1283,37 @@ fn quote_and_code_preambles_keep_their_own_look() {
     let rows = preamble_rows(&blocks, IconSet::unicode(), palette, 40);
     assert_eq!(rows[0].text, "│ quoted");
     assert!(rows[0].style.add_modifier.contains(Modifier::ITALIC));
-    assert_eq!(rows[1].text, "make all");
+    assert_eq!(rows[1].text, " make all ");
     assert_eq!(rows[1].style, palette.code);
     assert!(rows.iter().all(|r| !r.alert));
+}
+
+#[test]
+fn a_preamble_code_block_keeps_its_indentation_and_spacing() {
+    let blocks = [PreambleBlock {
+        kind: PreambleKind::Code,
+        text: "for host in a b; do\n    ssh \"$host\"   uptime\n\tdone".to_string(),
+    }];
+    let rows = preamble_rows(&blocks, IconSet::unicode(), Palette::truecolor(), 40);
+    let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            " for host in a b; do      ",
+            "     ssh \"$host\"   uptime ",
+            "     done                 ",
+        ],
+        "every row is the same width, so the block centers as one"
+    );
+}
+
+#[test]
+fn a_long_preamble_code_line_hard_wraps_with_a_continuation_marker() {
+    let blocks = [PreambleBlock {
+        kind: PreambleKind::Code,
+        text: "abcdefghij\nxy".to_string(),
+    }];
+    let rows = preamble_rows(&blocks, IconSet::unicode(), Palette::truecolor(), 8);
+    let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(texts, [" abcdef↩", " ghij   ", " xy     "]);
 }
