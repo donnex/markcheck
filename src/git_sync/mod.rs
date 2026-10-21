@@ -303,6 +303,13 @@ impl GitSync {
         self.spawn_if_due(now);
     }
 
+    /// Drops the waiting request, for a reload that replaced its content,
+    /// returning whether there was one. A running sync and an armed push
+    /// retry are left alone.
+    pub fn cancel_queued(&mut self) -> bool {
+        self.queued.take().is_some()
+    }
+
     /// Starts the waiting request now, for a quit that shouldn't lose it.
     pub fn flush(&mut self) {
         let now = Instant::now();

@@ -22,6 +22,9 @@ pub enum Effect {
     Suspend,
     OpenLink(String),
     GitSync(PendingSync),
+    /// A reload replaced the content a request still waiting in the worker
+    /// carries, so that request must not run.
+    CancelGitSync,
     Quit,
 }
 
@@ -45,6 +48,8 @@ pub trait Host {
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()>;
     fn open_link(&mut self, state: &mut AppState, url: &str);
     fn git_sync(&mut self, sync: PendingSync);
+    /// Whether a waiting request was dropped.
+    fn cancel_git_sync(&mut self) -> bool;
 }
 
 /// What a [`drain`] did, for the main loop's redraw and exit decisions.
@@ -74,6 +79,11 @@ pub fn drain(state: &mut AppState, host: &mut impl Host) -> anyhow::Result<Drain
             Effect::Suspend => host.suspend(state)?,
             Effect::OpenLink(url) => host.open_link(state, &url),
             Effect::GitSync(sync) => host.git_sync(sync),
+            Effect::CancelGitSync => {
+                if host.cancel_git_sync() {
+                    state.report_dropped_git_sync();
+                }
+            }
             Effect::Quit => drained.quit = true,
         }
     }

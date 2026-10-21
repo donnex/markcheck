@@ -377,13 +377,31 @@ impl AppState {
     /// Queues `sync`, replacing one not yet handed to the worker: only the
     /// latest content needs committing.
     pub(super) fn queue_git_sync(&mut self, sync: PendingSync) {
-        self.cancel_git_sync();
+        self.effects
+            .retain(|effect| !matches!(effect, Effect::GitSync(_)));
         self.effects.push(Effect::GitSync(sync));
     }
 
+    /// Drops every sync request for the current content: one still in the
+    /// effect queue here, and one waiting in the worker through
+    /// `Effect::CancelGitSync`.
     pub(super) fn cancel_git_sync(&mut self) {
         self.effects
             .retain(|effect| !matches!(effect, Effect::GitSync(_)));
+        self.effects.push(Effect::CancelGitSync);
+    }
+
+    /// Says that `Effect::CancelGitSync` dropped a request the worker was
+    /// holding, after the reload's own message.
+    pub fn report_dropped_git_sync(&mut self) {
+        match self.status_message.take() {
+            Some(message) => {
+                self.status_message = Some(format!("{message} — pending git sync dropped"));
+            }
+            None => {
+                self.set_status("Pending git sync dropped: the file changed on disk".to_string())
+            }
+        }
     }
 
     /// Records a successful background commit+push, driving the

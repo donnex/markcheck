@@ -36,6 +36,7 @@ fn every_effect_reaches_the_host_in_order_and_quit_is_reported() {
         Effect::OpenEditor { line: Some(5) },
         Effect::Suspend,
         Effect::OpenLink("https://example.com".to_string()),
+        Effect::CancelGitSync,
         Effect::Quit,
         Effect::GitSync(sync("after quit")),
     ];
@@ -51,6 +52,7 @@ fn every_effect_reaches_the_host_in_order_and_quit_is_reported() {
     assert_eq!(host.editor_lines, vec![Some(5)]);
     assert_eq!(host.suspends, 1);
     assert_eq!(host.links, vec!["https://example.com".to_string()]);
+    assert_eq!(host.cancelled_syncs, 1);
     assert_eq!(
         host.syncs
             .iter()
@@ -98,6 +100,10 @@ impl Host for LinkFallbackHost {
     }
 
     fn git_sync(&mut self, _: PendingSync) {}
+
+    fn cancel_git_sync(&mut self) -> bool {
+        false
+    }
 }
 
 #[test]

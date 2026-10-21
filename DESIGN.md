@@ -244,7 +244,7 @@ The main loop calls `effect::drain(state, host)` once per iteration, after the i
 
 `CopyKind` decides how an outcome is reported: `Command` (`y`, a click, `y` + digit) reports every outcome; `Auto` announces only a success (appended to the motion's message) or a hidden-characters refusal; `LinkFallback` words each outcome around the link.
 
-`GitSync` has slot semantics: `queue_git_sync` replaces one still in the queue, and an external reload removes it (`cancel_git_sync`), since markcheck never commits an edit it didn't make.
+`GitSync` has slot semantics: `queue_git_sync` replaces one still in the queue. An external reload that brings different content calls `cancel_git_sync`, which removes one still in the queue and queues `Effect::CancelGitSync`, since markcheck never commits an edit it didn't make: by the time a reload is seen, a toggle's request has usually left the queue and is waiting out the quiet period in `GitSync::queued`, so the host's `cancel_git_sync` calls `GitSync::cancel_queued`, which drops that waiting request (a running sync and an armed push retry are left alone) and says whether there was one; when there was, `drain` calls `report_dropped_git_sync`, which ends the reload's message with `— pending git sync dropped` (#178). A reload whose content matches what markcheck last had cancels nothing, since its request is still valid. An `e` edit's `request_external_edit_sync` removes the cancel its own reload queued, so a waiting toggle folds into the edit's commit instead.
 
 ---
 
@@ -379,7 +379,7 @@ shared: imported by any of them, imports none of them
 
 ### Requests and the worker
 
-`AppState` never runs git: `commit_write` queues `Effect::GitSync(PendingSync)` after every successful write, and `finish_editor` queues one (`immediate`, described `Edited in <program name>`, never its directory) after an `e` edit that reloaded and exited successfully. A non-zero editor exit is an abort, reloaded but not synced. A change reloaded from elsewhere queues nothing: markcheck never commits an edit it didn't make, and a reload removes a request still queued.
+`AppState` never runs git: `commit_write` queues `Effect::GitSync(PendingSync)` after every successful write, and `finish_editor` queues one (`immediate`, described `Edited in <program name>`, never its directory) after an `e` edit that reloaded and exited successfully. A non-zero editor exit is an abort, reloaded but not synced. A change reloaded from elsewhere queues nothing: markcheck never commits an edit it didn't make, and a reload with different content cancels a request still queued or waiting in `GitSync` (`Effect::CancelGitSync`, see Effects).
 
 **Own changes only (#177).** A toggle's commit is built from the whole file, so it must not carry an edit markcheck didn't make: an uncommitted draft line, an outside edit markcheck reloaded, an `e` edit whose editor failed. `AppState.git_sync.unsynced_base` remembers the content markcheck's own unsynced changes started from: `commit_write` takes the pre-write content when none is held, and `request_external_edit_sync` takes the saved `e` content; each new base bumps `base_epoch`. It survives failed syncs, so toggling again after a refusal still syncs, and `reload_from_disk` drops it when the reload brings content that differs from what markcheck last had. Each request carries `SyncBase::Own { epoch, content }` (or `Edited { epoch }` for the `e` edit). `GitSync` remembers the epoch of the last `e` edit (`edited_epoch`: toggles on that base may publish the edit too) and what the last content sync committed and on which base (`landed`, from `in_flight` once the outcome is `Synced`, `Skipped` or `CommittedNotPushed`), and checks a later request on that base against that content instead, since its commit moved `HEAD` past the base. `run_sync` gets the result as `Publish::Everything` or `Publish::OwnChangesSince(base)`.
 
@@ -871,7 +871,7 @@ One line per decision, oldest first within each area, with the commit that made 
 - Hooks get 5 minutes and the real error is reported — `e80a274` (#53)
 - A failed sync stays in the title bar until a push lands — `3d3a136` (#64); the last one's failure is reported after quitting — `313d309` (#108)
 - A stale `.git/index.lock` is never left behind — `c7283e8` (#119)
-- An `e` edit is synced — `aea85ec`, but not after an editor failure — `2c7b0af` (#94); an external edit drops a queued request — `0ab2032`
+- An `e` edit is synced — `aea85ec`, but not after an editor failure — `2c7b0af` (#94); an external edit drops a queued request — `0ab2032`, also one waiting out the quiet period (#178)
 - `--no-git-sync` overrides `git_sync_paths` — `ac665d4` (#111)
 - Git runs with no controlling terminal — `3757ff9` (#2); quit and signals stop and clean up git — `b6deb70` (#5); every command runs from the repository root — `8f2432f` (#141)
 - A `Synced-by: markcheck` trailer marks markcheck's commits — `1de27ce` (#62, #99)

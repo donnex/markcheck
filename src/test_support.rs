@@ -121,6 +121,9 @@ pub(crate) struct RecordingHost {
     pub(crate) suspends: usize,
     pub(crate) links: Vec<String>,
     pub(crate) syncs: Vec<crate::model::PendingSync>,
+    pub(crate) cancelled_syncs: usize,
+    /// What `cancel_git_sync` answers: whether a waiting request existed.
+    pub(crate) sync_waiting: bool,
 }
 
 impl crate::effect::Host for RecordingHost {
@@ -144,6 +147,11 @@ impl crate::effect::Host for RecordingHost {
 
     fn git_sync(&mut self, sync: crate::model::PendingSync) {
         self.syncs.push(sync);
+    }
+
+    fn cancel_git_sync(&mut self) -> bool {
+        self.cancelled_syncs += 1;
+        std::mem::take(&mut self.sync_waiting)
     }
 }
 

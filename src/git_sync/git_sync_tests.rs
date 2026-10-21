@@ -682,6 +682,25 @@ fn requests_inside_the_quiet_period_become_one_commit() {
 }
 
 #[test]
+fn a_cancelled_request_never_runs() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    let mut sync = GitSync::detect(&file).unwrap();
+    sync.set_delay(Duration::from_secs(60));
+
+    fs::write(&file, "- [x] one\n").unwrap();
+    sync.request(pending_sync("- [x] one\n", "Check \"one\""));
+    assert!(sync.cancel_queued(), "a waiting request was dropped");
+    assert!(!sync.cancel_queued(), "nothing is left to drop");
+    assert!(!sync.is_waiting());
+
+    sync.tick(Instant::now() + Duration::from_secs(61));
+    sync.flush();
+    assert!(!sync.is_busy(), "no sync runs for the dropped request");
+    assert_eq!(git_stdout(&remote, &["rev-list", "--count", "main"]), "1");
+}
+
+#[test]
 fn a_delay_too_long_to_schedule_waits_for_the_flush() {
     let (work, _remote) = init_repo_with_remote();
     let file = work.join("tracked.md");

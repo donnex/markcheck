@@ -6,6 +6,7 @@ use std::fs;
 use std::io;
 use std::time::{Duration, SystemTime};
 
+use crate::effect::Effect;
 use crate::launch::program_name;
 use crate::model::{
     AppState, Document, FileGone, Item, ItemKind, List, Overlay, PendingChord, PendingSync,
@@ -166,10 +167,6 @@ impl AppState {
                 // Positions from before the edit may no longer mean the same card.
                 self.jump_back.clear();
                 self.critical_armed = None;
-                // A queued git-sync request describes content this reload replaced. The
-                // new content queues nothing: markcheck doesn't commit edits it didn't
-                // make.
-                self.cancel_git_sync();
                 // The cursor may now be on a different card, so a half-typed chord must
                 // not act on it.
                 self.pending_chord = PendingChord::None;
@@ -194,10 +191,13 @@ impl AppState {
                 let content_hash = Some(hash_bytes(
                     writer::document_contents(&self.document).as_bytes(),
                 ));
-                // New content is a change markcheck didn't make, so its next toggle
-                // must not publish it on top of the old base.
+                // New content is a change markcheck didn't make: its next toggle
+                // must not publish it on top of the old base, and a waiting sync
+                // request carries content that is gone. The new content queues
+                // nothing.
                 if content_hash != self.file_content_hash {
                     self.git_sync.unsynced_base = None;
+                    self.cancel_git_sync();
                 }
                 self.file_content_hash = content_hash;
                 true
@@ -223,6 +223,10 @@ impl AppState {
     /// into the commit message, so a path from the user's environment is never
     /// published.
     pub fn request_external_edit_sync(&mut self, editor: &str) {
+        // This edit replaces the request the reload just cancelled, so a
+        // waiting toggle folds into its commit instead of being dropped.
+        self.effects
+            .retain(|effect| !matches!(effect, Effect::CancelGitSync));
         let content = writer::document_contents(&self.document);
         let content_hash = hash_bytes(content.as_bytes());
         self.git_sync.unsynced_base = Some(content.clone());

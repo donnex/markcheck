@@ -641,8 +641,10 @@ exits with an error (vim's `:cq`) counts as an abort: the edit is reloaded
 but not synced, and the status bar keeps the error, ending in `not synced`;
 it stays unsynced until you commit it yourself (see below). The editor has to stay open until you close the file (see [Editor and reset](#editor-and-reset)): an edit saved later from a window it handed off to reaches markcheck as an outside change, which is not synced. If something *else* changes the file in the meantime — an
 edit made outside markcheck entirely, or the file getting deleted — while
-a sync is still queued or in flight, that sync is refused rather than
-publishing content that's since gone stale: `Git sync failed: the file
+a change is still waiting to be synced, that sync is dropped rather than
+publishing content that's since gone stale, and the reload message says so:
+`Reloaded: 1 done ("Verify") — pending git sync dropped`. A sync already
+running when the file changes is refused instead: `Git sync failed: the file
 changed after this sync was queued, so it was not published`.
 
 A toggle only ever publishes **markcheck's own changes**. Its commit holds

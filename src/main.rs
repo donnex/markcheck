@@ -633,6 +633,12 @@ where
             worker.request(sync);
         }
     }
+
+    fn cancel_git_sync(&mut self) -> bool {
+        self.git_sync
+            .as_mut()
+            .is_some_and(git_sync::GitSync::cancel_queued)
+    }
 }
 
 /// How long a signal lets a running sync finish before it is abandoned.

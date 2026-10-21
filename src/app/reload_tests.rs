@@ -1023,7 +1023,6 @@ fn reload_reports_a_parse_error_and_keeps_the_last_good_document() {
 
 #[test]
 fn an_external_reload_drops_a_queued_git_sync_request() {
-    // A reload drops the queued sync request for the replaced content.
     let path = unique_temp_path();
     fs::write(&path, "## L\n\n- [ ] alpha\n- [ ] beta\n").unwrap();
     let document = crate::parser::parse_document(path.clone()).unwrap();
@@ -1035,19 +1034,120 @@ fn an_external_reload_drops_a_queued_git_sync_request() {
         "test setup: the toggle must have queued a sync request"
     );
 
-    // Somebody else rewrites the file, and the watcher picks it up.
     touch_with_new_mtime(&path, "## L\n\n- [ ] alpha\n- [x] beta\n");
     assert!(
         state.reload_if_changed(),
         "the external edit must be adopted"
     );
 
-    assert!(
-        state.git_sync_request().is_none(),
-        "a request describing content that is no longer on disk must not survive the reload"
+    assert_eq!(
+        state.effects,
+        vec![Effect::CancelGitSync],
+        "the request here is dropped and the one waiting in the worker is cancelled"
     );
 
     fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_reload_after_the_request_reached_the_worker_cancels_it_there() {
+    let path = unique_temp_path();
+    fs::write(&path, "## L\n\n- [ ] alpha\n- [ ] beta\n").unwrap();
+    let mut state = AppState::new(crate::parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    let mut host = crate::test_support::RecordingHost::default();
+    crate::effect::drain(&mut state, &mut host).unwrap();
+    assert_eq!(
+        host.syncs.len(),
+        1,
+        "test setup: the toggle reached the worker"
+    );
+
+    touch_with_new_mtime(&path, "## L\n\n- [ ] alpha\n- [x] beta\n");
+    assert!(state.reload_if_changed());
+    host.sync_waiting = true;
+    crate::effect::drain(&mut state, &mut host).unwrap();
+
+    assert_eq!(host.cancelled_syncs, 1);
+    assert_eq!(host.syncs.len(), 1, "the reload requests nothing new");
+    let message = state.status_message.as_deref().unwrap_or_default();
+    assert!(
+        message.starts_with("Reloaded: ") && message.ends_with(" — pending git sync dropped"),
+        "got {message:?}"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_reload_with_nothing_waiting_in_the_worker_says_nothing_about_git_sync() {
+    let path = unique_temp_path();
+    fs::write(&path, "## L\n\n- [ ] alpha\n").unwrap();
+    let mut state = AppState::new(crate::parser::parse_document(path.clone()).unwrap());
+    touch_with_new_mtime(&path, "## L\n\n- [x] alpha\n");
+    assert!(state.reload_if_changed());
+    let mut host = crate::test_support::RecordingHost::default();
+    crate::effect::drain(&mut state, &mut host).unwrap();
+
+    assert_eq!(host.cancelled_syncs, 1);
+    let message = state.status_message.as_deref().unwrap_or_default();
+    assert!(
+        message.starts_with("Reloaded: ") && !message.contains("git sync"),
+        "got {message:?}"
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_reload_of_unchanged_content_keeps_the_queued_git_sync_request() {
+    let path = unique_temp_path();
+    fs::write(&path, "## L\n\n- [ ] alpha\n").unwrap();
+    let mut state = AppState::new(crate::parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    let written = fs::read_to_string(&path).unwrap();
+
+    touch_with_new_mtime(&path, &written);
+    assert!(state.reload_if_changed(), "test setup: the stat changed");
+
+    assert!(
+        matches!(state.effects.as_slice(), [Effect::GitSync(_)]),
+        "the request still matches the file, so it must still be synced: {:?}",
+        state.effects
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn an_editor_edit_folds_a_waiting_toggle_into_its_own_request() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.toggle_current();
+    let mut host = crate::test_support::RecordingHost::default();
+    crate::effect::drain(&mut state, &mut host).unwrap();
+
+    touch_with_new_mtime(&path, "## List 1\n\n- [x] `task one`\n- [ ] `task two`\n");
+    state.finish_editor("vi", None, Ok(exit_status(0)), EDITOR_WAITED);
+
+    assert!(
+        matches!(state.effects.as_slice(), [Effect::GitSync(sync)] if sync.description == "Edited in vi"),
+        "the edit's request replaces the cancel: {:?}",
+        state.effects
+    );
+
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_dropped_git_sync_is_reported_even_without_a_reload_message() {
+    let mut state = AppState::new(two_list_document());
+    state.report_dropped_git_sync();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Pending git sync dropped: the file changed on disk")
+    );
+    assert!(!state.status_is_error);
 }
 
 #[test]
