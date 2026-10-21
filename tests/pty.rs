@@ -2410,6 +2410,105 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
     );
 }
 
+/// A shell running markcheck with `--git-sync` on `path`, which on `Ctrl-Z`
+/// prints `SUSPENDED-IN-SHELL` and the newest commit on `remote`'s `main`,
+/// then runs `fg`.
+fn suspend_shell_session(path: &Path, extra: &[&str], remote: &Path) -> Session {
+    let mut cmd = CommandBuilder::new("sh");
+    cmd.arg("-c");
+    cmd.arg(concat!(
+        "set -m; \"$0\" --no-nerd-font --git-sync $3 \"$1\"; ",
+        "echo SUSPENDED-IN-SHELL; ",
+        "echo \"REMOTE-HEAD:$(git --git-dir=\"$2\" log -1 --format=%s main 2>/dev/null)\"; ",
+        "fg",
+    ));
+    cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
+    cmd.arg(path);
+    cmd.arg(remote);
+    cmd.arg(extra.join(" "));
+    isolate(&mut cmd);
+    Session::spawn(cmd)
+}
+
+/// A toggle still in its quiet period when `Ctrl-Z` is pressed is committed
+/// and pushed before markcheck stops, so the shell already sees it on the
+/// remote.
+#[test]
+fn ctrl_z_right_after_a_toggle_pushes_it_before_stopping() {
+    let root = unique_path("suspend-sync");
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+    run_git(&work, &["init", "-q", "-b", "main"]);
+    run_git(&work, &["config", "user.email", "test@example.com"]);
+    run_git(&work, &["config", "user.name", "test"]);
+    let path = work.join("checklist.md");
+    write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
+    run_git(&work, &["add", "checklist.md"]);
+    run_git(&work, &["commit", "-q", "-m", "init"]);
+    run_git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+
+    let mut session = suspend_shell_session(&path, &[], &remote);
+    session.key(" ");
+    wait_for_file(&path, "the toggle", |s| s.contains("[x] `alpha`"));
+    session.key("\x1a");
+    session.wait_until("the shell's look at the remote", |raw| {
+        raw.contains("REMOTE-HEAD:")
+            && raw
+                .split("REMOTE-HEAD:")
+                .nth(1)
+                .is_some_and(|rest| rest.contains('\n'))
+    });
+    let raw = session.raw_output();
+    let head = raw
+        .split("REMOTE-HEAD:")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    assert_eq!(
+        head, "checklist.md: Check \"alpha\"",
+        "the toggle must be on the remote while markcheck is stopped"
+    );
+    assert!(
+        !raw.contains("git sync paused while suspended"),
+        "a sync that landed needs no warning"
+    );
+    session.wait_for_screen("Resumed");
+    session.key("q");
+    assert!(session.finish().0);
+}
+
+/// A sync that doesn't land within the wait is left running, and the shell
+/// is told so before it gets the prompt.
+#[test]
+fn ctrl_z_during_a_stuck_sync_says_on_the_shell_that_it_is_paused() {
+    let (path, pid_file) = repo_with_a_slow_hook("suspend-stuck-sync", "sleep 30");
+    let remote = path.parent().unwrap().join("no-remote.git");
+
+    let mut session = suspend_shell_session(&path, &["--git-sync-delay", "0"], &remote);
+    session.key(" ");
+    wait_for_hook_pid(&pid_file);
+    session.key("\x1a");
+    session.wait_for_screen("Waiting for git sync before suspending");
+    session.wait_until("the paused-sync line, then the shell", |raw| {
+        raw.split_once("markcheck: git sync paused while suspended; fg to finish it")
+            .is_some_and(|(_, after)| after.contains("SUSPENDED-IN-SHELL"))
+    });
+    session.wait_for_screen("Resumed");
+    session.key("q");
+    session.wait_for_screen("Waiting for git sync");
+    session.key("q");
+    assert!(session.finish().0);
+}
+
 #[test]
 fn a_hash_anchor_or_plus_line_opens_at_that_task() {
     let path = unique_path("start-at");

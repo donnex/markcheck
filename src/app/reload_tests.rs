@@ -81,6 +81,36 @@ fn finish_suspend_with_no_change_confirms_the_resume() {
 }
 
 #[test]
+fn waiting_for_sync_before_suspend_shows_a_notice_that_resuming_replaces() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.wait_for_sync_before_suspend();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Waiting for git sync before suspending…")
+    );
+    assert!(!state.status_is_error);
+    state.finish_waiting_to_suspend();
+    assert_eq!(state.status_message, None);
+    state.finish_suspend(Ok(()));
+    assert_eq!(state.status_message.as_deref(), Some("Resumed"));
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn finishing_the_wait_keeps_what_the_sync_reported() {
+    let mut state = AppState::new(two_list_document());
+    state.wait_for_sync_before_suspend();
+    state.set_error("Git sync failed: example".to_string());
+    state.finish_waiting_to_suspend();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Git sync failed: example")
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
 fn finish_suspend_reloads_an_edit_made_while_suspended() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());

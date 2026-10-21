@@ -636,7 +636,11 @@ where
     }
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
-        suspend_to_shell(self.terminal, state, self.mouse, self.title)
+        let still_running = match self.git_sync.as_mut() {
+            Some(sync) => settle_git_sync_before_suspend(self.terminal, state, sync)?,
+            None => false,
+        };
+        suspend_to_shell(self.terminal, state, self.mouse, self.title, still_running)
     }
 
     fn redraw(&mut self) -> anyhow::Result<()> {
@@ -660,7 +664,8 @@ where
     }
 }
 
-/// How long a signal lets a running sync finish before it is abandoned.
+/// How long a signal lets a running sync finish before it is abandoned, and
+/// `Ctrl-Z` waits for one before stopping anyway.
 const QUIT_WAIT: Duration = Duration::from_secs(5);
 /// How long an abandoned sync's worker gets to unwind through its cleanup
 /// after `SIGTERM`, and then after `SIGKILL`.
@@ -789,21 +794,53 @@ where
     Ok(())
 }
 
-/// `Ctrl-Z`: hands the terminal back to the shell and stops the process
-/// until `fg` resumes it, then restores the TUI and picks up any edit made
-/// meanwhile. Raw mode turns off `ISIG`, so the terminal itself never sends
+/// Printed on the shell when `Ctrl-Z` stops markcheck with a sync running.
+const SUSPENDED_MID_SYNC: &str = "markcheck: git sync paused while suspended; fg to finish it";
+
+/// A stopped process commits and pushes nothing, so before `Ctrl-Z` stops it
+/// a change still in its quiet period starts now and a running sync gets up
+/// to [`QUIT_WAIT`] to land. Returns whether one is still running.
+fn settle_git_sync_before_suspend<B: Backend>(
+    terminal: &mut Terminal<B>,
+    state: &mut AppState,
+    sync: &mut git_sync::GitSync,
+) -> anyhow::Result<bool>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    sync.flush();
+    if sync.is_busy() {
+        state.wait_for_sync_before_suspend();
+        state.git_sync.busy = true;
+        state.git_sync.waiting = false;
+        terminal.draw(|frame| ui::render(frame, state))?;
+        for outcome in sync.wait_for_outcomes(QUIT_WAIT) {
+            state.apply_git_sync_outcome(&outcome);
+        }
+        state.finish_waiting_to_suspend();
+    }
+    Ok(sync.is_busy())
+}
+
+/// `Ctrl-Z`: hands the terminal back to the shell, saying so when a git sync
+/// is left `sync_running`, and stops the process until `fg` resumes it, then
+/// restores the TUI and picks up any edit made meanwhile. Raw mode turns off `ISIG`, so the terminal itself never sends
 /// `SIGTSTP` for the keypress.
 fn suspend_to_shell<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
     mouse: bool,
     title: &mut TerminalTitle,
+    sync_running: bool,
 ) -> anyhow::Result<()>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
     leave_tui(mouse)?;
     title.release();
+    if sync_running {
+        let _ = writeln!(io::stderr(), "{SUSPENDED_MID_SYNC}");
+    }
     let outcome = stop_self();
     title.reclaim();
     enter_tui(terminal, mouse)?;

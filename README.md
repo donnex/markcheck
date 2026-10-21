@@ -467,7 +467,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `o` | open the current card's link in your browser |
 | `o` then a number | when a card has several links, open link `[N]` (see below for `[10]` and up) |
 | `e` | edit the file in `$EDITOR` (at the current task's line for editors that support it) |
-| `Ctrl-Z` | suspend to the shell, as in vim or less; `fg` brings markcheck back, picking up any change made to the file meanwhile |
+| `Ctrl-Z` | suspend to the shell, as in vim or less; `fg` brings markcheck back, picking up any change made to the file meanwhile. With git sync on, a pending change is committed and pushed first |
 | `Ctrl-L` | redraw the whole screen, as in vim or the shell, when something outside markcheck (a background job, a `wall` message, console output) has written over it; works on every screen and overlay, and leaves a pending key or an armed critical step as it was |
 | `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
 | `R` | reset tasks to not-done (asks first): `y` resets everything, `l` only the current list, `s` only the sub-list the cursor is in |
@@ -737,7 +737,13 @@ closes saying so (e.g. `markcheck: git sync failed: ...`), so you don't walk
 away thinking the change was published. The exit status stays 0. A second
 `SIGTERM` or `SIGINT` doesn't wait: `markcheck` exits at once with status 1,
 without that stderr line and without restoring the terminal (run `reset` if
-it's left in a strange state). If
+it's left in a strange state). `Ctrl-Z` also starts a change still waiting
+out the quiet period straight away and waits up to 5 seconds for it, with
+`Waiting for git sync before suspending…`, since a stopped `markcheck` can't
+commit or push: checking a step, then `Ctrl-Z` to run its command, publishes
+the step before you reach the shell. A sync that takes longer is left for
+`fg` to finish, and the shell shows `markcheck: git sync paused while
+suspended; fg to finish it`. If
 `markcheck` is ever killed outright, the next start removes the temporary
 files it left in the checklist's folder and the repository and says so in
 the status bar.

@@ -17,6 +17,9 @@ use crate::writer;
 
 use super::*;
 
+/// Shown while `Ctrl-Z` waits for a running git sync before stopping.
+const WAITING_TO_SUSPEND: &str = "Waiting for git sync before suspending…";
+
 /// An `e` editor that exits successfully sooner than this, leaving the file
 /// unchanged, is taken to have handed off to a window instead of waiting.
 pub(super) const EDITOR_RETURNED_AT_ONCE: Duration = Duration::from_secs(1);
@@ -370,6 +373,20 @@ impl AppState {
         }
         let nearest = (0..items.len()).min_by_key(distance).unwrap_or(0);
         (new_list_index, nearest, true)
+    }
+
+    /// Before `Ctrl-Z` stops the process: a sync still running is waited for,
+    /// since a stopped process can't commit or push it.
+    pub fn wait_for_sync_before_suspend(&mut self) {
+        self.set_notice(WAITING_TO_SUSPEND.to_string());
+    }
+
+    /// Clears the [`AppState::wait_for_sync_before_suspend`] notice, keeping
+    /// a message the finished sync reported in its place.
+    pub fn finish_waiting_to_suspend(&mut self) {
+        if self.status_message.as_deref() == Some(WAITING_TO_SUSPEND) {
+            self.clear_status();
+        }
     }
 
     /// Called by the main loop once `fg` has resumed it, or once the suspend
