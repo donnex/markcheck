@@ -487,3 +487,54 @@ fn an_auto_copy_to_both_clipboards_says_so() {
     );
     assert!(!state.status_is_error);
 }
+
+#[test]
+fn each_extra_link_copy_outcome_follows_the_opener_report() {
+    let cases = [
+        (
+            CopyOutcome::CopiedSystem,
+            "link also copied to clipboard",
+            false,
+        ),
+        (
+            CopyOutcome::CopiedOsc52,
+            "link also sent to clipboard (OSC 52)",
+            false,
+        ),
+        (
+            CopyOutcome::CopiedBoth,
+            "link also copied (system clipboard + OSC 52)",
+            false,
+        ),
+        (
+            CopyOutcome::CopiedSystemOnlyTooLarge,
+            "link also copied, but only to the system clipboard: too large to send through the terminal (OSC 52)",
+            true,
+        ),
+        (
+            CopyOutcome::TooLarge,
+            "link not copied: too large for the terminal clipboard",
+            true,
+        ),
+        (
+            CopyOutcome::HiddenCharacters,
+            "link not copied: it contains hidden control characters",
+            true,
+        ),
+        (
+            CopyOutcome::Failed,
+            "link not copied: no clipboard available",
+            true,
+        ),
+    ];
+    for (outcome, copied, is_error) in cases {
+        let mut state = AppState::new(two_list_document());
+        state.set_status("Sent to open on this host: https://example.com/x".to_string());
+        state.apply_copy_outcome(CopyKind::LinkAlso, "https://example.com/x", outcome);
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some(format!("Sent to open on this host: https://example.com/x · {copied}").as_str())
+        );
+        assert_eq!(state.status_is_error, is_error, "{copied}");
+    }
+}

@@ -341,12 +341,53 @@ fn report_link_sent_names_the_opener_as_an_attempt() {
         1,
         &["https://example.com/a"],
     )));
-    state.report_link_sent("/usr/bin/xdg-open", "https://example.com/a");
+    state.report_link_sent("/usr/bin/xdg-open", "https://example.com/a", false);
     assert_eq!(
         state.status_message.as_deref(),
         Some("Sent to xdg-open: https://example.com/a")
     );
     assert!(!state.status_is_error);
+    state.report_link_sent("/usr/bin/xdg-open", "https://example.com/a", true);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Sent to xdg-open on this host: https://example.com/a")
+    );
+}
+
+#[test]
+fn copy_link_too_adds_the_copy_after_the_opener_report() {
+    let url = "https://example.com/a";
+    let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));
+    state.copy_route = crate::model::CopyRoute::Osc52Only;
+
+    state.report_link_sent("xdg-open", url, true);
+    state.copy_link_too(url);
+    state.settle();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(
+            "Sent to xdg-open on this host: https://example.com/a · link also sent to clipboard (OSC 52)"
+        )
+    );
+    assert!(!state.status_is_error);
+
+    state.set_error("Couldn't open link (xdg-open: not found)".to_string());
+    state.copy_link_too(url);
+    state.settle();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Couldn't open link (xdg-open: not found) · link also sent to clipboard (OSC 52)")
+    );
+    assert!(state.status_is_error);
+
+    state.clear_status();
+    state.copy_link_too("https://example.com/\u{7}");
+    state.settle();
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("link not copied: it contains hidden control characters")
+    );
+    assert!(state.status_is_error);
 }
 
 #[test]

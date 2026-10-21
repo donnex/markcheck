@@ -243,7 +243,8 @@ clipboard instead of opening it.
 .TP
 \fBSSH_CONNECTION\fR, \fBSSH_TTY\fR
 Mark an SSH session, where \fB\-\-clipboard auto\fR also sends the copy through
-the terminal (OSC 52).
+the terminal (OSC 52), and \fBo\fR without \fBBROWSER\fR copies the link as
+well as opening it.
 .TP
 \fBXDG_CONFIG_HOME\fR, \fBHOME\fR
 Where the config file is looked for (see FILES).

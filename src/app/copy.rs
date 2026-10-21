@@ -86,6 +86,30 @@ impl AppState {
             (CopyKind::LinkFallback, CopyOutcome::Failed) => {
                 self.set_error(format!("No browser or clipboard here — link: {text}"))
             }
+            (CopyKind::LinkAlso, CopyOutcome::CopiedSystem) => {
+                self.report_link_also("link also copied to clipboard", false)
+            }
+            (CopyKind::LinkAlso, CopyOutcome::CopiedOsc52) => {
+                self.report_link_also("link also sent to clipboard (OSC 52)", false)
+            }
+            (CopyKind::LinkAlso, CopyOutcome::CopiedBoth) => {
+                self.report_link_also("link also copied (system clipboard + OSC 52)", false)
+            }
+            (CopyKind::LinkAlso, CopyOutcome::CopiedSystemOnlyTooLarge) => self.report_link_also(
+                "link also copied, but only to the system clipboard: too large to send through the terminal (OSC 52)",
+                true,
+            ),
+            (CopyKind::LinkAlso, CopyOutcome::TooLarge) => self.report_link_also(
+                "link not copied: too large for the terminal clipboard",
+                true,
+            ),
+            (CopyKind::LinkAlso, CopyOutcome::HiddenCharacters) => self.report_link_also(
+                "link not copied: it contains hidden control characters",
+                true,
+            ),
+            (CopyKind::LinkAlso, CopyOutcome::Failed) => {
+                self.report_link_also("link not copied: no clipboard available", true)
+            }
         }
     }
 
@@ -118,7 +142,29 @@ impl AppState {
         self.set_error(message);
     }
 
-    /// `o` with nowhere to send the link (`launch::no_browser_available`):
+    /// Adds how `o`'s extra copy went after the opener's report
+    /// (`Sent to xdg-open on this host: … · link also copied (OSC 52)`),
+    /// keeping the message sticky when either part is a problem.
+    fn report_link_also(&mut self, copied: &str, problem: bool) {
+        let was_error = self.status_is_error;
+        let message = match self.status_message.take() {
+            Some(reported) => format!("{reported} · {copied}"),
+            None => copied.to_string(),
+        };
+        if problem || was_error {
+            self.set_error(message);
+        } else {
+            self.set_status(message);
+        }
+    }
+
+    /// `o` over SSH, after handing the link to an opener on this machine:
+    /// copy it too, which reaches the user's own terminal via OSC 52.
+    pub fn copy_link_too(&mut self, url: &str) {
+        self.request_copy(url.to_string(), CopyKind::LinkAlso);
+    }
+
+    /// `o` with nowhere to send the link (`launch::LinkRoute::CopyInstead`):
     /// copy it instead, which over SSH reaches the local terminal via OSC 52.
     pub fn copy_link_instead(&mut self, url: &str) {
         self.request_copy(url.to_string(), CopyKind::LinkFallback);

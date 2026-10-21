@@ -124,21 +124,42 @@ pub fn resolve_opener(
     (candidates, warning)
 }
 
-/// Whether `o` has nowhere to send a link: no usable `$BROWSER` entry and,
-/// outside macOS, no graphical session (`$DISPLAY` and `$WAYLAND_DISPLAY`
-/// both unset or empty) — typically an SSH login on a server. The platform
-/// opener can't show anything there, so the link is copied instead.
-pub fn no_browser_available(
+/// What `o` does with a link, from [`link_route`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkRoute {
+    /// Hand it to the opener.
+    Open,
+    /// Copy it instead: there is nowhere to show it.
+    CopyInstead,
+    /// Hand it to the opener and copy it too: over SSH the opener may show
+    /// it on the remote machine's screen, where a stale `$DISPLAY` or a Mac's
+    /// console points, rather than the user's own.
+    OpenAndCopy,
+}
+
+/// Where `o` sends a link. A usable `$BROWSER` entry always opens it. Without
+/// one, outside macOS with no graphical session (`$DISPLAY` and
+/// `$WAYLAND_DISPLAY` both unset or empty), the link is only copied; over
+/// SSH (`remote`) it is otherwise opened and copied, so the copy reaches the
+/// user's own terminal through OSC 52.
+pub fn link_route(
     browser: Option<&str>,
     display: Option<&str>,
     wayland_display: Option<&str>,
-) -> bool {
+    remote: bool,
+) -> LinkRoute {
     let is_set = |value: Option<&str>| value.is_some_and(|v| !v.trim().is_empty());
     let browser_set = browser
         .unwrap_or_default()
         .split(':')
         .any(|entry| !entry.trim().is_empty());
-    !cfg!(target_os = "macos") && !browser_set && !is_set(display) && !is_set(wayland_display)
+    let graphical = cfg!(target_os = "macos") || is_set(display) || is_set(wayland_display);
+    match (browser_set, graphical, remote) {
+        (true, _, _) => LinkRoute::Open,
+        (false, false, _) => LinkRoute::CopyInstead,
+        (false, true, true) => LinkRoute::OpenAndCopy,
+        (false, true, false) => LinkRoute::Open,
+    }
 }
 
 /// A command's basename, for status messages: `/usr/bin/xdg-open` → `xdg-open`.

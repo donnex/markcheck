@@ -41,6 +41,9 @@ pub enum CopyKind {
     Command,
     /// `o` with no browser to send the link to.
     LinkFallback,
+    /// `o` over SSH: the link was handed to an opener on the remote machine,
+    /// and is copied too in case it showed up on a screen the user can't see.
+    LinkAlso,
 }
 
 /// The parts of the outside world `drain` needs from the main loop: the

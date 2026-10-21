@@ -106,9 +106,12 @@ impl AppState {
 
     /// `o`'s opener has started. Worded as an attempt, not a result: a
     /// quick failed exit is reported afterwards (`launch::opener_failure_message`).
-    pub fn report_link_sent(&mut self, program: &str, url: &str) {
+    /// `on_this_host` says the opener runs on the machine markcheck runs on,
+    /// for an SSH session, where that isn't the user's own.
+    pub fn report_link_sent(&mut self, program: &str, url: &str, on_this_host: bool) {
         let name = program_name(program);
-        self.set_status(format!("Sent to {name}: {url}"));
+        let place = if on_this_host { " on this host" } else { "" };
+        self.set_status(format!("Sent to {name}{place}: {url}"));
     }
 }
 

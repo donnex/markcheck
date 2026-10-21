@@ -348,7 +348,12 @@ Finer points:
   `$WAYLAND_DISPLAY` is set), `o` doesn't try to launch anything. It copies
   the link to the clipboard instead — over SSH that reaches your local
   terminal through OSC 52 — and says `No browser here — link copied to
-  clipboard`. Set `$BROWSER` to force an opener anyway. With **several**, the URLs stay
+  clipboard`. Over SSH with a display set (a reattached tmux session that
+  kept `DISPLAY=:0`, say, or a Mac with someone logged in at its screen),
+  the browser may open on the remote machine's screen rather than yours, so
+  `o` opens the link there and copies it too: `Sent to xdg-open on this
+  host: <url> · link also copied (system clipboard + OSC 52)`. Set
+  `$BROWSER` to force an opener anyway, with no copy. With **several**, the URLs stay
   listed below the card and the status bar shows `press 1–N to open · esc
   cancels` — press the number (matching the card's `[1]`/`[2]` markers) to open
   that one, or Esc to cancel. On a card with ten or more links, type the

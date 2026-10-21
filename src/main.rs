@@ -700,22 +700,43 @@ fn finish_git_sync(
 /// Opens `url` without suspending the TUI, trying each resolved opener in
 /// turn until one spawns. No shell and discarded output; the child is reaped
 /// on a detached thread, which sends a quick failed exit to `failures`. With
-/// no browser to send to at all (a headless session), copies the link instead.
+/// no browser to send to at all (a headless session), copies the link instead;
+/// over SSH, copies it as well (see `launch::link_route`).
 fn open_link(url: &str, state: &mut AppState, failures: &std::sync::mpsc::Sender<String>) {
-    use std::process::{Command, Stdio};
-
     let browser = std::env::var("BROWSER").ok();
     let display = std::env::var("DISPLAY").ok();
     let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
-    if launch::no_browser_available(
+    let remote = cli::is_remote_session(
+        std::env::var("SSH_CONNECTION").ok().as_deref(),
+        std::env::var("SSH_TTY").ok().as_deref(),
+    );
+    match launch::link_route(
         browser.as_deref(),
         display.as_deref(),
         wayland_display.as_deref(),
+        remote,
     ) {
-        state.copy_link_instead(url);
-        return;
+        launch::LinkRoute::CopyInstead => state.copy_link_instead(url),
+        launch::LinkRoute::Open => spawn_opener(url, browser.as_deref(), false, state, failures),
+        launch::LinkRoute::OpenAndCopy => {
+            spawn_opener(url, browser.as_deref(), true, state, failures);
+            state.copy_link_too(url);
+        }
     }
-    let (candidates, warning) = launch::resolve_opener(browser.as_deref(), url);
+}
+
+/// Tries each resolved opener for `url` in turn until one spawns.
+/// `on_this_host` words the confirmation for an SSH session.
+fn spawn_opener(
+    url: &str,
+    browser: Option<&str>,
+    on_this_host: bool,
+    state: &mut AppState,
+    failures: &std::sync::mpsc::Sender<String>,
+) {
+    use std::process::{Command, Stdio};
+
+    let (candidates, warning) = launch::resolve_opener(browser, url);
     let mut last_error = None;
     for (program, args) in &candidates {
         match Command::new(program)
@@ -726,7 +747,7 @@ fn open_link(url: &str, state: &mut AppState, failures: &std::sync::mpsc::Sender
             .spawn()
         {
             Ok(mut child) => {
-                state.report_link_sent(program, url);
+                state.report_link_sent(program, url, on_this_host);
                 if let Some(warning) = warning {
                     state.set_error(warning);
                 }

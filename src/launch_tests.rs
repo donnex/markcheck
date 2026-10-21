@@ -1,9 +1,10 @@
+use super::LinkRoute;
 use super::{
     CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, already_open_warning, editor_file_args,
     exit_summary, expand_tilde, git_sync_path_matches, git_sync_request, git_sync_scope,
-    git_sync_warning, leftovers_warning, no_browser_available, opener_failure_message,
-    resolve_editor, resolve_opener, startup_message, startup_warning, terminal_title,
-    unshown_warning, watch_warning,
+    git_sync_warning, leftovers_warning, link_route, opener_failure_message, resolve_editor,
+    resolve_opener, startup_message, startup_warning, terminal_title, unshown_warning,
+    watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -16,16 +17,45 @@ fn is_default_opener(candidates: &[(String, Vec<String>)]) -> bool {
 }
 
 #[test]
-fn no_browser_only_without_browser_and_without_a_graphical_session() {
-    let headless = !cfg!(target_os = "macos");
-    assert_eq!(no_browser_available(None, None, None), headless);
+fn link_is_copied_instead_only_without_browser_and_without_a_graphical_session() {
+    let headless = if cfg!(target_os = "macos") {
+        LinkRoute::Open
+    } else {
+        LinkRoute::CopyInstead
+    };
+    assert_eq!(link_route(None, None, None, false), headless);
     assert_eq!(
-        no_browser_available(Some(" : "), Some(""), Some(" ")),
+        link_route(Some(" : "), Some(""), Some(" "), false),
         headless
     );
-    assert!(!no_browser_available(Some("w3m"), None, None));
-    assert!(!no_browser_available(None, Some(":0"), None));
-    assert!(!no_browser_available(None, None, Some("wayland-0")));
+    assert_eq!(link_route(Some("w3m"), None, None, false), LinkRoute::Open);
+    assert_eq!(link_route(None, Some(":0"), None, false), LinkRoute::Open);
+    assert_eq!(
+        link_route(None, None, Some("wayland-0"), false),
+        LinkRoute::Open
+    );
+}
+
+#[test]
+fn over_ssh_a_display_opens_the_link_and_copies_it_too() {
+    assert_eq!(
+        link_route(None, Some(":0"), None, true),
+        LinkRoute::OpenAndCopy
+    );
+    assert_eq!(
+        link_route(None, None, Some("wayland-0"), true),
+        LinkRoute::OpenAndCopy
+    );
+    assert_eq!(
+        link_route(Some("w3m"), Some(":0"), None, true),
+        LinkRoute::Open
+    );
+    let headless = if cfg!(target_os = "macos") {
+        LinkRoute::OpenAndCopy
+    } else {
+        LinkRoute::CopyInstead
+    };
+    assert_eq!(link_route(None, None, None, true), headless);
 }
 
 #[test]
