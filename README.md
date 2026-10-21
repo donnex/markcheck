@@ -999,7 +999,10 @@ task that changed so you can see it. `Ctrl-R` redoes what you just undid; making
 a fresh change after an undo clears the redo history (the usual undo/redo rule).
 The status bar confirms each step (`Undo: marked not done`, `Redo: marked done`,
 `Redo: marked skipped`, `Undo: restored 3 tasks`) and says `Nothing to undo` / `Nothing to redo` when the
-history is empty. The history is in-memory and covers task state only; editing
+history is empty. With git sync on, an undo or redo is committed under a
+message naming what it did, like any other change: `Undo: Uncheck "Restart
+service"` for one task, `Undo: 3 tasks ("Drain node", "Restart service",
+"Verify")` for several (the first three named, the rest elided with `…`). The history is in-memory and covers task state only; editing
 the file **externally** (in another editor) clears it, since that edit could
 change the file underneath the undo history — your own toggles never do.
 

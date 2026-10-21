@@ -534,3 +534,63 @@ fn undo_and_redo_of_a_skip_name_the_state() {
         Some("Redo: marked skipped")
     );
 }
+
+#[test]
+fn undo_and_redo_commit_messages_name_the_task_and_its_new_state() {
+    let mut state = AppState::new(two_list_document());
+    state.toggle_current();
+    state.undo();
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Undo: Uncheck \"task 1\"".to_string())
+    );
+    state.redo();
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Redo: Check \"task 1\"".to_string())
+    );
+    state.skip_current();
+    state.undo();
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Undo: Check \"task 1\"".to_string())
+    );
+}
+
+#[test]
+fn undo_of_several_tasks_commits_a_count_with_their_names() {
+    let mut state = AppState::new(two_list_document());
+    state.toggle_item(0, 0);
+    state.toggle_item(0, 1);
+    state.reset_all();
+    state.undo();
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Undo: 2 tasks (\"task 1\", \"task 2\")".to_string())
+    );
+}
+
+#[test]
+fn undo_of_many_tasks_names_the_first_few_and_elides_the_rest() {
+    let mut state = AppState::new(two_list_document());
+    for (li, ii) in [(0, 0), (0, 1), (0, 2), (1, 0)] {
+        state.toggle_item(li, ii);
+    }
+    state.reset_all();
+    state.undo();
+    assert_eq!(
+        state.take_git_sync_request().map(|p| p.description),
+        Some("Undo: 4 tasks (\"task 1\", \"task 2\", \"task 3\", \u{2026})".to_string())
+    );
+}
+
+#[test]
+fn history_change_desc_with_nothing_changed_says_so() {
+    let state = AppState::new(two_list_document());
+    assert_eq!(state.history_change_desc(&[]), "no change");
+    assert_eq!(
+        state.history_change_desc(&[999]),
+        "no change",
+        "a line no longer in the document is not named"
+    );
+}

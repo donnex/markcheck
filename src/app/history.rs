@@ -2,7 +2,12 @@
 
 use crate::model::{AppState, ItemKind, StateSnapshot, TaskState, UNDO_HISTORY_CAP, View};
 
+use super::write::state_verb;
 use super::*;
+
+/// How many task labels an undo or redo of several tasks names in its
+/// git-sync commit message before eliding the rest.
+const HISTORY_NAMED_TASKS: usize = 3;
 
 impl AppState {
     // ----- Undo / redo -------------------------------------------------
@@ -105,11 +110,7 @@ impl AppState {
         changed: &[usize],
         verb: &str,
     ) -> bool {
-        let change_desc = format!(
-            "{verb}: {} item{}",
-            changed.len(),
-            if changed.len() == 1 { "" } else { "s" }
-        );
+        let change_desc = format!("{verb}: {}", self.history_change_desc(changed));
         if !self.commit_write(
             pre_state,
             &format!("{verb} failed — write error, change not saved"),
@@ -137,6 +138,36 @@ impl AppState {
             many => self.set_status(format!("{verb}: restored {} tasks", many.len())),
         }
         true
+    }
+
+    /// Names what an undo or redo changed, for the git-sync commit message:
+    /// one task as its transition (`Uncheck "Restart service"`), several as a
+    /// count with the first few labels.
+    pub(super) fn history_change_desc(&self, changed: &[usize]) -> String {
+        let items: Vec<(TaskState, &Item)> = changed
+            .iter()
+            .filter_map(|&line| self.locate_line(line))
+            .map(|(li, ii)| &self.document.lists[li].items[ii])
+            .filter_map(|item| match item.kind {
+                ItemKind::Checkbox(state) => Some((state, item)),
+                ItemKind::DisplayOnly => None,
+            })
+            .collect();
+        match items.as_slice() {
+            [] => "no change".to_string(),
+            [(state, item)] => format!("{} \"{}\"", state_verb(*state), item.label()),
+            many => {
+                let mut names: Vec<String> = many
+                    .iter()
+                    .take(HISTORY_NAMED_TASKS)
+                    .map(|(_, item)| format!("\"{}\"", item.label()))
+                    .collect();
+                if many.len() > HISTORY_NAMED_TASKS {
+                    names.push("\u{2026}".to_string());
+                }
+                format!("{} tasks ({})", many.len(), names.join(", "))
+            }
+        }
     }
 
     /// Finds the `(list, item)` indices of the checkbox item with the given line
