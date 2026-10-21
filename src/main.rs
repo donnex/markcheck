@@ -222,8 +222,12 @@ fn main() -> anyhow::Result<()> {
                 "cannot create {shown_new}: markcheck is interactive and needs a terminal (stdout is not a TTY)"
             );
         }
-        let created = scaffold::create_new_checklist(new_path)
-            .with_context(|| format!("cannot create {shown_new}"))?;
+        let created = scaffold::create_new_checklist(new_path).map_err(|err| {
+            match scaffold::existing_file_message(new_path, &err) {
+                Some(message) => anyhow::anyhow!(message),
+                None => anyhow::Error::new(err).context(format!("cannot create {shown_new}")),
+            }
+        })?;
         (created, true)
     } else {
         // clap's `required_unless_present_any` guarantees this is `Some`
@@ -236,11 +240,14 @@ fn main() -> anyhow::Result<()> {
             file = path;
             start_at = Some(model::StartAt::Anchor(anchor));
         }
-        let resolved = std::fs::canonicalize(&file).with_context(|| {
-            format!(
-                "cannot resolve path: {}",
-                printable::printable_line(&file.display().to_string())
-            )
+        let resolved = std::fs::canonicalize(&file).map_err(|err| {
+            match scaffold::missing_file_message(&file, &err) {
+                Some(message) => anyhow::anyhow!(message),
+                None => anyhow::Error::new(err).context(format!(
+                    "cannot resolve path: {}",
+                    printable::printable_line(&file.display().to_string())
+                )),
+            }
         })?;
         (resolved, false)
     };

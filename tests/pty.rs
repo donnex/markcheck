@@ -648,7 +648,7 @@ fn interrupts_sent_while_the_editor_runs_reach_only_the_editor() {
 #[test]
 fn editor_spawn_failure_does_not_crash_or_change_the_file() {
     // $EDITOR pointing at a nonexistent binary must surface a clear error
-    // (`main.rs`'s `Err(err)` branch) rather than crashing or hanging
+    // that says how to pick another editor rather than crashing or hanging
     // the TUI, and leave the file untouched, since the editor never ran.
     let path = unique_path("editorspawnfail");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n");
@@ -659,7 +659,7 @@ fn editor_spawn_failure_does_not_crash_or_change_the_file() {
         &[("EDITOR", missing_editor.to_str().unwrap())],
         &[
             Step::Key("e"),
-            Step::WaitForScreen("Failed to launch"),
+            Step::WaitForScreen("not found — set $EDITOR"),
             Step::Key("q"),
         ],
     );

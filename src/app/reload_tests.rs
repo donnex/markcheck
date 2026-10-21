@@ -148,6 +148,34 @@ fn finish_editor_launch_failure_is_a_sticky_error_naming_the_editor() {
 }
 
 #[test]
+fn finish_editor_missing_editor_says_how_to_pick_one() {
+    let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.finish_editor(
+        "vi",
+        None,
+        Err(io::Error::from(io::ErrorKind::NotFound)),
+        Duration::ZERO,
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("vi not found — set $EDITOR (or $VISUAL) to your editor")
+    );
+    state.finish_editor(
+        "/opt/editors/my-editor",
+        None,
+        Err(io::Error::from(io::ErrorKind::NotFound)),
+        Duration::ZERO,
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("my-editor not found — set $EDITOR (or $VISUAL) to your editor")
+    );
+    assert!(state.status_is_error);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn finish_editor_non_zero_exit_is_a_sticky_error() {
     let path = write_real_file("## List 1\n\n- [ ] `task one`\n");
     let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());

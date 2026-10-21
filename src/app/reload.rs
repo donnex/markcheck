@@ -421,6 +421,10 @@ impl AppState {
         elapsed: Duration,
     ) {
         let failure = match status {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Some(format!(
+                "{} not found — set $EDITOR (or $VISUAL) to your editor",
+                program_name(program)
+            )),
             Err(err) => Some(format!("Failed to launch {program}: {err}")),
             Ok(status) if !status.success() => Some(format!("{program} exited with {status}")),
             Ok(_) => None,

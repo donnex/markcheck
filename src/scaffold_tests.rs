@@ -234,3 +234,58 @@ fn a_very_long_name_can_be_created() {
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no temp file left");
     fs::remove_dir_all(&dir).ok();
 }
+
+fn not_found() -> io::Error {
+    io::Error::from(io::ErrorKind::NotFound)
+}
+
+#[test]
+fn missing_md_file_points_at_new() {
+    assert_eq!(
+        missing_file_message(Path::new("notes.md"), &not_found()).as_deref(),
+        Some("no such file: notes.md (create it with markcheck --new notes.md)")
+    );
+}
+
+#[test]
+fn missing_file_hint_quotes_a_path_with_spaces() {
+    let dir = unique_temp_dir();
+    let path = dir.join("my notes.md");
+    let message = missing_file_message(&path, &not_found()).unwrap();
+    assert!(
+        message.ends_with(&format!("--new '{}')", path.display())),
+        "{message}"
+    );
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn missing_file_without_md_or_parent_gets_no_new_hint() {
+    assert_eq!(
+        missing_file_message(Path::new("notes.txt"), &not_found()),
+        None
+    );
+    let dir = unique_temp_dir();
+    let path = dir.join("absent").join("notes.md");
+    assert_eq!(missing_file_message(&path, &not_found()), None);
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn missing_file_hint_is_only_for_not_found() {
+    let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+    assert_eq!(missing_file_message(Path::new("notes.md"), &denied), None);
+}
+
+#[test]
+fn existing_new_path_points_at_opening_it() {
+    let exists = io::Error::from(io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        existing_file_message(Path::new("notes.md"), &exists).as_deref(),
+        Some("notes.md already exists (open it with markcheck notes.md)")
+    );
+    assert_eq!(
+        existing_file_message(Path::new("notes.md"), &not_found()),
+        None
+    );
+}

@@ -169,7 +169,11 @@ existing one — `PATH` must not already exist and must end in `.md`
 filename (`meeting-notes.md` → `# Meeting Notes`) and two blank tasks ready
 to fill in. It works on filesystems without hard links too (FAT32/exFAT
 USB sticks and SD cards, many network shares). `--new` and the positional
-`FILE` argument are mutually exclusive — pass exactly one.
+`FILE` argument are mutually exclusive — pass exactly one. Opening a `.md`
+file that doesn't exist says how to create it (`no such file: notes.md
+(create it with markcheck --new notes.md)`), and `--new` on a file that is
+already there says how to open it (`notes.md already exists (open it with
+markcheck notes.md)`).
 
 ## Config file
 
@@ -1095,7 +1099,9 @@ terminal editors do but most GUI editors don't unless told to: set
 or leave off `-n` with `emacsclient`. An editor that exits within a second
 without changing the file gets a status-bar hint saying so, since its later
 save would otherwise be picked up as an outside change and, with git-sync,
-not committed as an edit of its own. `R` resets tasks to not-done after a
+not committed as an edit of its own. An editor that isn't installed (such as
+`vi` on a minimal server with neither variable set) gets `vi not found — set
+$EDITOR (or $VISUAL) to your editor`. `R` resets tasks to not-done after a
 confirmation prompt that says how many done and started tasks it will clear:
 press `y` to reset everything, `l` to reset only the current list (offered
 with several lists), or `s` to reset only the sub-list you are in (offered

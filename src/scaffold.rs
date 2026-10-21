@@ -66,6 +66,43 @@ pub fn validate_new_path(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The error for a FILE that doesn't exist, pointing at `--new` when that
+/// would create it: a `.md` name in a directory that exists.
+pub fn missing_file_message(path: &Path, err: &io::Error) -> Option<String> {
+    let parent_exists = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.is_dir(),
+        _ => true,
+    };
+    (err.kind() == io::ErrorKind::NotFound && parent_exists && validate_new_path(path).is_ok())
+        .then(|| {
+            format!(
+                "no such file: {} (create it with markcheck --new {})",
+                shown(path),
+                shown_quoted(path)
+            )
+        })
+}
+
+/// The error for `--new` on a path that is already there, pointing at the
+/// command that opens it instead.
+pub fn existing_file_message(path: &Path, err: &io::Error) -> Option<String> {
+    (err.kind() == io::ErrorKind::AlreadyExists).then(|| {
+        format!(
+            "{} already exists (open it with markcheck {})",
+            shown(path),
+            shown_quoted(path)
+        )
+    })
+}
+
+fn shown(path: &Path) -> String {
+    crate::printable::printable_line(&path.display().to_string())
+}
+
+fn shown_quoted(path: &Path) -> String {
+    crate::printable::printable_line(&shell_words::quote(&path.display().to_string()))
+}
+
 /// Creates a starter checklist at `path` and returns its canonical path.
 /// Written to a temp file and hard-linked into place, which fails rather
 /// than overwrite an existing file and never leaves a partial one. On a

@@ -37,7 +37,24 @@ fn nonexistent_file_reports_a_clear_error_and_exits_nonzero() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("cannot resolve path"),
+        stderr.contains(&format!(
+            "no such file: {} (create it with markcheck --new {})",
+            path.display(),
+            path.display()
+        )),
+        "the error points at --new: {stderr:?}"
+    );
+}
+
+#[test]
+fn nonexistent_non_md_file_reports_the_os_error() {
+    let path = unique_dir("missing-plain");
+    let output = markcheck().arg(&path).output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot resolve path") && !stderr.contains("--new"),
         "clear error context shown: {stderr:?}"
     );
 }
@@ -251,8 +268,12 @@ fn new_with_existing_path_reports_a_clear_error_and_exits_nonzero() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("cannot create"),
-        "clear error context shown: {stderr:?}"
+        stderr.contains(&format!(
+            "{} already exists (open it with markcheck {})",
+            path.display(),
+            path.display()
+        )),
+        "the error points at opening it: {stderr:?}"
     );
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
