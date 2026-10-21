@@ -1019,9 +1019,11 @@ without changing the file gets a status-bar hint saying so, since its later
 save would otherwise be picked up as an outside change and, with git-sync,
 not committed as an edit of its own. `R` resets tasks to not-done after a
 confirmation prompt that says how many done and started tasks it will clear:
-press `y` to reset everything, `l` to reset only the current list, or `s`
-to reset only the sub-list you are in, each shown with how many tasks it
-would change; any other key cancels. When
+press `y` to reset everything, `l` to reset only the current list (offered
+with several lists), or `s` to reset only the sub-list you are in (offered
+inside one), each shown with how many tasks it would change; the status
+bar lists the same keys. `s` outside a sub-list keeps the dialog open with
+`No sub-list here: y resets everything`; any other key cancels. When
 you quit with every task already done, `markcheck` first asks whether to
 reset the checklist so it's ready to run again: `y` resets and quits, `n`
 quits as-is, `Esc` stays in the app. If the reset can't be saved, markcheck

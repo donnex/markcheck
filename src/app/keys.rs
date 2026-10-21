@@ -395,6 +395,10 @@ impl AppState {
                 KeyCode::Char('y') => ResetScope::All,
                 KeyCode::Char('l') => ResetScope::List,
                 KeyCode::Char('s') if self.sub_list_root().is_some() => ResetScope::SubList,
+                KeyCode::Char('s') => {
+                    self.set_error("No sub-list here: y resets everything".to_string());
+                    return;
+                }
                 _ => {
                     self.overlay = None;
                     return;

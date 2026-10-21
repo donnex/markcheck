@@ -1550,6 +1550,34 @@ fn status_bar_shows_trimmed_legend() {
 }
 
 #[test]
+fn reset_dialog_legend_offers_only_the_keys_that_apply() {
+    let mut state = sample_state();
+    state.overlay = Some(Overlay::ConfirmReset);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        text.contains("y:all  l:list  any other key:cancel"),
+        "{text}"
+    );
+    assert!(!text.contains("s:sub-list"), "no sub-list here: {text}");
+
+    let mut child = checkbox(2, "child task", true);
+    child.depth = 1;
+    let mut state = state_with(vec![List {
+        title: "S".to_string(),
+        banner: None,
+        items: vec![checkbox(1, "parent task", false), child],
+    }]);
+    state.current_item_index = 1;
+    state.overlay = Some(Overlay::ConfirmReset);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        text.contains("y:all  s:sub-list  any other key:cancel"),
+        "{text}"
+    );
+    assert!(!text.contains("l:list"), "one list only: {text}");
+}
+
+#[test]
 fn completion_screens_show_their_own_legend() {
     let mut list_complete = sample_state();
     list_complete.view = View::ListComplete;

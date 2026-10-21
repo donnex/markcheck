@@ -574,9 +574,15 @@ fn r_then_s_resets_the_sub_list_the_cursor_is_in() {
     state.handle_key(KeyCode::Char('R'));
     state.handle_key(KeyCode::Char('s'));
     assert_eq!(
-        state.overlay, None,
-        "s without a sub-list cancels like any other key"
+        state.overlay,
+        Some(Overlay::ConfirmReset),
+        "s without a sub-list keeps the dialog open"
     );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("No sub-list here: y resets everything")
+    );
+    assert!(state.status_is_error);
 }
 
 #[test]

@@ -15,7 +15,6 @@ const MAX_STATUS_ROWS: u16 = 6;
 const KEYBIND_LEGEND: &str = "hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit";
 const LIST_COMPLETE_LEGEND: &str = "l/enter:next list  h:review  ?:help  q:quit";
 const ALL_COMPLETE_LEGEND: &str = "h:review  R:reset  ?:help  q:quit";
-const CONFIRM_LEGEND: &str = "y:all  l:list  s:sub-list  any other key:cancel";
 const CONFIRM_QUIT_LEGEND: &str = "y:reset & quit  n:quit  esc:cancel";
 const HELP_LEGEND: &str = "j/k ↑↓: scroll  ·  any other key: close help";
 const PENDING_G_PROMPT: &str = "g… press g for the first task · any other key cancels";
@@ -83,7 +82,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     let legend = match (state.overlay, state.view) {
-        (Some(Overlay::ConfirmReset), _) => CONFIRM_LEGEND,
+        (Some(Overlay::ConfirmReset), _) => &confirm_legend(state),
         (Some(Overlay::ConfirmQuitReset), _) => CONFIRM_QUIT_LEGEND,
         (Some(Overlay::Help), _) => HELP_LEGEND,
         (Some(Overlay::ListPicker), _) => PICKER_LEGEND,
@@ -114,6 +113,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let text = armed_prompt.as_deref().unwrap_or(legend);
     frame.render_widget(Paragraph::new(Line::raw(text)), area);
+}
+
+/// The reset dialog's keys, offering `l` and `s` only where the dialog does:
+/// `l` with several lists, `s` inside a sub-list.
+fn confirm_legend(state: &AppState) -> String {
+    let mut legend = String::from("y:all  ");
+    if state.document.lists.len() > 1 {
+        legend.push_str("l:list  ");
+    }
+    if state.sub_list_root().is_some() {
+        legend.push_str("s:sub-list  ");
+    }
+    legend.push_str("any other key:cancel");
+    legend
 }
 
 /// The armed `o`/`y` prompt: the range to choose from, then, once a digit that
