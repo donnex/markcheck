@@ -605,3 +605,96 @@ fn the_wheel_or_a_paste_leaves_an_armed_critical_task_open() {
         "still open after the paste"
     );
 }
+
+/// What a key does with the `is_bound_chord` gate bypassed, card scroll
+/// included since `observable` leaves it out.
+fn ungated_outcome(
+    setup: &impl Fn() -> AppState,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> String {
+    let mut state = setup();
+    state.dispatch_bound_key(code, modifiers);
+    format!("{} {}", observable(&state), state.card_scroll)
+}
+
+/// The Ctrl-a..z chords a screen's handlers act on themselves: ungated, each
+/// does something other than both an unbound key and its plain letter.
+fn ctrl_chords_with_own_arm(setup: impl Fn() -> AppState) -> (Vec<char>, Vec<char>) {
+    let unbound = ungated_outcome(&setup, KeyCode::F(12), KeyModifiers::NONE);
+    let mut handled = Vec::new();
+    let mut gated = Vec::new();
+    for c in ('a'..='z').filter(|c| !matches!(c, 'c' | 'z')) {
+        let code = KeyCode::Char(c);
+        let chord = ungated_outcome(&setup, code, KeyModifiers::CONTROL);
+        if chord != unbound && chord != ungated_outcome(&setup, code, KeyModifiers::NONE) {
+            handled.push(c);
+        }
+        if setup().is_bound_chord(code, KeyModifiers::CONTROL) {
+            gated.push(c);
+        }
+    }
+    (handled, gated)
+}
+
+type Screen = (&'static str, fn() -> AppState);
+
+#[test]
+fn every_ctrl_chord_a_handler_acts_on_is_let_through_and_no_other() {
+    let checklist = || {
+        let mut state = AppState::new(two_list_document());
+        state.current_item_index = 1;
+        state.card_scroll = 2;
+        state.layout.card_max_scroll = 6;
+        state.layout.card_viewport_height = 4;
+        state
+    };
+    let screens: [Screen; 7] = [
+        ("checklist", checklist),
+        ("list complete", || {
+            let mut state = AppState::new(two_list_document_first_list_almost_done());
+            state.view = View::ListComplete;
+            state
+        }),
+        ("all complete", || {
+            let mut state = AppState::new(all_done_document());
+            state.view = View::AllComplete;
+            state
+        }),
+        ("help", || {
+            let mut state = AppState::new(two_list_document());
+            state.handle_key(KeyCode::Char('?'));
+            state.help.scroll = 2;
+            state.layout.help_max_scroll = 6;
+            state.layout.help_viewport_height = 4;
+            state
+        }),
+        ("search", || {
+            let mut state = AppState::new(two_list_document());
+            state.handle_key(KeyCode::Char('/'));
+            type_str(&mut state, "a task");
+            state
+        }),
+        ("picker", || {
+            let mut state = AppState::new(two_list_document());
+            state.handle_key(KeyCode::Char('T'));
+            type_str(&mut state, "task");
+            state.picker.selection = 2;
+            state.layout.picker_viewport_height = 4;
+            state
+        }),
+        ("reset dialog", || {
+            let mut state = AppState::new(two_list_document_first_list_almost_done());
+            state.overlay = Some(Overlay::ConfirmReset);
+            state
+        }),
+    ];
+    for (screen, setup) in screens {
+        let (handled, gated) = ctrl_chords_with_own_arm(setup);
+        assert_eq!(
+            handled, gated,
+            "{screen}: the Ctrl chords its handlers act on (left) must be exactly \
+             the ones is_bound_chord lets through (right)"
+        );
+    }
+}

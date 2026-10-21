@@ -267,6 +267,12 @@ impl AppState {
             return;
         }
 
+        self.dispatch_bound_key(code, modifiers);
+    }
+
+    /// Everything [`dispatch_key`] does once a chord has passed
+    /// [`is_bound_chord`].
+    pub(super) fn dispatch_bound_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         // Any key other than the one an armed chord waits for cancels it.
         let pending = std::mem::take(&mut self.pending_chord);
         let pending_g = pending == PendingChord::G;
