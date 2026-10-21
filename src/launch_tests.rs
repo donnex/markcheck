@@ -2,9 +2,9 @@ use super::LinkRoute;
 use super::{
     CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, already_open_warning, editor_file_args,
     exit_summary, expand_tilde, git_sync_path_matches, git_sync_request, git_sync_scope,
-    git_sync_warning, leftovers_warning, link_route, opener_failure_message, resolve_editor,
-    resolve_opener, startup_message, startup_warning, terminal_title, unshown_warning,
-    watch_warning,
+    git_sync_warning, is_terminal_browser, leftovers_warning, link_route, opener_failure_message,
+    resolve_editor, resolve_opener, startup_message, startup_warning, terminal_title,
+    unshown_warning, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -56,6 +56,24 @@ fn over_ssh_a_display_opens_the_link_and_copies_it_too() {
         LinkRoute::CopyInstead
     };
     assert_eq!(link_route(None, None, None, true), headless);
+}
+
+#[test]
+fn terminal_browsers_are_recognised_by_basename() {
+    for program in [
+        "w3m",
+        "/usr/bin/lynx",
+        "links",
+        "links2",
+        "elinks",
+        "browsh",
+        "/opt/carbonyl/carbonyl",
+    ] {
+        assert!(is_terminal_browser(program), "{program}");
+    }
+    for program in ["firefox", "xdg-open", "open", "/usr/bin/w3mman", "lynx.sh"] {
+        assert!(!is_terminal_browser(program), "{program}");
+    }
 }
 
 #[test]

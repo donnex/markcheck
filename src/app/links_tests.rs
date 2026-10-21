@@ -355,6 +355,28 @@ fn report_link_sent_names_the_opener_as_an_attempt() {
 }
 
 #[test]
+fn finish_terminal_browser_confirms_the_return_or_reports_the_failure() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    let url = "https://example.com/a";
+    let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));
+    state.finish_terminal_browser("/usr/bin/w3m", url, &Ok(ExitStatus::from_raw(0)));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Back from w3m: https://example.com/a")
+    );
+    assert!(!state.status_is_error);
+
+    state.finish_terminal_browser("lynx", url, &Ok(ExitStatus::from_raw(1 << 8)));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Couldn't open link (lynx exited with code 1)")
+    );
+    assert!(state.status_is_error);
+}
+
+#[test]
 fn copy_link_too_adds_the_copy_after_the_opener_report() {
     let url = "https://example.com/a";
     let mut state = AppState::new(single_item_document(item_with_links(1, &[url])));

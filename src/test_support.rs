@@ -147,8 +147,9 @@ impl crate::effect::Host for RecordingHost {
         Ok(())
     }
 
-    fn open_link(&mut self, _state: &mut crate::model::AppState, url: &str) {
+    fn open_link(&mut self, _state: &mut crate::model::AppState, url: &str) -> anyhow::Result<()> {
         self.links.push(url.to_string());
+        Ok(())
     }
 
     fn git_sync(&mut self, sync: crate::model::PendingSync) {

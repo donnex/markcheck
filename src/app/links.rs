@@ -2,7 +2,7 @@
 //! anchors, and the jump-back stack (`Ctrl-O`).
 
 use crate::effect::Effect;
-use crate::launch::program_name;
+use crate::launch::{opener_failure_message, program_name};
 use crate::model::{AppState, PendingChord, View};
 
 use super::*;
@@ -112,6 +112,21 @@ impl AppState {
         let name = program_name(program);
         let place = if on_this_host { " on this host" } else { "" };
         self.set_status(format!("Sent to {name}{place}: {url}"));
+    }
+
+    /// After a terminal browser (`launch::is_terminal_browser`) that had the
+    /// terminal returns: confirms where the link was shown, or reports how
+    /// the browser failed, however long it ran.
+    pub fn finish_terminal_browser(
+        &mut self,
+        program: &str,
+        url: &str,
+        outcome: &std::io::Result<std::process::ExitStatus>,
+    ) {
+        match opener_failure_message(program, outcome, std::time::Duration::ZERO) {
+            Some(message) => self.set_error(message),
+            None => self.set_status(format!("Back from {}: {url}", program_name(program))),
+        }
     }
 }
 

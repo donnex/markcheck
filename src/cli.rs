@@ -236,6 +236,7 @@ The editor \fBe\fR opens the checklist in, in that order; \fBvi\fR without eithe
 \fBBROWSER\fR
 The program \fBo\fR opens a link with: a colon\-separated list tried in order,
 \fB%s\fR marking the link's place. Without it, \fBxdg\-open\fR (\fBopen\fR on macOS).
+A text browser such as \fBw3m\fR or \fBlynx\fR gets the terminal until it exits.
 .TP
 \fBDISPLAY\fR, \fBWAYLAND_DISPLAY\fR
 On Linux, with neither set and no \fBBROWSER\fR, \fBo\fR copies the link to the

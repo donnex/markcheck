@@ -101,8 +101,9 @@ impl Host for LinkFallbackHost {
         Ok(())
     }
 
-    fn open_link(&mut self, state: &mut AppState, url: &str) {
+    fn open_link(&mut self, state: &mut AppState, url: &str) -> anyhow::Result<()> {
         state.copy_link_instead(url);
+        Ok(())
     }
 
     fn git_sync(&mut self, _: PendingSync) {}

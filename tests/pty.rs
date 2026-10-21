@@ -2420,6 +2420,43 @@ fn open_link_reports_an_opener_that_exits_with_an_error() {
 }
 
 #[test]
+fn open_link_hands_the_terminal_to_a_terminal_browser_and_takes_it_back() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = unique_path("textbrowser").with_extension("d");
+    std::fs::create_dir_all(&dir).unwrap();
+    let browser = dir.join("w3m");
+    // A fake terminal browser: says whether it has the terminal, shows the
+    // URL and waits for a line typed into it.
+    std::fs::write(
+        &browser,
+        "#!/bin/sh\n[ -t 0 ] && [ -t 1 ] && tty=yes || tty=no\n\
+         printf 'TEXT-BROWSER tty=%s %s\\n' \"$tty\" \"$1\"\nread line\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let md = unique_path("textbrowsermd");
+    write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");
+
+    let value = format!("/nonexistent/firefox:{}", browser.display());
+    let ok = drive_args(
+        &md,
+        &[],
+        &[("BROWSER", value.as_str())],
+        &[
+            Step::Key("o"),
+            Step::WaitForScreen("TEXT-BROWSER tty=yes https://example.com/rb"),
+            Step::Key("\r"),
+            Step::WaitForScreen("Back from w3m"),
+            Step::Key("q"),
+        ],
+    );
+    assert!(ok, "the browser returns the terminal and the binary exits");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn open_link_without_a_browser_or_display_copies_the_link_instead() {
     let md = unique_path("linkheadlessmd");
     write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");

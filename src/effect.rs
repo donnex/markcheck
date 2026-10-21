@@ -53,7 +53,7 @@ pub trait Host {
     -> anyhow::Result<()>;
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()>;
     fn redraw(&mut self) -> anyhow::Result<()>;
-    fn open_link(&mut self, state: &mut AppState, url: &str);
+    fn open_link(&mut self, state: &mut AppState, url: &str) -> anyhow::Result<()>;
     fn git_sync(&mut self, sync: PendingSync);
     /// Whether a waiting request was dropped.
     fn cancel_git_sync(&mut self) -> bool;
@@ -85,7 +85,7 @@ pub fn drain(state: &mut AppState, host: &mut impl Host) -> anyhow::Result<Drain
             Effect::OpenEditor { line } => host.open_editor(state, line)?,
             Effect::Suspend => host.suspend(state)?,
             Effect::Redraw => host.redraw()?,
-            Effect::OpenLink(url) => host.open_link(state, &url),
+            Effect::OpenLink(url) => host.open_link(state, &url)?,
             Effect::GitSync(sync) => host.git_sync(sync),
             Effect::CancelGitSync => {
                 if host.cancel_git_sync() {

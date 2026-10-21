@@ -702,8 +702,18 @@ where
         repaint(self.terminal)
     }
 
-    fn open_link(&mut self, state: &mut AppState, url: &str) {
-        open_link(url, state, self.opener_failures);
+    fn open_link(&mut self, state: &mut AppState, url: &str) -> anyhow::Result<()> {
+        let TerminalHost {
+            terminal,
+            mouse,
+            signals,
+            title,
+            opener_failures,
+            ..
+        } = self;
+        open_link(url, state, opener_failures, &mut |program, args| {
+            run_in_terminal(terminal, *mouse, signals, title, program, args)
+        })
     }
 
     fn git_sync(&mut self, sync: model::PendingSync) {
@@ -757,12 +767,24 @@ fn finish_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) -> Optio
     git_sync::exit_report(sync.unresolved(), sync.is_busy())
 }
 
-/// Opens `url` without suspending the TUI, trying each resolved opener in
-/// turn until one spawns. No shell and discarded output; the child is reaped
-/// on a detached thread, which sends a quick failed exit to `failures`. With
-/// no browser to send to at all (a headless session), copies the link instead;
-/// over SSH, copies it as well (see `launch::link_route`).
-fn open_link(url: &str, state: &mut AppState, failures: &std::sync::mpsc::Sender<String>) {
+/// Runs `program` with the whole terminal, as `e` runs the editor, and
+/// takes it back once the program exits.
+type RunInTerminal<'a> =
+    dyn FnMut(&str, &[String]) -> anyhow::Result<io::Result<std::process::ExitStatus>> + 'a;
+
+/// Opens `url`, trying each resolved opener in turn until one starts. A
+/// terminal browser (`launch::is_terminal_browser`) gets the terminal through
+/// `run_here` until it exits; any other opener runs without suspending the
+/// TUI, with no shell and discarded output, reaped on a detached thread that
+/// sends a quick failed exit to `failures`. With no browser to send to at all
+/// (a headless session), copies the link instead; over SSH, copies it as well
+/// (see `launch::link_route`).
+fn open_link(
+    url: &str,
+    state: &mut AppState,
+    failures: &std::sync::mpsc::Sender<String>,
+    run_here: &mut RunInTerminal<'_>,
+) -> anyhow::Result<()> {
     let browser = std::env::var("BROWSER").ok();
     let display = std::env::var("DISPLAY").ok();
     let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
@@ -777,15 +799,18 @@ fn open_link(url: &str, state: &mut AppState, failures: &std::sync::mpsc::Sender
         remote,
     ) {
         launch::LinkRoute::CopyInstead => state.copy_link_instead(url),
-        launch::LinkRoute::Open => spawn_opener(url, browser.as_deref(), false, state, failures),
+        launch::LinkRoute::Open => {
+            spawn_opener(url, browser.as_deref(), false, state, failures, run_here)?;
+        }
         launch::LinkRoute::OpenAndCopy => {
-            spawn_opener(url, browser.as_deref(), true, state, failures);
+            spawn_opener(url, browser.as_deref(), true, state, failures, run_here)?;
             state.copy_link_too(url);
         }
     }
+    Ok(())
 }
 
-/// Tries each resolved opener for `url` in turn until one spawns.
+/// Tries each resolved opener for `url` in turn until one starts.
 /// `on_this_host` words the confirmation for an SSH session.
 fn spawn_opener(
     url: &str,
@@ -793,12 +818,30 @@ fn spawn_opener(
     on_this_host: bool,
     state: &mut AppState,
     failures: &std::sync::mpsc::Sender<String>,
-) {
+    run_here: &mut RunInTerminal<'_>,
+) -> anyhow::Result<()> {
     use std::process::{Command, Stdio};
 
     let (candidates, warning) = launch::resolve_opener(browser, url);
     let mut last_error = None;
     for (program, args) in &candidates {
+        if launch::is_terminal_browser(program) {
+            match run_here(program, args)? {
+                Err(err) => last_error = Some(format!("{program}: {err}")),
+                outcome => {
+                    state.finish_terminal_browser(program, url, &outcome);
+                    if let Some(warning) = warning {
+                        let shown = match state.status_message.take() {
+                            Some(shown) => format!("{shown}; {warning}"),
+                            None => warning,
+                        };
+                        state.set_error(shown);
+                    }
+                    return Ok(());
+                }
+            }
+            continue;
+        }
         match Command::new(program)
             .args(args)
             .stdin(Stdio::null())
@@ -822,7 +865,7 @@ fn spawn_opener(
                         let _ = failures.send(message);
                     }
                 });
-                return;
+                return Ok(());
             }
             Err(err) => last_error = Some(format!("{program}: {err}")),
         }
@@ -830,6 +873,29 @@ fn spawn_opener(
     if let Some(err) = last_error {
         state.set_error(format!("Couldn't open link ({err})"));
     }
+    Ok(())
+}
+
+/// Hands the terminal to `program` (a terminal browser) until it exits, then
+/// restores the TUI. Its outcome is `Err` when it couldn't be started.
+fn run_in_terminal<B: Backend>(
+    terminal: &mut Terminal<B>,
+    mouse: bool,
+    signals: &mut StopSignals,
+    title: &mut TerminalTitle,
+    program: &str,
+    args: &[String],
+) -> anyhow::Result<io::Result<std::process::ExitStatus>>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    leave_tui(mouse)?;
+    title.release();
+    let status =
+        signals.ignoring_interrupts(|| std::process::Command::new(program).args(args).status());
+    title.reclaim();
+    enter_tui(terminal, mouse)?;
+    status.context("cannot restore the SIGINT handler")
 }
 
 /// Suspends the TUI, launches the editor on the current file, then

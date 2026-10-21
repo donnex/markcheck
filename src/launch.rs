@@ -170,6 +170,16 @@ pub fn program_name(program: &str) -> &str {
         .unwrap_or(program)
 }
 
+/// Whether `program` (matched on its basename) is a browser that draws in
+/// the terminal, such as `w3m` or `lynx`. Detached with no terminal it could
+/// show nothing, so `o` hands it the terminal the way `e` does the editor.
+pub fn is_terminal_browser(program: &str) -> bool {
+    matches!(
+        program_name(program),
+        "w3m" | "lynx" | "links" | "links2" | "elinks" | "browsh" | "carbonyl"
+    )
+}
+
 /// How long after starting an opener a failed exit is still reported. An
 /// opener that hands off to a browser exits at once; one that *is* the
 /// browser can run for hours, and its eventual exit says nothing about the

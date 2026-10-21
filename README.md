@@ -341,8 +341,14 @@ Finer points:
   `%`) and the URL is appended when there is no `%s`. The status bar shows
   `Sent to <program>: <url>` once the opener starts, and if it exits with an
   error within a few seconds (no browser it can use, say) a sticky
-  `Couldn't open link (<program> exited with code N)` replaces it. With
-  exactly one link, `o` opens it.
+  `Couldn't open link (<program> exited with code N)` replaces it. A
+  terminal browser (`w3m`, `lynx`, `links`, `links2`, `elinks`, `browsh` or
+  `carbonyl`, recognised by name) gets the whole terminal instead, the way
+  `e` hands it to your editor: markcheck steps aside until you quit the
+  browser, then comes back with `Back from w3m: <url>` (or the error, if it
+  exited with one). So `BROWSER=w3m` works on a server reached over SSH, and
+  with `BROWSER=firefox:w3m` the page shows in `w3m` wherever Firefox is
+  missing. With exactly one link, `o` opens it.
 - **No browser here (headless / SSH):** on Linux, when `$BROWSER` is unset
   and there is no graphical session (neither `$DISPLAY` nor
   `$WAYLAND_DISPLAY` is set), `o` doesn't try to launch anything. It copies
