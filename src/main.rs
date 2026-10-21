@@ -13,6 +13,7 @@ mod launch;
 mod model;
 mod parser;
 mod printable;
+mod quit;
 mod scaffold;
 mod session;
 #[cfg(test)]
@@ -32,7 +33,7 @@ use anyhow::Context;
 use clap::Parser;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind,
+    Event, KeyEventKind, MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -99,15 +100,14 @@ fn take_terminal(mouse: bool) -> anyhow::Result<()> {
 /// terminal.
 struct TerminalTitle {
     enabled: bool,
-    /// What was last sent, so an unchanged title isn't rewritten every frame.
-    shown: String,
+    shown: launch::ShownTitle,
 }
 
 impl TerminalTitle {
     fn new(enabled: bool) -> Self {
         Self {
             enabled,
-            shown: String::new(),
+            shown: launch::ShownTitle::default(),
         }
     }
 
@@ -115,10 +115,8 @@ impl TerminalTitle {
         if !self.enabled {
             return;
         }
-        let title = launch::terminal_title(state);
-        if title != self.shown {
-            let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(&title));
-            self.shown = title;
+        if let Some(title) = self.shown.update(state) {
+            let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(title));
         }
     }
 
@@ -128,7 +126,7 @@ impl TerminalTitle {
         if self.enabled {
             let _ = write!(io::stdout(), "\x1b[23;2t");
             let _ = io::stdout().flush();
-            self.shown.clear();
+            self.shown.forget();
         }
     }
 
@@ -410,11 +408,9 @@ fn main() -> anyhow::Result<()> {
     let report = match &result {
         Ok(report) => report.clone(),
         Err(_) => git_sync.as_mut().and_then(|sync| {
-            sync.flush();
-            if sync.is_busy() {
+            quit::stop_without_tui(sync, &|| signals.hurried(), || {
                 let _ = writeln!(io::stderr(), "markcheck: waiting for git sync…");
-            }
-            settle_git_sync(sync, &signals)
+            })
         }),
     };
     // Printed only once the alternate screen is gone, so it stays visible.
@@ -518,9 +514,6 @@ impl StopSignals {
     }
 }
 
-/// Shown while `q` waits for a sync still running.
-const WAITING_FOR_SYNC: &str = "Waiting for git sync… press q again to abandon";
-
 fn run<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
@@ -538,16 +531,14 @@ where
     let mut dirty = true;
     let mut label_due: Option<SystemTime> = None;
     let (opener_failures, opener_failure_rx) = std::sync::mpsc::channel();
-    // Set once `q` found a sync still running, which it then waits for.
-    let mut quitting = false;
+    let mut quitting = quit::Quit::default();
     let mut title = TerminalTitle::new(show_title);
     loop {
         // Nothing is drawn from here on: after SIGHUP the terminal is gone.
         if signals.stopped() {
-            return Ok(git_sync.as_mut().and_then(|sync| {
-                sync.flush();
-                settle_git_sync(sync, signals)
-            }));
+            return Ok(git_sync
+                .as_mut()
+                .and_then(|sync| quit::stop_without_tui(sync, &|| signals.hurried(), || {})));
         }
         dirty |= reload.check(state, Instant::now());
         while let Ok(message) = opener_failure_rx.try_recv() {
@@ -576,7 +567,7 @@ where
             state.git_sync.waiting = sync.is_waiting();
             dirty = true;
         }
-        if quitting && !state.git_sync.busy {
+        if quitting.landed(state.git_sync.busy) {
             break;
         }
         let now = SystemTime::now();
@@ -609,14 +600,13 @@ where
             match event {
                 // The checklist is done with: a key either abandons the sync or
                 // is answered with the prompt again, so no edit queues another.
-                Event::Key(key) if quitting && key.kind == KeyEventKind::Press => {
-                    if key.code == KeyCode::Char('q') {
+                Event::Key(key) if quitting.is_waiting() && key.kind == KeyEventKind::Press => {
+                    if quitting.key(key.code, state) {
                         let sync = git_sync.as_mut().expect("quitting waits only on a sync");
-                        return Ok(finish_git_sync(sync, signals));
+                        return Ok(quit::finish(sync, &|| signals.hurried()));
                     }
-                    state.set_notice(WAITING_FOR_SYNC.to_string());
                 }
-                _ if quitting => {}
+                _ if quitting.is_waiting() => {}
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     state.handle_key_with_mods(key.code, key.modifiers);
                 }
@@ -646,23 +636,16 @@ where
         )?;
         dirty |= drained.ran_any;
         if drained.quit {
-            // A change still in its quiet period goes out now, not never.
-            if let Some(sync) = git_sync.as_mut() {
-                sync.flush();
-            }
-            if git_sync.as_ref().is_some_and(git_sync::GitSync::is_busy) {
-                quitting = true;
-                state.set_notice(WAITING_FOR_SYNC.to_string());
-                dirty = true;
-            } else {
+            if quitting.begin(git_sync.as_mut(), state) {
                 break;
             }
+            dirty = true;
         }
     }
 
     Ok(git_sync
         .as_mut()
-        .and_then(|sync| finish_git_sync(sync, signals)))
+        .and_then(|sync| quit::finish(sync, &|| signals.hurried())))
 }
 
 /// Carries out `AppState`'s effects against the real terminal, processes
@@ -697,7 +680,14 @@ where
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
         let still_running = match self.git_sync.as_mut() {
-            Some(sync) => settle_git_sync_before_suspend(self.terminal, state, sync, self.signals)?,
+            Some(sync) => {
+                let terminal = &mut *self.terminal;
+                let signals = &*self.signals;
+                quit::settle_before_suspend(state, sync, &|| signals.stopped(), |state| {
+                    terminal.draw(|frame| ui::render(frame, state))?;
+                    Ok(())
+                })?
+            }
             None => false,
         };
         if self.signals.stopped() {
@@ -719,9 +709,25 @@ where
             opener_failures,
             ..
         } = self;
-        open_link(url, state, opener_failures, &mut |program, args| {
-            run_in_terminal(terminal, *mouse, signals, title, program, args)
-        })
+        let browser = std::env::var("BROWSER").ok();
+        let display = std::env::var("DISPLAY").ok();
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+        let env = launch::LinkEnv {
+            browser: browser.as_deref(),
+            display: display.as_deref(),
+            wayland_display: wayland_display.as_deref(),
+            remote: cli::is_remote_session(
+                std::env::var("SSH_CONNECTION").ok().as_deref(),
+                std::env::var("SSH_TTY").ok().as_deref(),
+            ),
+        };
+        launch::open_link(
+            url,
+            &env,
+            state,
+            &mut |program, args| run_in_terminal(terminal, *mouse, signals, title, program, args),
+            &mut |program, args| spawn_opener(program, args, opener_failures),
+        )
     }
 
     fn git_sync(&mut self, sync: model::PendingSync) {
@@ -737,150 +743,33 @@ where
     }
 }
 
-/// How long a signal lets a running sync finish before it is abandoned, and
-/// `Ctrl-Z` waits for one before stopping anyway.
-const QUIT_WAIT: Duration = Duration::from_secs(5);
-/// How long an abandoned sync's worker gets to unwind through its cleanup
-/// after `SIGTERM`, and then after `SIGKILL`.
-const ABANDON_GRACE: Duration = Duration::from_secs(2);
-
-/// Stops a running sync's git processes, then waits for the worker to remove
-/// its temporary index and scratch files. A hurried quit skips straight to
-/// `SIGKILL`.
-fn abandon_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) {
-    if !signals.hurried() {
-        sync.abandon(false);
-        sync.wait_for_outcomes_unless(ABANDON_GRACE, || signals.hurried());
-    }
-    if sync.is_busy() {
-        sync.abandon(true);
-        sync.wait_for_outcomes(ABANDON_GRACE);
-    }
-}
-
-/// Gives a running sync up to [`QUIT_WAIT`] to land, unless a second signal
-/// cuts the wait short, then finishes it as [`finish_git_sync`] does.
-fn settle_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) -> Option<String> {
-    sync.wait_for_outcomes_unless(QUIT_WAIT, || signals.hurried());
-    finish_git_sync(sync, signals)
-}
-
-/// Abandons whatever is still running, then gives the line to print after
-/// the TUI closes for a sync problem still standing, however long before the
-/// quit it was reported.
-fn finish_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) -> Option<String> {
-    if sync.is_busy() {
-        abandon_git_sync(sync, signals);
-    }
-    git_sync::exit_report(sync.unresolved(), sync.is_busy())
-}
-
-/// Runs `program` with the whole terminal, as `e` runs the editor, and
-/// takes it back once the program exits.
-type RunInTerminal<'a> =
-    dyn FnMut(&str, &[String]) -> anyhow::Result<io::Result<std::process::ExitStatus>> + 'a;
-
-/// Opens `url`, trying each resolved opener in turn until one starts. A
-/// terminal browser (`launch::is_terminal_browser`) gets the terminal through
-/// `run_here` until it exits; any other opener runs without suspending the
-/// TUI, in a session of its own, with no shell and discarded output, reaped
-/// on a detached thread that sends a quick failed exit to `failures`. With no browser to send to at all
-/// (a headless session), copies the link instead; over SSH, copies it as well
-/// (see `launch::link_route`).
-fn open_link(
-    url: &str,
-    state: &mut AppState,
-    failures: &std::sync::mpsc::Sender<String>,
-    run_here: &mut RunInTerminal<'_>,
-) -> anyhow::Result<()> {
-    let browser = std::env::var("BROWSER").ok();
-    let display = std::env::var("DISPLAY").ok();
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
-    let remote = cli::is_remote_session(
-        std::env::var("SSH_CONNECTION").ok().as_deref(),
-        std::env::var("SSH_TTY").ok().as_deref(),
-    );
-    match launch::link_route(
-        browser.as_deref(),
-        display.as_deref(),
-        wayland_display.as_deref(),
-        remote,
-    ) {
-        launch::LinkRoute::CopyInstead => state.copy_link_instead(url),
-        launch::LinkRoute::Open => {
-            spawn_opener(url, browser.as_deref(), false, state, failures, run_here)?;
-        }
-        launch::LinkRoute::OpenAndCopy => {
-            spawn_opener(url, browser.as_deref(), true, state, failures, run_here)?;
-            state.copy_link_too(url);
-        }
-    }
-    Ok(())
-}
-
-/// Tries each resolved opener for `url` in turn until one starts.
-/// `on_this_host` words the confirmation for an SSH session.
+/// Starts a GUI opener in a session of its own, with no shell and discarded
+/// output, reaped on a detached thread that sends a quick failed exit to
+/// `failures`.
 fn spawn_opener(
-    url: &str,
-    browser: Option<&str>,
-    on_this_host: bool,
-    state: &mut AppState,
+    program: &str,
+    args: &[String],
     failures: &std::sync::mpsc::Sender<String>,
-    run_here: &mut RunInTerminal<'_>,
-) -> anyhow::Result<()> {
+) -> io::Result<()> {
     use std::process::{Command, Stdio};
 
-    let (candidates, warning) = launch::resolve_opener(browser, url);
-    let mut last_error = None;
-    for (program, args) in &candidates {
-        if launch::is_terminal_browser(program) {
-            match run_here(program, args)? {
-                Err(err) => last_error = Some(format!("{program}: {err}")),
-                outcome => {
-                    state.finish_terminal_browser(program, url, &outcome);
-                    if let Some(warning) = warning {
-                        let shown = match state.status_message.take() {
-                            Some(shown) => format!("{shown}; {warning}"),
-                            None => warning,
-                        };
-                        state.set_error(shown);
-                    }
-                    return Ok(());
-                }
-            }
-            continue;
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = session::spawn_in_new_session(command)?;
+    let program = program.to_string();
+    let failures = failures.clone();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        let outcome = child.wait();
+        if let Some(message) = launch::opener_failure_message(&program, &outcome, started.elapsed())
+        {
+            let _ = failures.send(message);
         }
-        let mut command = Command::new(program);
-        command
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        match session::spawn_in_new_session(command) {
-            Ok(mut child) => {
-                state.report_link_sent(program, url, on_this_host);
-                if let Some(warning) = warning {
-                    state.set_error(warning);
-                }
-                let program = program.clone();
-                let failures = failures.clone();
-                let started = Instant::now();
-                std::thread::spawn(move || {
-                    let outcome = child.wait();
-                    if let Some(message) =
-                        launch::opener_failure_message(&program, &outcome, started.elapsed())
-                    {
-                        let _ = failures.send(message);
-                    }
-                });
-                return Ok(());
-            }
-            Err(err) => last_error = Some(format!("{program}: {err}")),
-        }
-    }
-    if let Some(err) = last_error {
-        state.set_error(format!("Couldn't open link ({err})"));
-    }
+    });
     Ok(())
 }
 
@@ -951,33 +840,6 @@ where
 
 /// Printed on the shell when `Ctrl-Z` stops markcheck with a sync running.
 const SUSPENDED_MID_SYNC: &str = "markcheck: git sync paused while suspended; fg to finish it";
-
-/// A stopped process commits and pushes nothing, so before `Ctrl-Z` stops it
-/// a change still in its quiet period starts now and a running sync gets up
-/// to [`QUIT_WAIT`] to land, or until a signal asks markcheck to quit.
-/// Returns whether one is still running.
-fn settle_git_sync_before_suspend<B: Backend>(
-    terminal: &mut Terminal<B>,
-    state: &mut AppState,
-    sync: &mut git_sync::GitSync,
-    signals: &StopSignals,
-) -> anyhow::Result<bool>
-where
-    B::Error: std::error::Error + Send + Sync + 'static,
-{
-    sync.flush();
-    if sync.is_busy() {
-        state.wait_for_sync_before_suspend();
-        state.git_sync.busy = true;
-        state.git_sync.waiting = false;
-        terminal.draw(|frame| ui::render(frame, state))?;
-        for outcome in sync.wait_for_outcomes_unless(QUIT_WAIT, || signals.stopped()) {
-            state.apply_git_sync_outcome(&outcome);
-        }
-        state.finish_waiting_to_suspend();
-    }
-    Ok(sync.is_busy())
-}
 
 /// `Ctrl-Z`: hands the terminal back to the shell, saying so when a git sync
 /// is left `sync_running`, and stops the process until `fg` resumes it, then

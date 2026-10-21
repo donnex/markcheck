@@ -850,3 +850,242 @@ fn the_exit_summary_says_where_the_run_stopped_or_that_it_finished() {
     let finished = state_from("# Deploy\n\n- [x] one\n- [x] two\n", "deploy.md");
     assert_eq!(exit_summary(&finished), "deploy.md — Deploy: all 2 done");
 }
+
+mod opening {
+    use super::state_from;
+    use crate::launch::{LinkEnv, ShownTitle, open_link};
+    use crate::model::AppState;
+    use std::io;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    const URL: &str = "https://example.com/x";
+
+    fn env(browser: Option<&str>, remote: bool) -> LinkEnv<'_> {
+        LinkEnv {
+            browser,
+            display: Some(":0"),
+            wayland_display: None,
+            remote,
+        }
+    }
+
+    fn state() -> AppState {
+        state_from("- [ ] one\n", "links.md")
+    }
+
+    fn copies(state: &AppState) -> Vec<crate::effect::CopyKind> {
+        state
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                crate::effect::Effect::Copy { kind, .. } => Some(*kind),
+                _ => None,
+            })
+            .collect()
+    }
+
+    struct Calls {
+        here: Vec<String>,
+        spawned: Vec<String>,
+    }
+
+    fn open(
+        state: &mut AppState,
+        env: &LinkEnv<'_>,
+        here: impl Fn(&str) -> io::Result<ExitStatus>,
+        spawn: impl Fn(&str) -> io::Result<()>,
+    ) -> Calls {
+        let mut calls = Calls {
+            here: Vec::new(),
+            spawned: Vec::new(),
+        };
+        let mut here_log = Vec::new();
+        let mut spawn_log = Vec::new();
+        open_link(
+            URL,
+            env,
+            state,
+            &mut |program, args| {
+                assert_eq!(args.last().map(String::as_str), Some(URL));
+                here_log.push(program.to_string());
+                Ok(here(program))
+            },
+            &mut |program, args| {
+                assert_eq!(args.last().map(String::as_str), Some(URL));
+                spawn_log.push(program.to_string());
+                spawn(program)
+            },
+        )
+        .unwrap();
+        calls.here = here_log;
+        calls.spawned = spawn_log;
+        calls
+    }
+
+    fn missing() -> io::Error {
+        io::Error::new(io::ErrorKind::NotFound, "not found")
+    }
+
+    #[test]
+    fn a_gui_opener_is_spawned_and_confirmed() {
+        let mut state = state();
+        let calls = open(
+            &mut state,
+            &env(Some("firefox"), false),
+            |_| unreachable!(),
+            |_| Ok(()),
+        );
+        assert_eq!(calls.spawned, ["firefox"]);
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Sent to firefox: https://example.com/x")
+        );
+        assert!(copies(&state).is_empty());
+    }
+
+    #[test]
+    fn openers_are_tried_in_turn_until_one_starts() {
+        let mut state = state();
+        let calls = open(
+            &mut state,
+            &env(Some("gone:w3m:firefox"), false),
+            |_| Err(missing()),
+            |program| {
+                if program == "gone" {
+                    Err(missing())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(calls.spawned, ["gone", "firefox"]);
+        assert_eq!(calls.here, ["w3m"]);
+        assert!(!state.status_is_error);
+    }
+
+    #[test]
+    fn the_last_spawn_error_is_reported_when_none_starts() {
+        let mut state = state();
+        open(
+            &mut state,
+            &env(Some("gone:w3m"), false),
+            |_| Err(missing()),
+            |_| Err(missing()),
+        );
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Couldn't open link (w3m: not found)")
+        );
+        assert!(state.status_is_error);
+    }
+
+    #[test]
+    fn a_terminal_browser_gets_the_terminal_and_is_reported_on_return() {
+        let mut state = state();
+        let calls = open(
+            &mut state,
+            &env(Some("w3m"), false),
+            |_| Ok(ExitStatus::from_raw(0)),
+            |_| unreachable!(),
+        );
+        assert_eq!(calls.here, ["w3m"]);
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("Back from w3m: https://example.com/x")
+        );
+    }
+
+    #[test]
+    fn a_browser_parse_warning_follows_the_confirmation() {
+        let mut state = state();
+        open(
+            &mut state,
+            &env(Some("\"bad:firefox"), false),
+            |_| unreachable!(),
+            |_| Ok(()),
+        );
+        let shown = state.status_message.clone().unwrap();
+        assert!(
+            shown.starts_with("Couldn't parse $BROWSER entry"),
+            "{shown}"
+        );
+        assert!(state.status_is_error);
+
+        let mut state = self::state();
+        open(
+            &mut state,
+            &env(Some("\"bad:w3m"), false),
+            |_| Ok(ExitStatus::from_raw(0)),
+            |_| unreachable!(),
+        );
+        let shown = state.status_message.clone().unwrap();
+        assert!(
+            shown
+                .starts_with("Back from w3m: https://example.com/x; Couldn't parse $BROWSER entry"),
+            "{shown}"
+        );
+        assert!(state.status_is_error);
+    }
+
+    #[test]
+    fn a_terminal_that_cannot_be_taken_back_is_an_error() {
+        let mut state = state();
+        let result = open_link(
+            URL,
+            &env(Some("w3m"), false),
+            &mut state,
+            &mut |_, _| anyhow::bail!("terminal gone"),
+            &mut |_, _| unreachable!(),
+        );
+        assert_eq!(result.unwrap_err().to_string(), "terminal gone");
+    }
+
+    #[test]
+    fn over_ssh_the_link_is_opened_and_copied_too() {
+        let mut state = state();
+        let calls = open(&mut state, &env(None, true), |_| unreachable!(), |_| Ok(()));
+        assert_eq!(calls.spawned.len(), 1);
+        assert!(
+            state
+                .status_message
+                .as_deref()
+                .is_some_and(|message| message.contains(" on this host: "))
+        );
+        assert_eq!(copies(&state), [crate::effect::CopyKind::LinkAlso]);
+    }
+
+    #[test]
+    fn with_nowhere_to_show_it_the_link_is_copied_instead() {
+        if cfg!(target_os = "macos") {
+            return;
+        }
+        let mut state = state();
+        let headless = LinkEnv {
+            browser: None,
+            display: None,
+            wayland_display: None,
+            remote: false,
+        };
+        let calls = open(
+            &mut state,
+            &headless,
+            |_| unreachable!(),
+            |_| unreachable!(),
+        );
+        assert!(calls.spawned.is_empty() && calls.here.is_empty());
+        assert_eq!(copies(&state), [crate::effect::CopyKind::LinkFallback]);
+    }
+
+    #[test]
+    fn the_terminal_title_is_sent_only_when_it_changes() {
+        let mut state = state();
+        let mut shown = ShownTitle::default();
+        assert_eq!(shown.update(&state), Some("Links · 0/1 — markcheck"));
+        assert_eq!(shown.update(&state), None);
+        state.document.title = Some("Other".to_string());
+        assert_eq!(shown.update(&state), Some("Other · 0/1 — markcheck"));
+        shown.forget();
+        assert_eq!(shown.update(&state), Some("Other · 0/1 — markcheck"));
+    }
+}

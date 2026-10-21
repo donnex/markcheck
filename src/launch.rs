@@ -1,8 +1,9 @@
 //! Pure resolution for the things markcheck launches or acts on outside
 //! itself: the editor and link-opener commands from the environment, the
-//! editor's jump-to-line argument, whether git-sync applies to a file, and the
-//! startup warning about a file a save would disturb. The spawning itself
-//! stays in `main.rs`.
+//! editor's jump-to-line argument, the order `o` tries openers in, whether
+//! git-sync applies to a file, and the startup warning about a file a save
+//! would disturb. The spawning itself stays in `main.rs`, passed in as
+//! closures.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -433,6 +434,114 @@ fn document_name(state: &crate::model::AppState) -> String {
         .title
         .clone()
         .unwrap_or_else(|| crate::scaffold::derive_title(&state.document.file_path))
+}
+
+/// The environment `o` decides where a link goes from.
+pub struct LinkEnv<'a> {
+    pub browser: Option<&'a str>,
+    pub display: Option<&'a str>,
+    pub wayland_display: Option<&'a str>,
+    /// An SSH session (`cli::is_remote_session`).
+    pub remote: bool,
+}
+
+/// Runs `program` with the whole terminal, as `e` runs the editor, and
+/// takes it back once the program exits. The inner `Err` means it couldn't
+/// be started; the outer one that the terminal couldn't be taken back.
+pub type RunInTerminal<'a> =
+    dyn FnMut(&str, &[String]) -> anyhow::Result<std::io::Result<ExitStatus>> + 'a;
+
+/// Starts `program` detached from the terminal, without waiting for it.
+pub type SpawnDetached<'a> = dyn FnMut(&str, &[String]) -> std::io::Result<()> + 'a;
+
+/// Opens `url` along [`link_route`]: with no browser to send it to (a
+/// headless session) it copies the link instead, and over SSH it copies it
+/// as well. Opening tries each [`resolve_opener`] candidate in turn until one
+/// starts: a terminal browser ([`is_terminal_browser`]) gets the terminal
+/// through `run_here` until it exits, any other opener goes to `spawn`.
+pub fn open_link(
+    url: &str,
+    env: &LinkEnv<'_>,
+    state: &mut crate::model::AppState,
+    run_here: &mut RunInTerminal<'_>,
+    spawn: &mut SpawnDetached<'_>,
+) -> anyhow::Result<()> {
+    match link_route(env.browser, env.display, env.wayland_display, env.remote) {
+        LinkRoute::CopyInstead => state.copy_link_instead(url),
+        LinkRoute::Open => try_openers(url, env.browser, false, state, run_here, spawn)?,
+        LinkRoute::OpenAndCopy => {
+            try_openers(url, env.browser, true, state, run_here, spawn)?;
+            state.copy_link_too(url);
+        }
+    }
+    Ok(())
+}
+
+/// The opener loop behind [`open_link`]. A `$BROWSER` parse warning follows
+/// the confirmation, so it is still on screen once the link has gone.
+/// `on_this_host` words the confirmation for an SSH session.
+fn try_openers(
+    url: &str,
+    browser: Option<&str>,
+    on_this_host: bool,
+    state: &mut crate::model::AppState,
+    run_here: &mut RunInTerminal<'_>,
+    spawn: &mut SpawnDetached<'_>,
+) -> anyhow::Result<()> {
+    let (candidates, warning) = resolve_opener(browser, url);
+    let mut last_error = None;
+    for (program, args) in &candidates {
+        if is_terminal_browser(program) {
+            match run_here(program, args)? {
+                Err(err) => last_error = Some(format!("{program}: {err}")),
+                outcome => {
+                    state.finish_terminal_browser(program, url, &outcome);
+                    if let Some(warning) = warning {
+                        let shown = state.status_message.take().unwrap_or_default();
+                        state.set_error(format!("{shown}; {warning}"));
+                    }
+                    return Ok(());
+                }
+            }
+            continue;
+        }
+        match spawn(program, args) {
+            Ok(()) => {
+                state.report_link_sent(program, url, on_this_host);
+                if let Some(warning) = warning {
+                    state.set_error(warning);
+                }
+                return Ok(());
+            }
+            Err(err) => last_error = Some(format!("{program}: {err}")),
+        }
+    }
+    if let Some(err) = last_error {
+        state.set_error(format!("Couldn't open link ({err})"));
+    }
+    Ok(())
+}
+
+/// The terminal title last sent, so an unchanged one isn't rewritten every
+/// frame.
+#[derive(Default)]
+pub struct ShownTitle(String);
+
+impl ShownTitle {
+    /// The title to send for `state`, or `None` when it is already showing.
+    pub fn update(&mut self, state: &crate::model::AppState) -> Option<&str> {
+        let title = terminal_title(state);
+        if title == self.0 {
+            return None;
+        }
+        self.0 = title;
+        Some(&self.0)
+    }
+
+    /// Forgets the title sent, once another program may have replaced it.
+    pub fn forget(&mut self) {
+        self.0.clear();
+    }
 }
 
 /// The terminal (and tmux pane) title while markcheck runs (#135):
