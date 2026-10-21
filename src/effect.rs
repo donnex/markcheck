@@ -28,6 +28,9 @@ pub enum Effect {
     /// A reload replaced the content a request still waiting in the worker
     /// carries, so that request must not run.
     CancelGitSync,
+    /// The file changed on disk, perhaps from a pull: ask the remote again
+    /// whether it has commits this checklist hasn't pulled.
+    CheckRemote,
     Quit,
 }
 
@@ -57,6 +60,7 @@ pub trait Host {
     fn git_sync(&mut self, sync: PendingSync);
     /// Whether a waiting request was dropped.
     fn cancel_git_sync(&mut self) -> bool;
+    fn check_remote(&mut self);
 }
 
 /// What a [`drain`] did, for the main loop's redraw and exit decisions.
@@ -92,6 +96,7 @@ pub fn drain(state: &mut AppState, host: &mut impl Host) -> anyhow::Result<Drain
                     state.report_dropped_git_sync();
                 }
             }
+            Effect::CheckRemote => host.check_remote(),
             Effect::Quit => drained.quit = true,
         }
     }

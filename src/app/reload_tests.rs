@@ -1201,8 +1201,8 @@ fn an_external_reload_drops_a_queued_git_sync_request() {
 
     assert_eq!(
         state.effects,
-        vec![Effect::CancelGitSync],
-        "the request here is dropped and the one waiting in the worker is cancelled"
+        vec![Effect::CancelGitSync, Effect::CheckRemote],
+        "the request here is dropped and the one waiting in the worker is cancelled, and the remote is asked again whether it has moved on"
     );
 
     fs::remove_file(&path).ok();

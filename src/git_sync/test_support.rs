@@ -197,6 +197,27 @@ pub(super) fn commit_unrelated(work: &Path, name: &str) -> String {
     run(work, &["commit", "-q", "-m", "unrelated"]);
     git_stdout(work, &["rev-parse", "HEAD"])
 }
+/// Ticks a step in a second clone of `remote` and pushes it, the way
+/// another host sharing the checklist does. Returns the pushed SHA, which
+/// the first work tree has never fetched.
+pub(super) fn push_from_another_clone(remote: &Path) -> String {
+    let other = unique_dir("other-host");
+    run(
+        remote,
+        &[
+            "clone",
+            "-q",
+            remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    run(&other, &["config", "user.email", "test@example.com"]);
+    run(&other, &["config", "user.name", "test"]);
+    fs::write(other.join("tracked.md"), "- [x] one\n").unwrap();
+    run(&other, &["commit", "-q", "-am", "ticked elsewhere"]);
+    run(&other, &["push", "-q", "origin", "main"]);
+    git_stdout(&other, &["rev-parse", "HEAD"])
+}
 pub(super) fn still_on_branch(work: &Path, sha: &str) -> bool {
     crate::test_support::git()
         .current_dir(work)

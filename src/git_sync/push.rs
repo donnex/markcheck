@@ -151,14 +151,47 @@ pub(super) fn retry_commit(repo_root: &Path, expected_commit: &str) -> SyncOutco
     }
     push(repo_root, expected_commit)
 }
+/// Asks the remote the push would reach whether its branch has moved past
+/// `head`, without fetching anything: `RemoteAhead` when it has, so the user
+/// pulls before ticking rather than learning it from a refused push (#253).
+/// A remote that can't be reached, or a branch git-sync wouldn't push, is a
+/// quiet `Skipped`: a tick reports those in its own words.
+pub(super) fn remote_has_moved_on(repo_root: &Path, head: &str) -> SyncOutcome {
+    let Some((remote, branch_ref)) = upstream_parts(repo_root) else {
+        return SyncOutcome::Skipped;
+    };
+    if remote == "." || !push_goes_to_upstream(repo_root, &remote) {
+        return SyncOutcome::Skipped;
+    }
+    let Some(url) = push_url(repo_root, &remote) else {
+        return SyncOutcome::Skipped;
+    };
+    match remote_branch_state(repo_root, &url, &branch_ref) {
+        RemoteBranch::Present(tip) if !is_ancestor(repo_root, &tip, head) => {
+            SyncOutcome::RemoteAhead(format!(
+                "{branch_ref} on {remote} has changes this checklist hasn't pulled; \
+                 run `git pull --rebase` before ticking"
+            ))
+        }
+        _ => SyncOutcome::Skipped,
+    }
+}
+/// [`remote_has_moved_on`] for the current `HEAD`, for a reload: the file
+/// changed on disk, perhaps from a pull.
+pub(super) fn check_remote(repo_root: &Path) -> SyncOutcome {
+    match current_head(repo_root) {
+        Some(head) => remote_has_moved_on(repo_root, &head),
+        None => SyncOutcome::Skipped,
+    }
+}
 /// Pushes a commit an earlier session left local-only, and never builds a
 /// commit: opening a checklist must not publish uncommitted edits. An
 /// untracked checklist is always reported, since git-sync can never act on
 /// it; a blocked repository, or a history that can't be checked, is
 /// `Failed`; nothing to push, or a tip that can't be read, is a quiet
-/// `Skipped`. Only commits carrying markcheck's own trailer are pushed (#62):
-/// one the user made and kept local is left alone, with `NotCaughtUp` saying
-/// so.
+/// `Skipped`, unless the remote has moved on (`RemoteAhead`). Only commits
+/// carrying markcheck's own trailer are pushed (#62): one the user made and
+/// kept local is left alone, with `NotCaughtUp` saying so.
 pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
     if let Some(reason) = repo_sync_blocked(repo_root) {
         return SyncOutcome::Failed(reason);
@@ -173,8 +206,10 @@ pub(super) fn catch_up_push(repo_root: &Path, file_path: &Path) -> SyncOutcome {
     let Some(head) = current_head(repo_root) else {
         return SyncOutcome::Skipped;
     };
-    if commits_ahead_of_upstream(repo_root, &head).is_none_or(|ahead| ahead == 0) {
-        return SyncOutcome::Skipped;
+    match commits_ahead_of_upstream(repo_root, &head) {
+        None => return SyncOutcome::Skipped,
+        Some(0) => return remote_has_moved_on(repo_root, &head),
+        Some(_) => {}
     }
     let relpath = match relpath {
         Ok(relpath) => relpath,

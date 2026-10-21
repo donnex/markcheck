@@ -396,6 +396,12 @@ impl AppState {
                 return;
             }
             SyncOutcome::Skipped | SyncOutcome::RetryAbandoned => return,
+            SyncOutcome::RemoteAhead(_) => {
+                if let Some(message) = git_sync::status_message(outcome) {
+                    self.set_error(message);
+                }
+                return;
+            }
             SyncOutcome::SkippedUntracked => ("not tracked", None),
             SyncOutcome::CommittedNotPushed { message, .. } | SyncOutcome::RetryFailed(message) => {
                 ("not pushed", Some(message))

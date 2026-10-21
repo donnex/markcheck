@@ -238,6 +238,7 @@ impl AppState {
                 if content_hash != self.file_content_hash {
                     self.git_sync.unsynced_base = None;
                     self.cancel_git_sync();
+                    self.effects.push(Effect::CheckRemote);
                 }
                 self.file_content_hash = content_hash;
                 true
@@ -264,9 +265,10 @@ impl AppState {
     /// published.
     pub fn request_external_edit_sync(&mut self, editor: &str) {
         // This edit replaces the request the reload just cancelled, so a
-        // waiting toggle folds into its commit instead of being dropped.
+        // waiting toggle folds into its commit instead of being dropped, and
+        // its own push asks the remote what the reload's check would have.
         self.effects
-            .retain(|effect| !matches!(effect, Effect::CancelGitSync));
+            .retain(|effect| !matches!(effect, Effect::CancelGitSync | Effect::CheckRemote));
         let content = writer::document_contents(&self.document);
         let content_hash = hash_bytes(content.as_bytes());
         self.git_sync.unsynced_base = Some(content.clone());

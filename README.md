@@ -72,7 +72,8 @@ workflow and file-backed state.
 - Live reload when the file changes on disk (edit it elsewhere, see it update)
 - Optional git sync (`--git-sync`): commit and push the file after a toggle
   or manual edit (`e`), when it's already in a git repo — a lightweight way
-  to keep a checklist in sync across hosts that share it via git
+  to publish your ticks to other hosts that share the checklist via git
+  (markcheck never pulls: `git pull` before you open it)
 - One-key clipboard copy of a task's command, with an SSH-friendly fallback;
   optional auto-copy on navigation and PRIMARY-selection support
 - Open the file in `$EDITOR` without leaving the app
@@ -686,7 +687,7 @@ instead`).
 With `--git-sync` (or a matching `git_sync_paths` entry, above) active for a
 file that's already in a git repository, every toggle, start, skip, reset
 (of the whole checklist, a list or a sub-list), undo and redo is committed and pushed in the background, so a checklist shared via git
-stays in sync across machines without leaving the app. It waits until 10
+publishes your ticks to the other machines without leaving the app. It waits until 10
 seconds pass without another change (the title bar shows `⇅ git · pending`
 meanwhile), so a burst of ticks becomes one commit and a tick you undo
 straight away is never published at all. Set `git_sync_delay` in the config
@@ -710,6 +711,23 @@ publishing content that's since gone stale, and the reload message says so:
 `Reloaded: 1 done ("Verify") — pending git sync dropped`. A sync already
 running when the file changes is refused instead: `Git sync failed: the file
 changed after this sync was queued, so it was not published`.
+
+Git sync only ever **publishes**: markcheck never fetches, pulls or
+merges, so bringing in what another host pushed stays your job. Run
+`git pull --rebase` before opening a shared checklist. A tick made on a
+copy that is behind is committed on the old state, its push is refused
+(`Committed, not pushed: refs/heads/main on origin has commits this change
+is not based on; pull first, then it will sync`), and the branch has
+diverged: `git pull --rebase` then fixes it, though it can conflict on a
+line both hosts ticked, while a plain `git pull` makes a merge commit that
+markcheck won't push for you. To catch this before the first tick, markcheck
+asks the remote for its branch tip at startup, and again whenever the file
+changes on disk (a pull, say), without fetching anything. When the remote
+has commits your copy doesn't, the status bar says so in red until another
+message replaces it: ``Git sync: refs/heads/main on origin has changes this
+checklist hasn't pulled; run `git pull --rebase` before ticking``. A pull
+that changes the checklist reloads it, which checks again. A remote it
+can't reach stays quiet here; a tick reports that in its own words.
 
 A toggle only ever publishes **markcheck's own changes**. Its commit holds
 the whole file, so before committing, git sync checks that the file as it

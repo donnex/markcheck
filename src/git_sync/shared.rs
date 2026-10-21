@@ -36,6 +36,9 @@ pub enum SyncOutcome {
     /// The startup catch-up found a commit markcheck didn't make in the way,
     /// so it pushed nothing; the message names it.
     NotCaughtUp(String),
+    /// The remote branch has commits `HEAD` doesn't contain, found by asking
+    /// the remote without fetching; the message says to pull before ticking.
+    RemoteAhead(String),
     /// Nothing to do: already committed and pushed. Not reported.
     Skipped,
     /// The file isn't tracked. Reported, but never `git add`ed automatically.

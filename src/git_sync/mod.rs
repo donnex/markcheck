@@ -14,7 +14,7 @@ use shared::lock_hash;
 use process::{
     Children, PLUMBING_TIMEOUT, git_command, run_with_timeout, track_children_on_this_thread,
 };
-use push::{catch_up_push, retry_commit};
+use push::{catch_up_push, check_remote, retry_commit};
 use sync::{Publish, batch_message, run_sync};
 
 use std::path::{Path, PathBuf};
@@ -43,7 +43,9 @@ pub fn status_message(outcome: &SyncOutcome) -> Option<String> {
         SyncOutcome::CaughtUp { pushed } => {
             Some(format!("Pushed {pushed} earlier markcheck commits"))
         }
-        SyncOutcome::NotCaughtUp(message) => Some(format!("Git sync: {message}")),
+        SyncOutcome::NotCaughtUp(message) | SyncOutcome::RemoteAhead(message) => {
+            Some(format!("Git sync: {message}"))
+        }
         SyncOutcome::SkippedUntracked => {
             Some("Git sync skipped: file is not tracked in git (run `git add` on it)".to_string())
         }
@@ -78,6 +80,7 @@ fn exit_report_text(last: Option<&SyncOutcome>, still_running: bool) -> Option<S
         SyncOutcome::Synced
         | SyncOutcome::CaughtUp { .. }
         | SyncOutcome::NotCaughtUp(_)
+        | SyncOutcome::RemoteAhead(_)
         | SyncOutcome::Skipped
         | SyncOutcome::RetryAbandoned => None,
         SyncOutcome::SkippedUntracked => Some(
@@ -407,6 +410,17 @@ impl GitSync {
         self.spawn_worker(move |repo_root| catch_up_push(repo_root, &file_path));
     }
 
+    /// Asks the remote whether it has moved past `HEAD`, for a reload that
+    /// may follow a pull; skipped while a sync runs, since that sync's own
+    /// push asks the same question.
+    pub fn request_remote_check(&mut self) {
+        if self.busy {
+            return;
+        }
+        self.in_flight = None;
+        self.spawn_worker(check_remote);
+    }
+
     /// Runs `work` on a worker thread whose git children quitting can stop,
     /// and sends its outcome, a panic reported as a failure, to `poll`.
     fn spawn_worker(&mut self, work: impl FnOnce(&Path) -> SyncOutcome + Send + 'static) {
@@ -492,7 +506,10 @@ impl GitSync {
             }
             // A content sync's failure says nothing about an earlier commit's retry.
             SyncOutcome::Failed(_) => {}
-            SyncOutcome::Skipped | SyncOutcome::SkippedUntracked | SyncOutcome::NotCaughtUp(_) => {}
+            SyncOutcome::Skipped
+            | SyncOutcome::SkippedUntracked
+            | SyncOutcome::NotCaughtUp(_)
+            | SyncOutcome::RemoteAhead(_) => {}
         }
     }
 
@@ -517,7 +534,8 @@ impl GitSync {
             SyncOutcome::CaughtUp { .. }
             | SyncOutcome::RetryAbandoned
             | SyncOutcome::RetryFailed(_)
-            | SyncOutcome::NotCaughtUp(_) => {}
+            | SyncOutcome::NotCaughtUp(_)
+            | SyncOutcome::RemoteAhead(_) => {}
         }
     }
 

@@ -38,6 +38,7 @@ fn every_effect_reaches_the_host_in_order_and_quit_is_reported() {
         Effect::Redraw,
         Effect::OpenLink("https://example.com".to_string()),
         Effect::CancelGitSync,
+        Effect::CheckRemote,
         Effect::Quit,
         Effect::GitSync(sync("after quit")),
     ];
@@ -55,6 +56,7 @@ fn every_effect_reaches_the_host_in_order_and_quit_is_reported() {
     assert_eq!(host.redraws, 1);
     assert_eq!(host.links, vec!["https://example.com".to_string()]);
     assert_eq!(host.cancelled_syncs, 1);
+    assert_eq!(host.remote_checks, 1);
     assert_eq!(
         host.syncs
             .iter()
@@ -111,6 +113,8 @@ impl Host for LinkFallbackHost {
     fn cancel_git_sync(&mut self) -> bool {
         false
     }
+
+    fn check_remote(&mut self) {}
 }
 
 #[test]

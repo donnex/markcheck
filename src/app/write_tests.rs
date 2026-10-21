@@ -1016,6 +1016,23 @@ fn a_catch_up_that_pushed_nothing_says_why_and_stays() {
 }
 
 #[test]
+fn a_remote_with_unpulled_changes_is_a_sticky_warning_that_leaves_the_sync_state_alone() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_git_sync_outcome(&SyncOutcome::RemoteAhead(
+        "refs/heads/main on origin has changes this checklist hasn't pulled".to_string(),
+    ));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Git sync: refs/heads/main on origin has changes this checklist hasn't pulled")
+    );
+    assert_eq!(state.status_expiry, None, "sticky until read");
+    assert_eq!(
+        state.git_sync.problem, None,
+        "nothing of this session's failed"
+    );
+}
+
+#[test]
 fn a_save_in_place_is_announced_once_and_outlives_the_toggle_status() {
     use std::os::unix::fs::PermissionsExt;
     let dir = crate::test_support::unique_temp_path("app", "ro-dir", None);

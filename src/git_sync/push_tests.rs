@@ -775,3 +775,136 @@ fn catch_up_push_skips_a_checklist_staged_on_an_unborn_branch() {
         SyncOutcome::Skipped
     );
 }
+
+#[test]
+fn catch_up_push_warns_when_another_host_pushed_a_commit_not_yet_fetched() {
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+
+    let outcome = catch_up_push(&work, &work.join("tracked.md"));
+
+    assert_eq!(
+        outcome,
+        SyncOutcome::RemoteAhead(
+            "refs/heads/main on origin has changes this checklist hasn't pulled; \
+             run `git pull --rebase` before ticking"
+                .to_string()
+        )
+    );
+    assert_eq!(
+        git_stdout(&work, &["log", "--format=%s", "main"]),
+        "init",
+        "nothing is fetched, merged or committed"
+    );
+    assert_eq!(
+        git_stdout(&work, &["rev-parse", "origin/main"]),
+        git_stdout(&work, &["rev-parse", "main"]),
+        "the remote-tracking ref is not moved either"
+    );
+}
+#[test]
+fn catch_up_push_warns_about_a_fetched_but_unmerged_remote_commit() {
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+    run(&work, &["fetch", "-q"]);
+
+    let outcome = catch_up_push(&work, &work.join("tracked.md"));
+
+    assert!(
+        matches!(&outcome, SyncOutcome::RemoteAhead(_)),
+        "{outcome:?}"
+    );
+}
+#[test]
+fn catch_up_push_is_quiet_once_the_remote_commit_is_pulled() {
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+    run(&work, &["pull", "-q", "--ff-only"]);
+
+    assert_eq!(
+        catch_up_push(&work, &work.join("tracked.md")),
+        SyncOutcome::Skipped
+    );
+}
+#[test]
+fn catch_up_push_is_quiet_when_the_remote_cannot_be_reached() {
+    let (work, remote) = init_repo_with_remote();
+    fs::remove_dir_all(&remote).unwrap();
+
+    assert_eq!(
+        catch_up_push(&work, &work.join("tracked.md")),
+        SyncOutcome::Skipped
+    );
+}
+#[test]
+fn the_remote_check_asks_where_the_push_goes() {
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+    let elsewhere = work.parent().unwrap().join("elsewhere.git");
+    run(
+        &work,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            remote.to_str().unwrap(),
+            elsewhere.to_str().unwrap(),
+        ],
+    );
+    run(
+        &elsewhere,
+        &[
+            "update-ref",
+            "refs/heads/main",
+            &git_stdout(&work, &["rev-parse", "HEAD"]),
+        ],
+    );
+    run(
+        &work,
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            elsewhere.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(check_remote(&work), SyncOutcome::Skipped);
+}
+#[test]
+fn the_remote_check_stays_quiet_where_git_sync_would_not_push() {
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+    run(
+        &work,
+        &["checkout", "-q", "-b", "feature", "--track", "main"],
+    );
+    run(&work, &["config", "push.default", "upstream"]);
+    assert_eq!(
+        check_remote(&work),
+        SyncOutcome::Skipped,
+        "tracks a local branch"
+    );
+
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+    run(&work, &["config", "push.default", "nothing"]);
+    assert_eq!(
+        check_remote(&work),
+        SyncOutcome::Skipped,
+        "push goes nowhere"
+    );
+
+    let (work, _remote) = init_repo_with_remote();
+    run(&work, &["checkout", "-q", "--detach"]);
+    assert_eq!(check_remote(&work), SyncOutcome::Skipped, "detached HEAD");
+}
+#[test]
+fn the_remote_check_is_quiet_on_an_unborn_branch() {
+    let root = unique_dir("unborn-remote-check");
+    fs::create_dir_all(&root).unwrap();
+    run(&root, &["init", "-q", "-b", "main"]);
+
+    assert_eq!(check_remote(&root), SyncOutcome::Skipped);
+}

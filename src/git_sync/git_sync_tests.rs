@@ -491,6 +491,10 @@ fn status_message_names_each_problem() {
         status_message(&SyncOutcome::RetryFailed("offline".into())).as_deref(),
         Some("Push retry failed: offline (will keep retrying)")
     );
+    assert_eq!(
+        status_message(&SyncOutcome::RemoteAhead("pull first".into())).as_deref(),
+        Some("Git sync: pull first")
+    );
 }
 
 #[test]
@@ -499,6 +503,10 @@ fn exit_report_stays_quiet_when_the_final_sync_landed_or_had_nothing_to_do() {
     assert_eq!(exit_report(Some(&SyncOutcome::Synced), false), None);
     assert_eq!(exit_report(Some(&SyncOutcome::Skipped), false), None);
     assert_eq!(exit_report(Some(&SyncOutcome::RetryAbandoned), false), None);
+    assert_eq!(
+        exit_report(Some(&SyncOutcome::RemoteAhead("pull".into())), false),
+        None
+    );
 }
 
 #[test]
@@ -592,6 +600,8 @@ fn a_later_sync_that_lands_resolves_the_standing_problem() {
     );
     deliver(&mut sync, SyncOutcome::NotCaughtUp("someone else's".into()));
     assert!(sync.unresolved().is_some(), "NotCaughtUp resolves nothing");
+    deliver(&mut sync, SyncOutcome::RemoteAhead("pull".into()));
+    assert!(sync.unresolved().is_some(), "RemoteAhead resolves nothing");
     deliver(&mut sync, SyncOutcome::RetryAbandoned);
     assert_eq!(sync.unresolved(), None);
 
@@ -1058,3 +1068,32 @@ fn identity_warning_says_commits_are_refused_without_an_email() {
 }
 const IDENTITY_REFUSED: &str = "Git sync: no git identity set — commits will be refused; \
                                 set git config user.name and user.email";
+
+#[test]
+fn a_remote_check_reports_a_remote_that_moved_on_and_keeps_any_armed_retry() {
+    let (work, remote) = init_repo_with_remote();
+    push_from_another_clone(&remote);
+    let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    sync.retry = Some(("abc".into(), Instant::now()));
+
+    sync.request_remote_check();
+    assert!(sync.is_busy());
+    let outcomes = sync.wait_for_outcomes(Duration::from_secs(30));
+
+    assert!(
+        matches!(outcomes.as_slice(), [SyncOutcome::RemoteAhead(_)]),
+        "{outcomes:?}"
+    );
+    assert!(sync.retry.is_some(), "a remote check settles no push");
+}
+
+#[test]
+fn a_remote_check_waits_for_a_running_sync() {
+    let work = init_repo_without_remote();
+    let mut sync = GitSync::detect(&work.join("tracked.md")).unwrap();
+    sync.busy = true;
+
+    sync.request_remote_check();
+
+    assert!(sync.receiver.try_recv().is_err(), "nothing was started");
+}

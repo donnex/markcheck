@@ -746,6 +746,12 @@ where
             .as_mut()
             .is_some_and(git_sync::GitSync::cancel_queued)
     }
+
+    fn check_remote(&mut self) {
+        if let Some(worker) = self.git_sync.as_mut() {
+            worker.request_remote_check();
+        }
+    }
 }
 
 /// Starts a GUI opener in a session of its own, with no shell and discarded
