@@ -58,10 +58,8 @@ fn first_undone_index(list: &List) -> Option<usize> {
 }
 
 fn list_all_done(list: &List) -> bool {
-    list.items
-        .iter()
-        .filter(|i| matches!(i.kind, ItemKind::Checkbox(_)))
-        .all(|i| matches!(i.kind, ItemKind::Checkbox(state) if state.is_resolved()))
+    let progress = list.progress();
+    progress.resolved() == progress.tasks()
 }
 
 impl AppState {

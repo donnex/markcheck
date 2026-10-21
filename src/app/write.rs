@@ -24,36 +24,6 @@ pub(super) const CRITICAL_PAUSE: Duration = Duration::from_millis(500);
 pub(super) const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
      so a crash mid-save could truncate the checklist";
 
-/// Space/Enter and the overview click toggle *done*: a done task reverts to
-/// not started, anything else (started included) completes.
-pub(super) fn toggled_done(state: TaskState) -> TaskState {
-    if state == TaskState::Done {
-        TaskState::NotStarted
-    } else {
-        TaskState::Done
-    }
-}
-
-pub(super) fn toggle_message(state: TaskState) -> &'static str {
-    if state == TaskState::Done {
-        "Marked done"
-    } else {
-        "Marked not done"
-    }
-}
-
-/// The verb naming a transition *into* `state`, used to build the git-sync
-/// commit message: `Check "Restart service"`, `Start "..."`,
-/// `Uncheck "..."`, `Skip "..."`.
-pub(super) fn state_verb(state: TaskState) -> &'static str {
-    match state {
-        TaskState::Done => "Check",
-        TaskState::Started => "Start",
-        TaskState::NotStarted => "Uncheck",
-        TaskState::Skipped => "Skip",
-    }
-}
-
 impl AppState {
     pub fn toggle_current(&mut self) {
         let Some(current) = self.current_item() else {
@@ -73,7 +43,7 @@ impl AppState {
             ItemKind::Checkbox(state) => state,
         };
 
-        let new_state = toggled_done(state);
+        let new_state = state.toggle(TaskState::Done);
         let position = (self.current_list_index, self.current_item_index);
         if new_state == TaskState::Done && !self.confirm_critical(position, CriticalAction::Check) {
             return;
@@ -81,7 +51,7 @@ impl AppState {
         if !self.set_current_state(new_state) {
             return;
         }
-        self.set_status(toggle_message(new_state).to_string());
+        self.set_status(state.toggle_message(new_state));
         if new_state == TaskState::Done {
             self.maybe_transition_screen();
         } else {
@@ -107,7 +77,7 @@ impl AppState {
         else {
             return;
         };
-        let new_state = toggled_done(state);
+        let new_state = state.toggle(TaskState::Done);
         if new_state == TaskState::Done
             && !self.confirm_critical((list_index, item_index), CriticalAction::Click)
         {
@@ -127,7 +97,7 @@ impl AppState {
         if !still_complete {
             self.view = View::Checklist;
         }
-        self.set_status(toggle_message(new_state).to_string());
+        self.set_status(state.toggle_message(new_state));
     }
 
     /// `s` toggles the *started* state. Never completes and never advances.
@@ -142,22 +112,11 @@ impl AppState {
             }
             ItemKind::Checkbox(state) => state,
         };
-        let new_state = if state == TaskState::Started {
-            TaskState::NotStarted
-        } else {
-            TaskState::Started
-        };
+        let new_state = state.toggle(TaskState::Started);
         if !self.set_current_state(new_state) {
             return;
         }
-        self.set_status(
-            if new_state == TaskState::Started {
-                "Marked started"
-            } else {
-                "Marked not started"
-            }
-            .to_string(),
-        );
+        self.set_status(state.toggle_message(new_state));
         self.view = View::Checklist;
     }
 
@@ -213,11 +172,7 @@ impl AppState {
             self.set_error("Nothing to skip: this card is a note, not a task".to_string());
             return;
         };
-        let new_state = if state == TaskState::Skipped {
-            TaskState::NotStarted
-        } else {
-            TaskState::Skipped
-        };
+        let new_state = state.toggle(TaskState::Skipped);
         let position = (self.current_list_index, self.current_item_index);
         if new_state == TaskState::Skipped && !self.confirm_critical(position, CriticalAction::Skip)
         {
@@ -226,11 +181,10 @@ impl AppState {
         if !self.set_current_state(new_state) {
             return;
         }
+        self.set_status(state.toggle_message(new_state));
         if new_state == TaskState::Skipped {
-            self.set_status("Marked skipped".to_string());
             self.maybe_transition_screen();
         } else {
-            self.set_status("Marked not skipped".to_string());
             self.view = View::Checklist;
         }
     }
@@ -267,7 +221,7 @@ impl AppState {
         if !self.commit_write(
             &pre_state,
             "Write failed — change not saved to disk",
-            &format!("{} \"{item_text}\"", state_verb(state)),
+            &format!("{} \"{item_text}\"", state.commit_verb()),
         ) {
             return false;
         }

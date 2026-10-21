@@ -2,7 +2,6 @@
 
 use crate::model::{AppState, ItemKind, StateSnapshot, TaskState, UNDO_HISTORY_CAP, View};
 
-use super::write::state_verb;
 use super::*;
 
 /// How many task labels an undo or redo of several tasks names in its
@@ -127,11 +126,8 @@ impl AppState {
                     self.focus_item(li, ii, CursorMove::Quiet);
                 }
                 let desc = match self.current_item().map(|item| item.kind) {
-                    Some(ItemKind::Checkbox(TaskState::Done)) => "marked done",
-                    Some(ItemKind::Checkbox(TaskState::Started)) => "marked started",
-                    Some(ItemKind::Checkbox(TaskState::NotStarted)) => "marked not done",
-                    Some(ItemKind::Checkbox(TaskState::Skipped)) => "marked skipped",
-                    _ => "restored",
+                    Some(ItemKind::Checkbox(state)) => format!("marked {}", state.marked()),
+                    _ => "restored".to_string(),
                 };
                 self.set_status(format!("{verb}: {desc}"));
             }
@@ -155,7 +151,7 @@ impl AppState {
             .collect();
         match items.as_slice() {
             [] => "no change".to_string(),
-            [(state, item)] => format!("{} \"{}\"", state_verb(*state), item.label()),
+            [(state, item)] => format!("{} \"{}\"", state.commit_verb(), item.label()),
             many => {
                 let mut names: Vec<String> = many
                     .iter()

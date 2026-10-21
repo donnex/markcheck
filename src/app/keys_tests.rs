@@ -388,7 +388,7 @@ fn observable(state: &AppState) -> String {
             state.current_list_index,
             state.current_item_index,
             state.pending_chord,
-            state.document.checkbox_progress(),
+            state.document.progress(),
         )
     )
 }

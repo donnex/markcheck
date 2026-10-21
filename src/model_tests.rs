@@ -264,7 +264,7 @@ fn item_links_match_the_per_item_scans() {
 }
 
 #[test]
-fn list_checkbox_stats_excludes_display_only_items() {
+fn list_progress_excludes_display_only_items() {
     let list = List {
         title: "List".to_string(),
         banner: None,
@@ -275,7 +275,14 @@ fn list_checkbox_stats_excludes_display_only_items() {
             checkbox(4, true),
         ],
     };
-    assert_eq!(list.checkbox_stats(), (2, 3));
+    assert_eq!(
+        list.progress(),
+        Progress {
+            done: 2,
+            open: 1,
+            ..Progress::default()
+        }
+    );
 }
 
 #[test]
@@ -287,11 +294,12 @@ fn started_tasks_count_as_not_done_in_stats() {
     };
     list.items[1].kind = ItemKind::Checkbox(TaskState::Started);
     // 3 checkboxes total, only the Done one counts as done.
-    assert_eq!(list.checkbox_stats(), (1, 3));
+    let progress = list.progress();
+    assert_eq!((progress.done, progress.total()), (1, 3));
 }
 
 #[test]
-fn checkbox_progress_counts_done_started_total() {
+fn progress_counts_each_state() {
     // The progress bar needs the started count too.
     let mut list = List {
         title: "S".to_string(),
@@ -299,7 +307,22 @@ fn checkbox_progress_counts_done_started_total() {
         items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
     };
     list.items[1].kind = ItemKind::Checkbox(TaskState::Started);
-    assert_eq!(list.checkbox_progress(), (1, 1, 3));
+    list.items.push(checkbox(4, false));
+    list.items[3].kind = ItemKind::Checkbox(TaskState::Skipped);
+    let progress = list.progress();
+    assert_eq!(
+        progress,
+        Progress {
+            done: 1,
+            started: 1,
+            skipped: 1,
+            open: 1,
+        }
+    );
+    assert_eq!(progress.total(), 3, "skipped is outside the total");
+    assert_eq!(progress.resolved(), 2);
+    assert_eq!(progress.tasks(), 4);
+    assert!(!progress.is_finished());
 }
 
 #[test]
@@ -537,7 +560,7 @@ fn rgb_to_256_maps_primaries_and_extremes() {
 }
 
 #[test]
-fn document_checkbox_stats_sums_across_lists() {
+fn document_progress_sums_across_lists() {
     let document = Document {
         file_path: PathBuf::from("test.md"),
         title: None,
@@ -560,7 +583,14 @@ fn document_checkbox_stats_sums_across_lists() {
         critical: Default::default(),
         raw_lines: vec![],
     };
-    assert_eq!(document.checkbox_stats(), (2, 3));
+    assert_eq!(
+        document.progress(),
+        Progress {
+            done: 2,
+            open: 1,
+            ..Progress::default()
+        }
+    );
 }
 
 #[test]
@@ -581,4 +611,82 @@ fn auto_copies_to_both_clipboards_over_ssh_only() {
     assert_eq!(ClipboardChoice::Auto.route(true), CopyRoute::Both);
     assert_eq!(ClipboardChoice::System.route(true), CopyRoute::SystemOnly);
     assert_eq!(ClipboardChoice::Osc52.route(false), CopyRoute::Osc52Only);
+}
+
+#[test]
+fn progress_is_finished_once_every_task_is_resolved() {
+    assert!(!Progress::default().is_finished(), "no tasks at all");
+    let skipped_only = Progress {
+        skipped: 2,
+        ..Progress::default()
+    };
+    assert!(skipped_only.is_finished());
+    let one_started = Progress {
+        done: 3,
+        started: 1,
+        ..Progress::default()
+    };
+    assert!(!one_started.is_finished());
+}
+
+const ALL_STATES: [TaskState; 4] = [
+    TaskState::NotStarted,
+    TaskState::Started,
+    TaskState::Done,
+    TaskState::Skipped,
+];
+
+#[test]
+fn toggle_goes_to_the_target_or_back_to_not_started() {
+    for from in ALL_STATES {
+        for target in [TaskState::Started, TaskState::Done, TaskState::Skipped] {
+            let expected = if from == target {
+                TaskState::NotStarted
+            } else {
+                target
+            };
+            assert_eq!(from.toggle(target), expected, "{from:?} toward {target:?}");
+        }
+    }
+}
+
+#[test]
+fn toggle_message_names_the_state_entered_or_left() {
+    let cases = [
+        (TaskState::NotStarted, TaskState::Done, "Marked done"),
+        (TaskState::Started, TaskState::Done, "Marked done"),
+        (TaskState::Done, TaskState::NotStarted, "Marked not done"),
+        (TaskState::NotStarted, TaskState::Started, "Marked started"),
+        (
+            TaskState::Started,
+            TaskState::NotStarted,
+            "Marked not started",
+        ),
+        (TaskState::Done, TaskState::Skipped, "Marked skipped"),
+        (
+            TaskState::Skipped,
+            TaskState::NotStarted,
+            "Marked not skipped",
+        ),
+    ];
+    for (from, to, message) in cases {
+        assert_eq!(from.toggle_message(to), message, "{from:?} to {to:?}");
+    }
+}
+
+#[test]
+fn every_state_has_a_name_and_a_commit_verb() {
+    let named: Vec<_> = ALL_STATES
+        .iter()
+        .map(|state| (state.marked(), state.commit_verb()))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("not done", "Uncheck"),
+            ("started", "Start"),
+            ("done", "Check"),
+            ("skipped", "Skip"),
+        ]
+    );
 }

@@ -1454,7 +1454,8 @@ fn list_whose_only_checkboxes_are_blockquoted_is_dropped() {
     let document = parse(source);
     assert_eq!(document.lists.len(), 1, "{:?}", document.lists);
     assert_eq!(document.lists[0].title, "Real");
-    assert_eq!(document.lists[0].checkbox_stats(), (0, 1));
+    let progress = document.lists[0].progress();
+    assert_eq!((progress.done, progress.total()), (0, 1));
 }
 
 #[test]

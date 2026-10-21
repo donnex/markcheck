@@ -141,7 +141,8 @@ fn progress_fill(width: usize, done: usize, total: usize) -> usize {
 /// the done portion, a yellow heavy line for started/in-progress tasks,
 /// then a dim light line for what remains.
 fn render_progress_bar(frame: &mut Frame, area: Rect, state: &AppState) {
-    let (done, started, total) = state.document.checkbox_progress();
+    let progress = state.document.progress();
+    let (done, started, total) = (progress.done, progress.started, progress.total());
     let width = area.width as usize;
     let done_w = progress_fill(width, done, total);
     let started_w = progress_fill(width, started, total).min(width.saturating_sub(done_w));
@@ -184,12 +185,13 @@ fn render_title_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     // Color roles from the palette — accent title, dim filename,
     // done/started progress counter.
     let icons = state.icons;
-    let (done, total) = state.document.checkbox_stats();
+    let progress = state.document.progress();
+    let (done, total) = (progress.done, progress.total());
     // The counter fades yellow → green with completion, resolved per
     // color depth.
     let counter_style = state.palette.progress_color(done, total);
     // Skipped tasks are outside done/total, so say how many were set aside.
-    let skipped = state.document.skipped_count();
+    let skipped = progress.skipped;
     let counter_text = if skipped > 0 {
         format!(" {} {done}/{total} (+{skipped} skipped)", icons.done)
     } else {

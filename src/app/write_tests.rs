@@ -117,7 +117,8 @@ fn started_task_does_not_complete_the_list() {
     state.current_item_index = 2;
     state.start_current();
     assert_eq!(shown(&state), (View::Checklist, None));
-    assert_eq!(state.document.checkbox_stats(), (2, 5), "started ≠ done");
+    let progress = state.document.progress();
+    assert_eq!((progress.done, progress.total()), (2, 5), "started ≠ done");
 }
 
 #[test]
@@ -1049,12 +1050,13 @@ fn dash_skips_a_task_counts_it_as_resolved_and_moves_on() {
     );
     let sync = state.git_sync_request().unwrap();
     assert!(sync.description.starts_with("Skip"), "{}", sync.description);
+    let progress = state.document.progress();
     assert_eq!(
-        state.document.checkbox_stats(),
+        (progress.done, progress.total()),
         (0, 1),
         "skipped is out of the total"
     );
-    assert_eq!(state.document.skipped_count(), 1);
+    assert_eq!(progress.skipped, 1);
 
     state.handle_key(KeyCode::Char(' '));
     assert_eq!(

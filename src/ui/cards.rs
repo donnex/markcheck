@@ -15,7 +15,7 @@ use super::{
 };
 use crate::model::{
     AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, PreambleBlock,
-    PreambleKind, ResetScope, SubHeading, TaskState, View,
+    PreambleKind, Progress, ResetScope, SubHeading, TaskState, View,
 };
 
 /// Prose that wraps to at most this many lines is centered; longer prose is
@@ -1996,7 +1996,8 @@ fn modal_card(
 fn render_list_complete(frame: &mut Frame, area: Rect, state: &AppState) {
     let icons = state.icons;
     let list = state.current_list();
-    let (done, total) = list.checkbox_stats();
+    let progress = list.progress();
+    let (done, total) = (progress.done, progress.total());
 
     let lines = vec![
         Line::from(""),
@@ -2040,9 +2041,11 @@ fn render_all_complete(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(""),
     ];
 
-    let (total_done, total_all) = state.document.checkbox_stats();
+    let document = state.document.progress();
+    let (total_done, total_all) = (document.done, document.total());
     for list in &state.document.lists {
-        let (done, total) = list.checkbox_stats();
+        let progress = list.progress();
+        let (done, total) = (progress.done, progress.total());
         // This screen asserts completion, so an incomplete row must say so.
         let (marker, marker_style) = if done == total {
             (icons.done, Style::default().fg(state.palette.done))
@@ -2080,12 +2083,22 @@ fn completion_rule() -> Line<'static> {
 }
 
 /// What a reset will change, e.g. `3 done, 1 started and 2 skipped tasks`.
-fn reset_summary(done: usize, started: usize, skipped: usize) -> String {
-    let parts: Vec<String> = [(done, "done"), (started, "started"), (skipped, "skipped")]
-        .into_iter()
-        .filter(|&(count, _)| count > 0)
-        .map(|(count, name)| format!("{count} {name}"))
-        .collect();
+fn reset_summary(progress: Progress) -> String {
+    let Progress {
+        done,
+        started,
+        skipped,
+        ..
+    } = progress;
+    let parts: Vec<String> = [
+        (done, TaskState::Done),
+        (started, TaskState::Started),
+        (skipped, TaskState::Skipped),
+    ]
+    .into_iter()
+    .filter(|&(count, _)| count > 0)
+    .map(|(count, state)| format!("{count} {}", state.marked()))
+    .collect();
     let joined = match parts.split_last() {
         Some((last, [])) => last.clone(),
         Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
@@ -2100,9 +2113,8 @@ fn reset_summary(done: usize, started: usize, skipped: usize) -> String {
 }
 
 fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
-    let (done, started, total) = state.document.checkbox_progress();
-    let skipped = state.document.skipped_count();
-    let total = total + skipped;
+    let progress = state.document.progress();
+    let total = progress.tasks();
     let file_name = state
         .document
         .file_path
@@ -2119,7 +2131,7 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(""),
         Line::from(format!(
             "This marks {} (of {total}) as not started",
-            reset_summary(done, started, skipped)
+            reset_summary(progress)
         )),
         Line::from(format!("and rewrites {file_name}.")),
     ];
@@ -2151,10 +2163,9 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_confirm_quit_reset(frame: &mut Frame, area: Rect, state: &AppState) {
-    let (_, total) = state.document.checkbox_stats();
-    let skipped = state.document.skipped_count();
-    let total = total + skipped;
-    let heading = if skipped > 0 {
+    let progress = state.document.progress();
+    let total = progress.tasks();
+    let heading = if progress.skipped > 0 {
         "All tasks are done or skipped."
     } else {
         "All tasks are done."

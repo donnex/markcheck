@@ -408,10 +408,12 @@ fn document_name(state: &crate::model::AppState) -> String {
 /// `Deployment Runbook · 3/11 — markcheck`, so a tab says which checklist
 /// it holds and how far along it is.
 pub fn terminal_title(state: &crate::model::AppState) -> String {
-    let (done, total) = state.document.checkbox_stats();
+    let progress = state.document.progress();
     crate::printable::printable_line(&format!(
-        "{} · {done}/{total} — markcheck",
-        document_name(state)
+        "{} · {}/{} — markcheck",
+        document_name(state),
+        progress.done,
+        progress.total()
     ))
 }
 
@@ -424,8 +426,13 @@ pub fn exit_summary(state: &crate::model::AppState) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let (done, started, total) = state.document.checkbox_progress();
-    let skipped = state.document.skipped_count();
+    let progress = state.document.progress();
+    let (done, started, skipped, total) = (
+        progress.done,
+        progress.started,
+        progress.skipped,
+        progress.total(),
+    );
     let mut extras = Vec::new();
     if started > 0 {
         extras.push(format!("{started} started"));

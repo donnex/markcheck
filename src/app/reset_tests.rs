@@ -77,8 +77,8 @@ fn ctrl_c_cancels_reset_confirmation() {
     press_ctrl_c(&mut state);
     assert_eq!(shown(&state), (View::AllComplete, None));
     assert_eq!(
-        state.document.checkbox_stats().0,
-        state.document.checkbox_stats().1
+        state.document.progress().done,
+        state.document.progress().total()
     );
 }
 
@@ -126,7 +126,7 @@ fn confirm_reset_yes_clears_all_and_persists() {
     state.handle_key(KeyCode::Char('R'));
     state.handle_key(KeyCode::Char('y'));
     assert_eq!(shown(&state), (View::Checklist, None));
-    assert_eq!(state.document.checkbox_stats().0, 0, "all tasks not done");
+    assert_eq!(state.document.progress().done, 0, "all tasks not done");
     // No spurious reload from our own write.
     state.reload_if_changed();
     assert_ne!(
@@ -138,13 +138,13 @@ fn confirm_reset_yes_clears_all_and_persists() {
 #[test]
 fn confirm_reset_cancel_restores_screen_and_leaves_tasks() {
     let mut state = AppState::new(two_list_document_first_list_almost_done());
-    let done_before = state.document.checkbox_stats().0;
+    let done_before = state.document.progress().done;
     state.handle_key(KeyCode::Char('R'));
     assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key(KeyCode::Esc);
     assert_eq!(shown(&state), (View::Checklist, None));
     assert!(!state.quit_requested(), "Esc cancels, does not quit");
-    assert_eq!(state.document.checkbox_stats().0, done_before);
+    assert_eq!(state.document.progress().done, done_before);
 }
 
 #[test]
@@ -166,13 +166,13 @@ fn confirm_reset_from_all_complete_cancels_back_to_all_complete() {
 fn confirm_reset_enter_does_not_confirm() {
     // Enter no longer resets — only `y` does. Any other key cancels.
     let mut state = AppState::new(two_list_document_first_list_almost_done());
-    let done_before = state.document.checkbox_stats().0;
+    let done_before = state.document.progress().done;
     state.handle_key(KeyCode::Char('R'));
     assert_eq!(state.overlay, Some(Overlay::ConfirmReset));
     state.handle_key(KeyCode::Enter);
     assert_eq!(shown(&state), (View::Checklist, None), "Enter cancels");
     assert_eq!(
-        state.document.checkbox_stats().0,
+        state.document.progress().done,
         done_before,
         "Enter must not reset"
     );
@@ -193,7 +193,7 @@ fn confirm_quit_reset_yes_resets_and_quits() {
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('y'));
     assert!(state.quit_requested(), "y quits");
-    assert_eq!(state.document.checkbox_stats().0, 0, "y resets all tasks");
+    assert_eq!(state.document.progress().done, 0, "y resets all tasks");
 }
 
 #[test]
@@ -247,18 +247,18 @@ fn confirm_quit_reset_yes_stays_running_when_the_write_fails() {
         Some(Overlay::ConfirmQuitReset),
         "y retries, n quits"
     );
-    assert_eq!(state.document.checkbox_stats().0, 2, "nothing was reset");
+    assert_eq!(state.document.progress().done, 2, "nothing was reset");
 }
 
 #[test]
 fn confirm_quit_reset_no_quits_without_resetting() {
     let mut state = AppState::new(all_done_document());
-    let done_before = state.document.checkbox_stats().0;
+    let done_before = state.document.progress().done;
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('n'));
     assert!(state.quit_requested(), "n quits");
     assert_eq!(
-        state.document.checkbox_stats().0,
+        state.document.progress().done,
         done_before,
         "n must not reset"
     );

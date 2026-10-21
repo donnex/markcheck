@@ -33,6 +33,49 @@ impl TaskState {
     pub fn is_resolved(self) -> bool {
         matches!(self, TaskState::Done | TaskState::Skipped)
     }
+
+    /// The state a toggle key aimed at `target` leaves: `target`, or back to
+    /// not started when the task is already there.
+    pub fn toggle(self, target: TaskState) -> TaskState {
+        if self == target {
+            TaskState::NotStarted
+        } else {
+            target
+        }
+    }
+
+    /// The state as a status message names it: `Marked done`,
+    /// `Undo: marked not done`.
+    pub fn marked(self) -> &'static str {
+        match self {
+            TaskState::NotStarted => "not done",
+            TaskState::Started => "started",
+            TaskState::Done => "done",
+            TaskState::Skipped => "skipped",
+        }
+    }
+
+    /// The confirmation for a toggle from `self` to `new`: `Marked skipped`
+    /// going in, `Marked not skipped` coming back out.
+    pub fn toggle_message(self, new: TaskState) -> String {
+        if new == TaskState::NotStarted && self != TaskState::NotStarted {
+            format!("Marked not {}", self.marked())
+        } else {
+            format!("Marked {}", new.marked())
+        }
+    }
+
+    /// The verb naming a change *into* this state in a git-sync commit
+    /// message: `Check "Restart service"`, `Start "..."`, `Uncheck "..."`,
+    /// `Skip "..."`.
+    pub fn commit_verb(self) -> &'static str {
+        match self {
+            TaskState::NotStarted => "Uncheck",
+            TaskState::Started => "Start",
+            TaskState::Done => "Check",
+            TaskState::Skipped => "Skip",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +199,60 @@ impl Item {
     }
 }
 
+/// Task counts by state, for a list or the whole document. Skipped tasks
+/// don't apply to this run, so they stay outside [`Progress::total`], the
+/// `done/total` every counter shows (#54).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Progress {
+    pub done: usize,
+    pub started: usize,
+    pub skipped: usize,
+    /// Not started.
+    pub open: usize,
+}
+
+impl Progress {
+    /// The tasks a run has to finish: everything but skipped.
+    pub fn total(self) -> usize {
+        self.done + self.started + self.open
+    }
+
+    /// Done or skipped: nothing left to decide.
+    pub fn resolved(self) -> usize {
+        self.done + self.skipped
+    }
+
+    /// Every task, skipped ones included.
+    pub fn tasks(self) -> usize {
+        self.total() + self.skipped
+    }
+
+    /// Every task is resolved, and there is at least one.
+    pub fn is_finished(self) -> bool {
+        self.resolved() > 0 && self.resolved() == self.tasks()
+    }
+
+    fn with(self, state: TaskState) -> Progress {
+        let mut next = self;
+        *match state {
+            TaskState::NotStarted => &mut next.open,
+            TaskState::Started => &mut next.started,
+            TaskState::Done => &mut next.done,
+            TaskState::Skipped => &mut next.skipped,
+        } += 1;
+        next
+    }
+
+    fn plus(self, other: Progress) -> Progress {
+        Progress {
+            done: self.done + other.done,
+            started: self.started + other.started,
+            skipped: self.skipped + other.skipped,
+            open: self.open + other.open,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct List {
     pub title: String,
@@ -166,40 +263,15 @@ pub struct List {
 }
 
 impl List {
-    /// Returns (done, started, total) counting only Checkbox items; DisplayOnly
-    /// items are excluded since they can't be completed, and so are skipped
-    /// tasks, which don't apply to this run (see `skipped_count`). `started`
-    /// is the in-progress state, surfaced distinctly (e.g. the progress bar).
-    pub fn checkbox_progress(&self) -> (usize, usize, usize) {
-        let mut done = 0;
-        let mut started = 0;
-        let mut total = 0;
-        for item in &self.items {
-            if let ItemKind::Checkbox(state) = item.kind {
-                match state {
-                    TaskState::Done => done += 1,
-                    TaskState::Started => started += 1,
-                    TaskState::NotStarted => {}
-                    TaskState::Skipped => continue,
-                }
-                total += 1;
-            }
-        }
-        (done, started, total)
-    }
-
-    /// How many tasks are skipped (`[-]`).
-    pub fn skipped_count(&self) -> usize {
+    /// How the list's tasks stand; notes are not counted.
+    pub fn progress(&self) -> Progress {
         self.items
             .iter()
-            .filter(|item| item.kind == ItemKind::Checkbox(TaskState::Skipped))
-            .count()
-    }
-
-    /// Returns (done, total) counting only Checkbox items.
-    pub fn checkbox_stats(&self) -> (usize, usize) {
-        let (done, _started, total) = self.checkbox_progress();
-        (done, total)
+            .filter_map(|item| match item.kind {
+                ItemKind::Checkbox(state) => Some(state),
+                ItemKind::DisplayOnly => None,
+            })
+            .fold(Progress::default(), Progress::with)
     }
 
     /// Indices of the items that begin a `### H3`+ sub-section, where the
@@ -493,14 +565,12 @@ pub struct Document {
 }
 
 impl Document {
-    /// Returns (done, started, total) checkbox counts summed across all lists.
-    pub fn checkbox_progress(&self) -> (usize, usize, usize) {
-        self.lists.iter().map(List::checkbox_progress).fold(
-            (0, 0, 0),
-            |(done_acc, started_acc, total_acc), (done, started, total)| {
-                (done_acc + done, started_acc + started, total_acc + total)
-            },
-        )
+    /// How the tasks of every list stand.
+    pub fn progress(&self) -> Progress {
+        self.lists
+            .iter()
+            .map(List::progress)
+            .fold(Progress::default(), Progress::plus)
     }
 
     /// The first task after the heading `anchor` names (without its `#`),
@@ -528,17 +598,6 @@ impl Document {
             .get(list_index)
             .and_then(|list| list.items.get(item_index))
             .is_some_and(|item| self.critical.contains(&item.line_number))
-    }
-
-    /// Skipped tasks summed across all lists.
-    pub fn skipped_count(&self) -> usize {
-        self.lists.iter().map(List::skipped_count).sum()
-    }
-
-    /// Returns (done, total) checkbox counts summed across all lists.
-    pub fn checkbox_stats(&self) -> (usize, usize) {
-        let (done, _started, total) = self.checkbox_progress();
-        (done, total)
     }
 
     /// The number of sub-lists in all lists **before** `list_index` — the

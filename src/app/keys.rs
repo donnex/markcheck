@@ -566,8 +566,7 @@ impl AppState {
         if code == KeyCode::Char('q') {
             // When every task is done or skipped, offer to reset before
             // quitting instead of quitting outright.
-            let (done, _started, total) = self.document.checkbox_progress();
-            if done == total && done + self.document.skipped_count() > 0 {
+            if self.document.progress().is_finished() {
                 self.overlay = Some(Overlay::ConfirmQuitReset);
             } else {
                 self.effects.push(Effect::Quit);

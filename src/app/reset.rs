@@ -5,8 +5,8 @@ use crate::model::{AppState, ItemKind, Overlay, ResetScope, TaskState, View};
 
 impl AppState {
     pub(super) fn request_reset(&mut self) {
-        let (done, started, _total) = self.document.checkbox_progress();
-        if done == 0 && started == 0 && self.document.skipped_count() == 0 {
+        let progress = self.document.progress();
+        if progress.open == progress.tasks() {
             self.set_error("Nothing to reset: no tasks are done".to_string());
             return;
         }
