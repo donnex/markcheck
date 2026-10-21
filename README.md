@@ -757,9 +757,10 @@ one line on stderr after the screen closes saying so (e.g. `markcheck: git
 sync failed: ...`), so you don't walk away thinking the change was published.
 That holds whether the problem came up while quitting or earlier in the
 session, until a later sync lands. The exit status stays 0. A second
-`SIGTERM` or `SIGINT` doesn't wait: `markcheck` exits at once with status 1,
-without that stderr line and without restoring the terminal (run `reset` if
-it's left in a strange state). `Ctrl-Z` also starts a change still waiting
+`SIGTERM` or `SIGINT` doesn't wait: the sync's `git` processes are killed at
+once and cleaned up, the terminal is restored, and `markcheck` exits with
+status 1 and `stopped by a second signal`. Only a third exits on the spot,
+without restoring the terminal (run `reset` if it's left in a strange state). `Ctrl-Z` also starts a change still waiting
 out the quiet period straight away and waits up to 5 seconds for it, with
 `Waiting for git sync before suspending…`, since a stopped `markcheck` can't
 commit or push: checking a step, then `Ctrl-Z` to run its command, publishes

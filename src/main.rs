@@ -24,7 +24,7 @@ mod writer;
 
 use std::io::{self, IsTerminal, Write as _};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
@@ -403,7 +403,7 @@ fn main() -> anyhow::Result<()> {
             if sync.is_busy() {
                 let _ = writeln!(io::stderr(), "markcheck: waiting for git sync…");
             }
-            settle_git_sync(sync)
+            settle_git_sync(sync, &signals)
         }),
     };
     // Printed only once the alternate screen is gone, so it stays visible.
@@ -411,15 +411,20 @@ fn main() -> anyhow::Result<()> {
     if let Some(report) = report {
         let _ = writeln!(io::stderr(), "{report}");
     }
+    if result.is_ok() && signals.hurried() {
+        anyhow::bail!("stopped by a second signal");
+    }
     result.map(|_| ())
 }
 
 /// `SIGTERM`, `SIGHUP` (a closed terminal or dropped SSH session) and a
 /// `SIGINT` from `kill` set `stop`, so `run` ends the way `q` does and git
-/// sync is waited for and cleaned up. A second `SIGTERM` or `SIGINT` exits
-/// at once, for when that wait is too long.
+/// sync is waited for and cleaned up. A second `SIGTERM` or `SIGINT` cuts
+/// that wait short: the sync is killed at once and the terminal still
+/// restored. Only a third exits on the spot.
 struct StopSignals {
     stop: Arc<AtomicBool>,
+    repeats: Arc<AtomicUsize>,
     interrupt: [signal_hook::SigId; 2],
 }
 
@@ -429,22 +434,50 @@ impl StopSignals {
         use signal_hook::flag;
 
         let stop = Arc::new(AtomicBool::new(false));
-        flag::register_conditional_shutdown(SIGTERM, 1, Arc::clone(&stop))?;
+        let repeats = Arc::new(AtomicUsize::new(0));
+        Self::register_repeat(SIGTERM, &repeats)?;
         for signal in [SIGTERM, SIGHUP] {
             flag::register(signal, Arc::clone(&stop))?;
         }
-        let interrupt = Self::register_interrupt(&stop)?;
-        Ok(Self { stop, interrupt })
+        let interrupt = Self::register_interrupt(&stop, &repeats)?;
+        Ok(Self {
+            stop,
+            repeats,
+            interrupt,
+        })
     }
 
-    fn register_interrupt(stop: &Arc<AtomicBool>) -> io::Result<[signal_hook::SigId; 2]> {
+    fn register_interrupt(
+        stop: &Arc<AtomicBool>,
+        repeats: &Arc<AtomicUsize>,
+    ) -> io::Result<[signal_hook::SigId; 2]> {
         use signal_hook::consts::SIGINT;
-        use signal_hook::flag;
 
         Ok([
-            flag::register_conditional_shutdown(SIGINT, 1, Arc::clone(stop))?,
-            flag::register(SIGINT, Arc::clone(stop))?,
+            Self::register_repeat(SIGINT, repeats)?,
+            signal_hook::flag::register(SIGINT, Arc::clone(stop))?,
         ])
+    }
+
+    /// Counts `signal`, and exits on the third `SIGTERM`/`SIGINT` in all.
+    fn register_repeat(
+        signal: libc::c_int,
+        repeats: &Arc<AtomicUsize>,
+    ) -> io::Result<signal_hook::SigId> {
+        let repeats = Arc::clone(repeats);
+        let action = move || {
+            if repeats.fetch_add(1, Ordering::SeqCst) >= 2 {
+                signal_hook::low_level::exit(1);
+            }
+        };
+        // SAFETY: the action only touches an atomic and calls `_exit`, both
+        // async-signal-safe.
+        unsafe { signal_hook::low_level::register(signal, action) }
+    }
+
+    /// A second `SIGTERM`/`SIGINT` arrived: stop waiting for git sync.
+    fn hurried(&self) -> bool {
+        self.repeats.load(Ordering::SeqCst) >= 2
     }
 
     fn stopped(&self) -> bool {
@@ -465,7 +498,7 @@ impl StopSignals {
             unregister(id);
         }
         let result = child();
-        let restored = Self::register_interrupt(&self.stop);
+        let restored = Self::register_interrupt(&self.stop, &self.repeats);
         if let Ok(interrupt) = restored {
             self.interrupt = interrupt;
             unregister(dropped);
@@ -502,7 +535,7 @@ where
         if signals.stopped() {
             return Ok(git_sync.as_mut().and_then(|sync| {
                 sync.flush();
-                settle_git_sync(sync)
+                settle_git_sync(sync, signals)
             }));
         }
         dirty |= reload.check(state, Instant::now());
@@ -568,7 +601,7 @@ where
                 Event::Key(key) if quitting && key.kind == KeyEventKind::Press => {
                     if key.code == KeyCode::Char('q') {
                         let sync = git_sync.as_mut().expect("quitting waits only on a sync");
-                        return Ok(finish_git_sync(sync));
+                        return Ok(finish_git_sync(sync, signals));
                     }
                     state.set_notice(WAITING_FOR_SYNC.to_string());
                 }
@@ -616,7 +649,9 @@ where
         }
     }
 
-    Ok(git_sync.as_mut().and_then(finish_git_sync))
+    Ok(git_sync
+        .as_mut()
+        .and_then(|sync| finish_git_sync(sync, signals)))
 }
 
 /// Carries out `AppState`'s effects against the real terminal, processes
@@ -651,9 +686,12 @@ where
 
     fn suspend(&mut self, state: &mut AppState) -> anyhow::Result<()> {
         let still_running = match self.git_sync.as_mut() {
-            Some(sync) => settle_git_sync_before_suspend(self.terminal, state, sync)?,
+            Some(sync) => settle_git_sync_before_suspend(self.terminal, state, sync, self.signals)?,
             None => false,
         };
+        if self.signals.stopped() {
+            return Ok(());
+        }
         suspend_to_shell(self.terminal, state, self.mouse, self.title, still_running)
     }
 
@@ -686,29 +724,32 @@ const QUIT_WAIT: Duration = Duration::from_secs(5);
 const ABANDON_GRACE: Duration = Duration::from_secs(2);
 
 /// Stops a running sync's git processes, then waits for the worker to remove
-/// its temporary index and scratch files.
-fn abandon_git_sync(sync: &mut git_sync::GitSync) {
-    sync.abandon(false);
-    sync.wait_for_outcomes(ABANDON_GRACE);
+/// its temporary index and scratch files. A hurried quit skips straight to
+/// `SIGKILL`.
+fn abandon_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) {
+    if !signals.hurried() {
+        sync.abandon(false);
+        sync.wait_for_outcomes_unless(ABANDON_GRACE, || signals.hurried());
+    }
     if sync.is_busy() {
         sync.abandon(true);
         sync.wait_for_outcomes(ABANDON_GRACE);
     }
 }
 
-/// Gives a running sync up to [`QUIT_WAIT`] to land, then finishes it as
-/// [`finish_git_sync`] does.
-fn settle_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
-    sync.wait_for_outcomes(QUIT_WAIT);
-    finish_git_sync(sync)
+/// Gives a running sync up to [`QUIT_WAIT`] to land, unless a second signal
+/// cuts the wait short, then finishes it as [`finish_git_sync`] does.
+fn settle_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) -> Option<String> {
+    sync.wait_for_outcomes_unless(QUIT_WAIT, || signals.hurried());
+    finish_git_sync(sync, signals)
 }
 
 /// Abandons whatever is still running, then gives the line to print after
 /// the TUI closes for a sync problem still standing, however long before the
 /// quit it was reported.
-fn finish_git_sync(sync: &mut git_sync::GitSync) -> Option<String> {
+fn finish_git_sync(sync: &mut git_sync::GitSync, signals: &StopSignals) -> Option<String> {
     if sync.is_busy() {
-        abandon_git_sync(sync);
+        abandon_git_sync(sync, signals);
     }
     git_sync::exit_report(sync.unresolved(), sync.is_busy())
 }
@@ -836,11 +877,13 @@ const SUSPENDED_MID_SYNC: &str = "markcheck: git sync paused while suspended; fg
 
 /// A stopped process commits and pushes nothing, so before `Ctrl-Z` stops it
 /// a change still in its quiet period starts now and a running sync gets up
-/// to [`QUIT_WAIT`] to land. Returns whether one is still running.
+/// to [`QUIT_WAIT`] to land, or until a signal asks markcheck to quit.
+/// Returns whether one is still running.
 fn settle_git_sync_before_suspend<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
     sync: &mut git_sync::GitSync,
+    signals: &StopSignals,
 ) -> anyhow::Result<bool>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
@@ -851,7 +894,7 @@ where
         state.git_sync.busy = true;
         state.git_sync.waiting = false;
         terminal.draw(|frame| ui::render(frame, state))?;
-        for outcome in sync.wait_for_outcomes(QUIT_WAIT) {
+        for outcome in sync.wait_for_outcomes_unless(QUIT_WAIT, || signals.stopped()) {
             state.apply_git_sync_outcome(&outcome);
         }
         state.finish_waiting_to_suspend();

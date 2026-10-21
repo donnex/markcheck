@@ -455,9 +455,19 @@ impl GitSync {
     /// included, or `timeout` passes, and returns every outcome seen in
     /// order; [`GitSync::is_busy`] afterwards says whether it gave up.
     pub fn wait_for_outcomes(&mut self, timeout: Duration) -> Vec<SyncOutcome> {
+        self.wait_for_outcomes_unless(timeout, || false)
+    }
+
+    /// [`GitSync::wait_for_outcomes`], giving up early as soon as
+    /// `give_up` returns true.
+    pub fn wait_for_outcomes_unless(
+        &mut self,
+        timeout: Duration,
+        give_up: impl Fn() -> bool,
+    ) -> Vec<SyncOutcome> {
         let deadline = Instant::now() + timeout;
         let mut outcomes = Vec::new();
-        while self.busy && Instant::now() < deadline {
+        while self.busy && Instant::now() < deadline && !give_up() {
             outcomes.extend(self.poll());
             if self.busy {
                 std::thread::sleep(Duration::from_millis(20));

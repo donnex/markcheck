@@ -667,6 +667,15 @@ fn abandon_stops_the_running_git_and_starts_no_more() {
         sync.is_busy(),
         "the wait gives up while the hook still runs"
     );
+    let asked = Instant::now();
+    assert_eq!(
+        sync.wait_for_outcomes_unless(Duration::from_secs(60), || true),
+        vec![]
+    );
+    assert!(
+        sync.is_busy() && asked.elapsed() < Duration::from_secs(30),
+        "a wait told to give up returns at once, the sync still running"
+    );
     assert!(sync.abandon(false), "the commit's git was running");
 
     let outcomes = settle(&mut sync);

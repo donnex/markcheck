@@ -1389,6 +1389,49 @@ fn sigterm_mid_sync_quits_cleanly_and_leaves_nothing_behind() {
 }
 
 #[test]
+fn a_second_sigterm_mid_sync_kills_it_and_still_restores_the_terminal() {
+    // The hook shrugs off SIGTERM, so only the hurried path's SIGKILL ends it
+    // before the 5 s wait and the 2 s grace have both run out.
+    let (path, pid_file) = repo_with_a_slow_hook("gitsync-sigterm-twice", "trap '' TERM\nsleep 30");
+    let work = path.parent().unwrap().to_path_buf();
+
+    let mut session = git_sync_session(&path);
+    session.key(" ");
+    let hook_pid = wait_for_hook_pid(&pid_file);
+    let markcheck_pid = session.child.process_id().unwrap().to_string();
+    let sent = Instant::now();
+    for _ in 0..2 {
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &markcheck_pid])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    let (ok, output) = session.finish_within(Duration::from_secs(60));
+    assert!(
+        sent.elapsed() < Duration::from_secs(7),
+        "the wait is cut short"
+    );
+    assert!(!ok, "a second signal exits unsuccessfully");
+
+    assert!(output.contains("\x1b[?1049l"), "the terminal is restored");
+    assert!(
+        output.contains("stopped by a second signal"),
+        "the exit says why:\n{output}"
+    );
+    assert!(
+        !still_running_after_a_while(&hook_pid),
+        "the hook must not outlive markcheck"
+    );
+    assert_eq!(temp_indexes_left(&work), Vec::<String>::new());
+    let out = git(&work)
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "init");
+}
+
+#[test]
 fn a_burst_of_toggles_waits_then_becomes_one_commit_on_quit() {
     // The default quiet period holds the sync; the title bar says so, and
     // quitting sends it at once as one commit.
