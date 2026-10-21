@@ -180,6 +180,10 @@ markcheck notes.md)`).
 Set defaults for the flags above so you don't have to pass them every
 time, in a TOML file at `$XDG_CONFIG_HOME/markcheck/config.toml` (falling
 back to `~/.config/markcheck/config.toml` if `XDG_CONFIG_HOME` isn't set).
+A relative `XDG_CONFIG_HOME` is ignored, as the XDG Base Directory
+specification says, and so is a relative `HOME` (no config file is read
+then), so the config never depends on the directory you run `markcheck`
+from.
 All keys are optional; a flag passed on the command line always overrides
 its config value.
 

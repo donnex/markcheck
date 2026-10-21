@@ -42,6 +42,25 @@ fn config_path_none_when_home_is_empty_and_xdg_unset() {
 }
 
 #[test]
+fn config_path_ignores_relative_xdg_config_home() {
+    let path = config_path(Some(".config"), Some("/home/user")).unwrap();
+    assert_eq!(
+        path,
+        PathBuf::from("/home/user/.config/markcheck/config.toml")
+    );
+}
+
+#[test]
+fn config_path_none_when_home_is_relative_and_xdg_unset() {
+    assert_eq!(config_path(None, Some("home/user")), None);
+}
+
+#[test]
+fn config_path_none_when_both_are_relative() {
+    assert_eq!(config_path(Some("xdg"), Some(".")), None);
+}
+
+#[test]
 fn load_config_missing_file_returns_defaults() {
     let path = unique_temp_path();
     assert_eq!(load_config(&path).unwrap(), Loaded::default());

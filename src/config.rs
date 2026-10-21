@@ -98,14 +98,18 @@ pub fn unknown_keys_warning(keys: &[String]) -> Option<String> {
     ))
 }
 
-/// `$XDG_CONFIG_HOME`, falling back to `$HOME/.config`. Takes the values
-/// as arguments so tests don't touch the environment.
+/// `$XDG_CONFIG_HOME`, falling back to `$HOME/.config`. A value that is
+/// empty or not an absolute path is ignored, as the XDG Base Directory
+/// specification requires, so the config never depends on the current
+/// directory. Takes the values as arguments so tests don't touch the
+/// environment.
 pub fn config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    let absolute = |v: &&str| Path::new(v).is_absolute();
     let base = xdg_config_home
-        .filter(|v| !v.is_empty())
+        .filter(absolute)
         .map(PathBuf::from)
         .or_else(|| {
-            home.filter(|v| !v.is_empty())
+            home.filter(absolute)
                 .map(|h| PathBuf::from(h).join(".config"))
         })?;
     Some(base.join("markcheck").join("config.toml"))

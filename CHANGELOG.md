@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - A checklist can no longer send escape sequences to your terminal through its title, a task's label or its file name. These were written to the terminal title, the line printed on quit and git-sync's messages without being cleaned, so a crafted checklist could, for example, silently replace your clipboard with a command of its choosing the next time you ticked a task or quit. Control characters are now dropped from all of them, and from git-sync commit messages. (#145)
+- A relative `XDG_CONFIG_HOME` or `HOME` is now ignored when looking for the config file, as the XDG Base Directory specification requires. With `XDG_CONFIG_HOME=.config`, for example, markcheck read `.config/markcheck/config.toml` from whatever directory you ran it in, so the settings changed from one directory to the next, and a project or unpacked archive carrying that file could turn git sync on for the checklists opened from it. markcheck now falls back to `~/.config/markcheck/config.toml`, and reads no config file when `HOME` is relative too. (#234)
 
 ## [1.3.0] - 2026-10-20
 

@@ -27,7 +27,7 @@ const VERSION: &str = concat!(
     version = VERSION,
     after_help = "Defaults for the flags above can be set in the config file \
                   $XDG_CONFIG_HOME/markcheck/config.toml \
-                  (or ~/.config/markcheck/config.toml when XDG_CONFIG_HOME is unset). \
+                  (or ~/.config/markcheck/config.toml when XDG_CONFIG_HOME is unset or relative). \
                   --config PATH reads another file instead; --no-config skips it."
 )]
 pub struct Cli {
@@ -218,7 +218,8 @@ pub fn man_page() -> std::io::Result<Vec<u8>> {
 .TP
 \fI$XDG_CONFIG_HOME/markcheck/config.toml\fR
 Defaults for the flags, one key per flag (for example \fBnerd_font = true\fR).
-Without \fBXDG_CONFIG_HOME\fR, \fI~/.config/markcheck/config.toml\fR.
+Without \fBXDG_CONFIG_HOME\fR, or when it is not an absolute path,
+\fI~/.config/markcheck/config.toml\fR; a relative \fBHOME\fR is ignored too.
 \fB\-\-config\fR reads another file; \fB\-\-no\-config\fR skips it.
 .SH ENVIRONMENT
 .TP

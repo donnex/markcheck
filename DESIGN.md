@@ -701,7 +701,7 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 
 ## Config File (`src/config.rs`)
 
-`$XDG_CONFIG_HOME/markcheck/config.toml`, else `$HOME/.config/markcheck/config.toml`; `--config PATH` reads another file (which must exist), `--no-config` reads none.
+`$XDG_CONFIG_HOME/markcheck/config.toml`, else `$HOME/.config/markcheck/config.toml`; a value that is empty or relative is ignored (XDG Base Directory spec, #234), so a `.config/markcheck/config.toml` in the working directory can never switch on git sync; `--config PATH` reads another file (which must exist), `--no-config` reads none.
 
 ```rust
 pub struct Config {
