@@ -68,6 +68,27 @@ jobs:
       - name: cargo deny check licenses
         run: cargo deny check licenses
 
+      # deny.toml's list is checked on every push, about.toml's only when
+      # release.yml generates the license notices after a tag is pushed; a
+      # license on one list but not the other would pass here and fail the
+      # release (#203).
+      - name: deny.toml and about.toml allow the same licenses
+        run: |
+          python3 -c '
+          import sys, tomllib
+          with open("deny.toml", "rb") as f:
+              deny = set(tomllib.load(f)["licenses"]["allow"])
+          with open("about.toml", "rb") as f:
+              about = set(tomllib.load(f)["accepted"])
+          if deny != about:
+              for lic in sorted(deny - about):
+                  print(f"::error::{lic} is allowed in deny.toml but not accepted in about.toml")
+              for lic in sorted(about - deny):
+                  print(f"::error::{lic} is accepted in about.toml but not allowed in deny.toml")
+              sys.exit(1)
+          print(f"deny.toml and about.toml allow the same {len(deny)} licenses")
+          '
+
       - name: Build
         run: cargo build --locked
 
@@ -86,7 +107,9 @@ jobs:
             --fail-under-lines 97 --fail-under-regions 97
 
   # Cargo.toml's rust-version is a promise to anyone building from source;
-  # building with exactly that toolchain keeps it true (#44).
+  # building with exactly that toolchain keeps it true (#44). The version is
+  # read from the manifest rather than copied here, so changing rust-version
+  # changes what this job builds with (#203).
   msrv:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -96,10 +119,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust 1.88 (Cargo.toml rust-version)
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          set -euo pipefail
+          msrv="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')"
+          if [ -z "$msrv" ] || [ "$msrv" = "null" ]; then
+            echo "::error::Cargo.toml has no rust-version" >&2
+            exit 1
+          fi
+          echo "Cargo.toml rust-version: $msrv"
+          echo "version=$msrv" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }} (Cargo.toml rust-version)
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch
         with:
-          toolchain: "1.88.0"
+          toolchain: ${{ steps.msrv.outputs.version }}
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
