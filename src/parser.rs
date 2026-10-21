@@ -166,7 +166,9 @@ fn blank_front_matter(source: &str) -> Cow<'_, str> {
 /// the block structure: as text, `[/]` makes a paragraph that swallows an
 /// ordered sub-list starting at 2 on the next line, which as a marker it
 /// leaves alone, hiding that sub-list's own `[/]` from the first parse.
-/// Each round only turns more markers into real ones, so it ends.
+/// Each round only uncovers one more level of such a chain, so the rounds
+/// stop after `EXTENDED_MARKER_ROUNDS`, leaving deeper lookalikes as text
+/// rather than reparsing a crafted file once per level (#216).
 ///
 /// A heading inside an item, or an item whose first line is empty, can put
 /// a lookalike where a marker would sit without pulldown-cmark reading one
@@ -175,21 +177,28 @@ fn blank_front_matter(source: &str) -> Cow<'_, str> {
 fn extract_extended_markers(raw: &str) -> (String, HashMap<usize, TaskState>) {
     let mut processed = raw.to_string();
     let mut markers = HashMap::new();
-    loop {
+    for _ in 0..EXTENDED_MARKER_ROUNDS {
         let found: Vec<(usize, TaskState)> = extended_markers_in(&processed)
             .into_iter()
             .filter(|(offset, _)| !markers.contains_key(offset))
             .collect();
         if found.is_empty() {
-            restore_non_markers(raw, &mut processed, &mut markers);
-            return (processed, markers);
+            break;
         }
         for (offset, state) in found {
             processed.replace_range(offset..offset + 3, "[ ]");
             markers.insert(offset, state);
         }
     }
+    restore_non_markers(raw, &mut processed, &mut markers);
+    (processed, markers)
 }
+
+/// How many parses `extract_extended_markers` spends finding `[/]` and
+/// `[-]` markers. A real checklist settles in two; each further round only
+/// reaches one level deeper into a chain of bare markers over ordered
+/// sub-lists starting at 2.
+const EXTENDED_MARKER_ROUNDS: usize = 8;
 
 /// Undoes every rewrite in `markers` that pulldown-cmark doesn't report as
 /// a task marker in `processed`, putting back the bytes `raw` has there.

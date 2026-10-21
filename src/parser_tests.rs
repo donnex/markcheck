@@ -2601,3 +2601,34 @@ fn a_bang_in_a_tasks_bold_title_makes_it_critical() {
         "a note can't be checked, so isn't critical"
     );
 }
+
+#[test]
+fn a_deep_chain_of_hidden_started_sub_tasks_stops_after_the_round_cap() {
+    // Each level's `[/]` as text swallows the next level, so every round only
+    // uncovers one more; past the cap the rest stay text instead of costing
+    // a full parse per level (#216).
+    let depth = 400;
+    let mut source = String::from("- [/]\n");
+    for level in 1..depth {
+        source.push_str(&" ".repeat(2 + 3 * (level - 1)));
+        source.push_str("2. [/]\n");
+    }
+    let started = std::time::Instant::now();
+    let document = parse_source(&source, PathBuf::from("t.md"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let kinds: Vec<_> = document.lists[0]
+        .items
+        .iter()
+        .map(|item| (item.line_number, item.kind))
+        .collect();
+    let expected: Vec<_> = (1..=EXTENDED_MARKER_ROUNDS)
+        .map(|line| (line, ItemKind::Checkbox(TaskState::Started)))
+        .collect();
+    assert_eq!(kinds[..EXTENDED_MARKER_ROUNDS], expected[..]);
+    assert!(
+        kinds[EXTENDED_MARKER_ROUNDS..]
+            .iter()
+            .all(|(_, kind)| *kind != ItemKind::Checkbox(TaskState::Started)),
+        "{kinds:?}"
+    );
+}

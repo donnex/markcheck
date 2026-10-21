@@ -375,7 +375,10 @@ Finer points:
   render both as literal text rather than a checkbox. Either one is a state
   only where `[ ]` would be a checkbox; anywhere else, such as after the `#`
   of a heading inside a bullet (`- # [/] Wait for the rollout`) or on the
-  line after an empty `-`, it stays on the card as written.
+  line after an empty `-`, it stays on the card as written. A bare `[/]` or
+  `[-]` with nothing after it, over an ordered sub-list starting at 2 whose
+  first item is the same again, is recognised only to 8 levels deep; below
+  that it stays text.
 - **A blockquoted checkbox is never a live task.** `> - [ ] ...` reads as a
   quoted example (e.g. illustrating another runbook's output) rather than
   something to actually do, so it always renders as a plain, non-toggleable
