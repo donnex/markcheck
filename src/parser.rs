@@ -167,6 +167,11 @@ fn blank_front_matter(source: &str) -> Cow<'_, str> {
 /// ordered sub-list starting at 2 on the next line, which as a marker it
 /// leaves alone, hiding that sub-list's own `[/]` from the first parse.
 /// Each round only turns more markers into real ones, so it ends.
+///
+/// A heading inside an item, or an item whose first line is empty, can put
+/// a lookalike where a marker would sit without pulldown-cmark reading one
+/// there, so a last parse restores every rewrite it doesn't report as a
+/// `TaskListMarker`, keeping the card's text the file's.
 fn extract_extended_markers(raw: &str) -> (String, HashMap<usize, TaskState>) {
     let mut processed = raw.to_string();
     let mut markers = HashMap::new();
@@ -176,6 +181,7 @@ fn extract_extended_markers(raw: &str) -> (String, HashMap<usize, TaskState>) {
             .filter(|(offset, _)| !markers.contains_key(offset))
             .collect();
         if found.is_empty() {
+            restore_non_markers(raw, &mut processed, &mut markers);
             return (processed, markers);
         }
         for (offset, state) in found {
@@ -183,6 +189,23 @@ fn extract_extended_markers(raw: &str) -> (String, HashMap<usize, TaskState>) {
             markers.insert(offset, state);
         }
     }
+}
+
+/// Undoes every rewrite in `markers` that pulldown-cmark doesn't report as
+/// a task marker in `processed`, putting back the bytes `raw` has there.
+fn restore_non_markers(raw: &str, processed: &mut String, markers: &mut HashMap<usize, TaskState>) {
+    let reported: HashSet<usize> = Parser::new_ext(processed, PARSE_OPTIONS)
+        .into_offset_iter()
+        .filter(|(event, _)| matches!(event, Event::TaskListMarker(_)))
+        .map(|(_, range)| range.start)
+        .collect();
+    markers.retain(|&offset, _| {
+        let keep = reported.contains(&offset);
+        if !keep {
+            processed.replace_range(offset..offset + 3, &raw[offset..offset + 3]);
+        }
+        keep
+    });
 }
 
 /// The `[/]` and `[-]` markers one parse of `source` sees, by offset.

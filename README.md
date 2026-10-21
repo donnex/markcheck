@@ -367,7 +367,10 @@ Finer points:
   icons and glyphs alone.
 - **`[/]` (started / in-progress)** is markcheck's own convention, and `[-]`
   (skipped) the one Obsidian's task plugins use; GitHub and most other tools
-  render both as literal text rather than a checkbox.
+  render both as literal text rather than a checkbox. Either one is a state
+  only where `[ ]` would be a checkbox; anywhere else, such as after the `#`
+  of a heading inside a bullet (`- # [/] Wait for the rollout`) or on the
+  line after an empty `-`, it stays on the card as written.
 - **A blockquoted checkbox is never a live task.** `> - [ ] ...` reads as a
   quoted example (e.g. illustrating another runbook's output) rather than
   something to actually do, so it always renders as a plain, non-toggleable

@@ -2062,6 +2062,23 @@ fn extract_extended_markers_boundary_sweep_agrees_with_pulldown() {
         }
     }
 
+    for shape in [
+        "- # [/] task\n",
+        "- ### [/] task\n",
+        "- # [/] task #\n",
+        "- \n  [/] task\n",
+        "-\n  [/] task\n",
+        "- \n  # [/] task\n",
+        "- [/] task\n  ---\n",
+        "- [/] task\n  - \n",
+    ] {
+        for state in states {
+            let source = format!("## S\n\n- [ ] a\n{}", shape.replace("[/]", state));
+            assert_pre_pass_agrees_with_pulldown(&source);
+        }
+        assert_pre_pass_agrees_with_pulldown(&format!("## S\n\n- [ ] a\n{shape}"));
+    }
+
     let mut wrappers: Vec<(String, String)> = Vec::new();
     for fence_char in ['`', '~'] {
         let info_strings: &[&str] = if fence_char == '`' {
@@ -2138,6 +2155,45 @@ fn started_marker_without_trailing_whitespace_is_left_alone() {
     let items = &parse(source).lists[0].items;
     assert_eq!(items[1].kind, ItemKind::DisplayOnly);
     assert_eq!(items[1].display_text, "[/]x");
+}
+
+#[test]
+fn a_lookalike_pulldown_does_not_read_as_a_marker_keeps_its_text() {
+    for (source, label) in [
+        (
+            "## S\n\n- [ ] a\n- # [/] Wait for the rollout\n",
+            "[/] Wait for the rollout",
+        ),
+        (
+            "## S\n\n- [ ] a\n- # [-] Wait for the rollout\n",
+            "[-] Wait for the rollout",
+        ),
+        ("## S\n\n- [ ] a\n- \n  [/] step\n", "[/] step"),
+        ("## S\n\n- [ ] a\n- \n  [-] step\n", "[-] step"),
+    ] {
+        let items = &parse(source).lists[0].items;
+        assert_eq!(items[1].kind, ItemKind::DisplayOnly, "{source:?}");
+        assert_eq!(items[1].label(), label, "{source:?}");
+        let (processed, markers) = extract_extended_markers(source);
+        assert_eq!(processed, source);
+        assert!(markers.is_empty(), "{source:?}");
+    }
+}
+
+#[test]
+fn a_restored_lookalike_leaves_the_real_markers_promoted() {
+    let source = "## S\n\n- [/] a\n- # [-] h\n- [-] b\n";
+    let items = &parse(source).lists[0].items;
+    let kinds: Vec<_> = items.iter().map(|item| item.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ItemKind::Checkbox(TaskState::Started),
+            ItemKind::DisplayOnly,
+            ItemKind::Checkbox(TaskState::Skipped),
+        ]
+    );
+    assert_eq!(items[1].label(), "[-] h");
 }
 
 #[test]

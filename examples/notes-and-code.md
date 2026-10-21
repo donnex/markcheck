@@ -127,6 +127,11 @@ Non-task content and the ways code is handled.
 >   blockquoted checkbox never becomes a live task
 > - [/] Neither does a quoted "started" marker — still just reference text
 
+- ### [-] marks a skipped step
+
+  A `[-]` after a heading's `#` is not a task marker, so this note card keeps
+  it as written instead of showing an open checkbox
+
 ## Precondition with a command
 
 - **Export the environment first:**

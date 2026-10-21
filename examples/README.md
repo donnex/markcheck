@@ -40,7 +40,9 @@ markcheck examples/basics.md
   text, never a `y` candidate), a note that has a command but no checkbox
   (copyable, not a task), an indented (4-space) code block inside a task that
   renders and copies like a fenced one, a blockquoted `> - [ ]` and `> - [/]` example that
-  both render as a non-interactive note rather than a live task, inline vs
+  both render as a non-interactive note rather than a live task, a
+  `- ### [-] …` heading bullet whose `[-]` is no task marker and shows as
+  written, inline vs
   fenced code,
   multi-command tasks (inline and fenced) numbered `[1]`/`[2]` for `y` then a
   digit, a tab-indented fenced block whose tabs show as indentation (and
