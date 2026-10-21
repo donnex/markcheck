@@ -7,7 +7,7 @@ fn search_text_combines_header_body_and_code_blocks() {
     // and fenced command blocks — the last aren't part of display_text.
     let item = Item {
         header: Some("Reboot".to_string()),
-        code_blocks: vec!["systemctl restart svc".to_string()],
+        code_blocks: vec!["systemctl restart svc".into()],
         ..checkbox(1, "restart the service", false)
     };
     let text = item.search_text();
@@ -898,4 +898,71 @@ fn the_multiplexer_comes_from_tmux_then_a_screen_term() {
     assert_eq!(detect(Some(""), Some("screen")), Multiplexer::Screen);
     assert_eq!(detect(None, Some("xterm-256color")), Multiplexer::None);
     assert_eq!(detect(None, None), Multiplexer::None);
+}
+
+fn block(text: &str, kind: CodeKind) -> CodeBlock {
+    CodeBlock {
+        text: text.to_string(),
+        kind,
+    }
+}
+
+#[test]
+fn a_fence_info_string_names_its_code_kind_by_its_first_word() {
+    for info in [
+        "text",
+        "output",
+        "plaintext",
+        "TEXT",
+        "text {.wide}",
+        "output,raw",
+    ] {
+        assert_eq!(CodeKind::from_info(info), CodeKind::Output, "{info}");
+    }
+    for info in ["console", "shell-session", "Console title=run"] {
+        assert_eq!(CodeKind::from_info(info), CodeKind::Console, "{info}");
+    }
+    for info in ["", "sh", "bash", "textile", "shell"] {
+        assert_eq!(CodeKind::from_info(info), CodeKind::Command, "{info}");
+    }
+}
+
+#[test]
+fn only_a_command_or_a_transcript_with_a_prompt_has_copy_text() {
+    assert_eq!(
+        block("make build\nmake test", CodeKind::Command).copy_text(),
+        Some("make build\nmake test".to_string())
+    );
+    assert_eq!(block("Active: running", CodeKind::Output).copy_text(), None);
+    assert_eq!(
+        block(
+            "$ example-cli migrate\nApplied 3 migrations.\n# example-cli restart\n$ \n$x",
+            CodeKind::Console
+        )
+        .copy_text(),
+        Some("example-cli migrate\nexample-cli restart".to_string()),
+        "prompt lines without their prompt; an empty prompt and `$x` are output"
+    );
+    assert_eq!(
+        block("Applied 3 migrations.", CodeKind::Console).copy_text(),
+        None
+    );
+}
+
+#[test]
+fn a_block_from_a_string_is_a_command_and_compares_with_it() {
+    let command = CodeBlock::from("make");
+    assert_eq!(command.kind, CodeKind::Command);
+    assert_eq!(command, "make".to_string());
+    assert_ne!(block("make", CodeKind::Output), "make".to_string());
+}
+
+#[test]
+fn expected_output_alone_is_not_a_command_block() {
+    let mut item = checkbox(1, "check", false);
+    assert!(!item.has_command_blocks());
+    item.code_blocks = vec![block("Active: running", CodeKind::Output)];
+    assert!(!item.has_command_blocks());
+    item.code_blocks.push("systemctl status".into());
+    assert!(item.has_command_blocks());
 }

@@ -76,12 +76,19 @@ fn is_base(c: char) -> bool {
 }
 
 /// The commands `y` chooses between, in card order: code blocks (fenced or
-/// indented) take priority; inline spans are the fallback.
-pub fn candidates(item: &Item) -> &[String] {
-    if !item.code_blocks.is_empty() {
-        &item.code_blocks
+/// indented) that hold a command take priority; inline spans are the
+/// fallback. Expected output is never one, and a console transcript gives
+/// its prompt lines (see [`CodeBlock::copy_text`](crate::model::CodeBlock::copy_text)).
+pub fn candidates(item: &Item) -> Vec<String> {
+    let blocks: Vec<String> = item
+        .code_blocks
+        .iter()
+        .filter_map(|block| block.copy_text())
+        .collect();
+    if blocks.is_empty() {
+        item.code_spans.clone()
     } else {
-        &item.code_spans
+        blocks
     }
 }
 

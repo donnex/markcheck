@@ -32,7 +32,7 @@ fn find_matches_is_smart_case_and_in_document_order() {
 fn find_matches_searches_command_text() {
     // A task is findable by a command in its fenced block, not just prose.
     let mut item = text_item(1, "reboot the box");
-    item.code_blocks = vec!["systemctl restart nginx".to_string()];
+    item.code_blocks = vec!["systemctl restart nginx".into()];
     let state = AppState::new(document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,

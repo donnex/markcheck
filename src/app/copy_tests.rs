@@ -47,7 +47,7 @@ fn auto_copy_stays_silent_without_a_single_candidate() {
 
     // Ambiguous: put two candidates on the current item.
     let (si, ii) = (state.current_list_index, state.current_item_index);
-    state.document.lists[si].items[ii].code_blocks = vec!["one".to_string(), "two".to_string()];
+    state.document.lists[si].items[ii].code_blocks = vec!["one".into(), "two".into()];
     state.maybe_auto_copy();
     assert_eq!(state.status_message, None, "ambiguous set -> silent");
 }
@@ -234,7 +234,7 @@ fn y_with_multiple_candidates_arms_a_digit_prompt() {
     // (matching the card's [N] markers) and sets no status message, so the
     // status bar shows the prompt.
     let mut document = two_list_document();
-    document.lists[0].items[0].code_blocks = vec!["first".to_string(), "second".to_string()];
+    document.lists[0].items[0].code_blocks = vec!["first".into(), "second".into()];
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
     assert!(state.pending_copy_code(), "armed for a command number");
@@ -245,7 +245,7 @@ fn y_with_multiple_candidates_arms_a_digit_prompt() {
 #[test]
 fn y_then_two_digits_copies_command_ten() {
     let mut document = two_list_document();
-    document.lists[0].items[0].code_blocks = (1..=10).map(|n| format!("cmd-{n}")).collect();
+    document.lists[0].items[0].code_blocks = (1..=10).map(|n| format!("cmd-{n}").into()).collect();
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
     state.handle_key(KeyCode::Char('1'));
@@ -264,7 +264,7 @@ fn y_then_a_digit_copies_that_fenced_block_not_a_list() {
     // The armed digit selects a command and must pre-empt the global
     // digit→list jump.
     let mut document = two_list_document();
-    document.lists[0].items[0].code_blocks = vec!["first".to_string(), "second".to_string()];
+    document.lists[0].items[0].code_blocks = vec!["first".into(), "second".into()];
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
     state.handle_key(KeyCode::Char('2'));
@@ -374,7 +374,7 @@ fn every_copy_path_refuses_a_command_with_hidden_characters() {
     let hidden = "ls\x1b[201~\nrm -rf ~".to_string();
 
     let mut document = two_list_document();
-    document.lists[0].items[0].code_blocks = vec![hidden.clone()];
+    document.lists[0].items[0].code_blocks = vec![hidden.clone().into()];
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('y'));
     state.settle();
@@ -676,4 +676,61 @@ fn outside_tmux_an_osc52_copy_has_no_hint() {
             Some("Sent to clipboard (OSC 52): make")
         );
     }
+}
+
+#[test]
+fn y_beside_expected_output_copies_the_one_command_at_once() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec![
+        "systemctl status example-service".into(),
+        crate::model::CodeBlock {
+            text: "Active: active (running)".to_string(),
+            kind: crate::model::CodeKind::Output,
+        },
+    ];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.settle();
+    assert!(!state.pending_copy_code(), "one command, no digit prompt");
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(
+            c.system_attempts,
+            vec![("systemctl status example-service".to_string(), false)]
+        );
+    });
+}
+
+#[test]
+fn y_on_only_expected_output_says_there_is_no_command() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec![crate::model::CodeBlock {
+        text: "Active: active (running)".to_string(),
+        kind: crate::model::CodeKind::Output,
+    }];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some(EXPECTED_OUTPUT_ONLY_MESSAGE)
+    );
+    assert!(state.status_is_error);
+    crate::clipboard::fake::with(|c| assert!(c.system_attempts.is_empty()));
+}
+
+#[test]
+fn y_on_a_console_transcript_copies_its_commands_without_the_prompt() {
+    let mut document = two_list_document();
+    document.lists[0].items[0].code_blocks = vec![crate::model::CodeBlock {
+        text: "$ example-cli migrate --apply\nApplied 3 migrations.".to_string(),
+        kind: crate::model::CodeKind::Console,
+    }];
+    let mut state = AppState::new(document);
+    state.handle_key(KeyCode::Char('y'));
+    state.settle();
+    crate::clipboard::fake::with(|c| {
+        assert_eq!(
+            c.system_attempts,
+            vec![("example-cli migrate --apply".to_string(), false)]
+        );
+    });
 }

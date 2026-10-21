@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Runbook │ expected-output.md                                                                            ☑ 0/4
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ Code blocks labelled as e… │
+                                                                                          │ ❯ Check the service        │
+                                                                                          │ ☐ Apply the migration      │
+                                                                                          │ ☐ Confirm the version wit… │
+                                                                                          │ ☐ Restart the workers      │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                         • Check                                          │                            │
+                 Code blocks labelled as expected output or as a console                  │                            │
+                                       transcript.                                        │                            │
+                                                                                          │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/4 ┓               │                            │
+            ┃                     ▪ Check the service                     ┃────────────┐  │                            │
+            ┃                                                             ┃            │  │                            │
+            ┃ ┌─────────────────────────────────────────────────────────┐ ┃            │  │                            │
+            ┃ │                                                         │ ┃            │  │                            │
+            ┃ │ systemctl status example-service                        │ ┃            │  │                            │
+            ┃ │                                                         │ ┃Apply the   │  │                            │
+            ┃ └─────────────────────────────────────────────────────────┘ ┃migration   │  │                            │
+            ┃                                                             ┃            │  │                            │
+            ┃ ┌─expected output─────────────────────────────────────────┐ ┃            │  │                            │
+            ┃ │                                                         │ ┃            │  │                            │
+            ┃ │ Active: active (running)                                │ ┃            │  │                            │
+            ┃ │                                                         │ ┃            │  │                            │
+            ┃ └─────────────────────────────────────────────────────────┘ ┃────────────┘  │                            │
+            ┗ ◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

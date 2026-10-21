@@ -4,7 +4,7 @@ use crate::test_support::fixture::checkbox;
 fn item_with_code(spans: Vec<&str>, blocks: Vec<&str>) -> Item {
     Item {
         code_spans: spans.into_iter().map(str::to_string).collect(),
-        code_blocks: blocks.into_iter().map(str::to_string).collect(),
+        code_blocks: blocks.into_iter().map(Into::into).collect(),
         ..checkbox(1, "task", false)
     }
 }
@@ -391,4 +391,37 @@ fn the_primary_selection_is_wrapped_the_same_way() {
         assert_eq!(sent.matches("\x1bPtmux;").count(), 2, "{sent:?}");
         assert!(sent.contains("\x1bPtmux;\x1b\x1b]52;p;aGk=\x07\x1b\\"));
     });
+}
+
+#[test]
+fn expected_output_is_never_a_candidate_and_a_transcript_gives_its_commands() {
+    let mut item = item_with_code(vec!["inline"], vec!["systemctl status example-service"]);
+    item.code_blocks.push(crate::model::CodeBlock {
+        text: "Active: active (running)".to_string(),
+        kind: crate::model::CodeKind::Output,
+    });
+    item.code_blocks.push(crate::model::CodeBlock {
+        text: "$ example-cli migrate\nApplied.".to_string(),
+        kind: crate::model::CodeKind::Console,
+    });
+    assert_eq!(
+        candidates(&item),
+        vec![
+            "systemctl status example-service".to_string(),
+            "example-cli migrate".to_string()
+        ]
+    );
+}
+
+#[test]
+fn inline_spans_are_the_candidates_beside_only_expected_output() {
+    let mut item = item_with_code(vec!["systemctl status example-service"], vec![]);
+    item.code_blocks.push(crate::model::CodeBlock {
+        text: "Active: active (running)".to_string(),
+        kind: crate::model::CodeKind::Output,
+    });
+    assert_eq!(
+        candidates(&item),
+        vec!["systemctl status example-service".to_string()]
+    );
 }

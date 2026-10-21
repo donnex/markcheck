@@ -3063,3 +3063,48 @@ fn example_quoted_callout_keeps_its_heading_code_and_bullets_in_order() {
         ]
     );
 }
+
+#[test]
+fn a_fence_info_string_sets_its_code_kind() {
+    use crate::model::CodeKind;
+    let source = "\
+## S
+
+- [ ] Check the service
+
+  ```sh
+  systemctl status example-service
+  ```
+
+  ```text
+  Active: active (running)
+  ```
+
+- [ ] Apply the migration
+
+      indented-command
+
+- [ ] Run it
+```console
+$ example-cli migrate --apply
+Applied 3 migrations.
+```
+";
+    let document = parse(source);
+    let items = &document.lists[0].items;
+    let kinds = |i: usize| -> Vec<CodeKind> {
+        items[i]
+            .code_blocks
+            .iter()
+            .map(|block| block.kind)
+            .collect()
+    };
+    assert_eq!(kinds(0), vec![CodeKind::Command, CodeKind::Output]);
+    assert_eq!(items[0].code_blocks[1].text, "Active: active (running)");
+    assert_eq!(kinds(1), vec![CodeKind::Command]);
+    assert_eq!(
+        kinds(2),
+        vec![CodeKind::Console],
+        "a trailing fence keeps its kind"
+    );
+}

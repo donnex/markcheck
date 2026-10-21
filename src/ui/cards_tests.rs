@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::TextStyle;
+use crate::model::{CodeKind, TextStyle};
 use crate::test_support::fixture::checkbox;
 
 const CONTINUATION: &str = IconSet::unicode().continuation;
@@ -106,7 +106,7 @@ fn code_box_rows(block: &str, width: u16) -> Vec<String> {
     use ratatui::widgets::Paragraph;
 
     let lines = code_block_lines(
-        block,
+        &block.into(),
         width as usize,
         code_bg(Color::DarkGray),
         None,
@@ -163,7 +163,7 @@ fn body_item(body: Vec<BodySpan>, blocks: Vec<&str>, display: &str) -> Item {
     Item {
         display_text: display.to_string(),
         body,
-        code_blocks: blocks.into_iter().map(str::to_string).collect(),
+        code_blocks: blocks.into_iter().map(Into::into).collect(),
         ..checkbox(1, "", false)
     }
 }
@@ -587,7 +587,13 @@ fn code_block_box_spans_full_width_even_when_short() {
     // A short one-line block still fills the full card-body width, so
     // every box row (borders, blanks, content) is exactly `width` wide.
     let width = 30usize;
-    let lines = code_block_lines("hi", width, code_bg(Color::Magenta), None, CONTINUATION);
+    let lines = code_block_lines(
+        &"hi".into(),
+        width,
+        code_bg(Color::Magenta),
+        None,
+        CONTINUATION,
+    );
     assert!(lines.len() >= 5, "top + blank + content + blank + bottom");
     for line in &lines {
         let w: usize = line.spans.iter().flat_map(|s| s.content.chars()).count();
@@ -605,7 +611,7 @@ fn narrow_code_block_falls_back_without_a_box() {
     // Below the box minimum the fallback is still plain left-aligned
     // code lines (no border), unchanged by the full-width change.
     let lines = code_block_lines(
-        "hello world",
+        &"hello world".into(),
         4,
         code_bg(Color::Magenta),
         None,
@@ -752,7 +758,7 @@ fn wrapped_code_rows_carry_a_continuation_marker_and_real_breaks_do_not() {
 #[test]
 fn continuation_marker_is_dimmed() {
     let lines = code_block_lines(
-        "abcdefghij",
+        &"abcdefghij".into(),
         8,
         code_bg(Color::DarkGray),
         None,
@@ -770,7 +776,13 @@ fn continuation_marker_is_dimmed() {
 fn tab_indented_block_keeps_its_indentation_and_a_straight_border() {
     let block = "deploy:\n\tbuild\n\t\tpush";
     let width = 24;
-    let lines = code_block_lines(block, width, code_bg(Color::DarkGray), None, CONTINUATION);
+    let lines = code_block_lines(
+        &block.into(),
+        width,
+        code_bg(Color::DarkGray),
+        None,
+        CONTINUATION,
+    );
     let texts = line_texts(&lines);
     assert!(texts.iter().all(|t| !t.contains('\t')), "{texts:?}");
     assert!(texts.contains(&format!("│ {:<20} │", "deploy:")));
@@ -811,7 +823,7 @@ fn tabbed_commands_show_spaces_but_copy_the_real_tabs() {
 fn narrow_unboxed_code_still_marks_wrapped_rows() {
     let texts = |w| {
         line_texts(&code_block_lines(
-            "abcdefg\nxy",
+            &"abcdefg\nxy".into(),
             w,
             Style::default(),
             None,
@@ -940,13 +952,25 @@ fn several_fenced_blocks_carry_their_number_in_the_top_border() {
     );
 
     // Too narrow for a box: the number gets its own row above the code.
-    let narrow = code_block_lines("x", 4, code_bg(Color::Magenta), Some(2), CONTINUATION);
+    let narrow = code_block_lines(
+        &"x".into(),
+        4,
+        code_bg(Color::Magenta),
+        Some(2),
+        CONTINUATION,
+    );
     assert_eq!(
         line_texts(&narrow),
         vec!["[2]".to_string(), "x".to_string()]
     );
     // A box too small for its number keeps a plain border.
-    let tiny = code_block_lines("x", 6, code_bg(Color::Magenta), Some(10), CONTINUATION);
+    let tiny = code_block_lines(
+        &"x".into(),
+        6,
+        code_bg(Color::Magenta),
+        Some(10),
+        CONTINUATION,
+    );
     assert_eq!(line_texts(&tiny)[0], "┌────┐");
 }
 
@@ -1377,4 +1401,99 @@ fn a_long_preamble_code_line_hard_wraps_with_a_continuation_marker() {
     let rows = preamble_rows(&blocks, IconSet::unicode(), Palette::truecolor(), 8);
     let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
     assert_eq!(texts, [" abcdef↩", " ghij   ", " xy     "]);
+}
+
+fn kind_block(text: &str, kind: crate::model::CodeKind) -> CodeBlock {
+    CodeBlock {
+        text: text.to_string(),
+        kind,
+    }
+}
+
+#[test]
+fn expected_output_is_dimmed_under_a_label_and_copies_nothing() {
+    let output = kind_block("Active: active (running)", CodeKind::Output);
+    let lines = code_block_lines(&output, 40, code_bg(Color::Magenta), Some(2), CONTINUATION);
+    let texts = line_texts(&lines);
+    assert!(
+        texts[0].starts_with("┌─expected output─"),
+        "labelled, never numbered: {texts:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.style.add_modifier.contains(Modifier::DIM)),
+        "the whole block is dimmed"
+    );
+    let narrow = code_block_lines(&output, 4, code_bg(Color::Magenta), None, CONTINUATION);
+    assert!(
+        !line_texts(&narrow).iter().any(|t| t.contains("expected")),
+        "a label wider than the card is left out"
+    );
+
+    let mut item = body_item(vec![], vec!["systemctl status example-service"], "");
+    item.code_blocks.push(output);
+    let (lines, rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
+    let label_row = line_texts(&lines)
+        .iter()
+        .position(|t| t.contains("expected output"))
+        .expect("the output block is drawn");
+    assert!(rows[label_row..].iter().all(Vec::is_empty), "{rows:?}");
+    assert!(copy_texts(&rows).contains(&"systemctl status example-service"));
+    assert!(
+        !line_texts(&lines).iter().any(|t| t.contains("[1]")),
+        "one command beside output is not numbered"
+    );
+}
+
+#[test]
+fn a_console_transcript_dims_its_output_lines_and_copies_its_commands() {
+    let console = kind_block(
+        "$ example-cli migrate --apply\nApplied 3 migrations.",
+        CodeKind::Console,
+    );
+    let lines = code_block_lines(&console, 40, code_bg(Color::Magenta), None, CONTINUATION);
+    let content_dim = |needle: &str| {
+        lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content.contains(needle))
+            .map(|s| s.style.add_modifier.contains(Modifier::DIM))
+    };
+    assert_eq!(content_dim("$ example-cli"), Some(false));
+    assert_eq!(content_dim("Applied"), Some(true));
+
+    let narrow = code_block_lines(&console, 5, code_bg(Color::Magenta), None, CONTINUATION);
+    assert!(
+        !narrow[0].spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::DIM),
+        "the prompt line stays bright without a box too"
+    );
+
+    let mut item = body_item(vec![], vec![], "");
+    item.code_blocks.push(console);
+    let (_, rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
+    assert!(copy_texts(&rows).contains(&"example-cli migrate --apply"));
+}
+
+#[test]
+fn command_numbers_count_past_expected_output() {
+    let mut item = body_item(vec![], vec!["first"], "");
+    item.code_blocks
+        .push(kind_block("output", CodeKind::Output));
+    item.code_blocks.push("second".into());
+    assert_eq!(block_number(&item, 0), Some(1));
+    assert_eq!(block_number(&item, 1), None);
+    assert_eq!(block_number(&item, 2), Some(2));
+}
+
+#[test]
+fn inline_commands_keep_their_numbers_beside_only_expected_output() {
+    let mut item = body_item(vec![], vec![], "");
+    item.code_spans = vec!["one".to_string(), "two".to_string()];
+    item.code_blocks
+        .push(kind_block("output", CodeKind::Output));
+    assert_eq!(inline_command_number(&item, 1), Some(2));
 }

@@ -295,7 +295,7 @@ fn click_inside_card_copies_current_command() {
 
     // Ambiguous item inside the card → `y`'s digit prompt.
     let mut document = two_list_document();
-    document.lists[0].items[0].code_blocks = vec!["a".to_string(), "b".to_string()];
+    document.lists[0].items[0].code_blocks = vec!["a".into(), "b".into()];
     let mut state = AppState::new(document);
     state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.handle_left_click(12, 6);
@@ -309,7 +309,7 @@ fn click_on_code_region_copies_that_specific_row() {
     // but clicking a specific code region copies that row directly —
     // overriding the ambiguous hint a non-code click in the card produces.
     let mut document = two_list_document();
-    document.lists[0].items[0].code_blocks = vec!["a".to_string(), "b".to_string()];
+    document.lists[0].items[0].code_blocks = vec!["a".into(), "b".into()];
     let mut state = AppState::new(document);
     state.layout.card_rect = Some(Rect::new(10, 5, 40, 10));
     state.layout.code_regions = vec![(Rect::new(11, 7, 38, 1), "b".into())];

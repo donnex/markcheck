@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Runbook │ expected-output.md      ☑ 0/4
+──────────────────────────────────────────────────
+
+
+
+
+                      • Check
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/4 ┓
+┃              ▪ Apply the migration             ┃
+┃                                                ┃
+┃ ┌────────────────────────────────────────────┐ ┃
+┃ │                                            │ ┃
+┃ │ $ example-cli migrate --apply              │ ┃
+┃ │ Applied 3 migrations.                      │ ┃
+┃ │ $ example-cli migrate --status             │ ┃
+┃ │ Up to date.                                │ ┃
+┃ │                                            │ ┃
+┃ └────────────────────────────────────────────┘ ┃
+┗ ·◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

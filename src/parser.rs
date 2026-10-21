@@ -6,8 +6,8 @@ use pulldown_cmark::utils::TextMergeWithOffset;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::model::{
-    Anchor, BodySpan, Document, Item, ItemKind, LineNumber, List, PreambleBlock, PreambleKind,
-    SubHeading, TaskState, TextStyle, Unshown,
+    Anchor, BodySpan, CodeBlock, CodeKind, Document, Item, ItemKind, LineNumber, List,
+    PreambleBlock, PreambleKind, SubHeading, TaskState, TextStyle, Unshown,
 };
 
 /// Splits `raw` into lines, keeping each line's own terminator, using
@@ -290,7 +290,7 @@ struct ItemBuilder {
     /// a copy candidate, but it still keeps a bold-only first bullet a card.
     header_has_code: bool,
     code_spans: Vec<String>,
-    code_blocks: Vec<String>,
+    code_blocks: Vec<CodeBlock>,
     body: Vec<BodySpan>,
     /// Active inline styling for the text runs currently being read,
     /// toggled by Emphasis/Strong/Strikethrough start/end events.
@@ -785,7 +785,7 @@ fn quoted_bullet(item: &Item) -> String {
     .collect::<Vec<_>>()
     .join(" ");
     let mut line = format!("{indent}{marker} {text}");
-    for code_line in item.code_blocks.iter().flat_map(|block| block.lines()) {
+    for code_line in item.code_blocks.iter().flat_map(|block| block.text.lines()) {
         line.push_str(&format!("\n{indent}    {code_line}"));
     }
     line
@@ -872,8 +872,9 @@ struct ParseState<'a> {
     /// attached to that list's last item. Any other block between the list
     /// and the fence breaks the attachment.
     attach_fence_to_last_item: bool,
-    /// The open code block: whether it is fenced, and its content so far.
-    code_block: Option<(bool, String)>,
+    /// The open code block: whether it is fenced, what its info string says
+    /// it holds, and its content so far.
+    code_block: Option<(bool, CodeKind, String)>,
 
     /// One frame per open item; a stack so nested items don't clobber their
     /// parent's in-progress fields. The innermost open item is the top.
@@ -1102,8 +1103,11 @@ impl<'a> ParseState<'a> {
             }
             Event::End(TagEnd::Image) => self.with_item(ItemBuilder::end_image),
             Event::Start(Tag::CodeBlock(kind)) => {
-                let fenced = matches!(kind, CodeBlockKind::Fenced(_));
-                self.code_block = Some((fenced, String::new()));
+                let (fenced, code_kind) = match &kind {
+                    CodeBlockKind::Fenced(info) => (true, CodeKind::from_info(info)),
+                    CodeBlockKind::Indented => (false, CodeKind::Command),
+                };
+                self.code_block = Some((fenced, code_kind, String::new()));
             }
             Event::End(TagEnd::CodeBlock) => self.on_code_block_end(),
             Event::Text(text) => self.on_text(&text),
@@ -1338,15 +1342,21 @@ impl<'a> ParseState<'a> {
     /// Outside one, only a fence may attach to the previous list; any other
     /// top-level block is preamble for the next task, or counted as unshown.
     fn on_code_block_end(&mut self) {
-        let Some((fenced, content)) = self.code_block.take() else {
+        let Some((fenced, kind, content)) = self.code_block.take() else {
             return;
         };
         let content = strip_trailing_newline(content);
         if let Some(item) = self.item_stack.last_mut() {
-            item.code_blocks.push(content);
+            item.code_blocks.push(CodeBlock {
+                text: content,
+                kind,
+            });
             item.mark_boundary();
         } else if fenced && self.attach_fence_to_last_item {
-            self.attach_trailing_fence(content);
+            self.attach_trailing_fence(CodeBlock {
+                text: content,
+                kind,
+            });
         } else if self.at_top_level() && !content.trim().is_empty() {
             let quote = if self.in_preamble_quote() {
                 self.finish_prose()
@@ -1366,14 +1376,14 @@ impl<'a> ParseState<'a> {
 
     /// The attachment flag stays set: several consecutive fences all attach
     /// (and then correctly refuse to copy).
-    fn attach_trailing_fence(&mut self, content: String) {
+    fn attach_trailing_fence(&mut self, block: CodeBlock) {
         if let Some(item) = self.target_items().last_mut() {
-            item.code_blocks.push(content);
+            item.code_blocks.push(block);
         }
     }
 
     fn on_text(&mut self, text: &str) {
-        if let Some((_, buffer)) = &mut self.code_block {
+        if let Some((_, _, buffer)) = &mut self.code_block {
             buffer.push_str(text);
         } else if let Some((_, heading_text)) = &mut self.heading {
             heading_text.push_str(text);

@@ -9,6 +9,9 @@ use crate::printable::printable_line;
 pub(super) const HIDDEN_CHARACTERS_MESSAGE: &str =
     "Not copied: command contains hidden control characters";
 
+pub(super) const EXPECTED_OUTPUT_ONLY_MESSAGE: &str =
+    "Nothing to copy: this card's code is expected output, not a command";
+
 /// Added to the first OSC 52 copy inside tmux: markcheck can't tell
 /// whether tmux passes the sequence on.
 pub(super) const TMUX_HINT: &str = " · in tmux this needs set-clipboard on or allow-passthrough on";
@@ -45,8 +48,10 @@ impl AppState {
         if !self.auto_copy {
             return;
         }
-        if let Some([text]) = self.current_item().map(clipboard::candidates) {
-            let text = text.clone();
+        if let Some(Ok([text])) = self
+            .current_item()
+            .map(|item| <[String; 1]>::try_from(clipboard::candidates(item)))
+        {
             self.request_copy(text, CopyKind::Auto);
         }
     }
@@ -231,10 +236,14 @@ impl AppState {
         let Some(current) = self.current_item() else {
             return;
         };
-        match clipboard::candidates(current) {
-            [] => self.set_error("Nothing to copy: item has no code".to_string()),
-            [text] => {
-                let text = text.clone();
+        let mut candidates = clipboard::candidates(current);
+        match candidates.len() {
+            0 if current.code_blocks.is_empty() => {
+                self.set_error("Nothing to copy: item has no code".to_string())
+            }
+            0 => self.set_error(EXPECTED_OUTPUT_ONLY_MESSAGE.to_string()),
+            1 => {
+                let text = candidates.remove(0);
                 self.request_copy(text, CopyKind::Command);
             }
             // Several commands: arm a digit that picks command `[N]`. No sticky
@@ -245,9 +254,11 @@ impl AppState {
 
     /// Copies command `[n]` (1-based) after `y` on a card with several.
     pub(super) fn copy_code_number(&mut self, n: usize) {
-        let text = self
-            .current_item()
-            .and_then(|item| clipboard::candidates(item).get(n.checked_sub(1)?).cloned());
+        let text = self.current_item().and_then(|item| {
+            clipboard::candidates(item)
+                .into_iter()
+                .nth(n.checked_sub(1)?)
+        });
         match text {
             Some(text) => self.copy_specific(&text),
             None => self.set_error(format!("No command [{n}] on this card")),

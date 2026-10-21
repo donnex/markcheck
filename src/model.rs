@@ -118,6 +118,88 @@ pub enum BodySpan {
     Link { text: String, url: String },
 }
 
+/// What a code block holds, from its fence's info string (#231).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeKind {
+    /// A command to copy: any other fence, an unlabelled one, or an indented
+    /// block.
+    Command,
+    /// Expected output (`text`, `output`, `plaintext`): shown dimmed, never
+    /// copied.
+    Output,
+    /// A console transcript (`console`, `shell-session`): its `$ ` and `# `
+    /// prompt lines are the commands, the rest is output.
+    Console,
+}
+
+impl CodeKind {
+    /// The kind a fence's info string names, by its first word in any case.
+    pub fn from_info(info: &str) -> CodeKind {
+        let word = info
+            .split(|c: char| c.is_whitespace() || matches!(c, ',' | '{'))
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match word.as_str() {
+            "text" | "output" | "plaintext" => CodeKind::Output,
+            "console" | "shell-session" => CodeKind::Console,
+            _ => CodeKind::Command,
+        }
+    }
+}
+
+/// One code block of an item: its text as written, and what it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeBlock {
+    pub text: String,
+    pub kind: CodeKind,
+}
+
+impl CodeBlock {
+    /// The text `y` copies: the whole block for a command, the prompt lines
+    /// with their prompt removed for a console transcript, and nothing for
+    /// expected output or a transcript without a prompt line.
+    pub fn copy_text(&self) -> Option<String> {
+        match self.kind {
+            CodeKind::Command => Some(self.text.clone()),
+            CodeKind::Output => None,
+            CodeKind::Console => {
+                let commands: Vec<&str> = self.text.lines().filter_map(console_command).collect();
+                (!commands.is_empty()).then(|| commands.join("\n"))
+            }
+        }
+    }
+}
+
+/// A console transcript line's command, when it starts with a `$ ` or `# `
+/// prompt.
+pub fn console_command(line: &str) -> Option<&str> {
+    line.strip_prefix("$ ")
+        .or_else(|| line.strip_prefix("# "))
+        .filter(|command| !command.trim().is_empty())
+}
+
+impl From<String> for CodeBlock {
+    fn from(text: String) -> Self {
+        CodeBlock {
+            text,
+            kind: CodeKind::Command,
+        }
+    }
+}
+
+impl From<&str> for CodeBlock {
+    fn from(text: &str) -> Self {
+        CodeBlock::from(text.to_string())
+    }
+}
+
+impl PartialEq<String> for CodeBlock {
+    fn eq(&self, other: &String) -> bool {
+        self.kind == CodeKind::Command && self.text == *other
+    }
+}
+
 /// A `### H3`-and-deeper heading that labels a sub-section *within* an `## H2`
 /// list. `level` is the raw Markdown heading level (3–6). Sub-headings
 /// are display context — a divider in the overview and a breadcrumb above the
@@ -153,7 +235,7 @@ pub struct Item {
     pub code_spans: Vec<String>,
     /// Code blocks belonging to this item, in order: fenced or indented ones
     /// inside it, and fences immediately following its list.
-    pub code_blocks: Vec<String>,
+    pub code_blocks: Vec<CodeBlock>,
     pub kind: ItemKind,
 }
 
@@ -182,9 +264,17 @@ impl Item {
         text.push_str(&self.display_text);
         for block in &self.code_blocks {
             text.push(' ');
-            text.push_str(block);
+            text.push_str(&block.text);
         }
         text
+    }
+
+    /// Whether any code block holds a command `y` can copy, which makes the
+    /// blocks, not the inline spans, what `y` chooses between.
+    pub fn has_command_blocks(&self) -> bool {
+        self.code_blocks
+            .iter()
+            .any(|block| block.copy_text().is_some())
     }
 
     /// The URLs of the links in this item's body, in order. Drives the

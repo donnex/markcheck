@@ -509,7 +509,7 @@ fn a_lone_g_shows_the_pending_gg_prompt_until_the_chord_ends() {
 #[test]
 fn a_partial_number_at_the_prompt_shows_what_was_typed() {
     let mut item = checkbox(1, "cmds", false);
-    item.code_blocks = (1..=12).map(|n| format!("cmd-{n}")).collect();
+    item.code_blocks = (1..=12).map(|n| format!("cmd-{n}").into()).collect();
     let mut state = state_with(vec![List {
         title: "L".to_string(),
         banner: None,
@@ -1807,7 +1807,7 @@ fn render_records_code_region_for_click_to_copy() {
     // Rendering the current card records a per-row code region for a
     // fenced block, so a left-click on that row can copy it.
     let item = Item {
-        code_blocks: vec!["kubectl apply".to_string()],
+        code_blocks: vec!["kubectl apply".into()],
         ..checkbox(1, "deploy", false)
     };
     let mut state = state_with(vec![List {
@@ -1889,7 +1889,7 @@ fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
 #[test]
 fn card_shows_fenced_code_block() {
     let item = Item {
-        code_blocks: vec!["kubectl apply".to_string()],
+        code_blocks: vec!["kubectl apply".into()],
         ..checkbox(1, "deploy the service", false)
     };
     let mut state = state_with(vec![List {
@@ -3582,7 +3582,12 @@ fn a_critical_task_is_labelled_on_its_card_and_marked_in_the_overview() {
 fn a_tall_card_shrinks_so_the_heading_and_its_warning_stay_on_screen() {
     use crate::model::{PreambleBlock, PreambleKind};
     let mut first = checkbox(1, "Drop the old tables", false);
-    first.code_blocks = vec![(1..=30).map(|n| format!("step {n}\n")).collect()];
+    first.code_blocks = vec![
+        (1..=30)
+            .map(|n| format!("step {n}\n"))
+            .collect::<String>()
+            .into(),
+    ];
     first.section = vec![sub(3, "Cleanup")];
     let mut state = state_with(vec![List {
         title: "Migrate".to_string(),
@@ -3656,7 +3661,7 @@ fn a_card_with_a_huge_fenced_block_renders_quickly() {
         .collect::<Vec<_>>()
         .join("\n");
     let item = Item {
-        code_blocks: vec![block.clone()],
+        code_blocks: vec![block.clone().into()],
         ..checkbox(1, "deploy", false)
     };
     let mut state = state_with(vec![List {
@@ -3720,7 +3725,7 @@ fn the_ascii_icon_set_draws_no_glyph_a_console_font_lacks() {
         display_only(4, "a note"),
         Item {
             depth: 1,
-            code_blocks: vec!["x".repeat(200)],
+            code_blocks: vec!["x".repeat(200).into()],
             ..checkbox(5, "nested", false)
         },
     ];

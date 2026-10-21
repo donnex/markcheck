@@ -71,6 +71,14 @@ markcheck examples/basics.md
   command and bullets all stay in the quote, shown in order above the card,
   and a no-checkbox section that gets dropped (its bullets are counted
   in the startup note of what isn't shown).
+- **`expected-output.md`** — code blocks labelled by their fence: a ` ```text `
+  block of expected output under a ` ```sh ` command (dimmed, under an
+  `expected output` label, never copied, so `y` copies the command at once),
+  a ` ```console ` transcript whose `$` prompt lines are the commands `y` copies
+  without the prompt and whose other lines are dimmed output, an
+  ` ```output ` block beside an inline command (which `y` still copies), and
+  a ` ```shell-session ` transcript with a `#` prompt beside a ` ```sh `
+  block, numbered `[1]`/`[2]` for `y` then a digit.
 - **`sub-sections.md`** — `### H3`+ sub-sections *within* a list: items
   before the first sub-heading (directly under the H2), an `### H3` group, an
   `#### H4` nested under it, a second `### H3` that pops the H4 and starts a

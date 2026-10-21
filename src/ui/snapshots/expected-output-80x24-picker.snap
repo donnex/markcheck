@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, 24)"
+---
+ ≡ Service Runbook │ expected-output.md                                    ☑ 0/4
+────────────────────────────────────────────────────────────────────────────────
+╭ Go to task ───────────────────────── 4 items ╮  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ Code blocks labelled as e… │
+│ ❯ ☐ Check the service                        │  │ ❯ Check the service        │
+│   ☐ Apply the migration                      │  │ ☐ Apply the migration      │
+│   ☐ Confirm the version with example-cli --… │  │ ☐ Confirm the version wit… │
+│   ☐ Restart the workers                      │  │ ☐ Restart the workers      │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+│                                              │  │                            │
+╰──────────────────────────────────────────────╯  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

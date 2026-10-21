@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Runbook │ expected-output.md      ☑ 0/4
+──────────────────────────────────────────────────
+
+
+
+                      • Check
+  Code blocks labelled as expected output or as a
+                console transcript.
+
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/4 ┓
+┃               ▪ Check the service              ▲
+┃                                                ▓
+┃ ┌────────────────────────────────────────────┐ ▓
+┃ │                                            │ ▓
+┃ │ systemctl status example-service           │ ▓
+┃ │                                            │ ▓
+┃ └────────────────────────────────────────────┘ ▓
+┃                                                ┃
+┃ ┌─expected output────────────────────────────┐ ┃
+┃ │                                            │ ▼
+┗ ◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1–10/13 ┛
+
+
+hjkl:nav  space:toggle  /:search  y:copy  ?:help

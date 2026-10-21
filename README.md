@@ -316,6 +316,8 @@ icons; [Icons](#icons) lists the ASCII ones the Linux console gets):
 | a note with an indented sub-list | The note reflects its children's progress: its marker turns yellow once any sub-task is under way and green when all are done — on the card and in the overview — while staying a note (never a checkbox). |
 | `` `code` `` | An inline command chip (light text on a dark gray chip, on light and dark terminal themes alike); copy it with `y`. With several, each chip gets a dim `[1]`/`[2]` marker for `y` then a digit. |
 | a fenced ```` ``` ```` block | A command block shown in a box, styled like the chip; copy it with `y`. With several, each box shows `[1]`/`[2]` in its top border for `y` then a digit. A tab in a command (fenced or inline) is shown as spaces up to the next 4-column stop, so tab indentation stays visible; copying still gives the real tabs. |
+| a fence labelled ` ```text `, ` ```output ` or ` ```plaintext ` | **Expected output**, not a command: shown in a dimmed box with `expected output` in its top border, and never copied, by `y`, by a click or by `--auto-copy`, nor numbered. A command beside it is copied by `y` straight away. A card whose only code is expected output says `Nothing to copy: this card's code is expected output, not a command`; with inline `` `code` `` in the body, `y` copies that instead. The label is matched on the info string's first word, in any case. |
+| a fence labelled ` ```console ` or ` ```shell-session ` | A **console transcript**: the lines starting with a `$` or `#` prompt and a space are its commands, shown as usual, and every other line is output, shown dimmed. `y` (or a click on the box) copies only the command lines, without their prompt, one per line; a transcript with no prompt line is not copied at all. Any other label, or none, is a plain command block. |
 | an indented (4-space) code block inside a task or note | Treated exactly like a fenced block: shown in a box and copyable with `y`. Outside a list item it is treated like any other code block: shown above the first task under its heading (see the preamble row below), otherwise counted in the startup "not shown" note. |
 | a fenced block **directly after a list** (at column 0) | **Attached to that list's last card**, as if it were indented under it: shown in a box and copyable with `y`. Anything in between — a paragraph, a heading, another block — breaks the attachment, and a fence after a list that was dropped (no checkboxes) attaches nowhere; such a fence is not shown. |
 | `*italic*` / `**bold**` (mid-line) / `~~strike~~` | Inline styling in the card body — rendered *italic*, **bold**, and ~~struck through~~. (A **leading** bold is still the card title, above.) |
@@ -345,7 +347,9 @@ Finer points:
   mistaken for two. Copying (`y` or a click) still gives the original text.
 - **Copying (`y`)** copies a task's command — a single inline `` `code` `` span
   in the body (code inside the bold card title doesn't count) or a single fenced (or indented) block. When there are several, each is numbered on the
-  card and `y` then a digit copies that one. Code blocks (fenced or indented)
+  card and `y` then a digit copies that one. A ` ```text ` / ` ```output `
+  block is expected output and never copied, and a ` ```console ` block
+  copies only its `$` / `#` prompt lines, without the prompt. Code blocks (fenced or indented)
   take priority: if a
   task has any, only they are numbered, and its inline spans can be copied by
   clicking them. A command containing control
@@ -1093,7 +1097,13 @@ a row to highlight it and click it again to jump there.
 span in its body or a single code block (fenced or indented), that content is copied; if there is none,
 nothing is copied and the status bar says so. Inline code inside the bold
 card title is not a command: it shows as plain title text, so `y` and
-`--auto-copy` ignore it. If there are several, `y` asks
+`--auto-copy` ignore it. Nor is a block fenced as ` ```text `, ` ```output `
+or ` ```plaintext `: it is expected output, shown dimmed and never copied, so
+a command followed by the output it should print still copies with a single
+`y`. From a ` ```console ` or ` ```shell-session ` transcript only the lines
+after a `$` or `#` prompt and a space are copied, with the prompt removed: `$ example-cli
+migrate --apply` followed by `Applied 3 migrations.` copies
+`example-cli migrate --apply`. If there are several, `y` asks
 which (see below). Copy uses
 the system clipboard when available and otherwise emits an OSC 52 escape,
 which travels over SSH to your local terminal emulator (kitty, alacritty,

@@ -15,8 +15,9 @@ use super::{
     state_marker,
 };
 use crate::model::{
-    AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, PreambleBlock,
-    PreambleKind, Progress, ResetScope, SubHeading, TaskState, View,
+    AppState, BodySpan, CodeBlock, CodeKind, IconSet, Item, ItemKind, List, Overlay, Palette,
+    PreambleBlock, PreambleKind, Progress, ResetScope, SubHeading, TaskState, View,
+    console_command,
 };
 
 /// Prose that wraps to at most this many lines is centered; longer prose is
@@ -1386,13 +1387,20 @@ fn marker_token(n: usize, glue: bool) -> Token {
 /// command, when inline commands are what `y` chooses between and there are
 /// several.
 fn inline_command_number(item: &Item, k: usize) -> Option<usize> {
-    (item.code_blocks.is_empty() && item.code_spans.len() >= 2).then_some(k + 1)
+    (!item.has_command_blocks() && item.code_spans.len() >= 2).then_some(k + 1)
 }
 
-/// The number `y` then a digit uses for the `k`th (0-based) fenced block,
-/// when there are several.
+/// The number `y` then a digit uses for the `k`th (0-based) code block, when
+/// several blocks hold a command. Expected output has none, and later
+/// commands count on past it.
 fn block_number(item: &Item, k: usize) -> Option<usize> {
-    (item.code_blocks.len() >= 2).then_some(k + 1)
+    let copyable: Vec<bool> = item
+        .code_blocks
+        .iter()
+        .map(|block| block.copy_text().is_some())
+        .collect();
+    let count = copyable.iter().filter(|&&c| c).count();
+    (count >= 2 && copyable[k]).then(|| copyable[..k].iter().filter(|&&c| c).count() + 1)
 }
 
 /// The body's flowed tokens, plus the split-off trailing command and its
@@ -1613,15 +1621,16 @@ fn body_layout(
     // Fenced blocks below, left-aligned in a light box, with a blank
     // separator when there's flowed prose above them. Every box row maps to
     // the block's clean text so a click anywhere on the box copies it.
+    // Expected output has no copy text, so a click on it copies nothing.
     for (k, block) in item.code_blocks.iter().enumerate() {
         if !lines.is_empty() {
             lines.push(Line::from(""));
             code_rows.push(Vec::new());
         }
-        let text: Rc<str> = Rc::from(block.as_str());
+        let text: Option<Rc<str>> = block.copy_text().map(Rc::from);
         for line in code_block_lines(block, width, code, block_number(item, k), wrap) {
             lines.push(line);
-            code_rows.push(full_row(width, &text));
+            code_rows.push(text.as_ref().map_or_else(Vec::new, |t| full_row(width, t)));
         }
     }
 
@@ -1637,30 +1646,52 @@ fn body_layout(
 /// fit); falls back to plain left-aligned lines when the card is too narrow
 /// for a box. Deterministic line count, so scroll clamping stays exact.
 /// A `marker` number, set when the card has several blocks, is drawn into the
-/// top border (`┌─[N]──┐`) to key the block to `y`'s digit prompt. `wrap`
-/// marks a row continued on the next.
+/// top border (`┌─[N]──┐`) to key the block to `y`'s digit prompt. Expected
+/// output is dimmed whole, borders too, under an `expected output` label in
+/// that border; a console transcript dims only its lines that aren't
+/// commands. `wrap` marks a row continued on the next.
 fn code_block_lines(
-    block: &str,
+    block: &CodeBlock,
     width: usize,
     style: Style,
     marker: Option<usize>,
     wrap: &'static str,
 ) -> Vec<Line<'static>> {
-    let marker = marker.map(|n| format!("[{n}]"));
-    let continued = continuation_style(style);
+    let output = style.add_modifier(Modifier::DIM);
+    let (tag, style) = match block.kind {
+        CodeKind::Output => (Some(EXPECTED_OUTPUT_LABEL.to_string()), output),
+        _ => (marker.map(|n| format!("[{n}]")), style),
+    };
+    let line_style = |raw: &str| match block.kind {
+        CodeKind::Console if console_command(raw).is_none() => output,
+        _ => style,
+    };
+    let rows = |w: usize| -> Vec<(String, bool, Style)> {
+        block
+            .text
+            .lines()
+            .flat_map(|raw| {
+                let s = line_style(raw);
+                wrapped_line(raw, w).map(move |(c, wraps)| (c, wraps, s))
+            })
+            .collect()
+    };
     // Not enough room for "│ x │": drop the box, keep left-aligned code,
     // still marking wrapped rows when there's a cell to spare for it.
     if width < 6 {
         let mark = width >= 2;
-        let rows = soft_wrapped(block, if mark { width - 1 } else { width }).map(|(c, wraps)| {
-            let mut spans = vec![Span::styled(c, style)];
-            if wraps && mark {
-                spans.push(Span::styled(wrap, continued));
-            }
-            Line::from(spans)
-        });
-        return marker
-            .map(|m| Line::styled(m, style))
+        let rows = rows(if mark { width - 1 } else { width })
+            .into_iter()
+            .map(|(c, wraps, s)| {
+                let mut spans = vec![Span::styled(c, s)];
+                if wraps && mark {
+                    spans.push(Span::styled(wrap, continuation_style(s)));
+                }
+                Line::from(spans)
+            });
+        return tag
+            .filter(|t| display_width(t) <= width)
+            .map(|t| Line::styled(t, style))
             .into_iter()
             .chain(rows)
             .map(Line::left_aligned)
@@ -1668,7 +1699,7 @@ fn code_block_lines(
     }
 
     let content_w = width - 4; // "│ " + content + " │"
-    let chunks: Vec<(String, bool)> = soft_wrapped(block, content_w).collect();
+    let chunks = rows(content_w);
     // The box always spans the full card-body width — the gray
     // background reaches both edges even for a short one-line block — so code
     // blocks align regardless of content length, matching a rendered Markdown
@@ -1680,8 +1711,8 @@ fn code_block_lines(
     let blank = || Line::styled(format!("│ {} │", " ".repeat(box_w)), style).left_aligned();
 
     let mut out = Vec::with_capacity(chunks.len() + 4);
-    let top = match marker.filter(|m| m.len() < box_w + 2) {
-        Some(m) => format!("┌─{m}{}┐", "─".repeat(box_w + 1 - m.len())),
+    let top = match tag.filter(|t| t.len() < box_w + 2) {
+        Some(t) => format!("┌─{t}{}┐", "─".repeat(box_w + 1 - t.len())),
         None => format!("┌{}┐", "─".repeat(box_w + 2)),
     };
     out.push(Line::styled(top, style).left_aligned());
@@ -1689,24 +1720,28 @@ fn code_block_lines(
     // A row that a too-long source line wrapped onto the next carries a dim
     // `↩` in its right padding column, so a wrapped command can't be read
     // as two separate lines of the block.
-    for (c, wraps) in &chunks {
+    for (c, wraps, s) in &chunks {
         let pad = box_w.saturating_sub(display_width(c));
-        let row = format!("│ {c}{}", " ".repeat(pad));
-        let line = if *wraps {
-            Line::from(vec![
-                Span::styled(row, style),
-                Span::styled(wrap, continued),
-                Span::styled("│", style),
-            ])
-        } else {
-            Line::styled(format!("{row} │"), style)
-        };
+        let line = Line::from(vec![
+            Span::styled("│ ", style),
+            Span::styled(format!("{c}{}", " ".repeat(pad)), *s),
+            if *wraps {
+                Span::styled(wrap, continuation_style(*s))
+            } else {
+                Span::styled(" ", style)
+            },
+            Span::styled("│", style),
+        ])
+        .style(style);
         out.push(line.left_aligned());
     }
     out.push(blank());
     out.push(Line::styled(format!("└{}┘", "─".repeat(box_w + 2)), style).left_aligned());
     out
 }
+
+/// The label in the top border of an expected-output block.
+const EXPECTED_OUTPUT_LABEL: &str = "expected output";
 
 /// The continuation marker's style: the surrounding code style, dimmed.
 fn continuation_style(code: Style) -> Style {
@@ -1716,14 +1751,18 @@ fn continuation_style(code: Style) -> Style {
 /// Hard-wraps each of `block`'s lines to `width` cells, flagging every piece
 /// that continues onto the next row (all but the last piece of a line).
 fn soft_wrapped(block: &str, width: usize) -> impl Iterator<Item = (String, bool)> + '_ {
-    block.lines().flat_map(move |raw| {
-        let pieces = hard_wrap(&expand_tabs(raw), width);
-        let last = pieces.len() - 1;
-        pieces
-            .into_iter()
-            .enumerate()
-            .map(move |(i, p)| (p, i < last))
-    })
+    block.lines().flat_map(move |raw| wrapped_line(raw, width))
+}
+
+/// One source line hard-wrapped to `width` cells, each piece flagged when it
+/// continues onto the next row.
+fn wrapped_line(raw: &str, width: usize) -> impl Iterator<Item = (String, bool)> + use<> {
+    let pieces = hard_wrap(&expand_tabs(raw), width);
+    let last = pieces.len() - 1;
+    pieces
+        .into_iter()
+        .enumerate()
+        .map(move |(i, p)| (p, i < last))
 }
 
 /// One word for `greedy_wrap`: its text, whether it abuts the previous word

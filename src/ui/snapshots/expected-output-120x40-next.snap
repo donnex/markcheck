@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ ≡ Service Runbook │ expected-output.md                                                                            ☑ 0/4
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ Code blocks labelled as e… │
+                                                                                          │ ☐ Check the service        │
+                                                                                          │ ❯ Apply the migration      │
+                                                                                          │ ☐ Confirm the version wit… │
+                                                                                          │ ☐ Restart the workers      │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                         • Check                                          │                            │
+                                                                                          │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/4 ┓               │                            │
+┌ ☐ ────────┃                    ▪ Apply the migration                    ┃────────────┐  │                            │
+│           ┃                                                             ┃            │  │                            │
+│           ┃ ┌─────────────────────────────────────────────────────────┐ ┃            │  │                            │
+│           ┃ │                                                         │ ┃onfirm the  │  │                            │
+│   Check th┃ │ $ example-cli migrate --apply                           │ ┃rsion with  │  │                            │
+│    service┃ │ Applied 3 migrations.                                   │ ┃xample-cli  │  │                            │
+│           ┃ │ $ example-cli migrate --status                          │ ┃--version   │  │                            │
+│           ┃ │ Up to date.                                             │ ┃            │  │                            │
+│           ┃ │                                                         │ ┃            │  │                            │
+└───────────┃ └─────────────────────────────────────────────────────────┘ ┃────────────┘  │                            │
+            ┗ ·◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit
