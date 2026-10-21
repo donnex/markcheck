@@ -8,6 +8,7 @@ expression: "screen(&mut state, width, height)"
                                                                                           │ • [1] Prepare              │
                                                                                           │   ▪ Do not run against pr… │
                                                                                           │   A short checklist showi… │
+                                                                                          │   │ Note: Keep the change… │
                                                                                           │   ☑ Confirm access to exa… │
                                                                                           │   ◐ Warm the build cache   │
                                                                                           │   ❯ Check out the release… │
@@ -16,23 +17,22 @@ expression: "screen(&mut state, width, height)"
                                                                                           │ • [2] Verify               │
                                                                                           │   ▪ Warning: Run these on… │
                                                                                           │   ☐ Check the health endp… │
-                                                                                          │   ☐ Run the smoke tests    │
-                                        • Prepare                                         │   ☐ ! Switch traffic to t… │
-                             ▪ Do not run against production                              │   ☐ Tail the logs and wat… │
-                                                                                          │   ☑ Record the start time… │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │   ⊘ Restart the replica —… │
-┌ ◐ ────────┃                                                             ┃────────────┐  │   ▪ Roll back              │
-│           ┃                Check out the release branch:                ┃Build the   │  │ • [3] Ordered steps        │
-│   Warm the┃                                                             ┃artifact    │  │   Task states work the sa… │
-│  build cac┃                    git checkout release                     ┃            │  │   ▪ Important: Announce c… │
-│           ┃                                                             ┃ompile and  │  │   ☑ 1. Confirm the change… │
-└───────────┃                                                             ┃────────────┘  │   ◐ 2. Notify the on-call… │
-            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ 3. Announce completion │
+                                        • Prepare                                         │   ☐ Run the smoke tests    │
+                             ▪ Do not run against production                              │   ☐ ! Switch traffic to t… │
+                                                                                          │   ☐ Tail the logs and wat… │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/5 ┓               │   ☑ Record the start time… │
+┌ ◐ ────────┃                                                             ┃────────────┐  │   ⊘ Restart the replica —… │
+│           ┃                Check out the release branch:                ┃Build the   │  │   ▪ Roll back              │
+│   Warm the┃                                                             ┃artifact    │  │ • [3] Ordered steps        │
+│  build cac┃                    git checkout release                     ┃            │  │   Task states work the sa… │
+│           ┃                                                             ┃ompile and  │  │   ▪ Important: Announce c… │
+└───────────┃                                                             ┃────────────┘  │   ☑ 1. Confirm the change… │
+            ┗ ●●◉·· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ◐ 2. Notify the on-call… │
+                                                                                          │   ☐ 3. Announce completion │
                                                                                           │ • [4] Wrap-up              │
                                                                                           │   ▪ Caution: Keep the old… │
                                                                                           │   ☐ 1) Remove the old rel… │
                                                                                           │   ☐ 2) Close the change w… │
-                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

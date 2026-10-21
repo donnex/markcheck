@@ -157,6 +157,14 @@ fn examples_cover_every_alert_and_the_paren_delimiter() {
             "basics.md must show a {label} alert: {alerts:?}"
         );
     }
+    assert!(
+        document
+            .preambles
+            .values()
+            .flatten()
+            .any(|block| block.kind == PreambleKind::Quote && block.text.starts_with("Note: ")),
+        "basics.md must show a labelled [!NOTE] quote"
+    );
 }
 
 #[test]
@@ -2371,6 +2379,34 @@ fn a_github_alert_quote_becomes_a_labelled_alert() {
             (PreambleKind::Alert, "Caution".to_string()),
             (PreambleKind::Quote, "Just a quote.".to_string()),
         ]
+    );
+}
+
+#[test]
+fn every_github_alert_type_gets_its_label_in_any_case() {
+    let document = parse(
+        "## A\n\n> [!NOTE]\n> Back up first.\n\n> [!tip]\n> Use a pager.\n\n> [!warning]\n> Careful.\n\n> [!Important]\n> Read this.\n\n> [!CAUTION] Mind the gap.\n\n> [!NOTICE] Not an alert.\n\n> [!\n\n- [ ] t\n",
+    );
+    assert_eq!(
+        preamble_of(&document, 21),
+        vec![
+            (PreambleKind::Quote, "Note: Back up first.".to_string()),
+            (PreambleKind::Quote, "Tip: Use a pager.".to_string()),
+            (PreambleKind::Alert, "Warning: Careful.".to_string()),
+            (PreambleKind::Alert, "Important: Read this.".to_string()),
+            (PreambleKind::Alert, "Caution: Mind the gap.".to_string()),
+            (PreambleKind::Quote, "[!NOTICE] Not an alert.".to_string()),
+            (PreambleKind::Quote, "[!".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn an_alert_marker_cut_inside_a_wide_character_stays_a_quote() {
+    let document = parse("## A\n\n> [!NOT\u{20ac}] x\n\n- [ ] t\n");
+    assert_eq!(
+        preamble_of(&document, 5),
+        vec![(PreambleKind::Quote, "[!NOT\u{20ac}] x".to_string())]
     );
 }
 

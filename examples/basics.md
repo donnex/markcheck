@@ -6,6 +6,9 @@ a note card.
 
 ## Prepare
 
+> [!NOTE]
+> Keep the change ticket open alongside this runbook.
+
 - **Do not run against production**
 - [x] Confirm access to `example-host`
 - [/] Warm the build cache

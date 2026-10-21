@@ -21,7 +21,8 @@ markcheck examples/basics.md
   `2)` delimiter, kept as written), plus
   an uppercase `[X]` that counts as done. The `> [!IMPORTANT]` alert under
   `## Ordered steps` and the `> [!CAUTION]` one under `## Wrap-up` show in the
-  warning color like the `[!WARNING]` one, each with its label. Under
+  warning color like the `[!WARNING]` one, each with its label, while the
+  `> [!NOTE]` under `## Prepare` stays a plain quote labelled `Note: …`. Under
   `## Verify`, the log-tailing task links to `#prepare` and to `#roll-back`,
   the anchor of the `- ## Roll back` note card (a heading inside a list item),
   so `o` jumps to a heading and to a card.

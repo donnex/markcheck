@@ -586,18 +586,24 @@ pub(crate) fn slug(text: &str) -> String {
         .collect()
 }
 
-/// A quote opening with GitHub's `[!WARNING]`, `[!CAUTION]` or
-/// `[!IMPORTANT]` becomes an alert, its marker replaced by a label.
+/// A quote opening with one of GitHub's alert markers, in any case, gets
+/// the marker replaced by its label: `[!WARNING]`, `[!CAUTION]` and
+/// `[!IMPORTANT]` become an alert, `[!NOTE]` and `[!TIP]` stay a quote.
 fn as_alert(block: PreambleBlock) -> PreambleBlock {
-    for (marker, label) in [
-        ("[!WARNING]", "Warning"),
-        ("[!CAUTION]", "Caution"),
-        ("[!IMPORTANT]", "Important"),
+    for (marker, label, kind) in [
+        ("[!WARNING]", "Warning", PreambleKind::Alert),
+        ("[!CAUTION]", "Caution", PreambleKind::Alert),
+        ("[!IMPORTANT]", "Important", PreambleKind::Alert),
+        ("[!NOTE]", "Note", PreambleKind::Quote),
+        ("[!TIP]", "Tip", PreambleKind::Quote),
     ] {
-        if let Some(rest) = block.text.strip_prefix(marker) {
-            let rest = rest.trim_start();
+        let Some(head) = block.text.get(..marker.len()) else {
+            continue;
+        };
+        if head.eq_ignore_ascii_case(marker) {
+            let rest = block.text[marker.len()..].trim_start();
             return PreambleBlock {
-                kind: PreambleKind::Alert,
+                kind,
                 text: if rest.is_empty() {
                     label.to_string()
                 } else {

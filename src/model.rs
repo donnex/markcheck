@@ -505,8 +505,8 @@ pub struct PreambleBlock {
 pub enum PreambleKind {
     Paragraph,
     Quote,
-    /// A `> [!WARNING]`, `[!CAUTION]` or `[!IMPORTANT]` quote, shown in the
-    /// warning color; `text` starts with the alert's label.
+    /// A `> [!WARNING]`, `[!CAUTION]` or `[!IMPORTANT]` quote (in any case),
+    /// shown in the warning color; `text` starts with the alert's label.
     Alert,
     Code,
 }

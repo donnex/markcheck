@@ -8,21 +8,21 @@ expression: "screen(&mut state, width, 24)"
 │ Filter:                                      │  │ • [1] Prepare              ▲
 │ ☑ Confirm access to example-host  — Prepare  │  │   ▪ Do not run against pr… ▓
 │ ◐ Warm the build cache  — Prepare            │  │   A short checklist showi… ▓
-│ ☐ Check out the release branch: …  — Prepare │  │   ☑ Confirm access to exa… ▓
-│ ☐ Build the artifact  — Prepare              │  │   ◐ Warm the build cache   ▓
-│ ▪ Keep this runbook open while y…  — Prepare │  │   ☐ Check out the release… ▓
-│ ☐ Check the health endpoint curl …  — Verify │  │   ☐ Build the artifact     ▓
-│ ☐ Run the smoke tests  — Verify              │  │   ▪ Keep this runbook ope… ▓
-│ ☐ Switch traffic to the new relea…  — Verify │  │ • [2] Verify               ▓
-│ ☐ Tail the logs and watch for err…  — Verify │  │   ▪ Warning: Run these on… ▓
-│ ☑ Record the start time — an uppe…  — Verify │  │   ☐ Check the health endp… ▓
-│ ⊘ Restart the replica — skipped (…  — Verify │  │   ☐ Run the smoke tests    ▓
-│ ▪ Roll back  — Verify                        │  │   ☐ ! Switch traffic to t… ▓
-│ ☑ 1. Confirm the change wi…  — Ordered steps │  │   ☐ Tail the logs and wat… │
-│ ◐ 2. Notify the on-call ch…  — Ordered steps │  │   ☑ Record the start time… │
-│ ☐ 3. Announce completion  — Ordered steps    │  │   ⊘ Restart the replica —… │
-│ ☐ 1) Remove the old release  — Wrap-up       │  │   ▪ Roll back              │
-│ ☐ 2) Close the change window  — Wrap-up      │  │ • [3] Ordered steps        │
-│                                              │  │   Task states work the sa… ▼
+│ ☐ Check out the release branch: …  — Prepare │  │   │ Note: Keep the change… ▓
+│ ☐ Build the artifact  — Prepare              │  │   ☑ Confirm access to exa… ▓
+│ ▪ Keep this runbook open while y…  — Prepare │  │   ◐ Warm the build cache   ▓
+│ ☐ Check the health endpoint curl …  — Verify │  │   ☐ Check out the release… ▓
+│ ☐ Run the smoke tests  — Verify              │  │   ☐ Build the artifact     ▓
+│ ☐ Switch traffic to the new relea…  — Verify │  │   ▪ Keep this runbook ope… ▓
+│ ☐ Tail the logs and watch for err…  — Verify │  │ • [2] Verify               ▓
+│ ☑ Record the start time — an uppe…  — Verify │  │   ▪ Warning: Run these on… ▓
+│ ⊘ Restart the replica — skipped (…  — Verify │  │   ☐ Check the health endp… ▓
+│ ▪ Roll back  — Verify                        │  │   ☐ Run the smoke tests    ▓
+│ ☑ 1. Confirm the change wi…  — Ordered steps │  │   ☐ ! Switch traffic to t… │
+│ ◐ 2. Notify the on-call ch…  — Ordered steps │  │   ☐ Tail the logs and wat… │
+│ ☐ 3. Announce completion  — Ordered steps    │  │   ☑ Record the start time… │
+│ ☐ 1) Remove the old release  — Wrap-up       │  │   ⊘ Restart the replica —… │
+│ ☐ 2) Close the change window  — Wrap-up      │  │   ▪ Roll back              │
+│                                              │  │ • [3] Ordered steps        ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

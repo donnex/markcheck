@@ -8,21 +8,21 @@ expression: "screen(&mut state, width, height)"
                                                   │ • [1] Prepare              ▲
                                                   │   ▪ Do not run against pr… ▓
                                                   │   A short checklist showi… ▓
-                                                  │   ☑ Confirm access to exa… ▓
-                    • Prepare                     │   ◐ Warm the build cache   ▓
-         ▪ Do not run against production          │   ☐ Check out the release… ▓
-                                                  │   ☐ Build the artifact     ▓
-┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓  │   ▪ Keep this runbook ope… ▓
+                                                  │   │ Note: Keep the change… ▓
+                    • Prepare                     │   ☑ Confirm access to exa… ▓
+         ▪ Do not run against production          │   ◐ Warm the build cache   ▓
+                                                  │   ☐ Check out the release… ▓
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ┓  │   ☐ Build the artifact     ▓
+┃                                              ┃  │   ▪ Keep this runbook ope… ▓
 ┃                                              ┃  │ • [2] Verify               ▓
-┃                                              ┃  │   ▪ Warning: Run these on… ▓
-┃             Warm the build cache             ┃  │   ☐ Check the health endp… ▓
+┃             Warm the build cache             ┃  │   ▪ Warning: Run these on… ▓
+┃                                              ┃  │   ☐ Check the health endp… ▓
 ┃                                              ┃  │   ☐ Run the smoke tests    ▓
-┃                                              ┃  │   ☐ ! Switch traffic to t… ▓
-┃                                              ┃  │   ☐ Tail the logs and wat… │
-┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☑ Record the start time… │
+┃                                              ┃  │   ☐ ! Switch traffic to t… │
+┗ ●◉··· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   ☐ Tail the logs and wat… │
+                                                  │   ☑ Record the start time… │
                                                   │   ⊘ Restart the replica —… │
                                                   │   ▪ Roll back              │
-                                                  │ • [3] Ordered steps        │
-                                                  │   Task states work the sa… ▼
+                                                  │ • [3] Ordered steps        ▼
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit
