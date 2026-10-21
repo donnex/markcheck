@@ -2,9 +2,9 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/27
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/28
 ────────────────────────────────────────────────────────────────────────────────
-╭ Go to task ──────────────────────── 31 items ╮  ┌ Overview ──────────────────┐
+╭ Go to task ──────────────────────── 32 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Reference            ▲
 │ ▪ A note with a command but no…  — Reference │  │   ▪ Read before proceedin… ▓
 │ ☐ A task with a single inline …  — Reference │  │   Non-task content and th… ▓

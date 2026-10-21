@@ -4,6 +4,8 @@
 
 <!-- markdownlint-disable MD034 -- one task deliberately uses a bare URL, to show it is a link too -->
 
+<!-- markdownlint-disable MD045 -- one task deliberately has an image without alt text, to show it still becomes a link -->
+
 <!-- markdownlint-disable MD033 -- two tasks deliberately use inline HTML and an HTML block, to show they are dropped -->
 
 <!-- markdownlint-disable MD010 -- one fenced block is deliberately tab-indented, to show tabs render as indentation -->
@@ -111,6 +113,10 @@ Non-task content and the ways code is handled.
 - [ ] Check the mirror at www.example.com/mirror, a `www.` bare URL that `o`
   opens as `http://`, and the uptime page <https://example.com/uptime>, an
   autolink in angle brackets — both are links like any other
+- [ ] Compare the dashboard with ![expected dashboard](https://example.com/dashboard.png)
+  — an image shows as an `image: <alt text>` link, so `o` opens the picture;
+  one without alt text, ![](https://example.com/screenshot.png), shows as
+  `image`
 - [ ] Press <kbd>Enter</kbd> at the prompt — inline HTML tags are dropped but
   the text between them is kept, and a dropped tag still counts as a space:
   line one<br>line two

@@ -681,6 +681,83 @@ fn link_becomes_link_span_and_feeds_display_text() {
     assert_eq!(item.link_urls(), vec!["https://example.com/rb"]);
 }
 
+#[test]
+fn image_becomes_a_labelled_link_span() {
+    let document = parse(
+        "## S\n\n- [ ] Compare the graph with ![expected graph](https://example.com/graph.png) before going on\n",
+    );
+    let item = &document.lists[0].items[0];
+    assert_eq!(
+        item.body,
+        vec![
+            BodySpan::Text("Compare the graph with ".to_string()),
+            BodySpan::Link {
+                text: "image: expected graph".to_string(),
+                url: "https://example.com/graph.png".to_string(),
+            },
+            BodySpan::Text(" before going on".to_string()),
+        ]
+    );
+    assert_eq!(
+        item.display_text,
+        "Compare the graph with image: expected graph before going on"
+    );
+    assert_eq!(item.link_urls(), vec!["https://example.com/graph.png"]);
+}
+
+#[test]
+fn image_without_alt_text_is_labelled_image() {
+    let document = parse("## S\n\n- [ ] ![](https://example.com/screenshot.png)\n");
+    let item = &document.lists[0].items[0];
+    assert_eq!(
+        item.body,
+        vec![BodySpan::Link {
+            text: "image".to_string(),
+            url: "https://example.com/screenshot.png".to_string(),
+        }]
+    );
+    assert_eq!(item.display_text, "image");
+}
+
+#[test]
+fn linked_image_keeps_the_outer_link() {
+    let document = parse(
+        "## S\n\n- [ ] open [![the board](https://example.com/b.png)](https://example.com/board)\n",
+    );
+    let item = &document.lists[0].items[0];
+    assert_eq!(
+        item.body,
+        vec![
+            BodySpan::Text("open ".to_string()),
+            BodySpan::Link {
+                text: "the board".to_string(),
+                url: "https://example.com/board".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn image_inside_the_bold_title_lends_only_its_alt_text() {
+    let document = parse("## S\n\n- [ ] **See ![the map](https://example.com/m.png)** body\n");
+    let item = &document.lists[0].items[0];
+    assert_eq!(item.header.as_deref(), Some("See the map"));
+    assert!(item.link_urls().is_empty());
+}
+
+#[test]
+fn example_image_tasks_open_their_pictures() {
+    let task = example_item("notes-and-code.md", "Compare the dashboard");
+    assert_eq!(
+        task.link_urls(),
+        [
+            "https://example.com/dashboard.png",
+            "https://example.com/screenshot.png"
+        ]
+    );
+    assert!(task.display_text.contains("image: expected dashboard"));
+}
+
 fn bare_urls(text: &str) -> Vec<(&str, String)> {
     find_bare_urls(text)
         .into_iter()

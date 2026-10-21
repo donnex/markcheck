@@ -61,7 +61,8 @@ markcheck examples/basics.md
   opens, plus a `file://` one that `o` refuses as an unsupported scheme, a
   bare URL in the task text that `o` opens just the same,
   a `www.example.com` bare URL that opens as `http://` and an
-  `<https://…>` autolink, inline HTML (`<kbd>Enter</kbd>` shows as `Enter`, and
+  `<https://…>` autolink, images that show as `image: <alt>` links (and
+  `image` with no alt text) that `o` opens, inline HTML (`<kbd>Enter</kbd>` shows as `Enter`, and
   `line one<br>line two` as `line one line two`), an HTML block under a task
   that isn't shown,
   a fenced block placed directly after a list that attaches to the list's last

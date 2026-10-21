@@ -302,6 +302,7 @@ How each piece maps to the UI:
 | `[text](url)` | A **link**: the card shows the underlined `text`, the URL appears centered below the card (not on it), and `o` opens it. Several links on one card get `[1]`/`[2]` markers keyed to the list below the card. |
 | `[Rollback](#rollback)` (a link to a heading in the same file) | `o` **jumps** to the first task under that heading instead of opening a browser, and `Ctrl-O` jumps back. Anchors are GitHub's: the heading lowercased, punctuation dropped, spaces as `-`, and `-1`, `-2` added to repeats, counting quoted headings and headings inside a list item as GitHub does, so links that work on GitHub work here. A heading inside a list item (`- ## Rollback`) jumps to its own card, a quoted one to the first task after it, and a percent-encoded link copied from a browser, such as `#d%C3%A9ploiement` for `## Déploiement`, matches like the raw `#déploiement`. The same anchor opens a file there from the command line: `markcheck runbook.md#rollback`. |
 | a bare URL (`https://example.com/status`, `www.example.com`) and `<https://example.com>` | Also a **link**, the same as `[text](url)` with the URL as its text — as on GitHub. Trailing punctuation (`.`, `,`, `!`, an unmatched `)`, …) is left out of the URL, and a `www.` one opens as `http://`. Not inside the bold card title or inline code. |
+| `![alt](url)` (an image) | Also a **link**, shown as underlined `image: alt` (just `image` when the alt text is empty), so the card says there was a picture; its URL is listed below the card and `o` opens it in your browser. The picture itself isn't drawn. A linked image (`[![alt](img)](url)`) is one link to the outer `url`, shown with the alt text; an image inside the bold card title adds only its alt text to the title. In the prose above a list, only the alt text is shown. |
 | a leading `---` (YAML) or `+++` (TOML) front-matter block | **Ignored** — not shown anywhere, and left untouched in the file. Only a block on the very first line counts; its keys (e.g. `title:`) are not used. |
 | inline HTML (`<kbd>`, `<br>`, …) and HTML blocks | **Dropped.** Inline tags are not shown on the card, though the text between them is (`<kbd>Enter</kbd>` shows as `Enter`); a block of HTML, including an `<!-- comment -->`, is not shown at all. A dropped tag still counts as a space, so `line one<br>line two` shows as `line one line two` rather than running the words together. |
 | a task or note continuing in a **second paragraph** (a blank line, then indented text) | Joined to the first paragraph with a space and shown as one flowing body, the same as a line wrapped in the source. Text after a code block or a sub-list inside the item joins the same way. |
@@ -432,6 +433,8 @@ Finer points:
   blockquotes. `###` and deeper now label
   sub-sections *within* a list (above), rather than being ignored, but they
   never create a new list or the document title.
+- **Images aren't drawn.** A terminal can't show the picture, so `![alt](url)`
+  becomes an `image: alt` link that `o` opens (see the table above).
 - **A link entirely inside the leading-bold title loses its URL.** `- [ ]
   **[text](url) more** body` shows "text more" as the card title like any
   other bold title, but the link's URL is discarded — `o` can't open it (only

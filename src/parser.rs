@@ -294,6 +294,10 @@ struct ItemBuilder {
     /// `Some((url, text))` while inside a link: the destination plus the link
     /// text accumulated so far; flushed to a `BodySpan::Link` on link end.
     link: Option<(String, String)>,
+    /// One entry per open image: where its alt text starts in `text` when the
+    /// image opened its own link, `None` when it sits inside a link or the
+    /// title and just lends its alt text.
+    images: Vec<Option<usize>>,
     /// Set at a block boundary or dropped HTML tag inside the item, so the
     /// next run is separated from the text before it instead of fused onto it.
     pending_separator: bool,
@@ -346,6 +350,34 @@ impl ItemBuilder {
         if let Some((url, text)) = self.link.take() {
             self.body.push(BodySpan::Link { text, url });
         }
+    }
+
+    /// An image reads as a link labelled `image: <alt>` (`image` with no alt
+    /// text), so the card shows there was a picture and `o` opens it.
+    fn start_image(&mut self, url: &str) {
+        if self.link.is_some() || self.capturing_header {
+            self.images.push(None);
+            return;
+        }
+        self.start_link(url);
+        self.images.push(Some(self.text.len()));
+    }
+
+    fn end_image(&mut self) {
+        let Some(Some(alt_start)) = self.images.pop() else {
+            return;
+        };
+        if let Some((_, link_text)) = &mut self.link {
+            let label = if link_text.trim().is_empty() {
+                "image".to_string()
+            } else {
+                format!("image: {}", link_text.trim())
+            };
+            self.text.truncate(alt_start);
+            self.text.push_str(&label);
+            *link_text = label;
+        }
+        self.end_link();
     }
 
     /// Link text still flows into `text` (and thus `display_text`) so search
@@ -878,6 +910,10 @@ impl<'a> ParseState<'a> {
                 self.with_item(|item| item.start_link(&dest_url));
             }
             Event::End(TagEnd::Link) => self.with_item(ItemBuilder::end_link),
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                self.with_item(|item| item.start_image(&dest_url));
+            }
+            Event::End(TagEnd::Image) => self.with_item(ItemBuilder::end_image),
             Event::Start(Tag::CodeBlock(kind)) => {
                 let fenced = matches!(kind, CodeBlockKind::Fenced(_));
                 self.code_block = Some((fenced, String::new()));
