@@ -3222,3 +3222,54 @@ fn an_unrecognised_marker_at_the_end_of_the_file_is_counted() {
     let document = parse("- [ ] task\r\n\r\n- [?]");
     assert_eq!(unrecognised(&document), vec![(3, "[?]")]);
 }
+
+// --- `#anchor` links to sections that don't exist (#193).
+
+#[test]
+fn anchor_links_to_missing_sections_are_listed_by_card_line() {
+    let document = parse(
+        "# Runbook\n\n## Notes\n\nProse only.\n\n## Déploiement\n\n- [ ] a, see [notes](#notes) and [up](#runbook)\n\
+         - [ ] b, see [back](#rolback) and [site](https://example.com)\n\
+         - [ ] c, see [d%C3%A9ploiement](#d%C3%A9ploiement), [Card](#in-card) and ![pic](#nowhere)\n\
+         - ## In card\n\n  [quoted](#quoted) and [empty](#)\n\n> ## Quoted\n",
+    );
+    assert_eq!(
+        document.missing_anchor_links(),
+        vec![(10, "#rolback"), (11, "#nowhere"), (12, "#")],
+        "a section with no tasks, a percent-encoded link and a heading inside a card or quote are all there"
+    );
+}
+
+#[test]
+fn no_anchor_links_means_nothing_missing() {
+    let document = parse("## Deploy\n\n- [ ] see [docs](https://example.com)\n");
+    assert!(document.missing_anchor_links().is_empty());
+}
+
+#[test]
+fn only_the_missing_link_example_has_a_link_to_a_missing_section() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples");
+    for entry in fs::read_dir(&dir).expect("examples/ must exist") {
+        let path = entry.expect("readable entry").path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if !name.ends_with(".md") || name == "README.md" {
+            continue;
+        }
+        let document = parse_document(path).expect("example parses");
+        let missing: Vec<&str> = document
+            .missing_anchor_links()
+            .into_iter()
+            .map(|(_, url)| url)
+            .collect();
+        let expected: &[&str] = if name == "notes-and-code.md" {
+            &["#restart-the-queue"]
+        } else {
+            &[]
+        };
+        assert_eq!(missing, expected, "{name}");
+    }
+}

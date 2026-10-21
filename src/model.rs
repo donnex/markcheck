@@ -733,6 +733,25 @@ impl Document {
         self.find_anchor(anchor).is_some()
     }
 
+    /// Every `#anchor` link on a card that no heading has, as `(line of
+    /// its card, link as written)` in document order (#193). A heading
+    /// with no tasks under it still counts as there.
+    pub fn missing_anchor_links(&self) -> Vec<(LineNumber, &str)> {
+        self.lists
+            .iter()
+            .flat_map(|list| &list.items)
+            .flat_map(|item| {
+                item.link_urls()
+                    .into_iter()
+                    .map(move |url| (item.line_number, url))
+            })
+            .filter(|(_, url)| {
+                url.strip_prefix('#')
+                    .is_some_and(|anchor| !self.has_anchor(anchor))
+            })
+            .collect()
+    }
+
     fn find_anchor(&self, anchor: &str) -> Option<&Anchor> {
         let wanted = percent_decode(anchor).to_lowercase();
         self.anchors.iter().find(|taken| taken.name == wanted)

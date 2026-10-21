@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- = Notes, Banners, and Code │ notes-and-code.md                                                                 [x] 0/31
+ = Notes, Banners, and Code │ notes-and-code.md                                                                 [x] 0/32
 ------------------------------------------------------------------------------------------------------------------------
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ # [1] Reference            ^
@@ -28,8 +28,8 @@ expression: "screen(&mut state, width, height)"
 │    but no ║                     apply-config --now                      ║pplication  │  │   [ ] A task with two lin… #
 │  checkbox ║                                                             ║ervice and  │  │   [ ] Status board first … #
 └───────────║                                                             ║────────────┘  │   [ ] See also every serv… #
-            ╚ .@........................... ══════════════════════════════╝               │   [ ] A task linking to a… #
-                                                                                          │   [ ] Check the dashboard… #
+            ╚ .@........................... ══════════════════════════════╝               │   [ ] A task linking to a… │
+                                                                                          │   [ ] Check the dashboard… │
                                                                                           │   [ ] Check the mirror at… │
                                                                                           │   [ ] Compare the dashboa… │
                                                                                           │   [ ] Press Enter at the … │

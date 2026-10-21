@@ -3,8 +3,8 @@ use super::{
     CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, StartupSeverity, already_open_warning,
     editor_file_args, exit_summary, expand_tilde, git_sync_path_matches, git_sync_request,
     git_sync_scope, git_sync_warning, is_terminal_browser, leftovers_note, link_route,
-    opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
-    terminal_title, unrecognised_markers_note, unshown_note, watch_warning,
+    missing_anchors_note, opener_failure_message, resolve_editor, resolve_opener, startup_message,
+    startup_warning, terminal_title, unrecognised_markers_note, unshown_note, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -890,6 +890,19 @@ fn unrecognised_markers_note_counts_them_and_names_the_first() {
     assert_eq!(
         unrecognised_markers_note(&[marker(14, "[>]"), marker(20, "[ x]")]).as_deref(),
         Some("2 task markers not recognised (line 14: [>])")
+    );
+}
+
+#[test]
+fn missing_anchors_note_counts_the_links_and_names_the_first() {
+    assert_eq!(missing_anchors_note(&[]), None);
+    assert_eq!(
+        missing_anchors_note(&[(14, "#rolback")]).as_deref(),
+        Some("1 link points to a missing section (line 14: #rolback)")
+    );
+    assert_eq!(
+        missing_anchors_note(&[(14, "#rolback"), (20, "#deploi")]).as_deref(),
+        Some("2 links point to missing sections (line 14: #rolback)")
     );
 }
 

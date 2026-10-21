@@ -70,7 +70,9 @@ markcheck examples/basics.md
   card, a `> [!WARNING]` callout above a task whose quoted heading, fenced
   command and bullets all stay in the quote, shown in order above the card,
   items opening with other tools' markers (`[>]`, `[?]`) that stay notes and
-  are counted in the startup note (`2 task markers not recognised`), and a
+  are counted in the startup note (`2 task markers not recognised`), a link
+  to a heading the file doesn't have (`#restart-the-queue`), reported in the
+  startup note as `1 link points to a missing section`, and a
   no-checkbox section that gets dropped (its bullets are counted in the
   startup note of what isn't shown).
 - **`expected-output.md`** — code blocks labelled by their fence: a ` ```text `

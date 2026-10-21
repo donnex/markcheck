@@ -10,6 +10,8 @@
 
 <!-- markdownlint-disable MD010 -- one fenced block is deliberately tab-indented, to show tabs render as indentation -->
 
+<!-- markdownlint-disable MD051 -- one task deliberately links to a heading the file doesn't have, to show the startup note about it -->
+
 Non-task content and the ways code is handled.
 
 ## Reference
@@ -189,6 +191,14 @@ note counts them.
 - [ ] Stop the worker queue
 - [>] Run the data migration (deferred in another tool)
 - [?] Check whether the cache needs warming
+
+## Link to a missing section
+
+The link below points to a heading this file doesn't have, so the startup
+note reports it, and `o` on it says there is no such section.
+
+- [ ] Drain the worker queue; if it stalls, see
+  [Restart the queue](#restart-the-queue)
 
 ## Notes only (this section is dropped)
 

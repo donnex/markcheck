@@ -475,6 +475,19 @@ pub fn unrecognised_markers_note(markers: &[crate::model::UnrecognisedMarker]) -
     ))
 }
 
+/// The startup note for `#anchor` links no heading has (#193), naming the
+/// first: `1 link points to a missing section (line 14: #rolback)`.
+pub fn missing_anchors_note(links: &[(crate::model::LineNumber, &str)]) -> Option<String> {
+    let (line, url) = links.first()?;
+    let count = links.len();
+    let says = if count == 1 {
+        "link points to a missing section"
+    } else {
+        "links point to missing sections"
+    };
+    Some(format!("{count} {says} (line {line}: {url})"))
+}
+
 /// The document's title for the terminal title and the exit line: its
 /// `# H1`, or one made from the file name.
 fn document_name(state: &crate::model::AppState) -> String {

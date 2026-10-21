@@ -356,6 +356,7 @@ fn main() -> anyhow::Result<()> {
         launch::leftovers_note(leftovers),
         launch::unshown_note(&state.document.unshown),
         launch::unrecognised_markers_note(&state.document.unrecognised_markers),
+        launch::missing_anchors_note(&state.document.missing_anchor_links()),
     ];
     let opened_at = match &start_at {
         Some(start) => Some(state.open_at(start)),

@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/31
+ ≡ Notes, Banners, and Code │ notes-and-code.md                           ☑ 0/32
 ────────────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Reference            ▲
@@ -12,7 +12,7 @@ expression: "screen(&mut state, width, height)"
    ▪ Read before proceeding: every step below     │   ❯ A task with a single … ▓
   assumes the service has already been drained    │   ☐ Restart the primary a… ▓
              from the load balancer               │   ☐ Restart example-servi… ▓
-                                                  │   ☐ A task with a fenced … ▓
+                                                  │   ☐ A task with a fenced … │
 ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/29 ┓  │   ☐ A task with an indent… │
 ┃                                              ┃  │   ☐ A task with a short o… │
 ┃      A task with a single inline command     ┃  │   ☐ A task with fenced li… │

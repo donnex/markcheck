@@ -2,7 +2,7 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/31
+ ≡ Notes, Banners, and Code │ notes-and-code.md                                                                   ☑ 0/32
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Reference            ▲
@@ -28,8 +28,8 @@ expression: "screen(&mut state, width, height)"
 │    inline ┃  — a card title too long for one row wraps inside the card  ┃   ce       │  │   ☐ A task with two links… ▓
 │    command┃                    instead of being cut                     ┃            │  │   ☐ Status board first — … ▓
 └───────────┃                                                             ┃────────────┘  │   ☐ See also every servic… ▓
-            ┗ ··◉·························· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ A task linking to a l… ▓
-                                                                                          │   ☐ Check the dashboard a… ▓
+            ┗ ··◉·························· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ A task linking to a l… │
+                                                                                          │   ☐ Check the dashboard a… │
                                                                                           │   ☐ Check the mirror at w… │
                                                                                           │   ☐ Compare the dashboard… │
                                                                                           │   ☐ Press Enter at the pr… │
