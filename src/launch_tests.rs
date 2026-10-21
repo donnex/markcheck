@@ -1,10 +1,10 @@
 use super::LinkRoute;
 use super::{
-    CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, already_open_warning, editor_file_args,
-    exit_summary, expand_tilde, git_sync_path_matches, git_sync_request, git_sync_scope,
-    git_sync_warning, is_terminal_browser, leftovers_warning, link_route, opener_failure_message,
-    resolve_editor, resolve_opener, startup_message, startup_warning, terminal_title,
-    unshown_warning, watch_warning,
+    CoveringEntry, GitSyncRequest, OPENER_FAILURE_WINDOW, StartupSeverity, already_open_warning,
+    editor_file_args, exit_summary, expand_tilde, git_sync_path_matches, git_sync_request,
+    git_sync_scope, git_sync_warning, is_terminal_browser, leftovers_note, link_route,
+    opener_failure_message, resolve_editor, resolve_opener, startup_message, startup_warning,
+    terminal_title, unshown_note, watch_warning,
 };
 use std::path::{Path, PathBuf};
 
@@ -546,34 +546,81 @@ fn watch_warning_names_the_error_and_the_fallback_interval() {
 
 #[test]
 fn startup_message_is_sticky_only_when_something_needs_attention() {
-    assert_eq!(startup_message(false, None, &[None, None]), None);
+    use StartupSeverity::{Error, Status};
+    assert_eq!(startup_message(false, None, &[None, None], &[None]), None);
     assert_eq!(
-        startup_message(true, None, &[None, None]),
-        Some(("Created new checklist".to_string(), false))
+        startup_message(true, None, &[None, None], &[]),
+        Some(("Created new checklist".to_string(), Status))
     );
     assert_eq!(
-        startup_message(false, Some("Opened at #b"), &[None]),
-        Some(("Opened at #b".to_string(), false))
+        startup_message(false, Some("Opened at #b"), &[None], &[None]),
+        Some(("Opened at #b".to_string(), Status))
     );
     assert_eq!(
         startup_message(
             false,
             None,
-            &[Some("one".to_string()), Some("two".to_string())]
+            &[Some("one".to_string()), Some("two".to_string())],
+            &[]
         ),
-        Some(("one; two".to_string(), true))
+        Some(("one; two".to_string(), Error))
     );
     assert_eq!(
-        startup_message(true, None, &[None, Some("Git sync off: x".to_string())]),
-        Some(("Created new checklist; Git sync off: x".to_string(), true))
+        startup_message(
+            true,
+            None,
+            &[None, Some("Git sync off: x".to_string())],
+            &[]
+        ),
+        Some(("Created new checklist; Git sync off: x".to_string(), Error))
     );
     assert_eq!(
         startup_message(
             false,
             Some("Opened at line 4"),
-            &[Some("Warning: x".to_string())]
+            &[Some("Warning: x".to_string())],
+            &[]
         ),
-        Some(("Opened at line 4; Warning: x".to_string(), true))
+        Some(("Opened at line 4; Warning: x".to_string(), Error))
+    );
+}
+
+#[test]
+fn startup_notes_alone_are_not_an_error() {
+    use StartupSeverity::{Error, Notice};
+    let unshown = Some("1 paragraph outside task lists not shown".to_string());
+    assert_eq!(
+        startup_message(false, None, &[None], &[None, unshown.clone()]),
+        Some((
+            "1 paragraph outside task lists not shown".to_string(),
+            Notice
+        ))
+    );
+    assert_eq!(
+        startup_message(
+            true,
+            Some("Opened at #b"),
+            &[],
+            &[leftovers_note(1), unshown.clone()]
+        ),
+        Some((
+            "Created new checklist; Opened at #b; removed 1 file left by an interrupted \
+             markcheck; 1 paragraph outside task lists not shown"
+                .to_string(),
+            Notice
+        ))
+    );
+    assert_eq!(
+        startup_message(
+            false,
+            None,
+            &[Some("Git sync off: x".to_string())],
+            &[unshown]
+        ),
+        Some((
+            "Git sync off: x; 1 paragraph outside task lists not shown".to_string(),
+            Error
+        ))
     );
 }
 
@@ -623,14 +670,14 @@ fn startup_warning_says_when_another_users_file_cant_be_taken_over() {
 }
 
 #[test]
-fn leftovers_warning_counts_what_was_removed() {
-    assert_eq!(leftovers_warning(0), None);
+fn leftovers_note_counts_what_was_removed() {
+    assert_eq!(leftovers_note(0), None);
     assert_eq!(
-        leftovers_warning(1).as_deref(),
+        leftovers_note(1).as_deref(),
         Some("removed 1 file left by an interrupted markcheck")
     );
     assert_eq!(
-        leftovers_warning(3).as_deref(),
+        leftovers_note(3).as_deref(),
         Some("removed 3 files left by an interrupted markcheck")
     );
 }
@@ -712,11 +759,11 @@ fn a_trailing_double_star_marks_an_entry_as_covering_nested_repositories() {
 }
 
 #[test]
-fn unshown_warning_lists_what_is_not_shown() {
+fn unshown_note_lists_what_is_not_shown() {
     use crate::model::Unshown;
-    assert_eq!(unshown_warning(&Unshown::default()), None);
+    assert_eq!(unshown_note(&Unshown::default()), None);
     assert_eq!(
-        unshown_warning(&Unshown {
+        unshown_note(&Unshown {
             paragraphs: 1,
             ..Unshown::default()
         })
@@ -724,7 +771,7 @@ fn unshown_warning_lists_what_is_not_shown() {
         Some("1 paragraph outside task lists not shown")
     );
     assert_eq!(
-        unshown_warning(&Unshown {
+        unshown_note(&Unshown {
             paragraphs: 2,
             quotes: 1,
             bullets: 0,
@@ -734,7 +781,7 @@ fn unshown_warning_lists_what_is_not_shown() {
         Some("2 paragraphs, 1 quote and 3 code blocks outside task lists not shown")
     );
     assert_eq!(
-        unshown_warning(&Unshown {
+        unshown_note(&Unshown {
             bullets: 1,
             ..Unshown::default()
         })
@@ -742,7 +789,7 @@ fn unshown_warning_lists_what_is_not_shown() {
         Some("1 bullet point outside task lists not shown")
     );
     assert_eq!(
-        unshown_warning(&Unshown {
+        unshown_note(&Unshown {
             paragraphs: 1,
             bullets: 2,
             ..Unshown::default()

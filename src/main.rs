@@ -345,9 +345,11 @@ fn main() -> anyhow::Result<()> {
             .as_ref()
             .and_then(git_sync::GitSync::identity_warning),
         watch_error.map(|error| launch::watch_warning(&error.to_string())),
-        launch::leftovers_warning(leftovers),
         launch::already_open_warning(&other_sessions),
-        launch::unshown_warning(&state.document.unshown),
+    ];
+    let notes = [
+        launch::leftovers_note(leftovers),
+        launch::unshown_note(&state.document.unshown),
     ];
     let opened_at = start_at.as_ref().map(|start| state.open_at(start));
     let mut warnings = warnings.to_vec();
@@ -357,9 +359,10 @@ fn main() -> anyhow::Result<()> {
         Some(Ok(note)) => opened_note = Some(note),
         None => {}
     }
-    match launch::startup_message(created_new, opened_note.as_deref(), &warnings) {
-        Some((message, true)) => state.set_error(message),
-        Some((message, false)) => state.set_status(message),
+    match launch::startup_message(created_new, opened_note.as_deref(), &warnings, &notes) {
+        Some((message, launch::StartupSeverity::Error)) => state.set_error(message),
+        Some((message, launch::StartupSeverity::Notice)) => state.set_notice(message),
+        Some((message, launch::StartupSeverity::Status)) => state.set_status(message),
         None => {}
     }
     // Drives the persistent `⇅ git` section in the title bar

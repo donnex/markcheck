@@ -402,7 +402,7 @@ pub fn watch_warning(error: &str) -> String {
 /// The startup note for prose markcheck read but can't show (#80): what
 /// sits between tasks, after the last one, or under a heading with none, and
 /// the bullets of a list with no checkbox.
-pub fn unshown_warning(unshown: &crate::model::Unshown) -> Option<String> {
+pub fn unshown_note(unshown: &crate::model::Unshown) -> Option<String> {
     if unshown.is_empty() {
         return None;
     }
@@ -640,7 +640,7 @@ fn time_ago(elapsed: std::time::Duration) -> String {
 /// The startup note for leftovers of an interrupted markcheck that were
 /// removed (see `writer::sweep_interrupted_saves`), so a vanished file is
 /// accounted for.
-pub fn leftovers_warning(removed: usize) -> Option<String> {
+pub fn leftovers_note(removed: usize) -> Option<String> {
     match removed {
         0 => None,
         1 => Some("removed 1 file left by an interrupted markcheck".to_string()),
@@ -650,24 +650,46 @@ pub fn leftovers_warning(removed: usize) -> Option<String> {
     }
 }
 
-/// Joins the startup messages into the one the status bar shows: sticky and
-/// error-colored if any of them is a warning, otherwise the ephemeral
-/// "Created new checklist" and `opened` (the `open_at` note) alone. Returns
-/// the text and whether it's an error.
+/// How the startup message is shown: which of `set_status`, `set_notice`
+/// and `set_error` it goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupSeverity {
+    /// Ephemeral: "Created new checklist" and the `open_at` note alone.
+    Status,
+    /// Sticky but not an error: informational notes such as what isn't shown.
+    Notice,
+    /// Sticky and error-colored: at least one warning needs attention.
+    Error,
+}
+
+/// Joins the startup messages into the one the status bar shows: first
+/// "Created new checklist" and `opened` (the `open_at` note), then the
+/// `warnings`, then the informational `notes` (#254). It is an error only
+/// when a warning is present, a sticky notice when only notes are, and
+/// ephemeral otherwise.
 pub fn startup_message(
     created_new: bool,
     opened: Option<&str>,
     warnings: &[Option<String>],
-) -> Option<(String, bool)> {
+    notes: &[Option<String>],
+) -> Option<(String, StartupSeverity)> {
     let mut parts: Vec<&str> = Vec::new();
     if created_new {
         parts.push("Created new checklist");
     }
     parts.extend(opened);
     let warnings: Vec<&str> = warnings.iter().flatten().map(String::as_str).collect();
-    let is_error = !warnings.is_empty();
+    let notes: Vec<&str> = notes.iter().flatten().map(String::as_str).collect();
+    let severity = if !warnings.is_empty() {
+        StartupSeverity::Error
+    } else if !notes.is_empty() {
+        StartupSeverity::Notice
+    } else {
+        StartupSeverity::Status
+    };
     parts.extend(warnings);
-    (!parts.is_empty()).then(|| (parts.join("; "), is_error))
+    parts.extend(notes);
+    (!parts.is_empty()).then(|| (parts.join("; "), severity))
 }
 
 /// The sticky warning shown at startup when no save will happen (the file

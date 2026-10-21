@@ -460,7 +460,8 @@ Finer points:
   preamble, under a heading and before its first task (above). One between
   two tasks, after the last task, or under a heading with no tasks belongs to
   no card, so `markcheck` says at startup how many it isn't showing (`2
-  paragraphs and 1 quote outside task lists not shown`). Tables are read as
+  paragraphs and 1 quote outside task lists not shown`), as a plain note
+  rather than an error, after any warning. Tables are read as
   ordinary paragraphs. A fenced block right after a list still attaches to
   its last item (above).
 - **Files are read as UTF-8.** A leading byte-order mark (BOM), as some
