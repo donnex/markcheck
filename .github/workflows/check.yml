@@ -113,6 +113,39 @@ jobs:
             --ignore-filename-regex 'main\.rs|_tests\.rs|test_support\.rs' \
             --fail-under-lines 97 --fail-under-regions 97
 
+  # macOS is a supported platform with release binaries of its own (#194),
+  # and its code paths differ from Linux's (no /proc, so `ps`; the system
+  # pasteboard instead of X11/Wayland; `open` instead of `xdg-open`). Lint,
+  # build and test it here; formatting, licenses, advisories and coverage
+  # don't depend on the platform and stay in the Linux job. Tests that read
+  # /proc already skip themselves where it doesn't exist.
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The PTY tests (tests/pty.rs) drive the compiled binary.
+      - name: Build
+        run: cargo build --locked
+
+      - name: cargo test
+        run: cargo test --locked
+
   # Cargo.toml's rust-version is a promise to anyone building from source;
   # building with exactly that toolchain keeps it true (#44). The version is
   # read from the manifest rather than copied here, so changing rust-version

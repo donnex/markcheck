@@ -108,10 +108,21 @@ workflow and file-backed state.
 
 ## Installation
 
-Pre-built binaries (Linux x86_64) are attached to each
+Pre-built binaries are attached to each
 [release](https://github.com/donnex/markcheck/releases) as a
-`.tar.gz` with a `.sha256` checksum — download, verify, extract, and put
-`markcheck` on your `$PATH`. The archive also holds `LICENSE` and
+`.tar.gz` with a `.sha256` checksum — download the one for your platform,
+verify, extract, and put `markcheck` on your `$PATH`:
+
+| Platform | Archive |
+| --- | --- |
+| Linux x86_64 | `markcheck-<version>-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64 (aarch64) | `markcheck-<version>-aarch64-unknown-linux-musl.tar.gz` |
+| macOS Apple silicon | `markcheck-<version>-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `markcheck-<version>-x86_64-apple-darwin.tar.gz` |
+
+On macOS, a binary downloaded with a browser is quarantined by Gatekeeper,
+since it isn't signed; clear that with `xattr -d com.apple.quarantine
+markcheck` (a `curl` download isn't quarantined). The archive also holds `LICENSE` and
 `THIRD-PARTY-LICENSES`, the license texts of every crate compiled into the
 binary, a man page and shell completions:
 
@@ -123,9 +134,9 @@ cp completions/markcheck.fish ~/.config/fish/completions/
 ```
 
 A source build can make the same files with `markcheck --generate-man` and
-`markcheck --generate-completions bash|zsh|fish`, which print to stdout. The binary is statically linked (musl), so it
-runs on any x86_64 Linux, old or new, whatever its C library. For any other
-platform, build from source: that needs Rust 1.88 or newer (`rustc
+`markcheck --generate-completions bash|zsh|fish`, which print to stdout. The Linux binaries are statically linked (musl), so
+they run on any x86_64 or ARM64 Linux, old or new, whatever its C library.
+For any other platform, build from source: that needs Rust 1.88 or newer (`rustc
 --version`; install or update it with [rustup](https://rustup.rs)).
 
 ```sh
@@ -143,10 +154,11 @@ available, and otherwise falls back to an OSC 52 terminal escape (see
 [Clipboard](#clipboard)) — no manual setup either way; the Wayland clipboard
 backend builds in automatically.
 
-**Platform support:** Linux is what CI builds and tests, and the only
-platform release binaries are published for. macOS is expected to work
-(build from source) but is not tested anywhere, so a macOS-only regression
-could go unnoticed. Windows and other non-Unix systems are not supported:
+**Platform support:** Linux and macOS. CI builds, lints and runs the full
+test suite on both (Linux x86_64 and macOS on Apple silicon), and release
+binaries are published for Linux and macOS on x86_64 and ARM64. The Linux
+release binaries are also checked against a real X11 clipboard and the OSC
+52 fallback before publishing; the macOS ones only that they start. Windows and other non-Unix systems are not supported:
 building there stops with the error "markcheck supports Unix-like systems
 only".
 

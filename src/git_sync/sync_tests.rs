@@ -51,6 +51,9 @@ fn a_branch_deleted_on_the_remote_is_not_recreated_by_a_sync() {
         "the commit itself must have been made locally"
     );
 }
+// macOS file systems refuse a file name that isn't valid UTF-8, so the
+// file this test needs can't be created there.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn run_sync_refuses_a_non_utf8_file_name_without_committing() {
     use std::ffi::OsStr;

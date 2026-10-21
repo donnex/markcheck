@@ -161,6 +161,18 @@ fn isolate(cmd: &mut CommandBuilder) {
     }
 }
 
+/// A shell that, like the one in a terminal, takes the terminal back when
+/// `Ctrl-Z` stops its job and carries on with the script. It has to be
+/// interactive: macOS's `sh` (bash 3.2) never does that for a script, even
+/// with `set -m`. `ENV` is removed so no startup file runs.
+fn job_control_shell() -> CommandBuilder {
+    let mut cmd = CommandBuilder::new("sh");
+    cmd.env_remove("ENV");
+    cmd.arg("-i");
+    cmd.arg("-c");
+    cmd
+}
+
 /// A fixture `git` command in `dir`, isolated like the binary under test.
 fn git(dir: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
@@ -1019,6 +1031,7 @@ fn quit_when_all_done_prompts_reset_then_resets() {
 
 /// The OSC 52 clipboard write for `alpha`, which is what an auto-copy of the
 /// `alpha` card emits in the PTY, where no system clipboard is reachable.
+#[cfg(not(target_os = "macos"))]
 const ALPHA_OSC52: &str = "\x1b]52;c;YWxwaGE=\x07";
 
 const AUTO_COPY_CHECKLIST: &str = "## Work\n\n- [ ] `alpha`\n- [ ] plain item\n";
@@ -1053,6 +1066,9 @@ fn drive_auto_copy_navigation(
     run_with_pty_capturing(cmd, path, steps)
 }
 
+// Needs a machine with no clipboard tool or browser opener, so markcheck
+// falls back to OSC 52; macOS always has its own (pbcopy, open).
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn auto_copy_flag_copies_the_card_navigated_onto() {
     let path = unique_path("autocopy");
@@ -1083,6 +1099,9 @@ fn navigation_copies_nothing_without_auto_copy() {
     );
 }
 
+// Needs a machine with no clipboard tool or browser opener, so markcheck
+// falls back to OSC 52; macOS always has its own (pbcopy, open).
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn inside_tmux_a_copy_also_goes_through_its_passthrough() {
     let path = unique_path("autocopy-tmux");
@@ -1104,6 +1123,9 @@ fn inside_tmux_a_copy_also_goes_through_its_passthrough() {
     );
 }
 
+// Needs a machine with no clipboard tool or browser opener, so markcheck
+// falls back to OSC 52; macOS always has its own (pbcopy, open).
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn config_file_sets_auto_copy_default_without_the_flag() {
     // A config file's `auto_copy = true` must reach the same runtime
@@ -2548,6 +2570,9 @@ fn open_link_hands_the_terminal_to_a_terminal_browser_and_takes_it_back() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+// Needs a machine with no clipboard tool or browser opener, so markcheck
+// falls back to OSC 52; macOS always has its own (pbcopy, open).
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn open_link_without_a_browser_or_display_copies_the_link_instead() {
     let md = unique_path("linkheadlessmd");
@@ -2649,8 +2674,7 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
     let path = unique_path("suspend");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
 
-    let mut cmd = CommandBuilder::new("sh");
-    cmd.arg("-c");
+    let mut cmd = job_control_shell();
     cmd.arg(concat!(
         "set -m; \"$0\" --icons=unicode \"$1\"; ",
         "printf -- '- [ ] `gamma`\\n' >> \"$1\"; ",
@@ -2736,8 +2760,7 @@ fn ctrl_z_without_job_control_stays_on_screen_and_says_why() {
 /// prints `SUSPENDED-IN-SHELL` and the newest commit on `remote`'s `main`,
 /// then runs `fg`.
 fn suspend_shell_session(path: &Path, extra: &[&str], remote: &Path) -> Session {
-    let mut cmd = CommandBuilder::new("sh");
-    cmd.arg("-c");
+    let mut cmd = job_control_shell();
     cmd.arg(concat!(
         "set -m; \"$0\" --icons=unicode --git-sync $3 \"$1\"; ",
         "echo SUSPENDED-IN-SHELL; ",
@@ -2777,6 +2800,11 @@ fn ctrl_z_right_after_a_toggle_pushes_it_before_stopping() {
     run_git(&work, &["push", "-q", "-u", "origin", "main"]);
 
     let mut session = suspend_shell_session(&path, &[], &remote);
+    // The startup remote check would otherwise share the 5 s wait with the
+    // toggle's own commit and push, which a loaded runner can outlast.
+    session.wait_until("the startup sync to settle", |raw| {
+        !render_screen(raw).contains("syncing…")
+    });
     session.key(" ");
     wait_for_file(&path, "the toggle", |s| s.contains("[x] `alpha`"));
     session.key("\x1a");
@@ -2984,8 +3012,7 @@ fn the_terminal_title_is_handed_over_to_the_editor_and_set_again_after() {
 fn the_terminal_title_is_handed_back_on_ctrl_z_and_set_again_on_fg() {
     let path = unique_path("title-suspend");
     write_file(&path, "# Night shift\n\n## Work\n\n- [ ] alpha\n");
-    let mut cmd = CommandBuilder::new("sh");
-    cmd.arg("-c");
+    let mut cmd = job_control_shell();
     cmd.arg("set -m; \"$0\" \"$1\"; echo SUSPENDED-IN-SHELL; fg");
     cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
     cmd.arg(&path);

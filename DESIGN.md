@@ -722,7 +722,7 @@ OSC 52 (`ESC ] 52 ; c ; <base64> BEL`, to stdout) reaches the local terminal thr
 
 **`--version`** prints `<CARGO_PKG_VERSION> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. `build.rs` embeds the SHA (`unknown` outside a checkout, and also when the crate's directory isn't the root of the work tree git finds, as for a source tarball unpacked inside a packaging repository or monorepo, whose commit would otherwise be stamped; no git paths are watched then) and reruns on changes to `HEAD`, `packed-refs` and the directory holding the branch's loose ref (the next commit creates that file, which a watch on the file would miss); only existing paths are emitted.
 
-**Platforms.** Linux and macOS. The code assumes Unix throughout (modes, `fchown`, sessions, `killpg`, `/proc` or `ps`); `main.rs` opens with `#[cfg(not(unix))] compile_error!` (#78).
+**Platforms.** Linux and macOS. The code assumes Unix throughout (modes, `fchown`, sessions, `killpg`, `/proc` or `ps`); `main.rs` opens with `#[cfg(not(unix))] compile_error!` (#78). `check.yml` lints, builds and tests on Linux and on macOS (Apple silicon), and `release.yml` builds `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin` and `x86_64-apple-darwin`, each natively on a runner of its own architecture, as one archive per target (#194). Tests that read `/proc` skip themselves where it is missing.
 
 ---
 

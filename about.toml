@@ -1,5 +1,6 @@
 # Third-party license notices for the release archive (#132), generated with
-# `cargo about generate about.hbs` for the musl target the release builds.
+# `cargo about generate --target <target> about.hbs` once per release
+# target, so each archive lists the crates compiled into its own binary.
 # A dependency under a license not listed here fails the generation; the
 # same list is enforced on every push by `cargo deny check licenses`
 # (deny.toml).
@@ -16,5 +17,11 @@ accepted = [
     "Unlicense",
     "Zlib",
 ]
-targets = ["x86_64-unknown-linux-musl"]
+# The release targets, for a run without --target.
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
 ignore-dev-dependencies = true

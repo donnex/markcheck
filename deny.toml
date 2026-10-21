@@ -4,7 +4,13 @@
 # same list about.toml accepts for the release notices, and no locked crate
 # version may have a RustSec advisory or be yanked.
 [graph]
-targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
 exclude-dev = true
 
 [licenses]

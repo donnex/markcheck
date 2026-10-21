@@ -403,12 +403,18 @@ fn the_editor_names_the_variable_it_came_from() {
     assert!(found.detail.contains("falling back to vi"), "{found:?}");
 }
 
+const OPENER: &str = if cfg!(target_os = "macos") {
+    "open"
+} else {
+    "xdg-open"
+};
+
 #[test]
 fn the_browser_lists_its_openers_and_text_browsers() {
     let browser = |browser: Option<String>, env: Env| browser_check(&Env { browser, ..env });
     assert_eq!(
         browser(None, graphical()),
-        ok("browser", "xdg-open (BROWSER unset)")
+        ok("browser", format!("{OPENER} (BROWSER unset)"))
     );
     assert_eq!(
         browser(some("firefox:w3m %s"), Env::default()),
@@ -422,7 +428,7 @@ fn the_browser_lists_its_openers_and_text_browsers() {
         browser(None, over_ssh(graphical())),
         ok(
             "browser",
-            "xdg-open, and the link is copied too (BROWSER unset; SSH session)"
+            format!("{OPENER}, and the link is copied too (BROWSER unset; SSH session)")
         )
     );
     let found = browser(some("'broken"), graphical());

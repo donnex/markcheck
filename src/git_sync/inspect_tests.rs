@@ -49,6 +49,9 @@ fn index_entry_matches_glob_characters_literally() {
         index_blob(&work, "notes1.md")
     );
 }
+// macOS file systems refuse a file name that isn't valid UTF-8, so the
+// file this test needs can't be created there.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn index_entry_refuses_a_file_name_that_is_not_utf8() {
     use std::ffi::OsStr;

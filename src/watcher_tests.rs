@@ -196,6 +196,10 @@ fn ignores_writes_to_other_files_in_same_directory() {
     let sibling = unique_temp_path("sibling");
     fs::write(&path, "initial").unwrap();
     let watcher = FileWatcher::new(&path).unwrap();
+    // macOS FSEvents can still report the write just above once the watch
+    // starts; drain it so only the sibling's events are left to judge.
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = watcher.poll_changed();
 
     fs::write(&sibling, "unrelated").unwrap();
     // Give the OS a moment to deliver (or not deliver) an event, then

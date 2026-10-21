@@ -293,16 +293,20 @@ fn an_unbound_chord_cancels_a_pending_prompt_and_names_special_keys() {
     );
 }
 
+/// crossterm names the key by its keycap, which on a Mac reads "delete".
+const BACKSPACE_UNBOUND: &str = if cfg!(target_os = "macos") {
+    "Delete is not bound (? lists every key)"
+} else {
+    "Backspace is not bound (? lists every key)"
+};
+
 #[test]
 fn an_unbound_plain_key_on_the_checklist_says_so_and_changes_nothing() {
     for (code, message) in [
         (KeyCode::Char('z'), "z is not bound (? lists every key)"),
         (KeyCode::Char('0'), "0 is not bound (? lists every key)"),
         (KeyCode::F(1), "F1 is not bound (? lists every key)"),
-        (
-            KeyCode::Backspace,
-            "Backspace is not bound (? lists every key)",
-        ),
+        (KeyCode::Backspace, BACKSPACE_UNBOUND),
         (
             KeyCode::Char('x'),
             "x is not bound — Space checks a task (? lists every key)",

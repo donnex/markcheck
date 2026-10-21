@@ -1,13 +1,15 @@
 name: Release
 
-# Push a tag like "v0.2.0" to trigger a build + GitHub release with a
-# markcheck-<tag>-x86_64-unknown-linux-musl.tar.gz (binary, README.md,
-# LICENSE, THIRD-PARTY-LICENSES, the markcheck.1 man page and bash, zsh and
-# fish completions) and
-# its .sha256 checksum attached. Only Linux x86_64, built against musl so
-# the binary is static and runs whatever the host's glibc is (#44). Uses the `GITHUB_TOKEN` GitHub Actions injects
-# automatically for every run rather than requiring a manually-created
-# secret.
+# Push a tag like "v0.2.0" to trigger a build + GitHub release with one
+# markcheck-<tag>-<target>.tar.gz per target (binary, README.md, LICENSE,
+# THIRD-PARTY-LICENSES, the markcheck.1 man page and bash, zsh and fish
+# completions), each with its .sha256 checksum attached (#194). The targets:
+# x86_64 and aarch64 Linux, built against musl so the binary is static and
+# runs whatever the host's glibc is (#44), and aarch64 and x86_64 macOS. Each
+# builds natively on a runner of its own architecture, so every binary can
+# run its own smoke test and generate its own man page and completions. Uses
+# the `GITHUB_TOKEN` GitHub Actions injects automatically for every run
+# rather than requiring a manually-created secret.
 on:
   push:
     tags:
@@ -19,9 +21,9 @@ on:
 # scripts read it from the runner's own GITHUB_REF_NAME environment variable
 # instead of having it pasted into the shell source. Actions are pinned to
 # full commit SHAs, and every checkout sets `persist-credentials: false`, as in
-# check.yml: the release job's token can write to the repository, and its
-# build runs every dependency's build script and proc macros, none of which
-# needs git credentials. `gh release create` gets the token through its own
+# check.yml: the build runs every dependency's build script and proc macros,
+# none of which needs git credentials, and the release job's token can write
+# to the repository. `gh release create` gets the token through its own
 # GH_TOKEN variable instead (#200).
 permissions:
   contents: read
@@ -58,12 +60,28 @@ jobs:
   check:
     uses: ./.github/workflows/check.yml
 
-  release:
+  # One archive per target, each built and smoke-tested on a runner of its
+  # own architecture. Nothing here can write to the repository: the archives
+  # go to the release job below as workflow artifacts, so a target that
+  # fails to build publishes nothing at all rather than a partial release.
+  build:
     needs: [version, check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    env:
+      TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,21 +92,22 @@ jobs:
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable branch
         with:
           toolchain: stable
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+        run: cargo build --release --locked --target "$TARGET"
 
       # The static binary must still reach the clipboards: X11 (under Xvfb,
       # read back with xclip while markcheck holds the selection) and the
       # OSC 52 fallback with no display. Wayland needs a compositor the
       # runner doesn't have.
       - name: Smoke-test the static binary
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb xclip
-          bin="$PWD/target/x86_64-unknown-linux-musl/release/markcheck"
+          bin="$PWD/target/$TARGET/release/markcheck"
           "$bin" --version
           printf '## Smoke\n\n- [ ] `smoke-test-command`\n- [ ] other\n' > smoke.md
           cat > x11-smoke.sh <<EOS
@@ -107,40 +126,89 @@ jobs:
             "stty rows 30 cols 100; env -u DISPLAY -u WAYLAND_DISPLAY $bin --no-config smoke.md" osc52.log > /dev/null
           grep -q "$(printf '\033]52;c;')" osc52.log
 
-      # The notices for every crate compiled into the binary (#132), from
-      # about.toml's allow-list and the about.hbs template.
+      # No X11 or OSC 52 path to drive on macOS, whose clipboard is the
+      # system pasteboard: the binary must start and report its version, and
+      # the packaging step below runs it again for the man page and
+      # completions. check.yml's macOS job runs the test suite itself.
+      - name: Smoke-test the macOS binary
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          file "target/$TARGET/release/markcheck"
+          "target/$TARGET/release/markcheck" --version
+
+      # The notices for every crate compiled into this target's binary
+      # (#132), from about.toml's allow-list and the about.hbs template.
       - name: Install cargo-about
         uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-about@0.9.2
 
       - name: Generate third-party license notices
-        run: cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES
+        run: cargo about generate --locked --target "$TARGET" about.hbs -o THIRD-PARTY-LICENSES
 
       # The archive name carries the version/platform detail; the binary
       # inside it stays plain `markcheck` so extracting it needs no
-      # renaming. ARCHIVE_NAME is computed once here (via $GITHUB_ENV) so
-      # the packaging and upload steps below don't repeat the same string.
-      # It is set as a shell variable first rather than by sourcing
-      # $GITHUB_ENV back in, which would evaluate the tag text as shell.
+      # renaming. `shasum -a 256` rather than `sha256sum`, which macOS
+      # lacks; both write the same `<hash>  <file>` line.
       - name: Package release archive
         run: |
           set -euo pipefail
-          ARCHIVE_NAME="markcheck-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
-          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> "$GITHUB_ENV"
+          archive="markcheck-${GITHUB_REF_NAME}-${TARGET}"
+          bin="target/$TARGET/release/markcheck"
 
-          mkdir -p "dist/$ARCHIVE_NAME"
-          cp target/x86_64-unknown-linux-musl/release/markcheck "dist/$ARCHIVE_NAME/markcheck"
-          cp README.md LICENSE THIRD-PARTY-LICENSES "dist/$ARCHIVE_NAME/"
-          bin=target/x86_64-unknown-linux-musl/release/markcheck
-          "$bin" --generate-man > "dist/$ARCHIVE_NAME/markcheck.1"
-          mkdir -p "dist/$ARCHIVE_NAME/completions"
-          "$bin" --generate-completions bash > "dist/$ARCHIVE_NAME/completions/markcheck.bash"
-          "$bin" --generate-completions zsh > "dist/$ARCHIVE_NAME/completions/_markcheck"
-          "$bin" --generate-completions fish > "dist/$ARCHIVE_NAME/completions/markcheck.fish"
-          chmod +x "dist/$ARCHIVE_NAME/markcheck"
-          tar -C dist -czf "dist/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
-          (cd dist && sha256sum "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256")
+          mkdir -p "dist/$archive"
+          cp "$bin" "dist/$archive/markcheck"
+          cp README.md LICENSE THIRD-PARTY-LICENSES "dist/$archive/"
+          "$bin" --generate-man > "dist/$archive/markcheck.1"
+          mkdir -p "dist/$archive/completions"
+          "$bin" --generate-completions bash > "dist/$archive/completions/markcheck.bash"
+          "$bin" --generate-completions zsh > "dist/$archive/completions/_markcheck"
+          "$bin" --generate-completions fish > "dist/$archive/completions/markcheck.fish"
+          chmod +x "dist/$archive/markcheck"
+          tar -C dist -czf "dist/$archive.tar.gz" "$archive"
+          (cd dist && shasum -a 256 "$archive.tar.gz" > "$archive.tar.gz.sha256")
+          mkdir upload
+          mv "dist/$archive.tar.gz" "dist/$archive.tar.gz.sha256" upload/
+
+      - name: Hand the archive to the release job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archive-${{ matrix.target }}
+          path: upload/
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Collect the archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+
+      # Each archive must arrive with a checksum that still matches it, and
+      # every target must be there, so a lost artifact fails the release
+      # instead of publishing it without that platform.
+      - name: Verify the archives
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -l
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
+            sha256sum -c "markcheck-${GITHUB_REF_NAME}-${target}.tar.gz.sha256"
+          done
 
       # Release notes come from CHANGELOG.md rather than gh's own
       # auto-generated (PR-title-based) notes, so they match what
@@ -171,7 +239,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
-            "dist/$ARCHIVE_NAME.tar.gz" \
-            "dist/$ARCHIVE_NAME.tar.gz.sha256" \
+            dist/*.tar.gz \
+            dist/*.tar.gz.sha256 \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md
