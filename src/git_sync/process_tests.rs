@@ -27,14 +27,15 @@ fn run_with_timeout_and_stdin_writes_and_the_command_reads_it_back() {
 }
 #[test]
 fn run_with_timeout_kills_a_process_that_exceeds_the_deadline() {
-    // The marker is touched after the timeout: it appearing would mean the
-    // child was given up on, not killed.
+    // Left running, the child would touch the marker about a second in, well
+    // inside the wait below: it appearing means the child was given up on,
+    // not killed.
     let marker = crate::test_support::unique_temp_path("git-sync-timeout", "marker", None);
     let mut cmd = Command::new("sh");
     cmd.args([
         "-c",
         &format!(
-            "sleep 5 && touch {}",
+            "sleep 1 && touch {}",
             shell_words::quote(marker.to_str().unwrap())
         ),
     ]);
@@ -52,11 +53,11 @@ fn run_with_timeout_kills_a_process_that_exceeds_the_deadline() {
         "must return promptly once the deadline passes, not wait for the child: {elapsed:?}"
     );
 
-    std::thread::sleep(Duration::from_millis(1500));
+    std::thread::sleep(Duration::from_millis(2500));
     assert!(
         !marker.exists(),
         "the child must have been killed, not merely abandoned -- \
-             it was still alive it would have created this marker by now"
+             had it still been alive it would have created this marker by now"
     );
 
     fs::remove_file(&marker).ok();

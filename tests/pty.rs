@@ -649,9 +649,7 @@ fn interrupts_sent_while_the_editor_runs_reach_only_the_editor() {
 fn editor_spawn_failure_does_not_crash_or_change_the_file() {
     // $EDITOR pointing at a nonexistent binary must surface a clear error
     // (`main.rs`'s `Err(err)` branch) rather than crashing or hanging
-    // the TUI. No screen-scraping (per this module's own convention) — the
-    // behavioral proof is that the app survives and quits cleanly with the
-    // file untouched, since the (nonexistent) editor never ran.
+    // the TUI, and leave the file untouched, since the editor never ran.
     let path = unique_path("editorspawnfail");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n");
     let missing_editor = unique_path("does-not-exist");
@@ -659,7 +657,11 @@ fn editor_spawn_failure_does_not_crash_or_change_the_file() {
     let ok = drive(
         &path,
         &[("EDITOR", missing_editor.to_str().unwrap())],
-        &[Step::Key("e"), Step::Key("q")],
+        &[
+            Step::Key("e"),
+            Step::WaitForScreen("Failed to launch"),
+            Step::Key("q"),
+        ],
     );
     assert!(ok, "binary should exit successfully after a failed spawn");
 
@@ -690,7 +692,11 @@ fn editor_non_zero_exit_does_not_crash_or_change_the_file() {
     let ok = drive(
         &path,
         &[("EDITOR", editor.to_str().unwrap())],
-        &[Step::Key("e"), Step::Key("q")],
+        &[
+            Step::Key("e"),
+            Step::WaitForScreen("exited with exit status: 1"),
+            Step::Key("q"),
+        ],
     );
     assert!(
         ok,
@@ -1838,11 +1844,28 @@ fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it
     );
     run_git(&work, &["push", "-q", "-u", "origin", "main"]);
 
-    // Fake $EDITOR: touches the file's mtime forward without touching its
-    // content at all — a "no-op save," which some real editors do too.
+    // Fake $EDITOR: copies a reference file's later mtime onto the file
+    // without touching its content at all — a "no-op save," which some real
+    // editors do too — and leaves a marker to show it ran. `touch -r` is
+    // POSIX, unlike GNU's `touch -d`.
+    let reference = root.join("later-mtime");
+    write_file(&reference, "");
+    let later = std::fs::metadata(&path).unwrap().modified().unwrap() + Duration::from_secs(2);
+    std::fs::File::open(&reference)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    let marker = root.join("editor-ran");
     let editor = unique_path("fakeeditor-gitsync-noop");
     let editor = editor.with_extension("sh");
-    write_file(&editor, "#!/bin/sh\ntouch -d '+2 seconds' \"$1\"\n");
+    write_file(
+        &editor,
+        &format!(
+            "#!/bin/sh\ntouch -r {} \"$1\" && touch {}\n",
+            shell_words::quote(reference.to_str().unwrap()),
+            shell_words::quote(marker.to_str().unwrap())
+        ),
+    );
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&editor).unwrap().permissions();
@@ -1854,9 +1877,19 @@ fn git_sync_makes_no_commit_when_the_editor_touches_the_file_without_changing_it
         &path,
         &["--git-sync"],
         &[("EDITOR", editor.to_str().unwrap())],
-        &[Step::Key("e"), Step::Key("q")],
+        &[
+            Step::Key("e"),
+            Step::WaitForScreen("Reloaded: file changed on disk"),
+            Step::Key("q"),
+        ],
     );
     assert!(ok, "binary should exit successfully");
+    assert!(marker.exists(), "the fake editor must have run");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "## Work\n\n- [ ] `alpha`\n",
+        "the editor must have left the content alone"
+    );
 
     // The binary has exited, and its exit path waits for an in-flight sync
     // to settle, so a would-be (wrong) commit+push has already landed by
