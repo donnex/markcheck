@@ -146,6 +146,7 @@ impl AppState {
             file_gone: None,
             write_notice: None,
             in_place_noted: false,
+            saved_after_reload: None,
             search: SearchState::default(),
             picker: PickerState::default(),
             help: HelpState::default(),
@@ -294,8 +295,13 @@ impl AppState {
     }
 
     /// Shows a pending [`AppState::write_notice`], after the action's own
-    /// status.
+    /// status, and puts a retried save's reload message in front of that
+    /// status (see [`AppState::saved_after_reload`]).
     fn show_write_notice(&mut self) {
+        if let Some(reload) = self.saved_after_reload.take() {
+            let action = self.status_message.take().unwrap_or_default();
+            self.set_status(format!("{reload} — then saved: {action}"));
+        }
         if let Some(notice) = self.write_notice.take() {
             self.set_error(notice);
         }

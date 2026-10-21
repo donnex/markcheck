@@ -683,9 +683,14 @@ sticky "File is read-only — change not saved" message, leaving the file
 exactly as it was. Run `chmod u+w` on it to allow saving again.
 
 If the file changed on disk since it was last loaded — another `markcheck`
-instance, or an external editor, saved to it after you did — a toggle is
-refused rather than silently overwriting that change: the file is reloaded
-and a sticky error asks you to retry.
+instance, an external editor or a `git pull` saved to it after you did —
+markcheck never silently overwrites that change: it reloads the file first.
+When the task you changed (`Space`, `s`, `-` or an overview marker click) is
+still there with the same text, nesting and state, the change is made again
+on the reloaded content and saved, and the status bar says so, as in
+`Reloaded: 1 done ("Restart service") — then saved: Marked done`. When the
+outside change touched that task, or the action was a reset, undo, redo or a
+whole-branch skip, nothing is saved and a sticky error asks you to retry.
 
 ### Terminal title and exit line
 

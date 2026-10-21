@@ -130,6 +130,103 @@ pub(super) fn reload_changes(old: &Document, new: &Document) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
+/// [`AppState::remapped_with_loss`] for any pair of documents: where the
+/// `(list, item)` position in `old` lands in `new_document`, and whether the
+/// task was lost.
+pub(super) fn remap_between(
+    old: &Document,
+    (list_index, item_index): (usize, usize),
+    new_document: &Document,
+) -> (usize, usize, bool) {
+    let old_list = old.lists.get(list_index);
+    let old_title = old_list.map(|s| s.title.clone());
+    let old_item = old_list.and_then(|list| list.items.get(item_index));
+
+    // Two lists can share a title, so the old list's rank among same-titled
+    // lists picks the new one.
+    let old_occurrence = old_title.as_deref().map(|title| {
+        old.lists[..list_index]
+            .iter()
+            .filter(|s| s.title == title)
+            .count()
+    });
+
+    let found_list_index =
+        old_title
+            .as_deref()
+            .zip(old_occurrence)
+            .and_then(|(title, occurrence)| {
+                new_document
+                    .lists
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.title == title)
+                    .nth(occurrence)
+                    .map(|(i, _)| i)
+            });
+    let same_count = new_document.lists.len() == old.lists.len();
+    let last_list = new_document.lists.len().saturating_sub(1);
+
+    let Some(old_item) = old_item else {
+        let fallback = if same_count { list_index } else { 0 };
+        return (
+            found_list_index.unwrap_or(fallback).min(last_list),
+            0,
+            false,
+        );
+    };
+    let same_task = |item: &Item| {
+        item.header == old_item.header
+            && item.display_text == old_item.display_text
+            && item.depth == old_item.depth
+    };
+    let distance = |item: &Item| item.line_number.abs_diff(old_item.line_number);
+    let nearest_where = |matches: &dyn Fn(&Item) -> bool| {
+        new_document
+            .lists
+            .iter()
+            .enumerate()
+            .flat_map(|(l, list)| {
+                list.items
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, item)| (l, i, item))
+            })
+            .filter(|(_, _, item)| matches(item))
+            .min_by_key(|(_, _, item)| distance(item))
+            .map(|(l, i, _)| (l, i))
+    };
+
+    let new_list_index = match found_list_index {
+        Some(index) => index,
+        None => {
+            if let Some((list, item)) = nearest_where(&same_task) {
+                return (list, item, false);
+            }
+            if same_count {
+                list_index.min(last_list)
+            } else {
+                nearest_where(&|_| true).map_or(0, |(list, _)| list)
+            }
+        }
+    };
+    let items = &new_document.lists[new_list_index].items;
+
+    if let Some(index) = (0..items.len())
+        .filter(|&i| same_task(&items[i]))
+        .min_by_key(|&i| distance(&items[i]))
+    {
+        return (new_list_index, index, false);
+    }
+    if let Some(index) = (0..items.len()).find(|&i| items[i].line_number == old_item.line_number) {
+        return (new_list_index, index, false);
+    }
+    let nearest = (0..items.len())
+        .min_by_key(|&i| distance(&items[i]))
+        .unwrap_or(0);
+    (new_list_index, nearest, true)
+}
+
 impl AppState {
     /// Re-reads the file if its mtime or size changed. Cheap enough for every
     /// tick. Returns whether new content was loaded.
@@ -361,98 +458,10 @@ impl AppState {
     /// line nearest the task's.
     pub(super) fn remapped_with_loss(
         &self,
-        (list_index, item_index): (usize, usize),
+        position: (usize, usize),
         new_document: &Document,
     ) -> (usize, usize, bool) {
-        let old_list = self.document.lists.get(list_index);
-        let old_title = old_list.map(|s| s.title.clone());
-        let old_item = old_list.and_then(|list| list.items.get(item_index));
-
-        // Two lists can share a title, so the old list's rank among same-titled
-        // lists picks the new one.
-        let old_occurrence = old_title.as_deref().map(|title| {
-            self.document.lists[..list_index]
-                .iter()
-                .filter(|s| s.title == title)
-                .count()
-        });
-
-        let found_list_index =
-            old_title
-                .as_deref()
-                .zip(old_occurrence)
-                .and_then(|(title, occurrence)| {
-                    new_document
-                        .lists
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, s)| s.title == title)
-                        .nth(occurrence)
-                        .map(|(i, _)| i)
-                });
-        let same_count = new_document.lists.len() == self.document.lists.len();
-        let last_list = new_document.lists.len().saturating_sub(1);
-
-        let Some(old_item) = old_item else {
-            let fallback = if same_count { list_index } else { 0 };
-            return (
-                found_list_index.unwrap_or(fallback).min(last_list),
-                0,
-                false,
-            );
-        };
-        let same_task = |item: &Item| {
-            item.header == old_item.header
-                && item.display_text == old_item.display_text
-                && item.depth == old_item.depth
-        };
-        let distance = |item: &Item| item.line_number.abs_diff(old_item.line_number);
-        let nearest_where = |matches: &dyn Fn(&Item) -> bool| {
-            new_document
-                .lists
-                .iter()
-                .enumerate()
-                .flat_map(|(l, list)| {
-                    list.items
-                        .iter()
-                        .enumerate()
-                        .map(move |(i, item)| (l, i, item))
-                })
-                .filter(|(_, _, item)| matches(item))
-                .min_by_key(|(_, _, item)| distance(item))
-                .map(|(l, i, _)| (l, i))
-        };
-
-        let new_list_index = match found_list_index {
-            Some(index) => index,
-            None => {
-                if let Some((list, item)) = nearest_where(&same_task) {
-                    return (list, item, false);
-                }
-                if same_count {
-                    list_index.min(last_list)
-                } else {
-                    nearest_where(&|_| true).map_or(0, |(list, _)| list)
-                }
-            }
-        };
-        let items = &new_document.lists[new_list_index].items;
-
-        if let Some(index) = (0..items.len())
-            .filter(|&i| same_task(&items[i]))
-            .min_by_key(|&i| distance(&items[i]))
-        {
-            return (new_list_index, index, false);
-        }
-        if let Some(index) =
-            (0..items.len()).find(|&i| items[i].line_number == old_item.line_number)
-        {
-            return (new_list_index, index, false);
-        }
-        let nearest = (0..items.len())
-            .min_by_key(|&i| distance(&items[i]))
-            .unwrap_or(0);
-        (new_list_index, nearest, true)
+        remap_between(&self.document, position, new_document)
     }
 
     /// Before `Ctrl-Z` stops the process: a sync still running is waited for,

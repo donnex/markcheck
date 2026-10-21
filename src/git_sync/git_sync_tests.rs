@@ -1097,3 +1097,44 @@ fn a_remote_check_waits_for_a_running_sync() {
 
     assert!(sync.receiver.try_recv().is_err(), "nothing was started");
 }
+
+#[test]
+fn a_toggle_retried_after_a_pull_publishes_on_top_of_the_pulled_commit() {
+    let (work, remote) = init_repo_with_remote();
+    let file = work.join("tracked.md");
+    fs::write(&file, "## S\n\n- [ ] one\n- [ ] two\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "two steps"]);
+    run(&work, &["push", "-q"]);
+    let mut state =
+        crate::model::AppState::new(crate::parser::parse_document(file.clone()).unwrap());
+
+    fs::write(&file, "## S\n\n- [ ] one\n- [x] two\n").unwrap();
+    run(&work, &["commit", "-q", "-am", "pulled: two done"]);
+    run(&work, &["push", "-q"]);
+    state.toggle_current();
+
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "## S\n\n- [x] one\n- [x] two\n"
+    );
+    let pending = state
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            crate::effect::Effect::GitSync(sync) => Some(sync.clone()),
+            _ => None,
+        })
+        .expect("the retried toggle queues a sync");
+    let mut sync = GitSync::detect(&file).unwrap();
+    sync.request(pending);
+
+    assert_eq!(settle(&mut sync), vec![SyncOutcome::Synced]);
+    assert_eq!(
+        git_stdout(&remote, &["log", "-1", "--format=%s", "main"]),
+        "tracked.md: Check \"one\""
+    );
+    assert_eq!(
+        git_stdout(&remote, &["show", "main:tracked.md"]),
+        "## S\n\n- [x] one\n- [x] two"
+    );
+}

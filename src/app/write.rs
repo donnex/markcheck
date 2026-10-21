@@ -7,11 +7,12 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::effect::Effect;
 use crate::git_sync::{self, SyncOutcome};
 use crate::model::{
-    AppState, CriticalAction, CriticalArm, FileGone, ItemKind, PendingSync, StateSnapshot,
-    SyncBase, TaskState, View, hash_bytes,
+    AppState, CriticalAction, CriticalArm, Document, FileGone, ItemKind, PendingSync,
+    StateSnapshot, SyncBase, TaskState, View, hash_bytes,
 };
 use crate::writer;
 
+use super::reload::remap_between;
 use super::*;
 
 pub(super) const READ_ONLY_MESSAGE: &str =
@@ -20,6 +21,21 @@ pub(super) const READ_ONLY_MESSAGE: &str =
 /// The quiet spell a critical step's confirming press must follow, so key
 /// repeat from a held key, or a reflex double press, can't confirm it (#219).
 pub(super) const CRITICAL_PAUSE: Duration = Duration::from_millis(500);
+
+/// The one task change [`AppState::commit_write_retrying`] may make again
+/// after a reload: the task's position before it, and its new state.
+pub(super) struct Retry {
+    position: (usize, usize),
+    state: TaskState,
+}
+
+/// How [`AppState::commit_write_retrying`] saved.
+pub(super) enum Saved {
+    AsIs,
+    /// After reloading an outside change; carries the reloaded document's
+    /// states, the undo point for the change.
+    AfterReload(StateSnapshot),
+}
 
 pub(super) const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck replace the file, \
      so the checklist is overwritten directly";
@@ -233,14 +249,21 @@ impl AppState {
         };
         let item_text = item.label();
         item.kind = ItemKind::Checkbox(state);
-        if !self.commit_write(
+        let retry = Retry {
+            position: (list_index, item_index),
+            state,
+        };
+        let undo_point = match self.commit_write_retrying(
             &pre_state,
             "Write failed — change not saved to disk",
             &format!("{} \"{item_text}\"", state.commit_verb()),
+            Some(retry),
         ) {
-            return false;
-        }
-        self.push_undo_point(pre_state);
+            None => return false,
+            Some(Saved::AsIs) => pre_state,
+            Some(Saved::AfterReload(reloaded)) => reloaded,
+        };
+        self.push_undo_point(undo_point);
         true
     }
 
@@ -254,6 +277,22 @@ impl AppState {
         fail_msg: &str,
         change_desc: &str,
     ) -> bool {
+        self.commit_write_retrying(pre_state, fail_msg, change_desc, None)
+            .is_some()
+    }
+
+    /// [`AppState::commit_write`], which with `retry` handles a file changed
+    /// on disk more gently (#190): when the reload finds the one task being
+    /// changed untouched, the change is made again on the reloaded document
+    /// and saved under the same lock, once. Returns `None` when nothing was
+    /// saved.
+    pub(super) fn commit_write_retrying(
+        &mut self,
+        pre_state: &StateSnapshot,
+        fail_msg: &str,
+        change_desc: &str,
+        mut retry: Option<Retry>,
+    ) -> Option<Saved> {
         // Held across the divergence check and the write, making the two one
         // compare-and-swap. `Unavailable` proceeds unlocked so a machine without a
         // writable temp directory can still save.
@@ -269,20 +308,32 @@ impl AppState {
                      (if this persists, remove {})",
                     lock_path.display()
                 ));
-                return false;
+                return None;
             }
         };
 
-        let on_disk = writer::read_checklist(&self.document.file_path).ok();
-        if self.content_diverged(on_disk.as_deref()) {
-            self.apply_snapshot(pre_state);
-            if self.force_reload() {
+        let mut reloaded: Option<(StateSnapshot, Option<String>)> = None;
+        let on_disk = loop {
+            let on_disk = writer::read_checklist(&self.document.file_path).ok();
+            if !self.content_diverged(on_disk.as_deref()) {
+                break on_disk;
+            }
+            self.apply_snapshot(reloaded.as_ref().map_or(pre_state, |(undo, _)| undo));
+            let before = retry.is_some().then(|| self.document.clone());
+            if !self.force_reload() {
+                return None;
+            }
+            let Some((position, state)) = retry.take().zip(before).and_then(|(retry, before)| {
+                Some((self.untouched(&before, retry.position)?, retry.state))
+            }) else {
                 self.set_error(
                     "File changed on disk — reloaded; change not saved, please retry".to_string(),
                 );
-            }
-            return false;
-        }
+                return None;
+            };
+            reloaded = Some((self.state_snapshot(), self.status_message.clone()));
+            self.document.lists[position.0].items[position.1].kind = ItemKind::Checkbox(state);
+        };
         // The pre-write content for git-sync's staged-target guard, which compares
         // in git's terms so clean filters apply. The bytes just checked, so it is
         // the revision the check matched.
@@ -300,7 +351,7 @@ impl AppState {
                 saved.contents
             }
             Err(err) => {
-                self.apply_snapshot(pre_state);
+                self.apply_snapshot(reloaded.as_ref().map_or(pre_state, |(undo, _)| undo));
                 if writer::is_not_regular(&err) {
                     self.file_gone = Some(FileGone::NotRegular);
                     self.set_error(FileGone::NotRegular.message().to_string());
@@ -312,7 +363,7 @@ impl AppState {
                         writer::describe_write_error(&err)
                     ));
                 }
-                return false;
+                return None;
             }
         };
         let (file_mtime, file_size) = current_stat(&self.document.file_path).unzip();
@@ -337,7 +388,29 @@ impl AppState {
             immediate: false,
             base,
         });
-        true
+        Some(match reloaded {
+            None => Saved::AsIs,
+            Some((undo_point, message)) => {
+                self.saved_after_reload = message;
+                Saved::AfterReload(undo_point)
+            }
+        })
+    }
+
+    /// Where the task at `position` in `before` sits in the just-reloaded
+    /// document, if the outside change left it alone: the same title, body
+    /// and depth, the same state, and critical or not as before (a step made
+    /// critical meanwhile must be confirmed afresh).
+    fn untouched(&self, before: &Document, position: (usize, usize)) -> Option<(usize, usize)> {
+        let old = &before.lists[position.0].items[position.1];
+        let (list, index, _) = remap_between(before, position, &self.document);
+        let new = self.document.lists[list].items.get(index)?;
+        let same = new.header == old.header
+            && new.display_text == old.display_text
+            && new.depth == old.depth
+            && new.kind == old.kind
+            && before.is_critical(position.0, position.1) == self.document.is_critical(list, index);
+        same.then_some((list, index))
     }
 
     /// True when `on_disk`, the file's bytes as just read, no longer match

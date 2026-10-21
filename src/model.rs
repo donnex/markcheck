@@ -1720,6 +1720,10 @@ pub struct AppState {
     /// Whether this session already said a save went in place (see
     /// `writer::Saved::in_place`); said once, not on every toggle.
     pub in_place_noted: bool,
+    /// The reload message of a toggle that was refused because the file
+    /// changed on disk, then saved once the task was found untouched (#190),
+    /// shown with the action's own status once the key or click is handled.
+    pub saved_after_reload: Option<String>,
     /// Incremental `/` search state — see [`SearchState`].
     pub search: SearchState,
     /// `T` go-to-task overlay state — see [`PickerState`].

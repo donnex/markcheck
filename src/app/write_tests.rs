@@ -1360,3 +1360,147 @@ fn document_contents_follows_each_save_so_it_hashes_as_the_file() {
 
     fs::remove_file(&path).ok();
 }
+
+const REFUSED: &str = "File changed on disk — reloaded; change not saved, please retry";
+
+#[test]
+fn a_toggle_refused_by_an_outside_change_elsewhere_is_saved_after_the_reload() {
+    let path = write_real_file("## S\n\n- [ ] one\n- [ ] two\n- [ ] three\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    state.handle_key(KeyCode::Char(' '));
+    assert_eq!(state.current_item_index, 1);
+
+    let outside = "## S\n\nA note.\n\n- [x] one\n- [ ] two\n- [x] three\n";
+    fs::write(&path, outside).unwrap();
+    state.handle_key(KeyCode::Char(' '));
+
+    assert_eq!(
+        file_text(&path),
+        "## S\n\nA note.\n\n- [x] one\n- [x] two\n- [x] three\n"
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 1 done (\"three\") — then saved: Marked done")
+    );
+    assert!(!state.status_is_error);
+    assert!(matches!(
+        state.document.lists[0].items[1].kind,
+        ItemKind::Checkbox(TaskState::Done)
+    ));
+
+    assert!(matches!(state.effects[0], Effect::CancelGitSync));
+    assert_eq!(
+        state
+            .effects
+            .iter()
+            .filter(|e| matches!(e, Effect::GitSync(_)))
+            .count(),
+        1,
+        "the first toggle's waiting sync is dropped, the retried one queued"
+    );
+    let pending = state.take_git_sync_request().expect("a sync is queued");
+    assert_eq!(pending.description, "Check \"two\"");
+    assert_eq!(pending.previous_content.as_deref(), Some(outside));
+    assert_eq!(
+        pending.base,
+        SyncBase::Own {
+            epoch: 2,
+            content: Some(outside.to_string()),
+        },
+        "the outside content, not the first toggle's base, is what it changes"
+    );
+
+    state.handle_key(KeyCode::Char('u'));
+    assert_eq!(
+        file_text(&path),
+        outside,
+        "undo takes back the retried toggle only"
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn start_and_overview_clicks_are_retried_too() {
+    use ratatui::layout::Rect;
+    let path = write_real_file("## S\n\n- [ ] one\n- [ ] two\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+
+    fs::write(&path, "## S\n\n- [ ] one\n- [ ] two\n- [ ] added\n").unwrap();
+    state.handle_key(KeyCode::Char('s'));
+    assert_eq!(
+        file_text(&path),
+        "## S\n\n- [/] one\n- [ ] two\n- [ ] added\n"
+    );
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 1 added — then saved: Marked started")
+    );
+
+    fs::write(&path, "## S\n\n- [/] one\n- [ ] two\n").unwrap();
+    state.layout.overview_rows = vec![(Rect::new(60, 5, 6, 1), OverviewTarget::Toggle(0, 1))];
+    state.handle_left_click(61, 5);
+    assert_eq!(file_text(&path), "## S\n\n- [/] one\n- [x] two\n");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Reloaded: 1 removed — then saved: Marked done")
+    );
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_toggle_whose_task_changed_outside_is_still_refused() {
+    let cases = [
+        ("the same task checked", "## S\n\n- [x] one\n- [ ] two\n"),
+        ("the task reworded", "## S\n\n- [ ] one more\n- [ ] two\n"),
+        ("the task removed", "## S\n\n- [ ] two\n"),
+        ("the task nested", "## S\n\n- [ ] two\n  - [ ] one\n"),
+    ];
+    for (what, outside) in cases {
+        let path = write_real_file("## S\n\n- [ ] one\n- [ ] two\n");
+        let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+        fs::write(&path, outside).unwrap();
+
+        state.handle_key(KeyCode::Char(' '));
+
+        assert_eq!(state.status_message.as_deref(), Some(REFUSED), "{what}");
+        assert!(state.status_is_error, "{what}");
+        assert_eq!(file_text(&path), outside, "{what}: left as it was");
+        assert!(state.git_sync_request().is_none(), "{what}");
+        assert!(state.undo_stack.is_empty(), "{what}");
+        fs::remove_file(&path).ok();
+    }
+}
+
+#[test]
+fn a_task_made_critical_outside_is_not_checked_by_the_retry() {
+    let path = write_real_file("## S\n\n- [ ] **Drop the table**\n- [ ] two\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    let outside = "## S\n\n- [ ] **! Drop the table**\n- [ ] two\n";
+    fs::write(&path, outside).unwrap();
+
+    state.handle_key(KeyCode::Char(' '));
+
+    assert_eq!(state.status_message.as_deref(), Some(REFUSED));
+    assert_eq!(file_text(&path), outside);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_reset_refused_by_an_outside_change_is_not_retried() {
+    let path = write_real_file("## S\n\n- [x] one\n- [ ] two\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    let outside = "## S\n\n- [x] one\n- [ ] two\n- [ ] three\n";
+    fs::write(&path, outside).unwrap();
+
+    let pre_state = state.state_snapshot();
+    for list in &mut state.document.lists {
+        for item in &mut list.items {
+            item.kind = ItemKind::Checkbox(TaskState::NotStarted);
+        }
+    }
+    assert!(!state.commit_write(&pre_state, "Reset failed", "Reset"));
+
+    assert_eq!(state.status_message.as_deref(), Some(REFUSED));
+    assert_eq!(file_text(&path), outside);
+    fs::remove_file(&path).ok();
+}
