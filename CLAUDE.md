@@ -115,47 +115,17 @@ Every merge to `main` is a release; the version bump, the renaming of `## [Unrel
 
 A `new-issues.md` file in the repo root holds issue drafts the user wants filed in the project's issue tracker. Like `REVIEW.md`, it is a signal file: leave it untracked, and never add it to `.gitignore`.
 
-**When to check.** Look for it at the start of a session, before starting each new task or step, and after each commit. Work that runs for a long time without any of those moments still checks between its steps.
+Look for it at the start of a session, before starting each new task or step, and after each commit; long work checks between its steps too. When it exists, run the `new-issues` skill, which holds the procedure: reword the drafts, ask once whether to file them, wait one minute at most, then carry on with the work whether or not an answer came. The pause never stops, rolls back or skips work, and an unanswered question is not a no: ask again at the top of every later reply, in this session or the next, until the user answers. Without the skill, follow that outline.
 
-**When one is found, pause briefly and ask.** Stop what you're doing at the next safe point: never in the middle of a file edit or a git operation. Then:
+### Shortcuts: `issues`, `ideas`, `changes`
 
-1. Read the file and reword each draft into a proper issue. A draft is raw notes, not text to paste as-is. Give each one a short, specific title and a body that states the problem or request, where it applies, and what done looks like. Follow the project's own issue conventions for format, e.g. a severity or type prefix. Keep the draft's meaning, and don't invent details it doesn't support.
-2. Present a summary: how many drafts there are, and the reworded title plus a one-line gist of each.
-3. Ask whether to create them as issues: all, some, or none.
-4. Wait **one minute** for an answer, and no longer. Ask in plain text, then wait with a 60-second sleep (e.g. `sleep 60`), so a reply typed during the wait arrives when it ends. Never ask with a prompt that blocks until someone answers, since nothing would then end the wait.
+A message consisting of only one of these words (ignoring surrounding whitespace) runs the skill of the same name, which holds the procedure; inside a longer message the word is ordinary text.
 
-**The pause must never stop the work.** When no answer arrives within the minute, resume the interrupted work exactly where it left off, with no further prompt and no change to what it was doing. Never abort, roll back, or skip ongoing work because of this check, and never leave the work paused indefinitely waiting for an answer. An unanswered question is not a no: create nothing until the user says yes.
+- **`issues`**: review the open issues, the ones waiting on a decision as short decision cards.
+- **`ideas`**: review the open idea issues the same way.
+- **`changes`**, optionally followed by a period (`changes since yesterday`): summarize what changed as a shareable page.
 
-**Ask again at the very next interaction.** Getting the issues filed is the priority, so an unanswered question never waits for a new session. The next time the user interacts, lead with it: put the summary and the question at the top of the reply to their next message, before anything else. If the work finishes first, put them in the final summary too. Keep asking at every interaction, in this session or a later one, until the user answers. While work is running between interactions, an unchanged `new-issues.md` doesn't trigger another one-minute pause, but a change to its contents does.
-
-**When the user says yes**, create the approved issues from the reworded versions, not the raw drafts. Follow the project's issue conventions: check for an existing open issue covering the same thing first, and add any required trailer. Then delete `new-issues.md`, since its content now lives in the tracker. Report each new issue's number, and list any drafts that were declined or skipped as duplicates, so none disappears without a mention. Then resume the interrupted work.
-
-### Idea review: `ideas`
-
-**`ideas` is shorthand for "review the open idea issues".** A message consisting of only `ideas` (ignoring surrounding whitespace) starts the review below. Inside a longer message it is ordinary text. Idea issues are the ones the project's issue conventions mark as ideas, such as an `[IDEA]` title prefix or an idea label.
-
-**Fetch every open idea.** List all open issues, paging through the tracker until a page comes back empty, since one listing can be cut off silently. Keep the idea issues, and present them **oldest first** (lowest issue number first). Say up front how many there are.
-
-**Present them one at a time.** For each idea:
-
-1. **The issue's identifier and title, in bold**, e.g. **#12 [IDEA] Cache the API responses**.
-2. **A summary of the idea**, written from the issue's body and comments and checked against the current code: what it is, where it applies, and what done would look like. A simple idea gets two or three sentences. A technical or complicated one says so, and gets as long a description as it needs to be understood without opening the issue. A well-described idea matters more than a short one. If the code has already changed what the idea is about (done, superseded, or no longer applicable), say so.
-3. **A short list of pros, cons and the cost to implement**: a few bullets each, with the cost in rough effort (small, medium or large) and what it would touch.
-4. **A prompt with four choices**, asked with a blocking question, so the user answers each idea before the next is shown:
-   - **Keep**: leave the issue open and add it to the "to implement" list. Nothing is implemented during the review.
-   - **Keep open for later**: leave the issue open and untouched, but not on the "to implement" list: it stays in the backlog for a later look, such as a research report to work through some other time. Nothing is posted to the issue.
-   - **Close as won't do**: post a one-line comment giving the reason (ask for it when it isn't obvious from the answer), with the required trailer, then close the issue.
-   - **Needs refinement**: leave it open and set it aside for the refinement round at the end.
-
-**Refinement round.** Once every idea has been through the prompt, go back through the ones marked for refinement, one at a time. Ask what is unclear or missing, or propose a sharper description, then update the issue (its title and body, or a comment) with the result. Finish each one with the same prompt, minus refinement: keep, keep open for later, or close as won't do.
-
-**Close with a summary**: how many ideas were reviewed, then three tables covering every reviewed issue:
-
-- **To implement**: identifier, title, and a one-line gist with its cost, for every idea kept (refined ones included).
-- **Kept open for later**: identifier, title, and a one-line gist.
-- **Closed as won't do**: identifier, title, and the reason given.
-
-Mention the refined ones too (what changed in each). Never start implementing anything from the review unless the user asks.
+When the skill isn't available, say so rather than improvising the procedure.
 
 ### Naming an issue
 
@@ -170,53 +140,19 @@ Mention the refined ones too (what changed in each). Never start implementing an
 - Refresh it at the start of a session and after creating, closing, retitling or editing any issue, and refetch any issue missing from it.
 - Never commit it, and keep it out of the repository's working tree.
 
-### Deciding on an issue
+### Deciding on anything
 
-**This must always be followed, with no exceptions: every question that asks the user to decide something about an issue comes after a summary of that issue, shown first in plain text.** The summary is never optional, never skipped because the issue seems familiar or was discussed earlier, and never left for the prompt to carry. This holds everywhere such a question is asked, not only in the `ideas` and `issues` reviews: while planning, mid-task, after a review, or when an open question on an issue comes up in passing. A decision prompt naming only an issue's number and title asks the user to decide from memory.
+**This must always be followed, with no exceptions: every time the user is asked to decide or choose something, a short explanation comes first, shown in plain text before the question.** It applies to every decision and every question, not only to issues: a choice between approaches, a yes/no on an action, a clarifying question, a question mid-task, while planning, after a review, or one that comes up in passing. It is never optional, never skipped because the topic seems familiar or was discussed earlier, and never left for the prompt to carry. A question that names only a number, a title or a bare option label asks the user to decide from memory.
 
-The summary, written out before the prompt appears:
+Keep it brief. The user wants to decide, not read a page: a few lines, not a document.
 
-- **The issue's identifier and title, in bold.**
-- **What it is about**, checked against the current code: the problem or request, where it applies, and what is still open. Size it to the issue, neither too long nor too short: two or three sentences for a simple one; for a technical issue, or one that needs more to be understood, as long an explanation as it takes to decide without opening the issue.
+The explanation, written out before the prompt appears:
+
+- **What it is**: one to three plain sentences on the problem or request, where it applies and what is still open, checked against the current code. For an issue, lead with its identifier and title in bold. A technical subject may take a little more, but only as much as the decision needs.
 - **The choice being asked**, with what each option would mean.
-- **Pros, cons and cost**: a few bullets each, always, even when the choice looks small. The cost is the rough effort (small, medium or large) and what it would touch; for a choice between several options, give each option its own pros, cons and cost.
+- **Pros, cons and cost**: a few short bullets each, always, even when the choice looks small. The cost is the rough effort (small, medium or large) and what it would touch; for a choice between several options, give each option its own pros, cons and cost.
 
-When one prompt asks about several issues at once, summarize each of them before it. A prompt's own option labels and descriptions don't count as the summary: they are too short, and some interfaces hide them until an option is selected.
-
-### Issue review: `issues`
-
-**`issues` is shorthand for "review the open issues".** A message consisting of only `issues` (ignoring surrounding whitespace) starts the review below. Inside a longer message it is ordinary text.
-
-1. **Fetch every open issue**, paging through the tracker until a page comes back empty, and refresh the local issue cache if the project keeps one (see Naming an issue above).
-2. **Start with a summary list of every open issue**: number and title in bold plus a one-line gist each, grouped so it stays readable (e.g. by area or by severity), with the total count.
-3. **Then take the issues waiting on a decision from the user**, one at a time, oldest first. These are:
-   - idea issues, as the project's issue conventions mark them;
-   - issues only the user can move forward, such as a check that has to be done on their own machines;
-   - issues that end in an open question to the user, or whose next step depends on a choice between options.
-
-   Present each the same way as an idea in the `ideas` review above: number and title in bold, a summary checked against the current code (longer for a technical one), pros, cons and cost, then a prompt answered before the next one is shown. The prompt offers the choices that fit the issue: keep (onto the "to implement" list), keep open for later (left open and off that list), close as won't do (with a one-line reason comment), needs refinement (gone through at the end of the batch), or, for a check or question, the answer itself, recorded as a comment on the issue.
-
-   **Work in batches of 10.** After every 10 issues (or fewer, for the last batch), go through that batch's refinements, show the batch's summary tables (as at the end of the `ideas` review), then ask with a prompt whether to **start working on the issues this batch put on the "to implement" list** or **continue with the next 10**. Starting work ends the review; the issues not yet reviewed wait for the next `issues`.
-4. **When no issue is waiting on a decision**, or once they have all been through the prompt, ask with a prompt whether to plan the open issues that are left: an order to work through them, grouping issues that touch the same code.
-
-Never start implementing anything from the review unless the user chooses to, in the batch prompt or otherwise.
-
-### Change summary: `changes`
-
-**`changes` is shorthand for "summarize what changed".** A message consisting of only `changes`, optionally followed by a period such as `changes since yesterday` or `changes 2026-03-01..2026-03-03`, starts the summary below. Inside a longer message it is ordinary text. With no period given, cover everything on the working branch not yet on `main`.
-
-1. **Collect every change in the period**: the commit log of the working branch (and of `main`, if anything was merged in the period), the issues closed or filed, and any pull requests opened in other repositories the work depends on, with their state.
-2. **Group the changes by kind**, each entry one line with its short commit hash, a plain description written from the user's side, and its issue numbers:
-   - **New features**: something the user can do that they couldn't before.
-   - **Changed behaviour**: something that works differently now.
-   - **Bug fixes**: something that was wrong and now isn't.
-   - **Tests and CI**, then **Docs and housekeeping**.
-
-   Group within a kind by area when it runs long. Fold a commit that only fixes another commit in the same period into that commit's entry. Every commit in the period appears somewhere: brief, but complete.
-3. **Then the state of things**: what still has to happen before the changes are live (merge and deploy order, pull requests elsewhere), and what is still open, such as issues waiting on a decision or ideas filed.
-4. **End with what is worth verifying**: the checks that could only be done on the real systems, grouped by area, with anything already verified marked as done. Draw on the checks recorded in the issues rather than inventing new ones.
-
-Publish it as a shareable page when the environment can host one (an artifact or similar), otherwise write it as a Markdown file in a temporary working directory, outside the repository. Reply with the link or path and a few lines on the headline changes. Keep the page's name stable for a period that is asked for again, so a later run updates it rather than starting another.
+When one prompt asks about several things at once, explain each of them before it. A prompt's own option labels and descriptions don't count as the explanation: they are too short, and some interfaces hide them until an option is selected.
 
 ## CI
 
@@ -305,6 +241,34 @@ Real content must never be committed, full stop — no confirmation step, no "ju
 - If the user supplies a real, non-generic example (a real hostname, a real command, a real name) to illustrate a request, generalize it into a placeholder before writing it down anywhere in the repository — never commit it verbatim, no matter who provided it or why.
 - There is no confirm-and-proceed path here: if something might be real data, treat it as real data and replace it with a placeholder. When in doubt, default to a placeholder rather than asking whether the real value is fine to use.
 
+### Posting outside the project: nothing private, ever
+
+**THIS RULE CAN NEVER BE BROKEN. NO EXCEPTIONS, EVER.** Not for a small comment, not for a detail that seems harmless, not because the user seemed to imply it was fine, not to save time, not "just this once". It overrides every other content rule, including any confirm-first policy: permission to use a real name in the project's own files, docs or commits never covers posting it anywhere outside the project.
+
+**Where it applies:** anything written where people outside the project can read it. That means an issue, comment, pull request, review, discussion, commit message or release note in another project's repository or tracker (GitHub, GitLab, any forge, a mailing list, a forum, a chat), and the user's own public projects too.
+
+**What may never appear there. Nothing from the project, at all:**
+
+- the names of the project, its repositories, folders, files, scripts, functions, branches or settings;
+- its issue or pull-request numbers, titles or links, and its commit hashes;
+- hostnames, machine names, domains, IP addresses, usernames, paths, accounts, services or internal URLs;
+- code, config, logs, error output or screenshots copied from it, even a single line;
+- a description of the project's setup, tools or purpose specific enough to identify it.
+
+**Write it generically instead.** Describe the problem as it would happen to anyone ("a wrapper script that opens the tool in a terminal window", "a laptop with an external monitor"). Build every example, reproduction and log from scratch with placeholder names (`example.org`, `host-a`, `my-script`). A minimal reproduction made for the report is fine; a copy of anything from the project is not.
+
+**Check before posting, every time.** Draft the whole text first, then reread the title, body, labels and any attachment line by line against the list above, as a separate final step just before submitting.
+
+**When unsure, ask. When even a little unsure, ask.** Whether a detail counts as private, whether a place counts as outside the project, whether a reproduction is generic enough: any doubt at all means asking the user before posting, never deciding alone.
+
+**Not for the project's own private tracker.** In an issue tracker only the project's own people can read, naming the project's files, issues and hosts is normal, and this section doesn't apply. If it's unclear whether a tracker is private, treat it as public and ask.
+
+**If something private was posted anyway**, tell the user at once, so it can be removed or edited; never leave it to be noticed later.
+
+**markcheck's own tracker is the exception for markcheck's own content.** This repository and its GitHub issues are public, and markcheck itself is meant to be seen: in markcheck's own issues, comments, commits and docs, naming markcheck, its files, functions, settings, issue numbers and commit hashes, and quoting its code, Markdown and output, is normal and allowed. The strict Test Data & Privacy rules above still apply there in full (no real hostnames, names, paths or credentials).
+
+**Nothing from any other repository, ever.** Nothing from the user's private repositories, or anything they link to, may appear anywhere in markcheck: not in its files, commits, issues, comments or release notes. That covers their names, paths, file and script names, issue numbers, commit hashes, content and setup, even when a convention or instruction here came from one of them. Describe such an origin generically ("the project's conventions") or leave it out. The same holds in the other direction: posting markcheck's content in another project's tracker falls under the rule above.
+
 ## Git
 
 General git conventions for this project: branching, history rewriting, merging to `main`, and commit formatting.
@@ -334,21 +298,9 @@ Do this check — and any resulting rewrite plus `--force-with-lease` push — *
 
 #### Merging to main
 
-Merging to `main` happens only on explicit request, following the sequence below.
+Merging to `main` happens only on explicit request. Every merge request, typed out or as `mm` (a message consisting of only `mm`, ignoring surrounding whitespace; inside a longer message it is ordinary text), runs the `mm` skill, which holds the full sequence.
 
-**`mm` is shorthand for "merge to `main`".** A message consisting of only `mm` (nothing else, ignoring surrounding whitespace) is a request to merge `dev` into `main` — the same as typing it out in full. It starts the sequence below at step 1, exactly like any other merge request. It never approves a merge: it can't stand in for the confirmation in step 3, even when it's sent right after a merge summary. A merge summary answered with `mm` is a new merge request, and gets a fresh summary of its own. `mm` inside a longer message is ordinary text, not the shortcut.
-
-The sequence:
-
-1. Perform the mandatory pre-merge history check above. Do not proceed to the next step until `dev`'s history is already clean.
-2. Present a summary of what's about to land — the commit range (`git log --oneline main..dev`) and a nutshell of what changed.
-3. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are two separate steps; don't collapse them just because the user already said "merge."
-4. Once confirmed, fast-forward `main` to `dev`: `git merge --ff-only dev` — no merge commit, no squash, since `dev`'s history is already linear and clean. If there's no local `main` checkout to merge into, push `dev`'s tip directly to `main` on the remote instead.
-5. If a true fast-forward isn't possible (something moved `main` independently), stop and ask rather than falling back to a merge commit or force-push.
-
-**Steps 2 and 3 have no size exception, and no staleness exception either.** A single-commit merge, or a merge of work already discussed at length earlier in the same conversation, still gets its own summary and its own explicit confirmation — this has been skipped before on exactly that reasoning ("it's small," "we already just went over this"), which collapses the two steps the same way jumping straight from the user's "merge" to running it does. A summary shown earlier in the conversation does not count either, no matter how recently — even one turn earlier, even with nothing but an unrelated message in between. Any turn landing between the summary and the user's actual merge request breaks the link: treat every occurrence of the user asking to merge as requiring a summary shown *after* that specific request, with confirmation anchored to that specific summary, every single time it happens in a conversation, not just the first.
-
-**This step must never be skipped, full stop — not "try harder next time," a hard gate to check before running the merge command.** Immediately before running `git merge --ff-only` or pushing directly to `main` for any reason, stop and verify explicitly: *did the user's most recent merge request get answered with a summary shown after that request, and did they confirm that specific summary?* If either answer is no, the merge does not happen yet, regardless of confidence, urgency, commit count, or how many times the contents were already discussed. Treat the user's message asking to merge as the trigger for step 2, never as permission to skip to step 4.
+**The hard gate holds with or without the skill, with no exceptions.** Immediately before running `git merge --ff-only` or pushing to `main` for any reason, verify: was the mandatory pre-merge history check above done; was the user's *most recent* merge request answered with a summary (`git log --oneline main..dev` and a nutshell of what changed) shown after that request; and did the user explicitly confirm that specific summary? If any answer is no, the merge does not happen yet, regardless of size, urgency, or how much of it was discussed earlier. `mm` never approves a merge: sent right after a summary, it is a new merge request that gets a fresh summary. Merge only as a fast-forward of `main` to `dev`; when that isn't possible, stop and ask rather than falling back to a merge commit or a force-push.
 
 Remind the user to merge when it seems due: when a large feature/fix on `dev` looks finished, or `dev` has accumulated a lot of commits ahead of `main`, say so and suggest merging. This is a reminder only — never merge to `main` automatically or without explicit confirmation, no matter how done the work looks or how many commits have piled up.
 
@@ -360,7 +312,7 @@ Once a topic branch has been merged into `dev`, delete it — both the local bra
 
 - Every commit Claude Code creates must end with a `Co-Authored-By:` trailer identifying the active model, e.g. `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`. Never omit this — if a commit is later found to be missing it and hasn't been merged to `main` yet, fix it via the history-rewriting rules above rather than leaving it out.
 - One commit = one concern, not necessarily one file. Bundle files that share the same concern into a single commit — a source change routinely spans several files, and this applies to documentation too: if a single change is documented across more than one file (e.g. a design doc and `README.md` both describing the same change), commit them together rather than splitting per file. Keep genuinely separate concerns in separate commits even when they land together for the same task — don't bundle work together just because it happened at the same time if the concerns themselves are distinct.
-- Prefix commit titles with the **scope** of the change, followed by a colon and an uppercase description. Match the prefix casing to the actual file or directory name. One file → its exact path (`fetch-data:`, `CLAUDE.md:`). Several files sharing one concern → the directory that contains them (`snippets:`, `src/ui:`). End the title with the issue number when the work is tied to a tracked issue: `(#12)`.
+- Prefix commit titles with the **scope** of the change, followed by a colon and an uppercase description. The scope names the **one area the change is about** — a single path, never a list of files or directories. Match the prefix casing to the actual file or directory name. One file → its exact path (`fetch-data:`, `CLAUDE.md:`). Several files → the directory that holds the ones the change is about (`snippets:`, `src/ui:`). Files that change only because the change carries them along don't count toward the scope: the docs, changelog, examples, tests and snapshots that the sync rules require in the same commit. A parser change that also updates `README.md`, `DESIGN.md`, `CHANGELOG.md` and `examples/` is `src/parser.rs: Show mid-list prose (#187)`, not `src, examples, README.md, DESIGN.md, CHANGELOG.md: Show mid-list prose (#187)`. When the change itself spans several areas, name the one at its center (the module most of it is about) or, when there is none, their nearest shared directory (`src:`). Never list paths comma-separated, however few: name every file in the body's per-file bullets instead. End the title with the issue number when the work is tied to a tracked issue: `(#12)`.
 - Keep the title under 80 characters. Only exceed this if absolutely unavoidable.
 - Put detailed descriptions in the commit body, not the title. For a commit spanning several files, use a one- or two-line prose summary followed by per-file bullets (`- bin/fetch-data: ...`) saying what each file's part does.
 - Examples: `fetch-data: Add retry prompt`, `CLAUDE.md: Add indentation rule`
