@@ -835,6 +835,134 @@ fn text_that_only_looks_like_a_url_is_not_linked() {
     assert!(bare_urls("plain text, no links").is_empty());
 }
 
+fn naive_bare_urls(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    fn trim(mut url: &str) -> &str {
+        loop {
+            let trimmed = url.trim_end_matches(['?', '!', '.', ',', ':', '*', '_', '~']);
+            let trimmed = match trimmed.strip_suffix(')') {
+                Some(shorter) if trimmed.matches(')').count() > trimmed.matches('(').count() => {
+                    shorter
+                }
+                _ => trimmed,
+            };
+            if trimmed.len() == url.len() {
+                return url;
+            }
+            url = trimmed;
+        }
+    }
+    fn valid_domain(after_prefix: &str) -> bool {
+        let domain_end = after_prefix
+            .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
+            .unwrap_or(after_prefix.len());
+        let domain = after_prefix[..domain_end].trim_end_matches('.');
+        let segments: Vec<&str> = domain.split('.').collect();
+        segments.len() >= 2
+            && segments.iter().all(|segment| !segment.is_empty())
+            && segments[segments.len() - 2..]
+                .iter()
+                .all(|segment| !segment.contains('_'))
+    }
+    let mut found = Vec::new();
+    let mut previous: Option<char> = None;
+    let mut skip_until = 0;
+    for (start, ch) in text.char_indices() {
+        let at_boundary =
+            previous.is_none_or(|p| p.is_whitespace() || matches!(p, '*' | '_' | '~' | '('));
+        previous = Some(ch);
+        if start < skip_until || !at_boundary {
+            continue;
+        }
+        let rest = &text[start..];
+        let Some(prefix) = BARE_URL_PREFIXES.iter().find(|prefix| {
+            rest.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        }) else {
+            continue;
+        };
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == '<')
+            .unwrap_or(rest.len());
+        let candidate = trim(&rest[..end]);
+        let www = prefix.starts_with('w');
+        if !valid_domain(&candidate[if www { 0 } else { prefix.len() }..]) {
+            continue;
+        }
+        skip_until = start + candidate.len();
+        let url = if www {
+            format!("http://{candidate}")
+        } else {
+            candidate.to_string()
+        };
+        found.push((start..skip_until, url));
+    }
+    found
+}
+
+proptest::proptest! {
+    #[test]
+    fn bare_urls_match_a_rescan_per_candidate(
+        pieces in proptest::collection::vec(
+            proptest::sample::select(vec![
+                "http://", "https://", "www.", "WWW.", "a", "b1", "é", "-", ".", "..",
+                "_", "(", ")", "*", "~", "?", "!", ",", ":", "/", " ", "<", "com",
+            ]),
+            0..40,
+        )
+    ) {
+        let text: String = pieces.concat();
+        let found: Vec<_> = find_bare_urls(&text)
+            .into_iter()
+            .map(|bare| (bare.range, bare.url))
+            .collect();
+        proptest::prop_assert_eq!(found, naive_bare_urls(&text));
+    }
+}
+
+#[test]
+fn bare_url_detection_handles_the_tricky_overlaps() {
+    for text in [
+        "https://a.._www.example.com",
+        "www.a_www.com",
+        "www._www._www.x",
+        "(https://a.b(c))))!.",
+        "https://a.b_.)",
+        "https://x.y(http://a.b",
+        "www.example.com.._",
+    ] {
+        let found: Vec<_> = find_bare_urls(text)
+            .into_iter()
+            .map(|bare| (bare.range, bare.url))
+            .collect();
+        assert_eq!(found, naive_bare_urls(text), "{text}");
+    }
+    assert_eq!(
+        bare_urls("https://a.._www.example.com"),
+        vec![("www.example.com", "http://www.example.com".to_string())]
+    );
+}
+
+#[test]
+fn long_runs_of_failed_url_candidates_parse_quickly() {
+    // Each shape used to rescan the rest of the run per candidate (#246).
+    for text in [
+        "(http://".repeat(20_000),
+        format!("http://a.bc{}", ")".repeat(40_000)),
+        "www._".repeat(32_000),
+        format!("{}{}", "(http://a.b_".repeat(10_000), ")".repeat(20_000)),
+    ] {
+        let source = format!("- [ ] {text}\n");
+        let started = std::time::Instant::now();
+        let document = parse(&source);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(document.lists[0].items.len(), 1);
+    }
+}
+
 #[test]
 fn bare_url_split_by_pulldown_cmark_stays_whole() {
     let document = parse("## S\n\n- [ ] open https://example.com/a_b?x=1&amp;y=2 now\n");

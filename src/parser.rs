@@ -494,10 +494,17 @@ const BARE_URL_PREFIXES: [&str; 3] = ["https://", "http://", "www."];
 /// the URL starts at the run's start or after whitespace or `*_~(`, runs to
 /// whitespace or `<`, needs a dotted domain, and sheds trailing punctuation
 /// and any unbalanced closing `)`. A `www.` URL opens as `http://`.
+///
+/// Every candidate in one whitespace-free run shares that run's end, its
+/// trailing punctuation and, while candidates overlap, its domain, so those
+/// are worked out once and reused: rescanning them per candidate made a long
+/// run of failed candidates quadratic (#246).
 fn find_bare_urls(text: &str) -> Vec<BareUrl> {
     let mut found = Vec::new();
     let mut previous: Option<char> = None;
     let mut skip_until = 0;
+    let mut run: Option<UrlRun> = None;
+    let mut domain: Option<DomainTail> = None;
     for (start, ch) in text.char_indices() {
         let at_boundary =
             previous.is_none_or(|p| p.is_whitespace() || matches!(p, '*' | '_' | '~' | '('));
@@ -512,59 +519,172 @@ fn find_bare_urls(text: &str) -> Vec<BareUrl> {
         }) else {
             continue;
         };
-        let end = rest
-            .find(|c: char| c.is_whitespace() || c == '<')
-            .unwrap_or(rest.len());
-        let candidate = trim_url_end(&rest[..end]);
-        let domain_start = if prefix.starts_with('w') {
-            0
-        } else {
-            prefix.len()
+        let run = match run {
+            Some(ref mut run) if start < run.end => run,
+            _ => run.insert(UrlRun::new(text, start)),
         };
-        if !is_valid_domain(&candidate[domain_start..]) {
+        let url_end = run.trimmed_end(text, start);
+        let domain_start = if prefix.starts_with('w') {
+            start
+        } else {
+            start + prefix.len()
+        };
+        let tail = match domain {
+            Some(ref tail) if tail.covers(domain_start, url_end) => tail,
+            _ => domain.insert(DomainTail::new(text, domain_start, url_end)),
+        };
+        if !tail.is_valid_from(text, domain_start) {
             continue;
         }
-        let url = if domain_start == 0 {
+        let candidate = &text[start..url_end];
+        let url = if domain_start == start {
             format!("http://{candidate}")
         } else {
             candidate.to_string()
         };
-        skip_until = start + candidate.len();
+        skip_until = url_end;
         found.push(BareUrl {
-            range: start..skip_until,
+            range: start..url_end,
             url,
         });
     }
     found
 }
 
-fn trim_url_end(mut url: &str) -> &str {
-    loop {
-        let trimmed = url.trim_end_matches(['?', '!', '.', ',', ':', '*', '_', '~']);
-        let trimmed = match trimmed.strip_suffix(')') {
-            Some(shorter) if trimmed.matches(')').count() > trimmed.matches('(').count() => shorter,
-            _ => trimmed,
-        };
-        if trimmed.len() == url.len() {
-            return url;
+/// One whitespace-free run of text that bare-URL candidates end in: where it
+/// ends, and its trailing stretch of punctuation and `)` that a URL sheds.
+struct UrlRun {
+    end: usize,
+    trailing_start: usize,
+    trailing_closes: Vec<usize>,
+    opens_before_trailing: usize,
+    closes_before_trailing: usize,
+    counted_to: usize,
+    opens_counted: usize,
+    closes_counted: usize,
+}
+
+impl UrlRun {
+    fn new(text: &str, start: usize) -> Self {
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace() || c == '<')
+            .map_or(text.len(), |offset| start + offset);
+        let run = &text[start..end];
+        let trailing_start = start
+            + run
+                .trim_end_matches(|c: char| is_trailing_url_punctuation(c) || c == ')')
+                .len();
+        let trailing_closes = text[trailing_start..end]
+            .match_indices(')')
+            .map(|(offset, _)| trailing_start + offset)
+            .collect();
+        let body = &text[start..trailing_start];
+        Self {
+            end,
+            trailing_start,
+            trailing_closes,
+            opens_before_trailing: body.matches('(').count(),
+            closes_before_trailing: body.matches(')').count(),
+            counted_to: start,
+            opens_counted: 0,
+            closes_counted: 0,
         }
-        url = trimmed;
+    }
+
+    /// Where a URL starting at `start` ends once it has shed its trailing
+    /// punctuation and every `)` that has no `(` to close within the URL.
+    /// `start` never moves backwards between calls.
+    fn trimmed_end(&mut self, text: &str, start: usize) -> usize {
+        let skipped = &text[self.counted_to..start];
+        self.opens_counted += skipped.matches('(').count();
+        self.closes_counted += skipped.matches(')').count();
+        self.counted_to = start;
+        let opens = self.opens_before_trailing - self.opens_counted;
+        let closes = self.closes_before_trailing - self.closes_counted;
+        match opens.saturating_sub(closes).min(self.trailing_closes.len()) {
+            0 => self.trailing_start,
+            kept => self.trailing_closes[kept - 1] + 1,
+        }
     }
 }
 
-/// GFM's "valid domain": dot-separated segments of alphanumerics, `_` and
-/// `-`, at least one dot, and no `_` in the last two segments.
-fn is_valid_domain(after_prefix: &str) -> bool {
-    let domain_end = after_prefix
-        .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
-        .unwrap_or(after_prefix.len());
-    let domain = after_prefix[..domain_end].trim_end_matches('.');
-    let segments: Vec<&str> = domain.split('.').collect();
-    segments.len() >= 2
-        && segments.iter().all(|segment| !segment.is_empty())
-        && segments[segments.len() - 2..]
-            .iter()
-            .all(|segment| !segment.contains('_'))
+fn is_trailing_url_punctuation(c: char) -> bool {
+    matches!(c, '?' | '!' | '.' | ',' | ':' | '*' | '_' | '~')
+}
+
+fn is_domain_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-' | '.')
+}
+
+/// A stretch of domain characters ending where a URL's domain ends, with
+/// what GFM's "valid domain" rule needs to know about it precomputed, so a
+/// domain starting anywhere inside it is checked without rescanning: valid
+/// means dot-separated segments of alphanumerics, `_` and `-`, at least one
+/// dot, and no `_` in the last two segments.
+struct DomainTail {
+    start: usize,
+    scan_end: usize,
+    url_end: usize,
+    end: usize,
+    last_dot: Option<usize>,
+    second_last_dot: Option<usize>,
+    last_double_dot: Option<usize>,
+    last_segment_has_underscore: bool,
+    second_last_segment_has_underscore: bool,
+    last_underscore_before_last_dot: Option<usize>,
+}
+
+impl DomainTail {
+    fn new(text: &str, start: usize, url_end: usize) -> Self {
+        let scan_end = text[start..url_end]
+            .find(|c: char| !is_domain_char(c))
+            .map_or(url_end, |offset| start + offset);
+        let end = start + text[start..scan_end].trim_end_matches('.').len();
+        let domain = &text[start..end];
+        let dot = |position: Option<usize>| position.map(|offset| start + offset);
+        let last_dot = dot(domain.rfind('.'));
+        let second_last_dot = last_dot.and_then(|last| dot(text[start..last].rfind('.')));
+        let underscore_between = |from: usize, to: usize| text[from..to].contains('_');
+        Self {
+            start,
+            scan_end,
+            url_end,
+            end,
+            last_dot,
+            second_last_dot,
+            last_double_dot: dot(domain.rfind("..")),
+            last_segment_has_underscore: last_dot
+                .is_some_and(|last| underscore_between(last + 1, end)),
+            second_last_segment_has_underscore: second_last_dot
+                .zip(last_dot)
+                .is_some_and(|(second, last)| underscore_between(second + 1, last)),
+            last_underscore_before_last_dot: last_dot
+                .and_then(|last| dot(text[start..last].rfind('_'))),
+        }
+    }
+
+    /// Whether a domain starting at `start` and cut at `url_end` ends where
+    /// this one does.
+    fn covers(&self, start: usize, url_end: usize) -> bool {
+        self.url_end == url_end && (self.start..=self.scan_end).contains(&start)
+    }
+
+    fn is_valid_from(&self, text: &str, start: usize) -> bool {
+        let at_or_after = |position: Option<usize>| position.is_some_and(|p| p >= start);
+        if start >= self.end
+            || text[start..].starts_with('.')
+            || !at_or_after(self.last_dot)
+            || at_or_after(self.last_double_dot)
+            || self.last_segment_has_underscore
+        {
+            return false;
+        }
+        if at_or_after(self.second_last_dot) {
+            !self.second_last_segment_has_underscore
+        } else {
+            !at_or_after(self.last_underscore_before_last_dot)
+        }
+    }
 }
 
 /// The ordered-list marker (`3.` or `3)`) at the start of an item's
