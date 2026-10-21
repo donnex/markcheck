@@ -586,7 +586,8 @@ pub struct Document {
     /// The lines of critical tasks, whose bold title started with `!`:
     /// checking one takes a second, deliberate press (#95).
     pub critical: std::collections::BTreeSet<LineNumber>,
-    /// The source file's lines, each including its own terminator; the 1-based
+    /// The file's lines as markcheck last read or wrote them (a save puts its
+    /// own output back here), each including its own terminator; the 1-based
     /// `Item::line_number` is at index `line_number - 1`. `writer::write_back` edits one line and rejoins by
     /// concatenation, so mixed line endings round-trip exactly.
     pub raw_lines: Vec<String>,

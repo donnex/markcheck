@@ -565,7 +565,9 @@ fn join_lines(lines: &[String]) -> String {
     lines.concat()
 }
 
-/// The document's content as it stands in memory.
+/// The file as markcheck last read or wrote it: `raw_lines`, which a
+/// successful save replaces with what it wrote. Task states changed since
+/// then live in each `Item::kind` until the next `write_back`.
 pub fn document_contents(document: &Document) -> String {
     join_lines(&document.raw_lines)
 }

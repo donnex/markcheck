@@ -277,6 +277,11 @@ impl AppState {
                 if saved.in_place && !std::mem::replace(&mut self.in_place_noted, true) {
                     self.write_notice = Some(IN_PLACE_MESSAGE.to_string());
                 }
+                self.document.raw_lines =
+                    crate::parser::split_lines_keeping_endings(&saved.contents)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect();
                 saved.contents
             }
             Err(err) => {

@@ -436,7 +436,11 @@ fn reset_confirmed_with_y_writes_every_task_open() {
     assert_eq!(file_text(&path), reset);
 
     state.handle_key(KeyCode::Char('u'));
-    assert_eq!(file_text(&path), WRITE_PATH_MARKDOWN, "u restores the file");
+    assert_eq!(
+        file_text(&path),
+        markdown_with(&[("- [X] Bravo", "- [x] Bravo")]),
+        "u restores every state, a re-checked [X] written as [x]"
+    );
     state.handle_key_with_mods(KeyCode::Char('r'), KeyModifiers::CONTROL);
     assert_eq!(file_text(&path), reset, "Ctrl-R writes the reset again");
 }

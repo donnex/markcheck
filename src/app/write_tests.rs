@@ -1307,3 +1307,35 @@ fn content_diverged_compares_the_bytes_in_hand_and_fails_open_without_them() {
     );
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn document_contents_follows_each_save_so_it_hashes_as_the_file() {
+    let (mut state, path) = state_from_markdown("## L\n\n- [X] a\n- [ ] b\n- [ ] c\n");
+    let matches_disk = |state: &AppState| {
+        let contents = writer::document_contents(&state.document);
+        assert_eq!(contents, file_text(&path));
+        assert_eq!(
+            Some(hash_bytes(contents.as_bytes())),
+            state.file_content_hash
+        );
+    };
+
+    state.current_item_index = 0;
+    state.toggle_current();
+    assert_eq!(file_text(&path), "## L\n\n- [ ] a\n- [ ] b\n- [ ] c\n");
+    matches_disk(&state);
+
+    state.undo();
+    assert_eq!(
+        file_text(&path),
+        "## L\n\n- [x] a\n- [ ] b\n- [ ] c\n",
+        "re-checking an uppercase [X] writes [x], as the README promises"
+    );
+    matches_disk(&state);
+
+    state.reset_all();
+    assert_eq!(file_text(&path), "## L\n\n- [ ] a\n- [ ] b\n- [ ] c\n");
+    matches_disk(&state);
+
+    fs::remove_file(&path).ok();
+}
