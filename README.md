@@ -1100,6 +1100,12 @@ which travels over SSH to your local terminal emulator (kitty, alacritty,
 wezterm, foot, and others; inside tmux, set `set-clipboard on`). The status
 bar distinguishes a system-clipboard copy from an OSC 52 one.
 
+The confirmation also shows what was copied: the command's first line, cut
+to 60 characters with `…`, plus how many more lines it has, so you can check
+it is the right one before pasting, even over SSH where there is no local
+clipboard to look at: `Copied to clipboard: kubectl rollout restart
+deploy/example (+2 lines)`. `--auto-copy` confirmations show it too.
+
 Over SSH (when `SSH_CONNECTION` or `SSH_TTY` is set), `markcheck` does both:
 it writes the system clipboard and also sends OSC 52, and says `Copied
 (system clipboard + OSC 52)`. The "system clipboard" it finds there may not

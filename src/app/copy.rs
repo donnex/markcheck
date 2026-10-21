@@ -4,9 +4,34 @@
 use crate::clipboard::{self, CopyOutcome};
 use crate::effect::{CopyKind, Effect};
 use crate::model::{AppState, PendingChord};
+use crate::printable::printable_line;
 
 pub(super) const HIDDEN_CHARACTERS_MESSAGE: &str =
     "Not copied: command contains hidden control characters";
+
+/// Most characters of a copied command's first line a confirmation shows.
+const PREVIEW_MAX_CHARS: usize = 60;
+
+/// `copied` followed by a one-line preview of `text`: its first line with
+/// hidden characters dropped, cut to `PREVIEW_MAX_CHARS` with `…`, plus
+/// `(+N lines)` for the lines it leaves out
+/// (`Copied to clipboard: make build (+2 lines)`).
+fn with_preview(copied: &str, text: &str) -> String {
+    let mut lines = text.lines();
+    let first = printable_line(lines.next().unwrap_or_default());
+    let first = first.trim();
+    let preview = if first.chars().count() > PREVIEW_MAX_CHARS {
+        let kept: String = first.chars().take(PREVIEW_MAX_CHARS - 1).collect();
+        format!("{kept}…")
+    } else {
+        first.to_string()
+    };
+    match lines.count() {
+        0 => format!("{copied}: {preview}"),
+        1 => format!("{copied}: {preview} (+1 line)"),
+        n => format!("{copied}: {preview} (+{n} lines)"),
+    }
+}
 
 impl AppState {
     /// With `--auto-copy`, copy the current card's code when it has exactly
@@ -32,8 +57,8 @@ impl AppState {
     }
 
     /// Reports a finished copy the way its `kind` calls for. `text` is what
-    /// was copied, named in the message only when a link had nowhere else
-    /// to go.
+    /// was copied: a command copy's confirmation previews it, and a link
+    /// with nowhere else to go is named in full.
     pub fn apply_copy_outcome(&mut self, kind: CopyKind, text: &str, outcome: CopyOutcome) {
         const COPIED: &str = "Copied to clipboard";
         const SENT: &str = "Sent to clipboard (OSC 52)";
@@ -41,12 +66,24 @@ impl AppState {
         const SYSTEM_ONLY: &str =
             "Copied to the system clipboard only — too large to send through the terminal (OSC 52)";
         match (kind, outcome) {
-            (CopyKind::Auto, CopyOutcome::CopiedSystem) => self.report_auto_copy(COPIED),
-            (CopyKind::Auto, CopyOutcome::CopiedOsc52) => self.report_auto_copy(SENT),
-            (CopyKind::Auto, CopyOutcome::CopiedBoth) => self.report_auto_copy(BOTH),
-            (CopyKind::Command, CopyOutcome::CopiedSystem) => self.set_status(COPIED.to_string()),
-            (CopyKind::Command, CopyOutcome::CopiedOsc52) => self.set_status(SENT.to_string()),
-            (CopyKind::Command, CopyOutcome::CopiedBoth) => self.set_status(BOTH.to_string()),
+            (CopyKind::Auto, CopyOutcome::CopiedSystem) => {
+                self.report_auto_copy(&with_preview(COPIED, text))
+            }
+            (CopyKind::Auto, CopyOutcome::CopiedOsc52) => {
+                self.report_auto_copy(&with_preview(SENT, text))
+            }
+            (CopyKind::Auto, CopyOutcome::CopiedBoth) => {
+                self.report_auto_copy(&with_preview(BOTH, text))
+            }
+            (CopyKind::Command, CopyOutcome::CopiedSystem) => {
+                self.set_status(with_preview(COPIED, text))
+            }
+            (CopyKind::Command, CopyOutcome::CopiedOsc52) => {
+                self.set_status(with_preview(SENT, text))
+            }
+            (CopyKind::Command, CopyOutcome::CopiedBoth) => {
+                self.set_status(with_preview(BOTH, text))
+            }
             (CopyKind::Auto, CopyOutcome::CopiedSystemOnlyTooLarge) => {
                 self.report_auto_copy_problem(SYSTEM_ONLY)
             }

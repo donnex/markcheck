@@ -84,7 +84,10 @@ fn a_copy_runs_against_the_clipboard_and_reports_its_outcome() {
     clipboard::fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("make".to_string(), true)]);
     });
-    assert_eq!(state.status_message.as_deref(), Some("Copied to clipboard"));
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Copied to clipboard: make")
+    );
 }
 
 /// Queues a copy from inside the host, as a link with no browser does.

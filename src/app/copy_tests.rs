@@ -19,7 +19,7 @@ fn a_sub_section_jump_keeps_its_name_beside_the_auto_copy_confirmation() {
     state.settle();
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Sub-section: Alpha · Sent to clipboard (OSC 52)")
+        Some("Sub-section: Alpha · Sent to clipboard (OSC 52): make")
     );
 }
 
@@ -161,7 +161,7 @@ fn auto_copy_fires_on_every_navigation_motion() {
         });
         let status = state.status_message.as_deref().unwrap_or_default();
         assert!(
-            status.ends_with("Sent to clipboard (OSC 52)"),
+            status.ends_with(&format!("Sent to clipboard (OSC 52): {expected}")),
             "{name}: confirms the copy, got {status:?}"
         );
     }
@@ -182,7 +182,7 @@ fn a_wrap_message_keeps_the_auto_copy_confirmation_beside_it() {
     state.settle();
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Wrapped to the first unfinished task (List 1) · Sent to clipboard (OSC 52)")
+        Some("Wrapped to the first unfinished task (List 1) · Sent to clipboard (OSC 52): cmd-1")
     );
 }
 
@@ -273,7 +273,7 @@ fn y_then_a_digit_copies_that_fenced_block_not_a_list() {
     assert_eq!(state.current_list_index, 0, "no list jump");
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Sent to clipboard (OSC 52)")
+        Some("Sent to clipboard (OSC 52): second")
     );
     crate::clipboard::fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("second".to_string(), false)]);
@@ -403,7 +403,7 @@ fn a_copy_to_both_clipboards_says_so() {
     state.apply_copy_outcome(CopyKind::Command, "ls", CopyOutcome::CopiedBoth);
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Copied (system clipboard + OSC 52)")
+        Some("Copied (system clipboard + OSC 52): ls")
     );
     state.apply_copy_outcome(CopyKind::LinkFallback, "x", CopyOutcome::CopiedBoth);
     assert!(
@@ -490,7 +490,7 @@ fn an_auto_copy_to_both_clipboards_says_so() {
     state.apply_copy_outcome(CopyKind::Auto, "ls", CopyOutcome::CopiedBoth);
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Copied (system clipboard + OSC 52)")
+        Some("Copied (system clipboard + OSC 52): ls")
     );
     assert!(!state.status_is_error);
 }
@@ -544,4 +544,56 @@ fn each_extra_link_copy_outcome_follows_the_opener_report() {
         );
         assert_eq!(state.status_is_error, is_error, "{copied}");
     }
+}
+
+#[test]
+fn a_copy_confirmation_previews_the_first_line_and_counts_the_rest() {
+    let mut state = AppState::new(two_list_document());
+    let cases = [
+        ("make", "Copied to clipboard: make"),
+        (
+            "kubectl rollout restart deploy/example\nkubectl rollout status deploy/example",
+            "Copied to clipboard: kubectl rollout restart deploy/example (+1 line)",
+        ),
+        (
+            "cd /srv/example\n./build.sh\n./deploy.sh",
+            "Copied to clipboard: cd /srv/example (+2 lines)",
+        ),
+        ("\tmake  all ", "Copied to clipboard: make  all"),
+    ];
+    for (text, expected) in cases {
+        state.apply_copy_outcome(CopyKind::Command, text, CopyOutcome::CopiedSystem);
+        assert_eq!(state.status_message.as_deref(), Some(expected), "{text:?}");
+        assert!(!state.status_is_error);
+    }
+}
+
+#[test]
+fn a_long_first_line_is_cut_with_an_ellipsis() {
+    let mut state = AppState::new(two_list_document());
+    let long = "x".repeat(PREVIEW_MAX_CHARS + 10);
+    state.apply_copy_outcome(CopyKind::Command, &long, CopyOutcome::CopiedOsc52);
+    let expected = format!(
+        "Sent to clipboard (OSC 52): {}…",
+        "x".repeat(PREVIEW_MAX_CHARS - 1)
+    );
+    assert_eq!(state.status_message.as_deref(), Some(expected.as_str()));
+
+    let exact = "y".repeat(PREVIEW_MAX_CHARS);
+    state.apply_copy_outcome(CopyKind::Command, &exact, CopyOutcome::CopiedOsc52);
+    assert_eq!(
+        state.status_message,
+        Some(format!("Sent to clipboard (OSC 52): {exact}")),
+        "a line exactly at the cap is shown whole"
+    );
+}
+
+#[test]
+fn an_auto_copy_confirmation_previews_the_command_too() {
+    let mut state = AppState::new(two_list_document());
+    state.apply_copy_outcome(CopyKind::Auto, "make\ntest", CopyOutcome::CopiedSystem);
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Copied to clipboard: make (+1 line)")
+    );
 }

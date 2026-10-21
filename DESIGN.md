@@ -645,6 +645,8 @@ Every state change (`set_state`, the overview's `toggle_item`, `reset_scope`) ca
 
 `y` copies code only. The candidates (`clipboard::candidates`) are the item's `code_blocks` (fenced or indented), else its inline `code_spans`. One → a `CopyKind::Command` copy; none → `Nothing to copy: item has no code`; several → `PendingChord::CopyCode` is armed and the status bar shows `press 1–N to copy · esc cancels`, matching the card's `[N]` markers. A number (collected as for links, below) copies candidate `[N]` through `copy_specific`, the same path as a click, or says `No command [n] on this card`.
 
+**Preview (#189).** A successful `Command` or `Auto` copy's confirmation ends in what was copied (`with_preview` in `src/app/copy.rs`): the first line with hidden characters dropped (`printable::printable_line`) and trimmed, cut to `PREVIEW_MAX_CHARS` (60) with `…`, plus `(+N lines)` for the rest, e.g. `Copied to clipboard: make build (+2 lines)`. The status bar wraps rather than clips, so a fixed cap keeps the message short without knowing the width. It is the only check an OSC 52-only copy gets, and it shows which of several `[N]` commands landed.
+
 **Routes (#133).** `--clipboard auto|system|osc52` (config `clipboard`, `ClipboardChoice`) resolves at startup into `AppState::copy_route`:
 
 - `SystemThenOsc52` (`auto` locally): `arboard`, falling back to OSC 52 when it fails.

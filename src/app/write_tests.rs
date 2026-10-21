@@ -319,7 +319,7 @@ fn click_on_code_region_copies_that_specific_row() {
     state.settle();
     assert_eq!(
         state.status_message.as_deref(),
-        Some("Sent to clipboard (OSC 52)")
+        Some("Sent to clipboard (OSC 52): b")
     );
     crate::clipboard::fake::with(|c| {
         assert_eq!(c.system_attempts, vec![("b".to_string(), false)]);
