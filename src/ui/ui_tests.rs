@@ -2697,6 +2697,51 @@ fn long_status_message_wraps_so_the_lock_file_path_shows_in_full() {
 }
 
 #[test]
+fn status_message_past_the_row_cap_ends_in_an_ellipsis() {
+    let width = 40u16;
+    let height = 12u16;
+    let mut state = sample_state();
+    let (message, _) = write_lock_refusal();
+    state.set_error(message.clone());
+    let rows = statusbar::height(&state, width, height);
+    assert_eq!(rows, 3, "capped at a quarter of the terminal");
+    let text = buffer_text(&mut state, width, height);
+    let row = |y: u16| -> String {
+        let start = usize::from(y) * usize::from(width);
+        text.chars()
+            .skip(start)
+            .take(usize::from(width))
+            .collect::<String>()
+    };
+    let last = row(height - 1);
+    assert!(
+        last.trim_end().ends_with('…'),
+        "last shown row marks the cut: {last:?}"
+    );
+    assert!(
+        row(height - rows).starts_with("Another markcheck"),
+        "message start kept"
+    );
+
+    state.set_error("Nothing to copy".to_string());
+    let text = buffer_text(&mut state, width, height);
+    assert!(!text.contains('…'), "a message that fits is not marked");
+
+    state.set_error(message);
+    state.overlay = Some(Overlay::Search);
+    let text = buffer_text(&mut state, width, height);
+    let above_prompt: String = text
+        .chars()
+        .skip(usize::from(height - 2) * usize::from(width))
+        .take(usize::from(width))
+        .collect();
+    assert!(
+        above_prompt.trim_end().ends_with('…'),
+        "cut marked above the search prompt: {above_prompt:?}"
+    );
+}
+
+#[test]
 fn status_bar_grows_only_for_a_long_message_and_stays_capped() {
     let mut state = sample_state();
     assert_eq!(statusbar::height(&state, 80, 30), 1, "legend: one row");

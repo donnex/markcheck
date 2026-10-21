@@ -737,7 +737,7 @@ fn preamble_rows(
 
 /// Ends `row` in `…`, cut to `width`, to show that rows after it were
 /// left out.
-fn mark_cut(row: &mut String, width: u16) {
+pub(super) fn mark_cut(row: &mut String, width: u16) {
     *row = super::truncate(&format!("{row}…"), (width as usize).max(1));
 }
 

@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use super::cards::wrap_text;
+use super::cards::{mark_cut, wrap_text};
 use crate::clipboard;
 use crate::model::{AppState, Overlay, PendingChord, View};
 
@@ -111,11 +111,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 /// Draws the wrapped status message into `area`, error-colored for a failure,
-/// and returns whether there was one to draw.
+/// and returns whether there was one to draw. A message with more rows than
+/// `area` has ends its last shown row in `…`, so the cut is visible.
 fn render_message(frame: &mut Frame, area: Rect, state: &AppState) -> bool {
-    let Some(lines) = wrapped_message(state, area.width) else {
+    let Some(mut lines) = wrapped_message(state, area.width) else {
         return false;
     };
+    let rows = usize::from(area.height);
+    if lines.len() > rows {
+        lines.truncate(rows);
+        if let Some(last) = lines.last_mut() {
+            mark_cut(last, area.width);
+        }
+    }
     // The error color applies only to a real message, never the prompt or
     // legend.
     let lines: Vec<Line> = lines
