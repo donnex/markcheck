@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::{Cli, ColorChoice, Settings, config, is_remote_session, resolve_flag};
-use crate::model::ClipboardChoice;
+use crate::model::{ClipboardChoice, IconChoice};
 use clap::Parser as _;
 
 #[test]
@@ -37,6 +37,7 @@ fn settings_from(flags: &[&str], config: config::Config) -> Settings {
 
 fn config_all(value: bool) -> config::Config {
     config::Config {
+        icons: None,
         nerd_font: Some(value),
         mouse: Some(value),
         primary: Some(value),
@@ -54,7 +55,7 @@ fn config_all(value: bool) -> config::Config {
 /// defaults.
 fn settings_all(value: bool) -> Settings {
     Settings {
-        nerd_font: value,
+        icons: IconChoice::from_nerd_font(value),
         mouse: value,
         primary: value,
         auto_copy: value,
@@ -71,7 +72,7 @@ fn settings_resolve_the_built_in_defaults_with_no_flags_and_no_config() {
     assert_eq!(
         settings_from(&[], config::Config::default()),
         Settings {
-            nerd_font: false,
+            icons: IconChoice::Auto,
             mouse: true,
             primary: false,
             auto_copy: false,
@@ -127,6 +128,78 @@ fn every_setting_can_be_forced_off_over_a_config_that_enables_it() {
         settings_all(false),
         "a passed flag must beat the config in the negative direction"
     );
+}
+
+#[test]
+fn the_icons_flag_and_key_pick_each_set() {
+    for (name, choice) in [
+        ("auto", IconChoice::Auto),
+        ("unicode", IconChoice::Unicode),
+        ("nerd", IconChoice::Nerd),
+        ("ascii", IconChoice::Ascii),
+    ] {
+        let flag = format!("--icons={name}");
+        assert_eq!(
+            settings_from(&[&flag], config::Config::default()).icons,
+            choice
+        );
+        let config = config::Config {
+            icons: Some(choice),
+            ..config::Config::default()
+        };
+        assert_eq!(settings_from(&[], config).icons, choice);
+    }
+    assert!(Cli::try_parse_from(["markcheck", "checklist.md", "--icons", "emoji"]).is_err());
+}
+
+#[test]
+fn icons_wins_over_the_deprecated_nerd_font_alias_and_a_flag_over_the_config() {
+    let config = |icons, nerd_font| config::Config {
+        icons,
+        nerd_font,
+        ..config::Config::default()
+    };
+    let cases: [(&[&str], config::Config, IconChoice); 8] = [
+        // `icons` beats `nerd_font` in the same layer, either way round.
+        (
+            &[],
+            config(Some(IconChoice::Ascii), Some(true)),
+            IconChoice::Ascii,
+        ),
+        (
+            &[],
+            config(Some(IconChoice::Nerd), Some(false)),
+            IconChoice::Nerd,
+        ),
+        (
+            &["--icons", "unicode", "--nerd-font"],
+            config(None, None),
+            IconChoice::Unicode,
+        ),
+        // The alias alone still works, in the config and as flags.
+        (&[], config(None, Some(true)), IconChoice::Nerd),
+        (&["--nerd-font"], config(None, None), IconChoice::Nerd),
+        // A flag, even the deprecated one, beats the config's `icons`.
+        (
+            &["--nerd-font"],
+            config(Some(IconChoice::Ascii), None),
+            IconChoice::Nerd,
+        ),
+        (
+            &["--no-nerd-font"],
+            config(Some(IconChoice::Nerd), None),
+            IconChoice::Auto,
+        ),
+        (
+            &["--icons", "ascii"],
+            config(Some(IconChoice::Nerd), Some(true)),
+            IconChoice::Ascii,
+        ),
+    ];
+    for (flags, config, expected) in cases {
+        let shown = format!("{flags:?} over {config:?}");
+        assert_eq!(settings_from(flags, config).icons, expected, "{shown}");
+    }
 }
 
 #[test]

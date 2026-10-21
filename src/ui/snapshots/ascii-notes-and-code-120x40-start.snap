@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ = Notes, Banners, and Code │ notes-and-code.md                                                                 [x] 0/30
+------------------------------------------------------------------------------------------------------------------------
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ # [1] Reference            ^
+                                                                                          │   * Read before proceedin… #
+                                                                                          │   Non-task content and th… #
+                                                                                          │    *  A note with a comma… #
+                                                                                          │    >  A task with a singl… #
+                                                                                          │   [ ] Restart the primary… #
+                                                                                          │   [ ] Restart example-ser… #
+                                                                                          │   [ ] A task with a fence… #
+                                                                                          │   [ ] A task with an inde… #
+                                                                                          │   [ ] A task with a short… #
+                                                                                          │   [ ] A task with fenced … #
+                                                                                          │   [ ] A task with a tab-i… #
+                                       # Reference                                        │   [ ] A task with two com… #
+             * Read before proceeding: every step below assumes the service               │   [ ] A task with a comma… #
+                     has already been drained from the load balancer                      │   [ ] Fetch curl -fsSL ht… #
+                                                                                          │   [ ] A task with emphasi… #
+            ╔ [ ] ══════════════════════════════════════════════════ 2/29 ╗               │   [ ] A task whose text r… #
+┌ * ────────║                                                             ║] ──────────┐  │   [ ] A task in wide (two… #
+│  A note wi║             A task with a single inline command             ║estart the  │  │   [ ] Open the project ru… #
+│   a comman║                                                             ║ primary    │  │   [ ] A task with a very … #
+│    but no ║                     apply-config --now                      ║pplication  │  │   [ ] A task with two lin… #
+│  checkbox ║                                                             ║ervice and  │  │   [ ] Status board first … #
+└───────────║                                                             ║────────────┘  │   [ ] See also every serv… #
+            ╚ .@........................... ══════════════════════════════╝               │   [ ] A task linking to a… #
+                                                                                          │   [ ] Check the dashboard… #
+                                                                                          │   [ ] Check the mirror at… #
+                                                                                          │   [ ] Compare the dashboa… #
+                                                                                          │   [ ] Press Enter at the … │
+                                                                                          │   [ ] A task with an HTML… │
+                                                                                          │   [ ] Mail the on-call ow… │
+                                                                                          │    *  A quoted example fr… │
+                                                                                          │    *  Neither does a quot… │
+                                                                                          │ # [2] Precondition with a  │
+                                                                                          │    *  Export the environm… │
+                                                                                          │   [ ] Run the step that n… v
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

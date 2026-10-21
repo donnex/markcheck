@@ -4,6 +4,7 @@ use std::time::{Instant, SystemTime};
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::BorderType;
 use sha2::{Digest, Sha256};
 
 use crate::effect::Effect;
@@ -731,9 +732,12 @@ pub enum Overlay {
     ListPicker,
 }
 
-/// The glyphs used across the UI. Plain-Unicode symbols that render in any
-/// terminal font by default; the `--nerd-font` flag swaps in Nerd Font
-/// icons.
+/// The glyphs used across the UI: the icons, and the chrome drawn around
+/// them (position dots, scrollbar, progress bar, code-wrap marker, breadcrumb
+/// separator and card borders). Plain Unicode by default; Nerd Font icons with
+/// `--icons nerd`; plain ASCII (and the light and double box-drawing lines
+/// every console font has) with `--icons ascii`, picked automatically on the
+/// Linux console (#171).
 #[derive(Debug, Clone, Copy)]
 pub struct IconSet {
     pub done: &'static str,
@@ -746,13 +750,40 @@ pub struct IconSet {
     pub list: &'static str,
     pub update: &'static str,
     /// The title-bar git-sync icon, always paired with a "git" label. A plain
-    /// arrow in both icon sets, since the Nerd Font git glyphs rendered poorly.
+    /// arrow in the Unicode and Nerd Font sets, since the Nerd Font git
+    /// glyphs rendered poorly.
     pub sync: &'static str,
+    /// The position-dot strip's current item.
+    pub dot_current: &'static str,
+    pub dot_done: &'static str,
+    /// A started item's dot when it has a color of its own to tell it apart
+    /// from a done one.
+    pub dot_started: &'static str,
+    /// A started item's dot without color.
+    pub dot_started_mono: &'static str,
+    pub dot_skipped: &'static str,
+    /// A pending task's or a note's dot.
+    pub dot_pending: &'static str,
+    pub scroll_thumb: &'static str,
+    pub scroll_up: &'static str,
+    pub scroll_down: &'static str,
+    /// The progress bar's done and started cells.
+    pub bar_filled: &'static str,
+    /// The progress bar's remaining cells.
+    pub bar_empty: &'static str,
+    /// Ends a code row that continues on the next one.
+    pub continuation: &'static str,
+    /// Between the steps of a breadcrumb or the picker's context.
+    pub crumb: &'static str,
+    /// A task card's frame, a bold solid one.
+    pub task_border: BorderType,
+    /// A note card's and an overlay's frame.
+    pub note_border: BorderType,
 }
 
 impl IconSet {
     /// Classic Font Awesome range (U+F000–F2E0), retained by Nerd Fonts v3
-    /// and single-cell wide.
+    /// and single-cell wide. The chrome is the Unicode set's.
     pub const fn nerd() -> Self {
         IconSet {
             done: "\u{f14a}",    // check-square (filled box + check)
@@ -764,7 +795,7 @@ impl IconSet {
             file: "\u{f15c}",    // file-text
             list: "\u{f0ca}",    // list-ul
             update: "\u{f021}",  // refresh (circular arrows)
-            sync: "⇅",           // plain Unicode by design — see field doc
+            ..Self::unicode()
         }
     }
 
@@ -780,6 +811,95 @@ impl IconSet {
             list: "•",
             update: "↻",
             sync: "⇅",
+            dot_current: "◉",
+            dot_done: "●",
+            dot_started: "●",
+            dot_started_mono: "◐",
+            dot_skipped: "-",
+            dot_pending: "·",
+            scroll_thumb: "▓",
+            scroll_up: "▲",
+            scroll_down: "▼",
+            bar_filled: "━",
+            bar_empty: "─",
+            continuation: "↩",
+            crumb: "›",
+            task_border: BorderType::Thick,
+            note_border: BorderType::Rounded,
+        }
+    }
+
+    /// For the Linux console, whose 256- or 512-glyph font lacks the Unicode
+    /// set's symbols: the task states as their Markdown markers, and only the
+    /// light and double box-drawing lines it does have.
+    pub const fn ascii() -> Self {
+        IconSet {
+            done: "[x]",
+            pending: "[ ]",
+            started: "[/]",
+            skipped: "[-]",
+            current: ">",
+            note: "*",
+            file: "=",
+            list: "#",
+            update: "~",
+            sync: "^v",
+            dot_current: "@",
+            dot_done: "x",
+            dot_started: "/",
+            dot_started_mono: "/",
+            dot_skipped: "-",
+            dot_pending: ".",
+            scroll_thumb: "#",
+            scroll_up: "^",
+            scroll_down: "v",
+            bar_filled: "=",
+            bar_empty: "-",
+            continuation: "\\",
+            crumb: ">",
+            task_border: BorderType::Double,
+            note_border: BorderType::Plain,
+        }
+    }
+}
+
+/// The `--icons` flag / `icons` config key (#171): `Auto` is ASCII on the
+/// Linux console and Unicode elsewhere; anything else forces that set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+pub enum IconChoice {
+    #[default]
+    #[value(name = "auto")]
+    #[serde(rename = "auto")]
+    Auto,
+    #[value(name = "unicode")]
+    #[serde(rename = "unicode")]
+    Unicode,
+    #[value(name = "nerd")]
+    #[serde(rename = "nerd")]
+    Nerd,
+    #[value(name = "ascii")]
+    #[serde(rename = "ascii")]
+    Ascii,
+}
+
+impl IconChoice {
+    /// The deprecated `nerd_font` boolean as a choice: on is `Nerd`, off the
+    /// default.
+    pub fn from_nerd_font(on: bool) -> Self {
+        if on {
+            IconChoice::Nerd
+        } else {
+            IconChoice::Auto
+        }
+    }
+
+    /// The set this choice draws with, given the `TERM` value.
+    pub fn icon_set(self, term: Option<&str>) -> IconSet {
+        match self {
+            IconChoice::Auto if term == Some("linux") => IconSet::ascii(),
+            IconChoice::Auto | IconChoice::Unicode => IconSet::unicode(),
+            IconChoice::Nerd => IconSet::nerd(),
+            IconChoice::Ascii => IconSet::ascii(),
         }
     }
 }

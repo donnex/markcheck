@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph};
 
-use super::{fg, state_marker};
+use super::{centered, fg, state_marker};
 use crate::model::{
     AppState, IconSet, ItemKind, ItemLinks, OverviewTarget, Palette, PreambleKind, SubHeading,
     TaskState,
@@ -162,6 +162,9 @@ struct StickyContext {
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let icons = state.icons;
     let palette = state.palette;
+    // Every task-state marker in a set is the same width; a narrower one (the
+    // current or note marker) is centered in it, so labels stay in one column.
+    let marker_width = super::display_width(icons.pending);
     let mut list_items = Vec::new();
     // How each row responds to a click, index-aligned with `list_items`.
     // Computed here, mapped to on-screen `Rect`s after the render.
@@ -357,13 +360,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 let color = ancestors.color(item_index, level, &palette);
                 spans.push(Span::styled("│ ", Style::default().fg(color)));
             }
-            let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
+            let marker_cells = (has_list_header as usize + item.depth) * 2 + marker_width + 1;
             let icon_col = (has_list_header as usize + item.depth.min(max_guides)) as u16 * 2;
-            spans.push(Span::styled(format!("{marker} "), marker_style));
+            spans.push(Span::styled(
+                format!("{} ", centered(marker, marker_width)),
+                marker_style,
+            ));
             // A critical step still to do (#95) leads with a warning-colored `!`.
             let critical = item.kind != ItemKind::Checkbox(TaskState::Done)
                 && state.document.critical.contains(&item.line_number);
-            let mut label_budget = inner_width.saturating_sub(marker_cells as usize);
+            let mut label_budget = inner_width.saturating_sub(marker_cells);
             if critical {
                 spans.push(Span::styled(
                     "! ",
@@ -385,6 +391,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                     list_index,
                     item_index,
                     icon_col,
+                    icon_width: marker_width as u16,
                 },
                 ItemKind::DisplayOnly => {
                     RowClick::Whole(OverviewTarget::Item(list_index, item_index))
@@ -483,7 +490,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // A scrollbar on the right border when the rows overflow, reflecting
     // the list's scroll within the (reserved-shrunk) content viewport.
     let content_viewport = inner_height - reserved;
-    super::render_scrollbar(frame, area, total_rows, content_viewport, offset);
+    super::render_scrollbar(frame, area, icons, total_rows, content_viewport, offset);
 
     // Each list row is one line tall, below the reserved header rows.
     state.layout.overview_rows.clear();
@@ -505,9 +512,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 list_index,
                 item_index,
                 icon_col,
+                icon_width,
             } => {
                 let icon_start = (inner.x + icon_col).min(row_end);
-                let icon_end = (icon_start + 2).min(row_end);
+                let icon_end = (icon_start + icon_width + 1).min(row_end);
                 let navigate = OverviewTarget::Item(list_index, item_index);
                 let rows = &mut state.layout.overview_rows;
                 rows.push((Rect::new(area.x, y, icon_start - area.x, 1), navigate));
@@ -539,6 +547,8 @@ enum RowClick {
         item_index: usize,
         /// Columns from the panel's inner left edge to the state icon.
         icon_col: u16,
+        /// The state icon's width; it and the space after it toggle.
+        icon_width: u16,
     },
 }
 

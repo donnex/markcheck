@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ = Deployment Runbook │ basics.md                          [x] 3/14 (+1 skipped)
+============================----------------------------------------------------
+┌ Go to task ──────────────────────── 17 items ┐  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ # [1] Prepare              ^
+│   [x] Confirm access to example-…  — Prepare │  │   * Do not run against pr… #
+│ > [/] Warm the build cache  — Prepare        │  │   A short checklist showi… #
+│   [ ] Check out the release bran…  — Prepare │  │   │ Note: Keep the change… #
+│   [ ] Build the artifact  — Prepare          │  │   [x] Confirm access to e… #
+│    *  Keep this runbook open whi…  — Prepare │  │   [/] Warm the build cache #
+│   [ ] Check the health endpoint c…  — Verify │  │   [ ] Check out the relea… #
+│   [ ] Run the smoke tests  — Verify          │  │   [ ] Build the artifact   #
+│   [ ] Switch traffic to the new r…  — Verify │  │    *  Keep this runbook o… #
+│   [ ] Tail the logs and watch for…  — Verify │  │ # [2] Verify               #
+│   [x] Record the start time — an …  — Verify │  │   * Warning: Run these on… #
+│   [-] Restart the replica — skipp…  — Verify │  │   [ ] Check the health en… #
+│    *  Roll back  — Verify                    │  │   [ ] Run the smoke tests  #
+│   [x] 1. Confirm the chang…  — Ordered steps │  │   [ ] ! Switch traffic to… │
+│   [/] 2. Notify the on-cal…  — Ordered steps │  │   [ ] Tail the logs and w… │
+│   [ ] 3. Announce completi…  — Ordered steps │  │   [x] Record the start ti… │
+│   [ ] 1) Remove the old release  — Wrap-up   │  │   [-] Restart the replica… │
+│   [ ] 2) Close the change window  — Wrap-up  │  │    *  Roll back            │
+│                                              │  │ # [3] Ordered steps        v
+└──────────────────────────────────────────────┘  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

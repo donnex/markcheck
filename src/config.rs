@@ -5,14 +5,18 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::model::{ClipboardChoice, ColorChoice};
+use crate::model::{ClipboardChoice, ColorChoice, IconChoice};
 
 /// Defaults for the CLI flags, from a TOML file. Keys use the positive
-/// sense (`nerd_font`). Unknown keys are ignored here and reported by
+/// sense (`mouse`). Unknown keys are ignored here and reported by
 /// `load_config`, so a typo surfaces without a newer release's settings
 /// stopping an older one from starting.
 #[derive(Debug, Default, Deserialize, PartialEq)]
 pub struct Config {
+    /// Icon set, like `--icons`: `auto`, `unicode`, `nerd` or `ascii`.
+    pub icons: Option<IconChoice>,
+    /// Deprecated alias for `icons = "nerd"` (on) or `icons = "auto"` (off);
+    /// `icons` wins when both are set.
     pub nerd_font: Option<bool>,
     pub mouse: Option<bool>,
     pub primary: Option<bool>,
@@ -40,6 +44,7 @@ pub const MAX_GIT_SYNC_DELAY: u64 = 86_400;
 /// Every key `Config` reads; anything else in the file is reported as
 /// unknown.
 const KNOWN_KEYS: &[&str] = &[
+    "icons",
     "nerd_font",
     "mouse",
     "primary",
@@ -95,6 +100,23 @@ pub fn unknown_keys_warning(keys: &[String]) -> Option<String> {
     let noun = if rest.is_empty() { "key" } else { "keys" };
     Some(format!(
         "Config: unknown {noun} {listed} ignored — a typo, or a setting from a newer markcheck?"
+    ))
+}
+
+/// The startup note for a config that still sets the deprecated
+/// `nerd_font` key: the `icons` value that replaces it, or that it is
+/// ignored when `icons` is set too.
+pub fn deprecated_keys_note(config: &Config) -> Option<String> {
+    let nerd_font = config.nerd_font?;
+    if config.icons.is_some() {
+        return Some(
+            "Config: `nerd_font` is deprecated and ignored, since `icons` is set — remove it"
+                .to_string(),
+        );
+    }
+    let replacement = if nerd_font { "nerd" } else { "auto" };
+    Some(format!(
+        "Config: `nerd_font` is deprecated — use `icons = \"{replacement}\"` instead"
     ))
 }
 

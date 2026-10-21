@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 
 use crate::config;
-use crate::model::{ClipboardChoice, ColorChoice, LineNumber};
+use crate::model::{ClipboardChoice, ColorChoice, IconChoice, LineNumber};
 
 /// `<cargo version> (<git short sha>)`, e.g. `1.0.0 (da90ddd)`. The SHA comes
 /// from `build.rs`, which shells out to `git rev-parse --short HEAD` at
@@ -48,10 +48,15 @@ pub struct Cli {
     /// already exist and must end in .md)
     #[arg(long, value_name = "PATH", conflicts_with = "file")]
     pub new: Option<PathBuf>,
-    /// Use Nerd Font glyphs instead of plain Unicode symbols (config: nerd_font = true)
+    /// Icon set: auto uses ascii on the Linux console (TERM=linux) and unicode
+    /// elsewhere; unicode, nerd (needs a Nerd Font) or ascii force one
+    /// (config: icons = "...")
+    #[arg(long, value_name = "SET", value_enum)]
+    pub icons: Option<IconChoice>,
+    /// Deprecated: use --icons nerd
     #[arg(long, conflicts_with = "no_nerd_font")]
     pub nerd_font: bool,
-    /// Use plain Unicode symbols, overriding `nerd_font = true` in the config (the default)
+    /// Deprecated: use --icons auto
     #[arg(long)]
     pub no_nerd_font: bool,
     /// Enable mouse support, overriding `mouse = false` in the config
@@ -124,7 +129,7 @@ pub struct Cli {
 /// wiring can be tested through real argv.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Settings {
-    pub nerd_font: bool,
+    pub icons: IconChoice,
     pub mouse: bool,
     pub primary: bool,
     pub auto_copy: bool,
@@ -138,9 +143,15 @@ pub struct Settings {
 impl Settings {
     pub fn resolve(cli: &Cli, config: &config::Config) -> Self {
         Settings {
-            // Plain Unicode renders on every terminal; Nerd Font glyphs only
-            // with a patched font, so they are the opt-in (#83).
-            nerd_font: resolve_flag(cli.nerd_font, cli.no_nerd_font, config.nerd_font, false),
+            // Nerd Font glyphs need a patched font, so they are the opt-in
+            // (#83). An explicit `icons` wins over the deprecated `nerd_font`
+            // alias in the same layer, and a flag over the config (#171).
+            icons: cli
+                .icons
+                .or(cli_nerd_font(cli))
+                .or(config.icons)
+                .or(config.nerd_font.map(IconChoice::from_nerd_font))
+                .unwrap_or_default(),
             mouse: resolve_flag(cli.mouse, cli.no_mouse, config.mouse, true),
             primary: resolve_flag(cli.primary, cli.no_primary, config.primary, false),
             auto_copy: resolve_flag(cli.auto_copy, cli.no_auto_copy, config.auto_copy, false),
@@ -217,7 +228,7 @@ pub fn man_page() -> std::io::Result<Vec<u8>> {
         br#".SH FILES
 .TP
 \fI$XDG_CONFIG_HOME/markcheck/config.toml\fR
-Defaults for the flags, one key per flag (for example \fBnerd_font = true\fR).
+Defaults for the flags, one key per flag (for example \fBicons = "ascii"\fR).
 Without \fBXDG_CONFIG_HOME\fR, or when it is not an absolute path,
 \fI~/.config/markcheck/config.toml\fR; a relative \fBHOME\fR is ignored too.
 \fB\-\-config\fR reads another file; \fB\-\-no\-config\fR skips it.
@@ -230,6 +241,11 @@ When set to a non\-empty value, nothing is colored (unless \fB\-\-color\fR force
 Pick the color palette when \fB\-\-color\fR is \fBauto\fR: \fBCOLORTERM=truecolor\fR
 or a known truecolor \fBTERM\fR gives truecolor, a \fBTERM\fR containing
 \fB256color\fR gives 256 colors, anything else 16.
+.TP
+\fBTERM\fR
+Also picks the icon set when \fB\-\-icons\fR is \fBauto\fR: \fBTERM=linux\fR
+(the Linux console, whose font lacks the Unicode symbols) gives \fBascii\fR,
+anything else \fBunicode\fR.
 .TP
 \fBVISUAL\fR, \fBEDITOR\fR
 The editor \fBe\fR opens the checklist in, in that order; \fBvi\fR without either.
@@ -293,6 +309,12 @@ pub fn is_remote_session(ssh_connection: Option<&str>, ssh_tty: Option<&str>) ->
 /// Seconds: long enough to fold a burst of ticks (or a tick and its undo)
 /// into one commit, short enough that a pause publishes the work.
 pub const DEFAULT_GIT_SYNC_DELAY: u64 = 10;
+
+/// The deprecated `--nerd-font` / `--no-nerd-font` pair as an icon choice,
+/// `None` when neither is passed.
+fn cli_nerd_font(cli: &Cli) -> Option<IconChoice> {
+    (cli.nerd_font || cli.no_nerd_font).then(|| IconChoice::from_nerd_font(cli.nerd_font))
+}
 
 /// Resolves one boolean setting: a passed flag wins, then the config, then
 /// the default. Pass `false` for a flag a setting doesn't have. clap's

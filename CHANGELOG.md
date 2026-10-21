@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An ASCII icon set for the Linux console, picked automatically when `TERM` is `linux`, and an `--icons auto|unicode|nerd|ascii` flag (config: `icons = "..."`) to choose the icons yourself. On the console of a server, an IPMI or hypervisor web console or a rescue boot, the font has none of markcheck's Unicode symbols, so done, pending, started and skipped tasks all showed the same replacement glyph and the state was carried by color alone, or by nothing with `NO_COLOR`. The ASCII set shows task states as their Markdown markers (`[x] [ ] [/] [-]`) and also replaces the position dots, scrollbar, progress bar, code-wrap marker and breadcrumb separator, and draws card frames with lines the console can show. `--icons unicode` keeps the Unicode icons on a console whose font has them. (#171)
 - `Ctrl-L` redraws the whole screen, as in vim, less and the shell. Anything written to the terminal behind markcheck's back, such as a background job started from the same shell, a `wall` broadcast or console messages, stayed on screen over the cards until those cells happened to change, and `Ctrl-L` was rejected as `Ctrl-L is not bound`, so the only fix was resizing the window or `Ctrl-Z` then `fg`. It works on every screen and overlay and leaves everything else as it was. (#205)
 - `--no-terminal-title` and `--no-exit-summary` turn off the terminal title and the line printed after quitting for one run, and `--terminal-title` and `--exit-summary` turn them back on over a config file that sets `terminal_title = false` or `exit_summary = false`. These two settings could only be changed in the config file, although the 1.3.0 notes and the README said every on/off setting has a flag in both directions, so a shared config that turned the exit line off couldn't be overridden, and there was no way to leave the title alone without writing a config file. (#163)
+
+### Deprecated
+
+- The `nerd_font` config key and the `--nerd-font` / `--no-nerd-font` flags, replaced by `icons = "nerd"` and `--icons nerd` / `--icons auto`. They still work, but an `icons` setting wins over `nerd_font` when both are set, and a config file that still uses `nerd_font` gets a startup note naming the `icons` value to use instead. (#171)
 
 ### Fixed
 

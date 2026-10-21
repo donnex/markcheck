@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ = Nested Checklist │ nested.md                                                                                 [x] 0/12
+==========--------------------------------------------------------------------------------------------------------------
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ # [1] Rebuild              │
+                                                                                          │   Sub-lists under a task … │
+                                                                                          │   [ ] Rebuild all packages │
+                                                                                          │   │  >  Fetch sources fet… │
+                                                                                          │   │ [/] Compile            │
+                                                                                          │   │ │ [ ] Compile the core │
+                                                                                          │   │ │ [ ] Compile the plu… │
+                                                                                          │   │ [ ] Run the test suite │
+                                                                                          │    *  Preparation notes:   │
+                                                                                          │   │ [ ] Free up disk space │
+                                                                                          │   │ [ ] Notify the team o… │
+                                                                                          │ # [2] Release              │
+                                                                                          │   [ ] Tag the release      │
+                                        # Rebuild                                         │   [ ] Publish              │
+                                                                                          │   │ [ ] Upload the artifa… │
+            ╔ [ ] ═══════════════════════════════════════════════════ 2/9 ╗               │   │ [ ] Announce the rele… │
+┌ [ ] ──────║                                                             ║] ──────────┐  │                            │
+│           ║                   Rebuild all packages >                    ║            │  │                            │
+│  Rebuild a║                        Fetch sources                        ║ Compile    │  │                            │
+│   packages║                                                             ║            │  │                            │
+│           ║                     fetch-sources --all                     ║            │  │                            │
+└───────────║                                                             ║────────────┘  │                            │
+            ╚ .@/...... ══════════════════════════════════════════════════╝               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

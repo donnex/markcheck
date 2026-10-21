@@ -16,15 +16,19 @@ use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarStat
 
 use crate::model::{AppState, IconSet, ItemKind, Overlay, Palette, TaskState};
 
-/// The scrollbar thumb glyph: a soft shaded block (`▓`) rather than the chunky
-/// default full block, with `▲`/`▼` end arrows and the box border showing
-/// through as the track. The thumb glyph is also asserted by the tests.
-const SCROLLBAR_THUMB: &str = "▓";
-
 /// Draws a vertical scrollbar over the right border of `area` when the
-/// content overflows. Shared by the cards, the overview and the help
-/// overlay.
-fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, viewport: usize, position: usize) {
+/// content overflows: a soft shaded thumb (`▓`) rather than the chunky
+/// default full block, with `▲`/`▼` end arrows (ASCII ones in the ASCII
+/// set) and the box border showing through as the track. Shared by the
+/// cards, the overview and the help overlay.
+fn render_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    icons: IconSet,
+    total: usize,
+    viewport: usize,
+    position: usize,
+) {
     if total <= viewport || area.height < 3 {
         return;
     }
@@ -37,10 +41,10 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, viewport: usize
         .position(position);
     frame.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
+            .begin_symbol(Some(icons.scroll_up))
+            .end_symbol(Some(icons.scroll_down))
             .track_symbol(None)
-            .thumb_symbol(SCROLLBAR_THUMB),
+            .thumb_symbol(icons.scroll_thumb),
         area.inner(Margin {
             vertical: 1,
             horizontal: 0,
@@ -147,14 +151,18 @@ fn render_progress_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let done_w = progress_fill(width, done, total);
     let started_w = progress_fill(width, started, total).min(width.saturating_sub(done_w));
     let remaining = width.saturating_sub(done_w).saturating_sub(started_w);
+    let icons = state.icons;
     let line = Line::from(vec![
-        Span::styled("━".repeat(done_w), Style::default().fg(state.palette.done)),
         Span::styled(
-            "━".repeat(started_w),
+            icons.bar_filled.repeat(done_w),
+            Style::default().fg(state.palette.done),
+        ),
+        Span::styled(
+            icons.bar_filled.repeat(started_w),
             Style::default().fg(state.palette.started),
         ),
         Span::styled(
-            "─".repeat(remaining),
+            icons.bar_empty.repeat(remaining),
             Style::default().add_modifier(Modifier::DIM),
         ),
     ]);
@@ -389,6 +397,13 @@ fn truncate(text: &str, max_width: usize) -> String {
     }
 }
 
+/// `text` padded with spaces on both sides to `width` columns, for a marker
+/// narrower than the icon set's task-state markers.
+fn centered(text: &str, width: usize) -> String {
+    let pad = width.saturating_sub(display_width(text));
+    format!("{}{text}{}", " ".repeat(pad / 2), " ".repeat(pad - pad / 2))
+}
+
 /// Display width in terminal cells. A wide (e.g. East Asian) glyph takes two
 /// cells, so anything that wraps, pads or truncates to fit a row measures
 /// with this rather than a character count.
@@ -582,13 +597,13 @@ fn marker_color(kind: ItemKind, info_state: Option<TaskState>, palette: Palette)
 /// [`marker_color`]: done `●`, started `●` (a half dot `◐` without color, so
 /// it still reads apart from done), skipped `-`, and a small `·` for a pending
 /// task or a note (not a task, no progress of its own).
-fn dot_glyph(kind: ItemKind, mono: bool) -> &'static str {
+fn dot_glyph(kind: ItemKind, mono: bool, icons: IconSet) -> &'static str {
     match kind {
-        ItemKind::Checkbox(TaskState::Done) => "●",
-        ItemKind::Checkbox(TaskState::Started) if mono => "◐",
-        ItemKind::Checkbox(TaskState::Started) => "●",
-        ItemKind::Checkbox(TaskState::Skipped) => "-",
-        ItemKind::Checkbox(TaskState::NotStarted) | ItemKind::DisplayOnly => "·",
+        ItemKind::Checkbox(TaskState::Done) => icons.dot_done,
+        ItemKind::Checkbox(TaskState::Started) if mono => icons.dot_started_mono,
+        ItemKind::Checkbox(TaskState::Started) => icons.dot_started,
+        ItemKind::Checkbox(TaskState::Skipped) => icons.dot_skipped,
+        ItemKind::Checkbox(TaskState::NotStarted) | ItemKind::DisplayOnly => icons.dot_pending,
     }
 }
 

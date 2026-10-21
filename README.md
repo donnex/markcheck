@@ -25,6 +25,7 @@ file is the state** — it's still just a text file when you close the app.
   - [Not supported (and how it degrades)](#not-supported-and-how-it-degrades)
 - [Keybindings](#keybindings)
 - [Behavior](#behavior)
+  - [Icons](#icons)
   - [Write-back](#write-back)
   - [Terminal title and exit line](#terminal-title-and-exit-line)
   - [Live reload](#live-reload)
@@ -82,7 +83,7 @@ workflow and file-backed state.
 - Reset the whole checklist, the current list or the sub-list you're in
   (with confirmation), and an offer to reset when
   you quit a fully-completed checklist
-- Mouse and keyboard driven; plain Unicode icons that work on any terminal, or Nerd Font ones with `--nerd-font`
+- Mouse and keyboard driven; plain Unicode icons by default, Nerd Font ones with `--icons nerd`, and an ASCII set that the Linux console's font can draw, picked automatically there (see [Icons](#icons))
 - Colors adapt to your terminal: curated 24-bit hues on truecolor terminals,
   a 256-color match otherwise, and named ANSI colors as a safe fallback.
   Truecolor is detected from `COLORTERM=truecolor`/`24bit`, or from a
@@ -144,8 +145,7 @@ only".
 markcheck runbook.md
 markcheck runbook.md#rollback         # open at the first task under "## Rollback"
 markcheck +120 runbook.md             # open at the task on (or after) line 120
-markcheck --nerd-font runbook.md      # Nerd Font icons, if your terminal has one
-markcheck --no-nerd-font runbook.md   # ...or plain Unicode again, if your config enables them
+markcheck --icons nerd runbook.md     # icons: auto, unicode, nerd (needs a Nerd Font) or ascii
 markcheck --no-mouse runbook.md       # leave terminal text selection alone
 markcheck --mouse runbook.md          # ...or force it back on, if your config disables it
 markcheck --primary runbook.md        # also copy to the X11 PRIMARY selection
@@ -189,7 +189,7 @@ All keys are optional; a flag passed on the command line always overrides
 its config value.
 
 ```toml
-nerd_font = false   # true  = --nerd-font,    false = --no-nerd-font
+icons = "auto"      # = --icons: "auto", "unicode", "nerd" or "ascii"
 mouse = true        # false = --no-mouse,     true = --mouse
 primary = false     # true  = --primary,      false = --no-primary
 auto_copy = false   # true  = --auto-copy,    false = --no-auto-copy
@@ -220,15 +220,15 @@ entirely for one run — built-in defaults plus whatever flags you pass —
 which gets you past a broken config without editing it. The two are
 mutually exclusive. `markcheck --help` also names the default location.
 
-Each of the six boolean settings has a flag in both directions, so a config
+Each of the five boolean settings has a flag in both directions, so a config
 value can always be overridden for a single run:
-`--nerd-font`/`--no-nerd-font`, `--mouse`/`--no-mouse`,
+`--mouse`/`--no-mouse`,
 `--primary`/`--no-primary`, `--auto-copy`/`--no-auto-copy`,
 `--terminal-title`/`--no-terminal-title`, and
 `--exit-summary`/`--no-exit-summary`.
-`color`, `clipboard` and `git_sync_delay` work the same way: `--color`,
-`--clipboard` and `--git-sync-delay` override them, and `--color auto` goes
-back to detecting the terminal. An explicit `color` (from either) also wins
+`icons`, `color`, `clipboard` and `git_sync_delay` work the same way: `--icons`,
+`--color`, `--clipboard` and `--git-sync-delay` override them, and
+`--icons auto` and `--color auto` go back to detecting the terminal. An explicit `color` (from either) also wins
 over `NO_COLOR`, per [no-color.org](https://no-color.org/).
 
 `git_sync_paths` is the odd one out: a list of path prefixes rather than a
@@ -282,7 +282,8 @@ constructs specially. Example:
 - [ ] First check the status: `check-status example-host`
 ```
 
-How each piece maps to the UI:
+How each piece maps to the UI (the glyphs named are the default Unicode
+icons; [Icons](#icons) lists the ASCII ones the Linux console gets):
 
 | Markdown | How it's shown |
 | ---------- | ---------------- |
@@ -555,6 +556,38 @@ starting up) lands on its first not-done task.
 
 ## Behavior
 
+### Icons
+
+`--icons` (or the `icons` config key) picks the glyphs markcheck draws with:
+
+| Set | Task states | Used for |
+| --- | --- | --- |
+| `unicode` | `☑ ☐ ◐ ⊘` | Any terminal with a Unicode font: the default. |
+| `nerd` | Font Awesome glyphs | A terminal whose font is a [Nerd Font](https://www.nerdfonts.com/). |
+| `ascii` | `[x] [ ] [/] [-]` | The Linux console (`TERM=linux`): a server's local screen, an IPMI or hypervisor web console, a rescue boot. |
+
+`auto`, the default, is `ascii` when `TERM` is `linux` and `unicode`
+everywhere else; it never picks `nerd`, which needs a patched font. The
+console's font holds only 256 or 512 glyphs, with none of the ballot boxes,
+half circles or arrows of the Unicode set, so under it done, pending,
+started and skipped tasks would all show the same replacement glyph. The
+ASCII set swaps every icon and every piece of chrome that the font lacks:
+the task states are their Markdown markers, the current task is `>`, a note
+`*`, a list `#`, the file `=`, the `Updated` tag `~`, the git-sync section
+`^v git`, the card's position dots `x / - . @` (done, started, skipped,
+pending, current), the scrollbar `^ # v`, the progress bar `=` and `-`, a
+wrapped code row's marker `\`, and the breadcrumb separator `>`. Card frames
+use the light and double box-drawing lines every console font has, in place
+of the heavy and rounded ones. Text in messages keeps its punctuation (`—`,
+`…`, `·`), which console fonts carry or draw as a look-alike, and so do the
+arrow keys named in the help.
+
+`nerd_font = true` and `--nerd-font` / `--no-nerd-font` are **deprecated**
+but still work, as aliases for `icons = "nerd"` and `--icons nerd` /
+`--icons auto`. An `icons` setting wins over `nerd_font` from the same
+place, and a flag still wins over the config file; a config file that sets
+`nerd_font` gets a startup note naming the `icons` value to use instead.
+
 ### Write-back
 
 Toggling a task rewrites only its `[ ]`/`[/]`/`[-]`/`[x]` marker character; the rest
@@ -655,8 +688,8 @@ reload changed in task terms, such as `Reloaded: 2 done, 1 reopened
 ticked (or unticked) on a shared checklist doesn't go unnoticed; an edit that
 changes no task reads `Reloaded: file changed on disk`. A reload never
 triggers `--auto-copy`. A
-relative `Updated 10s ago` tag — prefixed with a refresh icon (`↻`, or a Nerd
-Font glyph) — appears in the title bar, grouped with the progress counter on
+relative `Updated 10s ago` tag — prefixed with a refresh icon (`↻`, a Nerd
+Font glyph, or `~` in the ASCII set) — appears in the title bar, grouped with the progress counter on
 the right, whenever the file changes — whether from your own toggles or an
 external edit — and disappears two minutes later. The tag steps in 5-second
 increments rather than ticking every second. Your own toggles never trigger
@@ -883,8 +916,8 @@ the title bar too, grouped with the `Updated` tag and the progress counter
 on the right — the whole right-hand side reads as "what's going on with
 this file right now," while the left side (title and filename) stays put as
 plain identity. `⇅ git` is there from the moment the app opens, before
-you've even toggled anything. (It's the same plain `⇅` symbol either way,
-with or without `--nerd-font` — a couple of fancier icon attempts along
+you've even toggled anything. (It's the same plain `⇅` symbol with the
+Unicode and Nerd Font icons, and `^v` with the ASCII ones — a couple of fancier icon attempts along
 the way didn't render reliably on every terminal, so the word "git" carries
 the meaning now rather than the glyph.) The text after it says where the file stands:
 

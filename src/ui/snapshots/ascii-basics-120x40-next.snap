@@ -1,0 +1,44 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ = Deployment Runbook │ basics.md                                                                  [x] 3/14 (+1 skipped)
+==========================================------------------------------------------------------------------------------
+                                                                                          ┌ Overview ──────────────────┐
+                                                                                          │ # [1] Prepare              │
+                                                                                          │   * Do not run against pr… │
+                                                                                          │   A short checklist showi… │
+                                                                                          │   │ Note: Keep the change… │
+                                                                                          │   [x] Confirm access to e… │
+                                                                                          │   [/] Warm the build cache │
+                                                                                          │    >  Check out the relea… │
+                                                                                          │   [ ] Build the artifact   │
+                                                                                          │    *  Keep this runbook o… │
+                                                                                          │ # [2] Verify               │
+                                                                                          │   * Warning: Run these on… │
+                                                                                          │   [ ] Check the health en… │
+                                        # Prepare                                         │   [ ] Run the smoke tests  │
+                             * Do not run against production                              │   [ ] ! Switch traffic to… │
+                                                                                          │   [ ] Tail the logs and w… │
+            ╔ [ ] ═══════════════════════════════════════════════════ 3/5 ╗               │   [x] Record the start ti… │
+┌ [/] ──────║                                                             ║] ──────────┐  │   [-] Restart the replica… │
+│           ║                Check out the release branch:                ║Build the   │  │    *  Roll back            │
+│   Warm the║                                                             ║artifact    │  │ # [3] Ordered steps        │
+│  build cac║                    git checkout release                     ║            │  │   Task states work the sa… │
+│           ║                                                             ║ompile and  │  │   * Important: Announce c… │
+└───────────║                                                             ║────────────┘  │   [x] 1. Confirm the chan… │
+            ╚ x/@.. ══════════════════════════════════════════════════════╝               │   [/] 2. Notify the on-ca… │
+                                                                                          │   [ ] 3. Announce complet… │
+                                                                                          │ # [4] Wrap-up              │
+                                                                                          │   * Caution: Keep the old… │
+                                                                                          │   [ ] 1) Remove the old r… │
+                                                                                          │   [ ] 2) Close the change… │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          │                            │
+                                                                                          └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

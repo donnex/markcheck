@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, 80, 24)"
+---
+ = Notes, Banners, and Code │ notes-and-code.md                         [x] 0/30
+--------------------------------------------------------------------------------
+┌ Go to task ──────────────────────── 34 items ┐  ┌ Overview ──────────────────┐
+│ Filter:                                      │  │ # [1] Reference            ^
+│    *  A note with a command bu…  — Reference │  │   * Read before proceedin… #
+│ > [ ] A task with a single inl…  — Reference │  │   Non-task content and th… #
+│   [ ] Restart the primary appl…  — Reference │  │    *  A note with a comma… #
+│   [ ] Restart example-service  — Reference   │  │    >  A task with a singl… #
+│   [ ] A task with a fenced blo…  — Reference │  │   [ ] Restart the primary… #
+│   [ ] A task with an indented …  — Reference │  │   [ ] Restart example-ser… #
+│   [ ] A task with a short one-…  — Reference │  │   [ ] A task with a fence… #
+│   [ ] A task with fenced lines…  — Reference │  │   [ ] A task with an inde… │
+│   [ ] A task with a tab-indent…  — Reference │  │   [ ] A task with a short… │
+│   [ ] A task with two commands…  — Reference │  │   [ ] A task with fenced … │
+│   [ ] A task with a command fo…  — Reference │  │   [ ] A task with a tab-i… │
+│   [ ] Fetch curl -fsSL https:/…  — Reference │  │   [ ] A task with two com… │
+│   [ ] A task with emphasis, mi…  — Reference │  │   [ ] A task with a comma… │
+│   [ ] A task whose text runs o…  — Reference │  │   [ ] Fetch curl -fsSL ht… │
+│   [ ] A task in wide (two-colu…  — Reference │  │   [ ] A task with emphasi… │
+│   [ ] Open the project runbook…  — Reference │  │   [ ] A task whose text r… │
+│   [ ] A task with a very long …  — Reference │  │   [ ] A task in wide (two… │
+│   [ ] A task with two links — …  — Reference │  │   [ ] Open the project ru… v
+└──────────────────────────────────────────────┘  └────────────────────────────┘
+type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

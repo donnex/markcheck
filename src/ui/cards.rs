@@ -7,7 +7,7 @@ use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List as ListWidget, ListItem, ListState, Padding, Paragraph,
+    Block, Borders, Clear, List as ListWidget, ListItem, ListState, Padding, Paragraph,
 };
 
 use super::{
@@ -84,8 +84,11 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let matches = state.picker_matches();
     let multi_list = state.document.lists.len() > 1;
     // A row's text width inside the borders and padding, less the
-    // current-task gutter and the marker.
-    let text_width = area.width.saturating_sub(4 + 2 + 2) as usize;
+    // current-task gutter and the marker, each with a space after it. Every
+    // task-state marker in a set is the same width; a note's is centered in it.
+    let gutter_width = display_width(icons.current) + 1;
+    let marker_width = display_width(icons.pending);
+    let text_width = (area.width as usize).saturating_sub(4 + gutter_width + marker_width + 1);
     let cursor = (state.current_list_index, state.current_item_index);
 
     let rows: Vec<ListItem> = matches
@@ -111,7 +114,7 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
             let suffix = if context.is_empty() {
                 String::new()
             } else {
-                format!("  — {}", context.join(" › "))
+                format!("  — {}", context.join(&format!(" {} ", icons.crumb)))
             };
             // A long label must not push the suffix off the row, since the
             // suffix is what tells same-named tasks apart: both keep a share
@@ -131,11 +134,14 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
                     Style::default().add_modifier(Modifier::BOLD),
                 )
             } else {
-                (Span::raw("  "), Style::default())
+                (Span::raw(" ".repeat(gutter_width)), Style::default())
             };
             let mut spans = vec![
                 gutter,
-                Span::styled(format!("{marker} "), marker_style),
+                Span::styled(
+                    format!("{} ", super::centered(marker, marker_width)),
+                    marker_style,
+                ),
                 Span::styled(super::truncate(&label, label_budget), label_style),
             ];
             if !suffix.is_empty() {
@@ -161,7 +167,7 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(state.icons.note_border)
         .border_style(Style::default().fg(palette.current))
         .padding(Padding::horizontal(1))
         .title(" Go to task ")
@@ -422,7 +428,7 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(state.icons.note_border)
         .border_style(Style::default().fg(palette.current))
         .title(" Keybindings ");
 
@@ -430,7 +436,14 @@ fn render_help(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .block(block)
         .scroll((state.help.scroll, 0));
     frame.render_widget(paragraph, row);
-    super::render_scrollbar(frame, row, total, inner_h, state.help.scroll as usize);
+    super::render_scrollbar(
+        frame,
+        row,
+        state.icons,
+        total,
+        inner_h,
+        state.help.scroll as usize,
+    );
 }
 
 /// Whether there's room below `card` for the spacer and one link row.
@@ -514,7 +527,10 @@ fn current_card_width(area: Rect) -> u16 {
 /// empty-body void); long tasks get more room before scrolling.
 fn desired_card_height(item: &Item, area: Rect, code: Style) -> u16 {
     let inner_w = current_card_width(area).saturating_sub(2 + 2 * BODY_PAD);
-    let body = clamp_to_u16(body_lines(item, inner_w.max(1), code).len());
+    // The wrap marker is one cell in every icon set, so it doesn't change
+    // the height.
+    let wrap = IconSet::unicode().continuation;
+    let body = clamp_to_u16(body_lines(item, inner_w.max(1), code, wrap).len());
     // The inside-card title adds its wrapped rows + a blank separator. The
     // note icon is measured as one character, like every icon set's glyph.
     let title_rows = card_title_rows(item, "i", inner_w.max(1)).len();
@@ -556,7 +572,7 @@ fn render_checklist(frame: &mut Frame, area: Rect, state: &mut AppState) {
         // which sub-section you're in on narrow terminals.
         breadcrumb: state
             .current_item()
-            .and_then(|item| section_breadcrumb(&item.section)),
+            .and_then(|item| section_breadcrumb(&item.section, state.icons.crumb)),
         gap: true,
     };
 
@@ -718,7 +734,7 @@ fn preamble_rows(
         let (prefix, style) = preamble_style(block.kind, icons, palette);
         if block.kind == PreambleKind::Code {
             rows.extend(
-                preamble_code_rows(&block.text, width)
+                preamble_code_rows(&block.text, width, icons.continuation)
                     .into_iter()
                     .map(|text| PreambleRow {
                         text,
@@ -751,7 +767,7 @@ fn preamble_rows(
 /// as a unit while its lines stay left-aligned: tabs expanded, indentation
 /// and spacing kept, a line too long for `width` hard-wrapped with `↩` in
 /// the last cell, one space of padding on either side.
-fn preamble_code_rows(block: &str, width: u16) -> Vec<String> {
+fn preamble_code_rows(block: &str, width: u16, wrap: &str) -> Vec<String> {
     let chunks: Vec<(String, bool)> =
         soft_wrapped(block, (width as usize).saturating_sub(2).max(1)).collect();
     let block_w = chunks
@@ -763,7 +779,7 @@ fn preamble_code_rows(block: &str, width: u16) -> Vec<String> {
         .into_iter()
         .map(|(c, wraps)| {
             let pad = " ".repeat(block_w - display_width(&c));
-            let end = if wraps { CONTINUATION } else { " " };
+            let end = if wraps { wrap } else { " " };
             format!(" {c}{pad}{end}")
         })
         .collect()
@@ -881,15 +897,15 @@ fn render_list_banner(frame: &mut Frame, area: Rect, row: &str, palette: Palette
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// The item's `### H3`+ sub-section path as a ` › `-joined breadcrumb, or
-/// `None` when the item sits directly under its `## H2`.
-fn section_breadcrumb(section: &[SubHeading]) -> Option<String> {
+/// The item's `### H3`+ sub-section path as a ` › `-joined breadcrumb (`crumb`
+/// is the separator), or `None` when the item sits directly under its `## H2`.
+fn section_breadcrumb(section: &[SubHeading], crumb: &str) -> Option<String> {
     (!section.is_empty()).then(|| {
         section
             .iter()
             .map(|h| h.text.as_str())
             .collect::<Vec<_>>()
-            .join(" › ")
+            .join(&format!(" {crumb} "))
     })
 }
 
@@ -926,6 +942,7 @@ fn breadcrumb_line(
     sublist_base: usize,
     index: usize,
     width: u16,
+    crumb: &str,
     palette: Palette,
 ) -> Option<Line<'static>> {
     let chain = list.parent_chain(index);
@@ -933,7 +950,7 @@ fn breadcrumb_line(
         return None;
     }
     let labels: Vec<String> = chain.iter().map(|&i| list.items[i].label()).collect();
-    let text = format!("{} ›", labels.join(" › "));
+    let text = format!("{} {crumb}", labels.join(&format!(" {crumb} ")));
 
     let width = width.max(1) as usize;
     let text = if display_width(&text) > width {
@@ -1035,15 +1052,15 @@ fn item_block(
 /// A compact pilot-style dot strip for the current list's items:
 /// current `◉` in the accent color, done/started in their state colors,
 /// pending `·` dim. Without color, a started item is a half dot `◐` so it
-/// still reads apart from a done one.
-fn position_dots(list: &List, current: usize, palette: Palette) -> Line<'static> {
+/// still reads apart from a done one. One cell per item in every icon set.
+fn position_dots(list: &List, current: usize, icons: IconSet, palette: Palette) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, item) in list.items.iter().enumerate() {
         let (glyph, style) = if i == current {
-            ("◉", Style::default().fg(palette.current))
+            (icons.dot_current, Style::default().fg(palette.current))
         } else {
             let color = marker_color(item.kind, None, palette);
-            let glyph = dot_glyph(item.kind, palette.is_mono());
+            let glyph = dot_glyph(item.kind, palette.is_mono(), icons);
             match color {
                 Some(color) => (glyph, Style::default().fg(color)),
                 None => (glyph, Style::default().add_modifier(Modifier::DIM)),
@@ -1132,7 +1149,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         // constructed with empty lists.
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Thick);
+            .border_type(icons.task_border);
         let paragraph = Paragraph::new(format!("No checklist items in \"{list_title}\"."))
             .block(block)
             .alignment(Alignment::Center);
@@ -1164,9 +1181,9 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     // not an actionable step; tasks get a thick border so an actionable step
     // reads as a bold, solid frame.
     let border_type = if matches!(item.kind, ItemKind::DisplayOnly) {
-        BorderType::Rounded
+        icons.note_border
     } else {
-        BorderType::Thick
+        icons.task_border
     };
     let mut block = item_block(item, info_state, icons, palette, Some(position))
         .border_type(border_type)
@@ -1198,13 +1215,14 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         state.document.sublist_base(state.current_list_index),
         state.current_item_index,
         inner.width,
+        icons.crumb,
         palette,
     ) {
         lines.push(crumb);
     }
     lines.extend(card_title_lines(item, inner.width, icons, palette));
     let n_before = lines.len();
-    let (body, code_rows) = body_layout(item, inner.width, palette.code);
+    let (body, code_rows) = body_layout(item, inner.width, palette.code, icons.continuation);
     lines.extend(body);
     let visible = inner.height as usize;
     let total_lines = lines.len();
@@ -1259,8 +1277,9 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
     let scroll_width = scroll_title.as_ref().map_or(0, |s| display_width(s) as u16);
     let dots_width = list.items.len() as u16 + 2;
     if !list.items.is_empty() && dots_width + scroll_width <= area.width {
-        block = block
-            .title_bottom(position_dots(list, state.current_item_index, palette).left_aligned());
+        block = block.title_bottom(
+            position_dots(list, state.current_item_index, icons, palette).left_aligned(),
+        );
     }
     if let Some(scroll_title) = &scroll_title {
         block = block.title_bottom(
@@ -1311,6 +1330,7 @@ fn render_current_card(frame: &mut Frame, area: Rect, screen_area: Rect, state: 
         super::render_scrollbar(
             frame,
             area,
+            icons,
             total_lines,
             visible,
             state.card_scroll as usize,
@@ -1481,8 +1501,8 @@ fn item_body_tokens(item: &Item) -> BodyTokens {
 /// The current card's body as styled, word-wrapped lines, with its code
 /// blocks appended below. Measured in display cells so scroll clamping stays
 /// exact.
-fn body_lines(item: &Item, width: u16, code: Style) -> Vec<Line<'static>> {
-    body_layout(item, width, code).0
+fn body_lines(item: &Item, width: u16, code: Style, wrap: &'static str) -> Vec<Line<'static>> {
+    body_layout(item, width, code, wrap).0
 }
 
 /// One click-to-copy target on a body row: the columns it covers, measured
@@ -1527,7 +1547,13 @@ fn chip_targets(
 }
 
 /// `body_lines` plus, index-aligned, the click-to-copy targets on each line.
-fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec<Vec<CopyTarget>>) {
+/// `wrap` is the icon set's marker for a code row continued on the next.
+fn body_layout(
+    item: &Item,
+    width: u16,
+    code: Style,
+    wrap: &'static str,
+) -> (Vec<Line<'static>>, Vec<Vec<CopyTarget>>) {
     let width = width.max(1) as usize;
 
     // Flow prose + inline code as styled word tokens; a trailing inline code
@@ -1538,7 +1564,7 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
     // Center short prose, left-align it once it wraps past a couple of
     // lines (centered multi-line prose is tiring to read). The trailing
     // command line, if any, shares the prose alignment.
-    let prose = wrap_tokens(&tokens, width, code);
+    let prose = wrap_tokens(&tokens, width, code, wrap);
     let center_prose = prose.len() <= PROSE_CENTER_MAX_LINES;
     let align = |line: Line<'static>| {
         if center_prose {
@@ -1578,7 +1604,7 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
         let mut trailing = vec![(format!(" {cmd} "), chip, false)];
         trailing.extend(number.map(|n| marker_token(n, true)));
         let cmd: Rc<str> = Rc::from(cmd);
-        for (line, _) in wrap_tokens(&trailing, width, code) {
+        for (line, _) in wrap_tokens(&trailing, width, code, wrap) {
             lines.push(align(line));
             code_rows.push(full_row(width, &cmd));
         }
@@ -1593,7 +1619,7 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
             code_rows.push(Vec::new());
         }
         let text: Rc<str> = Rc::from(block.as_str());
-        for line in code_block_lines(block, width, code, block_number(item, k)) {
+        for line in code_block_lines(block, width, code, block_number(item, k), wrap) {
             lines.push(line);
             code_rows.push(full_row(width, &text));
         }
@@ -1611,12 +1637,14 @@ fn body_layout(item: &Item, width: u16, code: Style) -> (Vec<Line<'static>>, Vec
 /// fit); falls back to plain left-aligned lines when the card is too narrow
 /// for a box. Deterministic line count, so scroll clamping stays exact.
 /// A `marker` number, set when the card has several blocks, is drawn into the
-/// top border (`┌─[N]──┐`) to key the block to `y`'s digit prompt.
+/// top border (`┌─[N]──┐`) to key the block to `y`'s digit prompt. `wrap`
+/// marks a row continued on the next.
 fn code_block_lines(
     block: &str,
     width: usize,
     style: Style,
     marker: Option<usize>,
+    wrap: &'static str,
 ) -> Vec<Line<'static>> {
     let marker = marker.map(|n| format!("[{n}]"));
     let continued = continuation_style(style);
@@ -1627,7 +1655,7 @@ fn code_block_lines(
         let rows = soft_wrapped(block, if mark { width - 1 } else { width }).map(|(c, wraps)| {
             let mut spans = vec![Span::styled(c, style)];
             if wraps && mark {
-                spans.push(Span::styled(CONTINUATION, continued));
+                spans.push(Span::styled(wrap, continued));
             }
             Line::from(spans)
         });
@@ -1667,7 +1695,7 @@ fn code_block_lines(
         let line = if *wraps {
             Line::from(vec![
                 Span::styled(row, style),
-                Span::styled(CONTINUATION, continued),
+                Span::styled(wrap, continued),
                 Span::styled("│", style),
             ])
         } else {
@@ -1679,10 +1707,6 @@ fn code_block_lines(
     out.push(Line::styled(format!("└{}┘", "─".repeat(box_w + 2)), style).left_aligned());
     out
 }
-
-/// Drawn at the end of a code row that continues on the next one, so a
-/// soft-wrapped command line is distinguishable from a real line break.
-const CONTINUATION: &str = "↩";
 
 /// The continuation marker's style: the surrounding code style, dimmed.
 fn continuation_style(code: Style) -> Style {
@@ -1788,7 +1812,7 @@ fn greedy_wrap<'a, T: Copy>(
 
 /// Greedy word wrap over styled tokens `(text, SpanStyle, glue)` through
 /// `greedy_wrap`, emitting styled `Line`s with code fragments in the `code`
-/// style; a hard-split code chip ends each continued row with `↩`, so the
+/// style; a hard-split code chip ends each continued row with `wrap` (`↩`), so the
 /// command doesn't read as several.
 /// Each line comes with, per span, the index of the code token it came from
 /// (`None` for prose and spacing), so click-to-copy can map a chip — or any
@@ -1797,6 +1821,7 @@ fn wrap_tokens(
     tokens: &[Token],
     width: usize,
     code: Style,
+    wrap: &'static str,
 ) -> Vec<(Line<'static>, Vec<Option<usize>>)> {
     let span_for = |text: &str, style: SpanStyle| {
         if style.code {
@@ -1862,7 +1887,7 @@ fn wrap_tokens(
                 }
             }
             if row.marked {
-                spans.push(Span::styled(CONTINUATION, continuation_style(code)));
+                spans.push(Span::styled(wrap, continuation_style(code)));
                 origins.push(last_origin);
             }
             (Line::from(spans), origins)

@@ -2,6 +2,8 @@ use super::*;
 use crate::model::TextStyle;
 use crate::test_support::fixture::checkbox;
 
+const CONTINUATION: &str = IconSet::unicode().continuation;
+
 fn code_bg(color: Color) -> Style {
     Style::default().bg(color)
 }
@@ -21,7 +23,7 @@ fn code_spans_carry_an_explicit_fg_on_every_color_tier() {
         Palette::palette256(),
         Palette::basic(),
     ] {
-        let code_styles: Vec<Style> = body_lines(&item, 40, palette.code)
+        let code_styles: Vec<Style> = body_lines(&item, 40, palette.code, CONTINUATION)
             .into_iter()
             .flat_map(|l| {
                 let line_style = l.style;
@@ -42,7 +44,7 @@ fn code_spans_carry_an_explicit_fg_on_every_color_tier() {
 fn mono_renders_code_reversed_and_started_dots_as_half_dots() {
     let item = body_item(vec![BodySpan::Code("deploy".into())], vec![], "deploy");
     let mono = Palette::mono();
-    let (lines, rows) = body_layout(&item, 40, mono.code);
+    let (lines, rows) = body_layout(&item, 40, mono.code, CONTINUATION);
     assert!(lines.iter().flat_map(|l| &l.spans).any(|s| {
         s.content.contains("deploy") && s.style.add_modifier.contains(Modifier::REVERSED)
     }));
@@ -58,7 +60,7 @@ fn mono_renders_code_reversed_and_started_dots_as_half_dots() {
         ],
     };
     let glyphs = |pal| -> Vec<String> {
-        position_dots(&list, 0, pal)
+        position_dots(&list, 0, IconSet::unicode(), pal)
             .spans
             .iter()
             .map(|s| s.content.to_string())
@@ -103,7 +105,13 @@ fn code_box_rows(block: &str, width: u16) -> Vec<String> {
     use ratatui::backend::TestBackend;
     use ratatui::widgets::Paragraph;
 
-    let lines = code_block_lines(block, width as usize, code_bg(Color::DarkGray), None);
+    let lines = code_block_lines(
+        block,
+        width as usize,
+        code_bg(Color::DarkGray),
+        None,
+        CONTINUATION,
+    );
     let mut terminal = Terminal::new(TestBackend::new(width, lines.len() as u16)).unwrap();
     terminal
         .draw(|f| f.render_widget(Paragraph::new(lines), f.area()))
@@ -223,14 +231,14 @@ fn position_dots_tint_info_items_apart_from_pending_tasks() {
         ],
     };
     // current = the pending task (index 1), so neither dot is the ◉ marker.
-    let dots = position_dots(&list, 1, pal);
+    let dots = position_dots(&list, 1, IconSet::unicode(), pal);
     let info = &dots.spans[1]; // spans[0] is the leading pad space
     let pending = &dots.spans[2];
     assert_eq!(info.content, "·");
     assert_eq!(info.style.fg, Some(pal.note), "info dot is note-blue");
     assert_eq!(pending.content, "◉", "the pending task is current here");
     // Make the info item non-current so the pending dot shows its dim ·.
-    let dots = position_dots(&list, 0, pal);
+    let dots = position_dots(&list, 0, IconSet::unicode(), pal);
     let pending = &dots.spans[2];
     assert_eq!(
         pending.style.fg, None,
@@ -257,7 +265,12 @@ fn body_lines_style_inline_code_distinctly() {
         vec![],
         "run cmd",
     );
-    let pairs = span_pairs(&body_lines(&item, 40, code_bg(Color::Magenta)));
+    let pairs = span_pairs(&body_lines(
+        &item,
+        40,
+        code_bg(Color::Magenta),
+        CONTINUATION,
+    ));
     assert!(
         pairs
             .iter()
@@ -281,7 +294,7 @@ fn body_lines_keep_a_paragraph_separator_between_words() {
         vec![],
         "Restart the service Then check",
     );
-    let text: String = body_lines(&item, 40, code_bg(Color::Magenta))
+    let text: String = body_lines(&item, 40, code_bg(Color::Magenta), CONTINUATION)
         .iter()
         .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
         .collect();
@@ -333,7 +346,12 @@ fn body_lines_style_emphasis_strong_and_strikethrough() {
         vec![],
         "italicword plain boldword crossed",
     );
-    let mods = span_mods(&body_lines(&item, 60, code_bg(Color::Magenta)));
+    let mods = span_mods(&body_lines(
+        &item,
+        60,
+        code_bg(Color::Magenta),
+        CONTINUATION,
+    ));
     assert!(
         mods.iter()
             .any(|(t, m)| t == "italicword" && m.contains(Modifier::ITALIC))
@@ -364,7 +382,7 @@ fn body_lines_render_link_as_underlined_text_without_inline_url() {
         vec![],
         "see runbook",
     );
-    let lines = body_lines(&item, 60, code_bg(Color::Magenta));
+    let lines = body_lines(&item, 60, code_bg(Color::Magenta), CONTINUATION);
     let whole: String = line_texts(&lines).join(" ");
     assert!(whole.contains("runbook"), "link text shown: {whole:?}");
     assert!(
@@ -399,7 +417,7 @@ fn body_lines_tag_multiple_links_with_dim_numbered_markers() {
         vec![],
         "see runbook and wiki",
     );
-    let lines = body_lines(&item, 60, code_bg(Color::Magenta));
+    let lines = body_lines(&item, 60, code_bg(Color::Magenta), CONTINUATION);
     let whole: String = line_texts(&lines).join(" ");
     assert!(whole.contains("runbook [1]"), "first marker: {whole:?}");
     assert!(whole.contains("wiki [2]"), "second marker: {whole:?}");
@@ -431,7 +449,13 @@ fn punctuation_after_a_styled_span_stays_attached() {
         vec![],
         "say hi, ok",
     );
-    let whole = line_texts(&body_lines(&item, 40, code_bg(Color::Magenta))).join(" ");
+    let whole = line_texts(&body_lines(
+        &item,
+        40,
+        code_bg(Color::Magenta),
+        CONTINUATION,
+    ))
+    .join(" ");
     assert!(
         whole.contains("hi,"),
         "comma attaches to the word: {whole:?}"
@@ -464,7 +488,7 @@ fn trailing_inline_command_breaks_to_its_own_line() {
         vec![],
         "run this cmd",
     );
-    let lines = body_lines(&item, 40, code_bg(Color::Magenta));
+    let lines = body_lines(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     let texts = line_texts(&lines);
     assert_eq!(texts.len(), 3, "prose, blank, command: {texts:?}");
     assert_eq!(texts[0], "run this");
@@ -492,7 +516,7 @@ fn inline_code_followed_by_text_stays_inline() {
         vec![],
         "run x and wait",
     );
-    let lines = body_lines(&item, 40, code_bg(Color::Magenta));
+    let lines = body_lines(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     let texts = line_texts(&lines);
     assert!(
         !texts.iter().any(|t| t.trim().is_empty()),
@@ -517,7 +541,7 @@ fn body_of_only_a_command_has_no_leading_blank() {
         vec![],
         "refresh-cache",
     );
-    let lines = body_lines(&item, 40, code_bg(Color::Magenta));
+    let lines = body_lines(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     let texts = line_texts(&lines);
     assert_eq!(texts.len(), 1, "just the command line: {texts:?}");
     assert!(texts[0].contains("refresh-cache"));
@@ -530,7 +554,7 @@ fn body_lines_box_fenced_code_left_aligned_with_code_background() {
         vec!["first line\nsecond line"],
         "do this",
     );
-    let lines = body_lines(&item, 40, code_bg(Color::Magenta));
+    let lines = body_lines(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     // Each code line's content appears inside a boxed, code-background,
     // left-aligned line.
     for expected in ["first line", "second line"] {
@@ -563,7 +587,7 @@ fn code_block_box_spans_full_width_even_when_short() {
     // A short one-line block still fills the full card-body width, so
     // every box row (borders, blanks, content) is exactly `width` wide.
     let width = 30usize;
-    let lines = code_block_lines("hi", width, code_bg(Color::Magenta), None);
+    let lines = code_block_lines("hi", width, code_bg(Color::Magenta), None, CONTINUATION);
     assert!(lines.len() >= 5, "top + blank + content + blank + bottom");
     for line in &lines {
         let w: usize = line.spans.iter().flat_map(|s| s.content.chars()).count();
@@ -580,7 +604,13 @@ fn code_block_box_spans_full_width_even_when_short() {
 fn narrow_code_block_falls_back_without_a_box() {
     // Below the box minimum the fallback is still plain left-aligned
     // code lines (no border), unchanged by the full-width change.
-    let lines = code_block_lines("hello world", 4, code_bg(Color::Magenta), None);
+    let lines = code_block_lines(
+        "hello world",
+        4,
+        code_bg(Color::Magenta),
+        None,
+        CONTINUATION,
+    );
     let all: String = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -592,7 +622,7 @@ fn narrow_code_block_falls_back_without_a_box() {
 #[test]
 fn short_prose_centered_long_prose_left_aligned() {
     let short = body_item(vec![BodySpan::Text("do it".to_string())], vec![], "do it");
-    for line in body_lines(&short, 40, code_bg(Color::Magenta)) {
+    for line in body_lines(&short, 40, code_bg(Color::Magenta), CONTINUATION) {
         if !line.spans.is_empty() {
             assert_eq!(
                 line.alignment,
@@ -603,7 +633,7 @@ fn short_prose_centered_long_prose_left_aligned() {
     }
     let long_text = "word ".repeat(60);
     let long = body_item(vec![BodySpan::Text(long_text.clone())], vec![], &long_text);
-    let long_lines = body_lines(&long, 20, code_bg(Color::Magenta));
+    let long_lines = body_lines(&long, 20, code_bg(Color::Magenta), CONTINUATION);
     assert!(long_lines.len() > PROSE_CENTER_MAX_LINES);
     for line in long_lines {
         assert_eq!(
@@ -673,7 +703,7 @@ fn breadcrumb_front_truncation_fits_wide_glyphs() {
         banner: None,
         items: vec![parent, child],
     };
-    let line = breadcrumb_line(&list, 0, 1, 6, Palette::truecolor())
+    let line = breadcrumb_line(&list, 0, 1, 6, "›", Palette::truecolor())
         .expect("nested item has a breadcrumb");
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(display_width(&text) <= 6, "fits the width: {text}");
@@ -721,7 +751,13 @@ fn wrapped_code_rows_carry_a_continuation_marker_and_real_breaks_do_not() {
 
 #[test]
 fn continuation_marker_is_dimmed() {
-    let lines = code_block_lines("abcdefghij", 8, code_bg(Color::DarkGray), None);
+    let lines = code_block_lines(
+        "abcdefghij",
+        8,
+        code_bg(Color::DarkGray),
+        None,
+        CONTINUATION,
+    );
     let marker = lines
         .iter()
         .flat_map(|l| &l.spans)
@@ -734,7 +770,7 @@ fn continuation_marker_is_dimmed() {
 fn tab_indented_block_keeps_its_indentation_and_a_straight_border() {
     let block = "deploy:\n\tbuild\n\t\tpush";
     let width = 24;
-    let lines = code_block_lines(block, width, code_bg(Color::DarkGray), None);
+    let lines = code_block_lines(block, width, code_bg(Color::DarkGray), None, CONTINUATION);
     let texts = line_texts(&lines);
     assert!(texts.iter().all(|t| !t.contains('\t')), "{texts:?}");
     assert!(texts.contains(&format!("│ {:<20} │", "deploy:")));
@@ -758,7 +794,7 @@ fn tabbed_commands_show_spaces_but_copy_the_real_tabs() {
         vec![block],
         "Run it first.",
     );
-    let (lines, rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (lines, rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     let texts = line_texts(&lines);
     assert!(texts.iter().all(|t| !t.contains('\t')), "{texts:?}");
     assert!(texts[0].contains(" printf x "), "{texts:?}");
@@ -773,7 +809,15 @@ fn tabbed_commands_show_spaces_but_copy_the_real_tabs() {
 
 #[test]
 fn narrow_unboxed_code_still_marks_wrapped_rows() {
-    let texts = |w| line_texts(&code_block_lines("abcdefg\nxy", w, Style::default(), None));
+    let texts = |w| {
+        line_texts(&code_block_lines(
+            "abcdefg\nxy",
+            w,
+            Style::default(),
+            None,
+            CONTINUATION,
+        ))
+    };
     assert_eq!(texts(4), vec!["abc↩", "def↩", "g", "xy"]);
     assert_eq!(texts(1).len(), 9, "no room for a marker at width 1");
     assert!(!texts(1).concat().contains('↩'));
@@ -790,7 +834,7 @@ fn hard_split_trailing_command_marks_its_continued_rows() {
         vec![],
         "Clear",
     );
-    let (lines, rows) = body_layout(&item, 20, code_bg(Color::Magenta));
+    let (lines, rows) = body_layout(&item, 20, code_bg(Color::Magenta), CONTINUATION);
     let texts = line_texts(&lines);
     let chip: Vec<usize> = (0..lines.len()).filter(|&r| !rows[r].is_empty()).collect();
     assert!(chip.len() >= 3, "the command is split: {texts:?}");
@@ -844,7 +888,13 @@ fn several_inline_commands_get_numbered_markers_for_y() {
         "Run stop-svc then start-svc",
     );
     item.code_spans = vec!["stop-svc".to_string(), "start-svc".to_string()];
-    let whole = line_texts(&body_lines(&item, 60, code_bg(Color::Magenta))).join("\n");
+    let whole = line_texts(&body_lines(
+        &item,
+        60,
+        code_bg(Color::Magenta),
+        CONTINUATION,
+    ))
+    .join("\n");
     assert!(whole.contains(" stop-svc [1]"), "{whole:?}");
     assert!(
         whole.contains(" start-svc [2]"),
@@ -854,7 +904,13 @@ fn several_inline_commands_get_numbered_markers_for_y() {
     // A lone command needs no number.
     item.body.truncate(2);
     item.code_spans.truncate(1);
-    let whole = line_texts(&body_lines(&item, 60, code_bg(Color::Magenta))).join("\n");
+    let whole = line_texts(&body_lines(
+        &item,
+        60,
+        code_bg(Color::Magenta),
+        CONTINUATION,
+    ))
+    .join("\n");
     assert!(!whole.contains("[1]"), "{whole:?}");
 }
 
@@ -862,7 +918,12 @@ fn several_inline_commands_get_numbered_markers_for_y() {
 fn several_fenced_blocks_carry_their_number_in_the_top_border() {
     let mut item = body_item(vec![], vec!["on-primary", "on-replica"], "");
     item.code_spans = vec!["ignored".to_string(), "too".to_string()];
-    let rows = line_texts(&body_lines(&item, 30, code_bg(Color::Magenta)));
+    let rows = line_texts(&body_lines(
+        &item,
+        30,
+        code_bg(Color::Magenta),
+        CONTINUATION,
+    ));
     let tops: Vec<&String> = rows.iter().filter(|r| r.starts_with('┌')).collect();
     assert_eq!(tops.len(), 2);
     assert!(tops[0].starts_with("┌─[1]─"), "{:?}", tops[0]);
@@ -879,13 +940,13 @@ fn several_fenced_blocks_carry_their_number_in_the_top_border() {
     );
 
     // Too narrow for a box: the number gets its own row above the code.
-    let narrow = code_block_lines("x", 4, code_bg(Color::Magenta), Some(2));
+    let narrow = code_block_lines("x", 4, code_bg(Color::Magenta), Some(2), CONTINUATION);
     assert_eq!(
         line_texts(&narrow),
         vec!["[2]".to_string(), "x".to_string()]
     );
     // A box too small for its number keeps a plain border.
-    let tiny = code_block_lines("x", 6, code_bg(Color::Magenta), Some(10));
+    let tiny = code_block_lines("x", 6, code_bg(Color::Magenta), Some(10), CONTINUATION);
     assert_eq!(line_texts(&tiny)[0], "┌────┐");
 }
 
@@ -903,7 +964,7 @@ fn body_layout_maps_each_chip_on_a_row_to_its_own_command() {
         "Run stop-svc then start-svc now.",
     );
     let width = 60u16;
-    let (lines, rows) = body_layout(&item, width, code_bg(Color::Magenta));
+    let (lines, rows) = body_layout(&item, width, code_bg(Color::Magenta), CONTINUATION);
     assert_eq!(lines.len(), 1, "fits on one row");
     let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     let offset = (width as usize / 2).saturating_sub(lines[0].width() / 2);
@@ -930,7 +991,7 @@ fn body_layout_maps_every_row_of_a_hard_split_chip_to_the_full_command() {
         vec![],
         "Fetch it first.",
     );
-    let (lines, rows) = body_layout(&item, 30, code_bg(Color::Magenta));
+    let (lines, rows) = body_layout(&item, 30, code_bg(Color::Magenta), CONTINUATION);
     let chip_rows: Vec<usize> = (0..lines.len()).filter(|&r| !rows[r].is_empty()).collect();
     assert!(
         chip_rows.len() >= 3,
@@ -947,14 +1008,14 @@ fn body_layout_maps_every_row_of_a_hard_split_chip_to_the_full_command() {
 #[test]
 fn body_layout_lines_and_code_rows_are_aligned() {
     let item = body_item(vec![], vec!["kubectl apply"], "");
-    let (lines, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (lines, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     assert_eq!(lines.len(), code_rows.len());
 }
 
 #[test]
 fn body_layout_maps_fenced_block_rows_to_block_text() {
     let item = body_item(vec![], vec!["kubectl apply"], "");
-    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     assert!(
         copy_texts(&code_rows).contains(&"kubectl apply"),
         "a fenced-block row copies the clean block text: {code_rows:?}"
@@ -972,7 +1033,7 @@ fn body_layout_maps_trailing_command_row() {
         vec![],
         "run this do-it",
     );
-    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     assert!(
         copy_texts(&code_rows).contains(&"do-it"),
         "trailing command row copies the command: {code_rows:?}"
@@ -992,7 +1053,7 @@ fn body_layout_maps_inline_code_in_prose() {
         vec![],
         "first cmd then done",
     );
-    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     assert!(
         copy_texts(&code_rows).contains(&"cmd"),
         "inline code row copies the span: {code_rows:?}"
@@ -1006,7 +1067,7 @@ fn body_layout_prose_rows_carry_no_code() {
         vec![],
         "just prose here",
     );
-    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     assert!(
         code_rows.iter().all(Vec::is_empty),
         "prose-only body has no code rows: {code_rows:?}"
@@ -1092,7 +1153,7 @@ fn body_layout_rows_of_one_command_share_its_text() {
         vec![&block],
         &format!("run {long_cmd}"),
     );
-    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta));
+    let (_, code_rows) = body_layout(&item, 40, code_bg(Color::Magenta), CONTINUATION);
     let targets: Vec<&Rc<str>> = code_rows.iter().flatten().map(|(_, t)| t).collect();
     let block_rows: Vec<&Rc<str>> = targets.iter().copied().filter(|t| ***t == *block).collect();
     let cmd_rows: Vec<&Rc<str>> = targets
@@ -1122,7 +1183,7 @@ fn a_huge_inline_command_lays_out_quickly_and_shares_its_text() {
         let item = body_item(body, vec![], "run");
         let start = std::time::Instant::now();
         let height = desired_card_height(&item, area, code_bg(Color::Magenta));
-        let (lines, code_rows) = body_layout(&item, 80, code_bg(Color::Magenta));
+        let (lines, code_rows) = body_layout(&item, 80, code_bg(Color::Magenta), CONTINUATION);
         let elapsed = start.elapsed();
         assert!(
             elapsed < std::time::Duration::from_secs(2),
@@ -1241,7 +1302,7 @@ fn wrap_tokens_marks_a_split_chip_and_maps_every_piece_to_it() {
         ("go".to_string(), SpanStyle::default(), false),
         ("abcdefgh".to_string(), chip, false),
     ];
-    let rows = wrap_tokens(&tokens, 4, Style::default());
+    let rows = wrap_tokens(&tokens, 4, Style::default(), CONTINUATION);
     let text: Vec<String> = rows.iter().map(|(line, _)| line.to_string()).collect();
     assert_eq!(text, vec!["go", "abc↩", "def↩", "gh"]);
     assert_eq!(rows[0].1, vec![None]);

@@ -436,7 +436,7 @@ fn drive(md_path: &PathBuf, env: &[(&str, &str)], steps: &[Step]) -> bool {
 /// Like `drive` but with extra CLI flags before the file argument.
 fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[Step]) -> bool {
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     for arg in args {
         cmd.arg(arg);
     }
@@ -452,7 +452,7 @@ fn drive_args(md_path: &PathBuf, args: &[&str], env: &[(&str, &str)], steps: &[S
 /// must not already exist yet — markcheck is expected to create it.
 fn drive_new(md_path: &PathBuf, steps: &[Step]) -> bool {
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--new");
     cmd.arg(md_path);
     run_with_pty(cmd, md_path, steps)
@@ -480,7 +480,7 @@ fn a_binary_that_never_quits_fails_the_test_instead_of_hanging_it() {
     let path = unique_path("never-quits");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n");
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg(&path);
     Session::spawn(cmd).finish_within(Duration::from_millis(500));
 }
@@ -492,7 +492,7 @@ fn a_main_thread_panic_prints_its_message_on_the_restored_screen() {
     let path = unique_path("panic-hook");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n");
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg(&path);
     cmd.env("MARKCHECK_TEST_PANIC", "1");
     let (ok, output) = Session::spawn(cmd).finish();
@@ -869,6 +869,22 @@ fn opens_through_a_symlink_writes_through_to_the_target() {
 }
 
 #[test]
+fn the_linux_console_gets_the_ascii_icon_set() {
+    let path = unique_path("console-icons");
+    write_file(&path, "## Work\n\n- [x] `alpha`\n- [ ] `beta`\n");
+
+    let mut cmd = markcheck_command();
+    cmd.env("TERM", "linux");
+    cmd.arg(&path);
+    let ok = run_with_pty(
+        cmd,
+        &path,
+        &[Step::WaitForScreen("[x] 1/2"), Step::Key("q")],
+    );
+    assert!(ok, "binary should exit successfully on TERM=linux");
+}
+
+#[test]
 fn no_mouse_flag_starts_and_exits_cleanly() {
     let path = unique_path("no-mouse");
     write_file(&path, "## Work\n\n- [ ] `alpha`\n");
@@ -1015,7 +1031,7 @@ fn drive_auto_copy_navigation(
     copies: bool,
 ) -> (bool, String) {
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     for arg in args {
         cmd.arg(arg);
     }
@@ -1189,7 +1205,7 @@ fn git_sync_children_cannot_reach_markcheck_s_terminal() {
 
     let mut cmd = CommandBuilder::new("sh");
     cmd.arg("-c");
-    cmd.arg("GPG_TTY=$(tty); export GPG_TTY; exec \"$0\" --no-nerd-font --git-sync \"$1\"");
+    cmd.arg("GPG_TTY=$(tty); export GPG_TTY; exec \"$0\" --icons=unicode --git-sync \"$1\"");
     cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
     cmd.arg(&path);
     isolate(&mut cmd);
@@ -1246,7 +1262,7 @@ fn repo_with_a_slow_hook(hint: &str, body: &str) -> (PathBuf, PathBuf) {
 
 fn git_sync_session(path: &Path) -> Session {
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.args(["--git-sync-delay", "0"]);
     cmd.arg(path);
@@ -1439,7 +1455,7 @@ fn a_burst_of_toggles_waits_then_becomes_one_commit_on_quit() {
     let work = path.parent().unwrap().to_path_buf();
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.arg(&path);
     let mut session = Session::spawn(cmd);
@@ -1474,7 +1490,7 @@ fn a_terminal_error_still_syncs_the_pending_change_before_exiting() {
     let trigger = work.join("fail-draw");
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.arg(&path);
     cmd.env("MARKCHECK_TEST_FAIL_DRAW", &trigger);
@@ -1530,7 +1546,7 @@ fn quitting_right_after_a_toggle_whose_sync_fails_says_so_after_the_tui_closes()
     }
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.arg(&path);
     let (ok, output) = run_with_pty_capturing(
@@ -1578,7 +1594,7 @@ fn quitting_after_a_sync_already_failed_still_says_so_after_the_tui_closes() {
     }
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.arg(&path);
     let (ok, output) = run_with_pty_capturing(
@@ -2075,7 +2091,7 @@ fn git_sync_reports_when_the_file_is_untracked() {
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.arg(&path);
     let ok = run_with_pty(
@@ -2212,7 +2228,7 @@ fn git_sync_reports_push_failure_then_retries_and_succeeds() {
     );
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg("--git-sync");
     cmd.args(["--git-sync-delay", "0"]);
     cmd.arg(&path);
@@ -2376,7 +2392,7 @@ fn open_link_starts_the_browser_outside_markchecks_process_group() {
     write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg(&md);
     cmd.env("BROWSER", browser.to_str().unwrap());
     let mut session = Session::spawn(cmd);
@@ -2569,7 +2585,7 @@ fn a_hard_linked_checklist_warns_the_user_at_startup() {
     std::fs::hard_link(&path, &alias).unwrap();
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg(&path);
     let (ok, screen) = run_with_pty_capturing(cmd, &path, &[Step::Key("q")]);
 
@@ -2590,7 +2606,7 @@ fn an_ordinary_checklist_is_not_warned_about() {
     write_file(&path, "## Work\n\n- [ ] `alpha`\n- [ ] `beta`\n");
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg(&path);
     let (ok, screen) = run_with_pty_capturing(cmd, &path, &[Step::Key("q")]);
 
@@ -2614,7 +2630,7 @@ fn ctrl_z_suspends_to_the_shell_and_fg_resumes_with_edits_loaded() {
     let mut cmd = CommandBuilder::new("sh");
     cmd.arg("-c");
     cmd.arg(concat!(
-        "set -m; \"$0\" --no-nerd-font \"$1\"; ",
+        "set -m; \"$0\" --icons=unicode \"$1\"; ",
         "printf -- '- [ ] `gamma`\\n' >> \"$1\"; ",
         "echo SUSPENDED-IN-SHELL; fg",
     ));
@@ -2663,7 +2679,7 @@ fn ctrl_z_without_job_control_stays_on_screen_and_says_why() {
     write_file(&path, "## Work\n\n- [ ] `alpha`\n");
 
     let mut cmd = markcheck_command();
-    cmd.arg("--no-nerd-font");
+    cmd.arg("--icons=unicode");
     cmd.arg(&path);
     let mut session = Session::spawn(cmd);
     session.run(
@@ -2701,7 +2717,7 @@ fn suspend_shell_session(path: &Path, extra: &[&str], remote: &Path) -> Session 
     let mut cmd = CommandBuilder::new("sh");
     cmd.arg("-c");
     cmd.arg(concat!(
-        "set -m; \"$0\" --no-nerd-font --git-sync $3 \"$1\"; ",
+        "set -m; \"$0\" --icons=unicode --git-sync $3 \"$1\"; ",
         "echo SUSPENDED-IN-SHELL; ",
         "echo \"REMOTE-HEAD:$(git --git-dir=\"$2\" log -1 --format=%s main 2>/dev/null)\"; ",
         "fg",
@@ -2985,7 +3001,7 @@ fn ctrl_l_repaints_over_output_written_behind_the_tui() {
         "( i=0; until grep -q '\\[x\\]' \"$1\" || [ $i -ge 1500 ]; do ",
         "sleep 0.1; i=$((i+1)); done; ",
         "printf '\\033[14;30HJUNK-FROM-OUTSIDE' ) & ",
-        "exec \"$0\" --no-nerd-font \"$1\"",
+        "exec \"$0\" --icons=unicode \"$1\"",
     ));
     cmd.arg(env!("CARGO_BIN_EXE_markcheck"));
     cmd.arg(&path);

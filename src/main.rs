@@ -44,7 +44,7 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::Rect;
 
 use cli::{Cli, Settings};
-use model::{AppState, IconSet};
+use model::AppState;
 use watcher::ReloadTrigger;
 
 struct TerminalGuard {
@@ -292,9 +292,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut state = AppState::new(document);
     let settings = Settings::resolve(&cli, &config);
-    if settings.nerd_font {
-        state.icons = IconSet::nerd();
-    }
+    state.icons = settings
+        .icons
+        .icon_set(std::env::var("TERM").ok().as_deref());
     state.clipboard_primary = settings.primary;
     state.copy_route = settings.clipboard.route(cli::is_remote_session(
         std::env::var("SSH_CONNECTION").ok().as_deref(),
@@ -348,6 +348,7 @@ fn main() -> anyhow::Result<()> {
         launch::already_open_warning(&other_sessions),
     ];
     let notes = [
+        config::deprecated_keys_note(&config),
         launch::leftovers_note(leftovers),
         launch::unshown_note(&state.document.unshown),
     ];

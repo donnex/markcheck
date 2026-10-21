@@ -76,3 +76,38 @@ fn every_example_matches_its_golden_screens() {
         }
     });
 }
+
+/// The ASCII icon set (#171), for the Linux console: a few examples whose
+/// cards, overview, picker and help between them draw every glyph it swaps.
+#[test]
+fn the_ascii_icon_set_matches_its_golden_screens() {
+    let mut settings = insta::Settings::clone_current();
+    settings.set_prepend_module_to_snapshot(false);
+    settings.bind(|| {
+        for stem in ["basics", "nested", "notes-and-code"] {
+            let ascii = || {
+                let mut state = open(&format!("{stem}.md"));
+                state.icons = IconSet::ascii();
+                state
+            };
+            for (width, height) in [(80, 24), (120, 40)] {
+                let mut state = ascii();
+                insta::assert_snapshot!(
+                    format!("ascii-{stem}-{width}x{height}-start"),
+                    screen(&mut state, width, height)
+                );
+                state.handle_key(KeyCode::Char('j'));
+                insta::assert_snapshot!(
+                    format!("ascii-{stem}-{width}x{height}-next"),
+                    screen(&mut state, width, height)
+                );
+            }
+            let mut state = ascii();
+            state.handle_key(KeyCode::Char('T'));
+            insta::assert_snapshot!(
+                format!("ascii-{stem}-80x24-picker"),
+                screen(&mut state, 80, 24)
+            );
+        }
+    });
+}

@@ -658,3 +658,98 @@ fn every_state_has_a_name_and_a_commit_verb() {
         ]
     );
 }
+
+#[test]
+fn auto_icons_are_ascii_only_on_the_linux_console() {
+    let done = |choice: IconChoice, term| choice.icon_set(term).done;
+    assert_eq!(done(IconChoice::Auto, Some("linux")), IconSet::ascii().done);
+    for term in [None, Some("xterm-256color"), Some("screen"), Some("")] {
+        assert_eq!(
+            done(IconChoice::Auto, term),
+            IconSet::unicode().done,
+            "{term:?}"
+        );
+    }
+    for term in [None, Some("linux")] {
+        assert_eq!(done(IconChoice::Unicode, term), IconSet::unicode().done);
+        assert_eq!(done(IconChoice::Nerd, term), IconSet::nerd().done);
+        assert_eq!(done(IconChoice::Ascii, term), IconSet::ascii().done);
+    }
+}
+
+#[test]
+fn the_deprecated_nerd_font_key_maps_onto_an_icon_choice() {
+    assert_eq!(IconChoice::from_nerd_font(true), IconChoice::Nerd);
+    assert_eq!(IconChoice::from_nerd_font(false), IconChoice::Auto);
+}
+
+#[test]
+fn the_ascii_set_is_plain_ascii_with_console_box_lines() {
+    let set = IconSet::ascii();
+    let glyphs = [
+        set.done,
+        set.pending,
+        set.started,
+        set.skipped,
+        set.current,
+        set.note,
+        set.file,
+        set.list,
+        set.update,
+        set.sync,
+        set.dot_current,
+        set.dot_done,
+        set.dot_started,
+        set.dot_started_mono,
+        set.dot_skipped,
+        set.dot_pending,
+        set.scroll_thumb,
+        set.scroll_up,
+        set.scroll_down,
+        set.bar_filled,
+        set.bar_empty,
+        set.continuation,
+        set.crumb,
+    ];
+    for glyph in glyphs {
+        assert!(glyph.is_ascii(), "{glyph:?} is not ASCII");
+    }
+    // The heavy and rounded lines aren't in a console font; light and
+    // double ones are.
+    assert_eq!(set.task_border, BorderType::Double);
+    assert_eq!(set.note_border, BorderType::Plain);
+}
+
+#[test]
+fn every_icon_set_keeps_its_markers_one_width_and_its_chrome_one_cell() {
+    for set in [IconSet::unicode(), IconSet::nerd(), IconSet::ascii()] {
+        let width = |glyph: &str| glyph.chars().count();
+        let marker = width(set.pending);
+        for glyph in [set.done, set.started, set.skipped] {
+            assert_eq!(width(glyph), marker, "{glyph:?} next to {:?}", set.pending);
+        }
+        for glyph in [set.current, set.note] {
+            assert!(
+                width(glyph) <= marker,
+                "{glyph:?} wider than {:?}",
+                set.pending
+            );
+        }
+        for glyph in [
+            set.dot_current,
+            set.dot_done,
+            set.dot_started,
+            set.dot_started_mono,
+            set.dot_skipped,
+            set.dot_pending,
+            set.scroll_thumb,
+            set.scroll_up,
+            set.scroll_down,
+            set.bar_filled,
+            set.bar_empty,
+            set.continuation,
+        ] {
+            assert_eq!(width(glyph), 1, "{glyph:?} must fill one cell");
+        }
+    }
+}

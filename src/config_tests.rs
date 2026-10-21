@@ -71,7 +71,7 @@ fn load_config_parses_all_fields() {
     let path = unique_temp_path();
     fs::write(
         &path,
-        "nerd_font = false\nmouse = false\nprimary = true\nauto_copy = true\n\
+        "icons = \"ascii\"\nnerd_font = false\nmouse = false\nprimary = true\nauto_copy = true\n\
              color = \"256\"\ngit_sync_paths = [\"/home/user/checklists\"]\ngit_sync_delay = 30\nclipboard = \"osc52\"\nterminal_title = false\nexit_summary = false\n",
     )
     .unwrap();
@@ -85,6 +85,7 @@ fn load_config_parses_all_fields() {
     assert_eq!(
         loaded.config,
         Config {
+            icons: Some(IconChoice::Ascii),
             nerd_font: Some(false),
             mouse: Some(false),
             primary: Some(true),
@@ -312,4 +313,36 @@ fn load_config_rejects_a_git_sync_delay_over_a_day() {
     );
 
     fs::remove_file(&path).ok();
+}
+
+#[test]
+fn deprecated_keys_note_names_the_icons_value_that_replaces_nerd_font() {
+    let note = |icons, nerd_font| {
+        deprecated_keys_note(&Config {
+            icons,
+            nerd_font,
+            ..Config::default()
+        })
+    };
+    assert_eq!(note(None, None), None);
+    assert_eq!(note(Some(IconChoice::Ascii), None), None);
+    assert!(
+        note(None, Some(true))
+            .unwrap()
+            .contains(r#"icons = "nerd""#)
+    );
+    assert!(
+        note(None, Some(false))
+            .unwrap()
+            .contains(r#"icons = "auto""#)
+    );
+    let both = note(Some(IconChoice::Unicode), Some(true)).unwrap();
+    assert!(both.contains("ignored"), "{both}");
+}
+
+#[test]
+fn an_unknown_icons_value_is_an_error() {
+    let path = unique_temp_path();
+    fs::write(&path, "icons = \"emoji\"\n").unwrap();
+    assert!(load_config(&path).is_err());
 }

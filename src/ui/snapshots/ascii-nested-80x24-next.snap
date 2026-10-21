@@ -1,0 +1,28 @@
+---
+source: src/ui/golden_tests.rs
+expression: "screen(&mut state, width, height)"
+---
+ = Nested Checklist │ nested.md                                         [x] 0/12
+======--------------------------------------------------------------------------
+                                                  ┌ Overview ──────────────────┐
+                                                  │ # [1] Rebuild              │
+                                                  │   Sub-lists under a task … │
+                                                  │   [ ] Rebuild all packages │
+                                                  │   │  >  Fetch sources fet… │
+                                                  │   │ [/] Compile            │
+                    # Rebuild                     │   │ │ [ ] Compile the core │
+                                                  │   │ │ [ ] Compile the plu… │
+╔ [ ] ════════════════════════════════════ 2/9 ╗  │   │ [ ] Run the test suite │
+║                                              ║  │    *  Preparation notes:   │
+║            Rebuild all packages >            ║  │   │ [ ] Free up disk space │
+║                 Fetch sources                ║  │   │ [ ] Notify the team o… │
+║                                              ║  │ # [2] Release              │
+║              fetch-sources --all             ║  │   [ ] Tag the release      │
+║                                              ║  │   [ ] Publish              │
+╚ .@/...... ═══════════════════════════════════╝  │   │ [ ] Upload the artifa… │
+                                                  │   │ [ ] Announce the rele… │
+                                                  │                            │
+                                                  │                            │
+                                                  │                            │
+                                                  └────────────────────────────┘
+hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

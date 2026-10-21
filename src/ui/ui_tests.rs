@@ -666,7 +666,7 @@ fn overview_scrollbar_thumb_reaches_the_bottom_on_the_last_item() {
 
     let thumb_rows = |rows: &[String]| -> Vec<usize> {
         (0..rows.len())
-            .filter(|&y| rows[y].contains(SCROLLBAR_THUMB))
+            .filter(|&y| rows[y].contains(IconSet::unicode().scroll_thumb))
             .collect()
     };
     let arrow_row = |rows: &[String], glyph: char| -> usize {
@@ -2977,7 +2977,7 @@ fn overflowing_card_shows_scroll_indicator() {
     );
     assert!(text.contains('–'), "scroll indicator like 1-6/N present");
     assert!(
-        text.contains(SCROLLBAR_THUMB),
+        text.contains(IconSet::unicode().scroll_thumb),
         "scrollbar thumb present on overflow"
     );
 }
@@ -3024,7 +3024,7 @@ fn overflowing_overview_shows_a_scrollbar() {
     }]);
     let text = buffer_text(&mut state, 100, 12);
     assert!(
-        text.contains(SCROLLBAR_THUMB),
+        text.contains(IconSet::unicode().scroll_thumb),
         "overview scrollbar thumb present"
     );
 }
@@ -3302,7 +3302,7 @@ fn overflowing_help_overlay_scrolls_and_shows_a_scrollbar() {
         "help overflows the short viewport"
     );
     assert!(
-        text.contains(SCROLLBAR_THUMB),
+        text.contains(IconSet::unicode().scroll_thumb),
         "help scrollbar thumb present"
     );
 }
@@ -3701,6 +3701,88 @@ fn the_nerd_font_icon_set_replaces_the_plain_unicode_glyphs() {
         !text.contains(IconSet::unicode().pending),
         "no plain Unicode box left: {text}"
     );
+}
+
+#[test]
+fn the_ascii_icon_set_draws_no_glyph_a_console_font_lacks() {
+    // Long enough to scroll the overview, nested for a breadcrumb, with a
+    // wrapped command, every task state and a note.
+    let mut items = vec![
+        checkbox(1, "done", true),
+        Item {
+            kind: ItemKind::Checkbox(TaskState::Started),
+            ..checkbox(2, "started", false)
+        },
+        Item {
+            kind: ItemKind::Checkbox(TaskState::Skipped),
+            ..checkbox(3, "skipped", false)
+        },
+        display_only(4, "a note"),
+        Item {
+            depth: 1,
+            code_blocks: vec!["x".repeat(200)],
+            ..checkbox(5, "nested", false)
+        },
+    ];
+    items.extend((6..40).map(|n| checkbox(n, "more", false)));
+    let mut state = state_with(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items,
+    }]);
+    state.icons = IconSet::ascii();
+    state.current_item_index = 4;
+    let text = buffer_text(&mut state, 100, 24);
+    // Light and double box-drawing lines are in every console font, and the
+    // punctuation (`…`, `–`) is left as it is in messages.
+    let console = |ch: char| ch.is_ascii() || "─│┌┐└┘═║╔╗╚╝…–".contains(ch);
+    let foreign: String = text.chars().filter(|&ch| !console(ch)).collect();
+    assert_eq!(foreign, "", "{text}");
+    for glyph in [
+        "[x]", "[/]", "[-]", "[ ]", "@", "#", "^", "v", "\\", "a note >",
+    ] {
+        assert!(text.contains(glyph), "{glyph:?} shown: {text}");
+    }
+}
+
+#[test]
+fn ascii_markers_keep_labels_in_one_column_and_toggle_on_the_whole_box() {
+    let mut state = state_with(vec![List {
+        title: "Alpha".to_string(),
+        banner: None,
+        items: vec![
+            checkbox(1, "a", true),
+            checkbox(2, "b", false),
+            display_only(3, "c"),
+            checkbox(4, "d", false),
+        ],
+    }]);
+    state.icons = IconSet::ascii();
+    state.current_item_index = 1;
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    terminal.draw(|f| render(f, &mut state)).unwrap();
+    let toggle = state
+        .layout
+        .overview_rows
+        .iter()
+        .find(|(_, t)| *t == OverviewTarget::Toggle(0, 3))
+        .map(|(r, _)| *r)
+        .expect("icon rect");
+    assert_eq!(toggle.width, 4, "the box and the space after it");
+    let buffer = terminal.backend().buffer().clone();
+    let cell = |x: u16, y: u16| buffer[(x, y)].symbol().to_string();
+    let label_x = toggle.x + toggle.width;
+    let row_of = |label: &str| {
+        (0..20)
+            .find(|&y| cell(label_x, y) == label && cell(label_x + 1, y) == " ")
+            .unwrap_or_else(|| panic!("{label} in the label column"))
+    };
+    assert_eq!(cell(toggle.x, toggle.y), "[");
+    assert_eq!(row_of("d"), toggle.y);
+    // The current task's `>` and the note's `*` are centered in the box.
+    assert_eq!(cell(toggle.x + 1, row_of("b")), ">");
+    assert_eq!(cell(toggle.x + 1, row_of("c")), "*");
+    row_of("a");
 }
 
 #[test]
