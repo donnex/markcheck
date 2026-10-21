@@ -28,10 +28,11 @@ pub(super) enum NumberKey {
 /// One key at an armed `o`/`y` prompt choosing among `count` entries, with
 /// `typed` digits so far. A digit picks at once unless a longer valid number
 /// could still follow (`1` with twelve links might be `[12]`); then it waits
-/// for another digit or `Enter`.
+/// for another digit or `Enter`. A leading `0` picks `[0]`, which no card has.
 pub(super) fn pick_number_key(code: KeyCode, typed: usize, count: usize) -> NumberKey {
     match code {
-        KeyCode::Char(c @ '0'..='9') if typed > 0 || c != '0' => {
+        KeyCode::Char('0') if typed == 0 => NumberKey::Picked(0),
+        KeyCode::Char(c @ '0'..='9') => {
             let n = typed * 10 + usize::from(c as u8 - b'0');
             if n * 10 <= count {
                 NumberKey::Typing(n)
@@ -46,7 +47,8 @@ pub(super) fn pick_number_key(code: KeyCode, typed: usize, count: usize) -> Numb
     }
 }
 
-/// A chord as the status bar names it, e.g. `Ctrl-S`, `Alt-1`, `Ctrl-Left`.
+/// A key or chord as the status bar names it, e.g. `x`, `Home`, `Ctrl-S`,
+/// `Alt-1`, `Ctrl-Left`.
 pub(super) fn chord_name(code: KeyCode, modifiers: KeyModifiers) -> String {
     let mut name = String::new();
     for (flag, prefix) in [
@@ -61,10 +63,29 @@ pub(super) fn chord_name(code: KeyCode, modifiers: KeyModifiers) -> String {
         }
     }
     match code {
-        KeyCode::Char(c) if c.is_ascii_alphabetic() => name.push(c.to_ascii_uppercase()),
+        KeyCode::Char(c) if !name.is_empty() && c.is_ascii_alphabetic() => {
+            name.push(c.to_ascii_uppercase())
+        }
         other => name.push_str(&other.to_string()),
     }
     name
+}
+
+/// What the status bar says for a key or chord the screen doesn't bind. The
+/// keys other to-do tools use to check a task or reach the first or last one
+/// also name markcheck's own key for it.
+pub(super) fn unbound_message(code: KeyCode, modifiers: KeyModifiers) -> String {
+    let hint = match code {
+        _ if !(modifiers - KeyModifiers::SHIFT).is_empty() => "",
+        KeyCode::Char('x') => " — Space checks a task",
+        KeyCode::Home => " — gg goes to the first task",
+        KeyCode::End => " — G goes to the last task",
+        _ => "",
+    };
+    format!(
+        "{} is not bound{hint} (? lists every key)",
+        chord_name(code, modifiers)
+    )
 }
 
 impl AppState {
@@ -263,10 +284,7 @@ impl AppState {
         if !self.is_bound_chord(code, modifiers) {
             self.clear_pending_chords();
             self.keeping_status(|state| {
-                state.set_error(format!(
-                    "{} is not bound (? lists every key)",
-                    chord_name(code, modifiers)
-                ));
+                state.set_error(unbound_message(code, modifiers));
             });
             return;
         }
@@ -694,7 +712,7 @@ impl AppState {
             KeyCode::Char('-') => self.skip_current(),
             KeyCode::Char('y') => self.copy_current_code(),
             KeyCode::Char('o') => self.open_current_link(),
-            _ => {}
+            _ => self.set_error(unbound_message(code, KeyModifiers::NONE)),
         }
     }
 

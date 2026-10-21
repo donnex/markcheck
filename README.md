@@ -514,6 +514,13 @@ or `Ctrl-Q`, does nothing and the status bar says it isn't bound, rather than
 acting like the plain letter (`s` would mark the task started). `Shift` is
 still fine, so `Shift-L` and `L` are the same key.
 
+A plain key with nothing bound to it says so too, rather than doing nothing:
+`F1 is not bound (? lists every key)`. The keys other to-do tools use point at
+markcheck's own: `x` says `Space checks a task`, and `Home` / `End` say `gg` /
+`G` go to the first / last task. At the number prompt after `o` or `y`, a
+leading `0` reports `No link [0]` or `No command [0]`, as a number past the
+last one does.
+
 Pasting text into markcheck never runs it as commands. A paste into `/` search
 or the `T` filter is added to the query as one line; anywhere else it is
 ignored, with a "Paste ignored" message in the status bar, so a command pasted

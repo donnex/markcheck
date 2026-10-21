@@ -190,7 +190,7 @@ impl AppState {
     pub(super) fn copy_code_number(&mut self, n: usize) {
         let text = self
             .current_item()
-            .and_then(|item| clipboard::candidates(item).get(n - 1).cloned());
+            .and_then(|item| clipboard::candidates(item).get(n.checked_sub(1)?).cloned());
         match text {
             Some(text) => self.copy_specific(&text),
             None => self.set_error(format!("No command [{n}] on this card")),

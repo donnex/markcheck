@@ -35,7 +35,8 @@ impl AppState {
 
     /// Opens link `[n]` (1-based) after `o` on a multi-link card.
     pub(super) fn open_link_number(&mut self, n: usize) {
-        match self.current_link_urls().get(n - 1) {
+        let urls = self.current_link_urls();
+        match n.checked_sub(1).and_then(|i| urls.get(i)) {
             Some(url) => self.open_url(url),
             None => self.set_error(format!("No link [{n}] on this card")),
         }

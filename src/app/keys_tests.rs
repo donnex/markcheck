@@ -294,6 +294,89 @@ fn an_unbound_chord_cancels_a_pending_prompt_and_names_special_keys() {
 }
 
 #[test]
+fn an_unbound_plain_key_on_the_checklist_says_so_and_changes_nothing() {
+    for (code, message) in [
+        (KeyCode::Char('z'), "z is not bound (? lists every key)"),
+        (KeyCode::Char('0'), "0 is not bound (? lists every key)"),
+        (KeyCode::F(1), "F1 is not bound (? lists every key)"),
+        (
+            KeyCode::Backspace,
+            "Backspace is not bound (? lists every key)",
+        ),
+        (
+            KeyCode::Char('x'),
+            "x is not bound — Space checks a task (? lists every key)",
+        ),
+        (
+            KeyCode::Home,
+            "Home is not bound — gg goes to the first task (? lists every key)",
+        ),
+        (
+            KeyCode::End,
+            "End is not bound — G goes to the last task (? lists every key)",
+        ),
+    ] {
+        let mut state = AppState::new(two_list_document());
+        state.current_item_index = 1;
+        state.set_status("Earlier".to_string());
+        state.handle_key(code);
+        assert_eq!(state.status_message.as_deref(), Some(message));
+        assert!(state.status_is_error, "{code:?}: sticky, so it is read");
+        assert_eq!(state.current_item_index, 1, "{code:?}: cursor unmoved");
+        assert_eq!(
+            state.document.progress().done,
+            0,
+            "{code:?}: nothing checked"
+        );
+    }
+}
+
+#[test]
+fn every_plain_key_on_the_checklist_acts_or_says_why_not() {
+    let fresh = || {
+        let mut state = AppState::new(two_list_document());
+        state.current_item_index = 1;
+        state.card_scroll = 2;
+        state.layout.card_max_scroll = 6;
+        state.layout.card_viewport_height = 4;
+        state
+    };
+    let outcome = |state: &AppState| format!("{} {}", observable(state), state.card_scroll);
+    let untouched = outcome(&fresh());
+    for (code, modifiers) in probe_keys(false) {
+        if !modifiers.is_empty() {
+            continue;
+        }
+        let mut state = fresh();
+        state.handle_key(code);
+        let reported = state.status_message.take();
+        assert!(
+            reported.is_some() || outcome(&state) != untouched,
+            "{code:?} did nothing and said nothing"
+        );
+    }
+}
+
+#[test]
+fn a_leading_zero_at_a_number_prompt_says_there_is_no_such_entry() {
+    let (mut state, path) = state_from_markdown(
+        "## L\n\n- [ ] Run `one` or `two`, see [a](https://example.com/a) or [b](https://example.com/b)\n",
+    );
+    for (key, message) in [
+        ('o', "No link [0] on this card"),
+        ('y', "No command [0] on this card"),
+    ] {
+        state.handle_key(KeyCode::Char(key));
+        state.handle_key(KeyCode::Char('0'));
+        assert!(!state.pending_open_link() && !state.pending_copy_code());
+        assert_eq!(state.status_message.as_deref(), Some(message));
+        assert!(state.status_is_error);
+    }
+    assert!(state.link_open_request().is_none());
+    fs::remove_file(&path).ok();
+}
+
+#[test]
 fn bound_ctrl_chords_still_reach_their_screen() {
     let mut state = AppState::new(two_list_document());
     state.toggle_current();
@@ -317,7 +400,8 @@ fn help_key_names(code: KeyCode, modifiers: KeyModifiers) -> Vec<String> {
     let name = |s: &str| vec![s.to_string()];
     match code {
         KeyCode::Char(' ') => name("space"),
-        KeyCode::Char('1'..='9') => name("1-9"),
+        KeyCode::Char('0') => name("0-9"),
+        KeyCode::Char('1'..='9') => vec!["1-9".to_string(), "0-9".to_string()],
         KeyCode::Char('g') => vec!["g".to_string(), "gg".to_string()],
         KeyCode::Char(c) if c.is_ascii_uppercase() => vec![c.to_string(), format!("Shift-{c}")],
         KeyCode::Char(c) => vec![c.to_string()],
@@ -430,7 +514,10 @@ fn unbound_key_outcome(setup: &impl Fn() -> AppState) -> String {
 
 fn assert_mode_documented(mode: &str, titles: &[&str], typing: bool, setup: impl Fn() -> AppState) {
     let baseline = unbound_key_outcome(&setup);
-    assert_handled_keys_have_help_rows(mode, titles, typing, setup, |_, _| baseline.clone());
+    let f12 = format!("{:?}", unbound_message(KeyCode::F(12), KeyModifiers::NONE));
+    assert_handled_keys_have_help_rows(mode, titles, typing, setup, |code, modifiers| {
+        baseline.replace(&f12, &format!("{:?}", unbound_message(code, modifiers)))
+    });
 }
 
 #[test]

@@ -266,7 +266,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
     (
         "Waiting for a number after o / y",
         &[
-            ("1-9", "open link [N] / copy command [N]"),
+            ("0-9", "open link [N] / copy command [N]"),
             (
                 "10+",
                 "type each digit; acts once no more digits can follow",
