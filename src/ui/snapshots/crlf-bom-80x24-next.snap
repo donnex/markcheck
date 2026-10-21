@@ -12,14 +12,14 @@ expression: "screen(&mut state, width, height)"
                                                   │                            │
                      • Check                      │                            │
                                                   │                            │
-┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓  │                            │
-┃                                              ┃  │                            │
-┃   Confirm the line endings are still CRLF:   ┃  │                            │
-┃                                              ┃  │                            │
-┃               file crlf-bom.md               ┃  │                            │
+┏ ☑ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/3 ┓  │                            │
 ┃                                              ┃  │                            │
 ┃                                              ┃  │                            │
-┗ ·◉● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │                            │
+┃  Confirm the byte-order mark is still there  ┃  │                            │
+┃                                              ┃  │                            │
+┃                                              ┃  │                            │
+┃                                              ┃  │                            │
+┗ ·●◉ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │                            │
                                                   │                            │
                                                   │                            │
                                                   │                            │

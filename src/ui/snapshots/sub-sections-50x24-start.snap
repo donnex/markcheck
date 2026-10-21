@@ -11,16 +11,16 @@ expression: "screen(&mut state, width, height)"
 
 
                      • Deploy
+                 Pre-flight checks
 
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/29 ┓
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4/29 ┓
 ┃                                                ┃
 ┃                                                ┃
-┃                  refresh-cache                 ┃
+┃  run  verify-output  and wait for it to finish ┃
 ┃                                                ┃
 ┃                                                ┃
 ┃                                                ┃
-┗ ◉··●··●······················ ━━━━━━━━━━━━━━━━━┛
-
+┗ ···◉··●······················ ━━━━━━━━━━━━━━━━━┛
 
 
 

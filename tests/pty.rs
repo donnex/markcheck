@@ -2875,6 +2875,29 @@ fn a_hash_anchor_or_plus_line_opens_at_that_task() {
 }
 
 #[test]
+fn a_started_task_is_where_a_run_resumes() {
+    let path = unique_path("resume-started");
+    write_file(
+        &path,
+        "## First\n\n- [ ] alpha\n- [/] **Run the migration**\n\n## Second\n\n- [ ] gamma\n",
+    );
+
+    let mut cmd = markcheck_command();
+    cmd.arg(&path);
+    let mut session = Session::spawn(cmd);
+    session.wait_for_screen("Resumed at started task: \"Run the migration\"");
+    session.key("q");
+    assert!(session.finish().0);
+
+    let mut cmd = markcheck_command();
+    cmd.arg(format!("{}#second", path.display()));
+    let mut session = Session::spawn(cmd);
+    session.wait_for_screen("Opened at #second");
+    session.key("q");
+    assert!(session.finish().0);
+}
+
+#[test]
 fn the_terminal_title_shows_progress_and_the_exit_line_says_where_it_stopped() {
     let path = unique_path("title-summary");
     write_file(

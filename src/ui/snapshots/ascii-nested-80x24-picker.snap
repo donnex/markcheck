@@ -6,9 +6,9 @@ expression: "screen(&mut state, 80, 24)"
 ======--------------------------------------------------------------------------
 ┌ Go to task ──────────────────────── 13 items ┐  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ # [1] Rebuild              │
-│ > [ ] Rebuild all packages  — Rebuild        │  │   Sub-lists under a task … │
-│   [ ] Fetch sources fetch-source…  — Rebuild │  │    >  Rebuild all packages │
-│   [/] Compile  — Rebuild                     │  │   │ [ ] Fetch sources fet… │
+│   [ ] Rebuild all packages  — Rebuild        │  │   Sub-lists under a task … │
+│   [ ] Fetch sources fetch-source…  — Rebuild │  │   [ ] Rebuild all packages │
+│ > [/] Compile  — Rebuild                     │  │   │ [ ] Fetch sources fet… │
 │   [ ] Compile the core  — Rebuild            │  │   │ [/] Compile            │
 │   [ ] Compile the plugins  — Rebuild         │  │   │ │ [ ] Compile the core │
 │   [ ] Run the test suite  — Rebuild          │  │   │ │ [ ] Compile the plu… │

@@ -9,19 +9,19 @@ expression: "screen(&mut state, width, height)"
 
 
 
-                     • Rebuild
- Sub-lists under a task and under a plain note, at
- several depths. Each sub-item is its own card and
-      shows its parent chain as a breadcrumb.
 
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/9 ┓
+                     • Rebuild
+
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/9 ┓
 ┃                                                ┃
 ┃                                                ┃
-┃              Rebuild all packages              ┃
+┃             Rebuild all packages ›             ┃
+┃                     Compile                    ┃
 ┃                                                ┃
 ┃                                                ┃
-┃                                                ┃
-┗ ◉·●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┗ ··◉······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
 
 
 

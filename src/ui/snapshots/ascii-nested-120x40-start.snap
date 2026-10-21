@@ -7,7 +7,7 @@ expression: "screen(&mut state, width, height)"
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ # [1] Rebuild              │
                                                                                           │   Sub-lists under a task … │
-                                                                                          │    >  Rebuild all packages │
+                                                                                          │   [ ] Rebuild all packages │
                                                                                           │   │ [ ] Fetch sources fet… │
                                                                                           │   │ [/] Compile            │
                                                                                           │   │ │ [ ] Compile the core │
@@ -16,19 +16,19 @@ expression: "screen(&mut state, width, height)"
                                                                                           │    *  Preparation notes:   │
                                                                                           │   │ [ ] Free up disk space │
                                                                                           │   │ [ ] Notify the team o… │
-                                        # Rebuild                                         │ # [2] Release              │
-                Sub-lists under a task and under a plain note, at several                 │   [ ] Tag the release      │
-               depths. Each sub-item is its own card and shows its parent                 │   [ ] Publish              │
-                                 chain as a breadcrumb.                                   │   │ [ ] Upload the artifa… │
-                                                                                          │   │ [ ] Announce the rele… │
-            ╔ [ ] ═══════════════════════════════════════════════════ 1/9 ╗               │                            │
-            ║                                                             ║] ──────────┐  │                            │
-            ║                                                             ║tch sources │  │                            │
-            ║                    Rebuild all packages                     ║tch-sources │  │                            │
-            ║                                                             ║  --all     │  │                            │
-            ║                                                             ║            │  │                            │
-            ║                                                             ║────────────┘  │                            │
-            ╚ @./...... ══════════════════════════════════════════════════╝               │                            │
+                                                                                          │ # [2] Release              │
+                                                                                          │   [ ] Tag the release      │
+                                        # Rebuild                                         │   [ ] Publish              │
+                                                                                          │   │ [ ] Upload the artifa… │
+            ╔ [/] ═══════════════════════════════════════════════════ 3/9 ╗               │   │ [ ] Announce the rele… │
+┌ [ ] ──────║                                                             ║] ──────────┐  │                            │
+│     Fetch ║                                                             ║            │  │                            │
+│    sources║                   Rebuild all packages >                    ║ompile the  │  │                            │
+│ fetch-sour║                           Compile                           ║  core      │  │                            │
+│    s --all║                                                             ║            │  │                            │
+└───────────║                                                             ║────────────┘  │                            │
+            ╚ ..@...... ══════════════════════════════════════════════════╝               │                            │
+                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

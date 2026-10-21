@@ -6,21 +6,21 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ A document with a title b… │
-                                                  │ ❯ First step: example-too… │
+                                                  │ ☐ First step: example-too… │
                                                   │ ◐ Second step, in progress │
- A document with a title but no ## H2 headings —  │ ☑ Third step, already done │
-   every task lives in the single, title-less     │ ▪ A plain note with no ch… │
-  default section (so there are no section tabs   │                            │
-        and no above-cards list heading).         │                            │
+                                                  │ ☑ Third step, already done │
+                                                  │ ▪ A plain note with no ch… │
                                                   │                            │
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/4 ┓  │                            │
-┃                                              ┃  │                            │
-┃                  First step:                 ┃  │                            │
-┃                                              ┃  │                            │
-┃               example-tool init              ┃  │                            │
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/4 ┓  │                            │
 ┃                                              ┃  │                            │
 ┃                                              ┃  │                            │
-┗ ◉●●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │                            │
+┃           Second step, in progress           ┃  │                            │
+┃                                              ┃  │                            │
+┃                                              ┃  │                            │
+┃                                              ┃  │                            │
+┗ ·◉●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │                            │
+                                                  │                            │
+                                                  │                            │
                                                   │                            │
                                                   │                            │
                                                   │                            │

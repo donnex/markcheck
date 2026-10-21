@@ -356,7 +356,10 @@ fn main() -> anyhow::Result<()> {
         launch::leftovers_note(leftovers),
         launch::unshown_note(&state.document.unshown),
     ];
-    let opened_at = start_at.as_ref().map(|start| state.open_at(start));
+    let opened_at = match &start_at {
+        Some(start) => Some(state.open_at(start)),
+        None => state.resumed_note().map(Ok),
+    };
     let mut warnings = warnings.to_vec();
     let mut opened_note = None;
     match opened_at {

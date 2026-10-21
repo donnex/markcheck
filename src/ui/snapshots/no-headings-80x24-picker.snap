@@ -6,8 +6,8 @@ expression: "screen(&mut state, width, 24)"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
 ╭ Go to task ───────────────────────── 4 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ A document with a title b… │
-│ ❯ ☐ First step: example-tool init            │  │ ❯ First step: example-too… │
-│   ◐ Second step, in progress                 │  │ ◐ Second step, in progress │
+│   ☐ First step: example-tool init            │  │ ☐ First step: example-too… │
+│ ❯ ◐ Second step, in progress                 │  │ ◐ Second step, in progress │
 │   ☑ Third step, already done                 │  │ ☑ Third step, already done │
 │   ▪ A plain note with no checkbox            │  │ ▪ A plain note with no ch… │
 │                                              │  │                            │

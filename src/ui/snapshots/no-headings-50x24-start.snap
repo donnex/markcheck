@@ -8,19 +8,19 @@ expression: "screen(&mut state, width, height)"
 
 
 
-  A document with a title but no ## H2 headings —
-every task lives in the single, title-less default
-   section (so there are no section tabs and no
-            above-cards list heading).
 
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/4 ┓
-┃                                                ┃
-┃                   First step:                  ┃
-┃                                                ┃
-┃                example-tool init               ┃
+
+
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/4 ┓
 ┃                                                ┃
 ┃                                                ┃
-┗ ◉●●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┃            Second step, in progress            ┃
+┃                                                ┃
+┃                                                ┃
+┃                                                ┃
+┗ ·◉●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
 
 
 

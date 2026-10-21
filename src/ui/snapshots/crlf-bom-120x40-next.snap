@@ -20,14 +20,14 @@ expression: "screen(&mut state, width, height)"
                                                                                           │                            │
                                          • Check                                          │                            │
                                                                                           │                            │
-            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓               │                            │
-┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
-│  Toggle th┃          Confirm the line endings are still CRLF:           ┃onfirm the  │  │                            │
-│  task, the┃                                                             ┃yte-order   │  │                            │
-│  reopen th┃                      file crlf-bom.md                       ┃rk is still │  │                            │
-│     file  ┃                                                             ┃  there     │  │                            │
-└───────────┃                                                             ┃────────────┘  │                            │
-            ┗ ·◉● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+            ┏ ☑ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3/3 ┓               │                            │
+┌ ◐ ────────┃                                                             ┃               │                            │
+│  Confirm t┃                                                             ┃               │                            │
+│ line endin┃         Confirm the byte-order mark is still there          ┃               │                            │
+│   are stil┃                                                             ┃               │                            │
+│  CRLF: fil┃                                                             ┃               │                            │
+└───────────┃                                                             ┃               │                            │
+            ┗ ·●◉ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

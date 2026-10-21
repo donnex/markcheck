@@ -6,7 +6,7 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Deploy               ▲
-                                                                                          │   ❯ refresh-cache          ▓
+                                                                                          │   ☐ refresh-cache          ▓
                                                                                           │   ☐ build-tool sync --pro… ▓
                                                                                           │   ── Pre-flight checks ─── ▓
                                                                                           │   Run these on the stagin… ▓
@@ -17,17 +17,17 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ confirm the snapshot … ▓
                                                                                           │   ── Rollout ───────────── ▓
                                                                                           │   ☑ restart-service        ▓
-                                                                                          │   ☐ check-status example-… ▓
-                                        • Deploy                                          │   ▪ Watch the dashboards   ▓
+                                        • Deploy                                          │   ☐ check-status example-… ▓
+                                    Pre-flight checks                                     │   ▪ Watch the dashboards   ▓
                                                                                           │   ☐ confirm the error rat… ▓
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/29 ┓               │   ☐ announce the rollout … ▓
-            ┃                                                             ┃────────────┐  │   ── Post-rollout ──────── ▓
-            ┃                                                             ┃uild-tool   │  │   ☐ tail the logs for one… ▓
-            ┃                        refresh-cache                        ┃  sync      │  │   ☐ verify-output --final  ▓
-            ┃                                                             ┃--profile   │  │   ── Extended verificati…  ▓
-            ┃                                                             ┃ default    │  │     ── Line-by-line chec…  ▓
-            ┃                                                             ┃────────────┘  │   ☐ verify service A resp… ▓
-            ┗ ◉··●··●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service B resp… ▓
+            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4/29 ┓               │   ☐ announce the rollout … ▓
+┌ ☐ ────────┃                                                             ┃────────────┐  │   ── Post-rollout ──────── ▓
+│  confirm t┃                                                             ┃ take a     │  │   ☐ tail the logs for one… ▓
+│ staging ho┃        run  verify-output  and wait for it to finish        ┃snapshot:   │  │   ☐ verify-output --final  ▓
+│    is idle┃                                                             ┃apshot-tool │  │   ── Extended verificati…  ▓
+│           ┃                                                             ┃ create     │  │     ── Line-by-line chec…  ▓
+└───────────┃                                                             ┃────────────┘  │   ☐ verify service A resp… ▓
+            ┗ ···◉··●······················ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │   ☐ verify service B resp… ▓
                                                                                           │   ☐ verify service C resp… ▓
                                                                                           │   ☐ confirm queue depth i… ▓
                                                                                           │   ☐ confirm cache hit rat… ▓

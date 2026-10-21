@@ -579,3 +579,47 @@ fn open_at_moves_to_a_line_or_an_anchor_or_says_why_not() {
         Err("no list or task at #c, so opened at the start".to_string())
     );
 }
+
+#[test]
+fn startup_resumes_at_the_first_started_task_and_says_so() {
+    let path = write_real_file(
+        "## A\n\n- [x] one\n- [ ] two\n\n## B\n\n- [ ] three\n- [/] **Run the migration**\n- [/] five\n",
+    );
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
+    assert_eq!(
+        state.resumed_note().as_deref(),
+        Some("Resumed at started task: \"Run the migration\"")
+    );
+    state.current_item_index = 2;
+    assert_eq!(state.resumed_note(), None, "only on the first started task");
+}
+
+#[test]
+fn startup_without_a_started_task_keeps_the_first_unfinished_one() {
+    let path = write_real_file("## A\n\n- [x] one\n- [ ] two\n- [-] three\n");
+    let state = AppState::new(parser::parse_document(path).unwrap());
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 1));
+    assert_eq!(state.resumed_note(), None);
+}
+
+#[test]
+fn open_at_wins_over_a_started_task_and_falls_back_to_it() {
+    use crate::model::StartAt;
+    let path = write_real_file("## A\n\n- [ ] one\n- [/] two\n\n## Notes\n\nJust prose.\n");
+    let mut state = AppState::new(parser::parse_document(path.clone()).unwrap());
+    assert_eq!(
+        state.open_at(&StartAt::Anchor("missing".to_string())),
+        Err("no list or task at #missing, so resumed at started task: \"two\"".to_string())
+    );
+    assert_eq!(
+        state.open_at(&StartAt::Anchor("notes".to_string())),
+        Err("#notes has no tasks, so resumed at started task: \"two\"".to_string())
+    );
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 1));
+    assert_eq!(
+        state.open_at(&StartAt::Line(1)),
+        Ok("Opened at line 1".to_string())
+    );
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+}

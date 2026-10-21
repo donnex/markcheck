@@ -8,9 +8,9 @@ expression: "screen(&mut state, width, height)"
                                                                                           │ • [1] Rebuild              │
                                                                                           │   Sub-lists under a task … │
                                                                                           │   ☐ Rebuild all packages   │
-                                                                                          │   │ ❯ Fetch sources fetch… │
+                                                                                          │   │ ☐ Fetch sources fetch… │
                                                                                           │   │ ◐ Compile              │
-                                                                                          │   │ │ ☐ Compile the core   │
+                                                                                          │   │ │ ❯ Compile the core   │
                                                                                           │   │ │ ☐ Compile the plugi… │
                                                                                           │   │ ☐ Run the test suite   │
                                                                                           │   ▪ Preparation notes:     │
@@ -20,14 +20,14 @@ expression: "screen(&mut state, width, height)"
                                                                                           │   ☐ Tag the release        │
                                         • Rebuild                                         │   ☐ Publish                │
                                                                                           │   │ ☐ Upload the artifact  │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/9 ┓               │   │ ☐ Announce the release │
-┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
-│           ┃                   Rebuild all packages ›                    ┃            │  │                            │
-│  Rebuild a┃                        Fetch sources                        ┃ Compile    │  │                            │
-│   packages┃                                                             ┃            │  │                            │
-│           ┃                     fetch-sources --all                     ┃            │  │                            │
+            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4/9 ┓               │   │ ☐ Announce the release │
+┌ ◐ ────────┃                                                             ┃────────────┐  │                            │
+│           ┃                                                             ┃            │  │                            │
+│    Compile┃              Rebuild all packages › Compile ›               ┃ompile the  │  │                            │
+│           ┃                      Compile the core                       ┃ plugins    │  │                            │
+│           ┃                                                             ┃            │  │                            │
 └───────────┃                                                             ┃────────────┘  │                            │
-            ┗ ·◉●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+            ┗ ··●◉····· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

@@ -74,7 +74,8 @@ impl AppState {
 
     /// Moves to where `markcheck file.md#anchor` or `+N` asked to start
     /// (#114). `Ok` is the confirmation to show; `Err` says why it couldn't,
-    /// with the cursor left on the first unfinished task. The caller shows
+    /// with the cursor left where [`AppState::new`] put it: the first started
+    /// task, or else the first unfinished one. The caller shows
     /// either alongside the other startup messages.
     pub fn open_at(&mut self, start: &crate::model::StartAt) -> Result<String, String> {
         let (target, description) = match start {
@@ -85,11 +86,15 @@ impl AppState {
                 (self.document.anchor_target(anchor), format!("#{anchor}"))
             }
         };
+        let fallback = match self.resumed_label() {
+            Some(label) => format!("so resumed at started task: \"{label}\""),
+            None => "so opened at the start".to_string(),
+        };
         let (list_index, item_index) = target.ok_or_else(|| match start {
             crate::model::StartAt::Anchor(anchor) if self.document.has_anchor(anchor) => {
-                format!("#{anchor} has no tasks, so opened at the start")
+                format!("#{anchor} has no tasks, {fallback}")
             }
-            _ => format!("no list or task at {description}, so opened at the start"),
+            _ => format!("no list or task at {description}, {fallback}"),
         })?;
         self.focus_item(list_index, item_index, CursorMove::Navigate);
         Ok(format!("Opened at {description}"))

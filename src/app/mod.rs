@@ -58,6 +58,17 @@ fn first_undone_index(list: &List) -> Option<usize> {
     })
 }
 
+/// The first `Started` task in the document, as `(list, item)`: where an
+/// interrupted run was (#191).
+fn first_started(document: &Document) -> Option<(usize, usize)> {
+    document.lists.iter().enumerate().find_map(|(s, list)| {
+        list.items
+            .iter()
+            .position(|i| matches!(i.kind, ItemKind::Checkbox(TaskState::Started)))
+            .map(|i| (s, i))
+    })
+}
+
 fn list_all_done(list: &List) -> bool {
     let progress = list.progress();
     progress.resolved() == progress.tasks()
@@ -83,14 +94,17 @@ impl AppState {
         // Hashed from the document, not a second read, so the fingerprint can't
         // describe a different revision than the one in memory.
         let file_content_hash = Some(hash_bytes(contents.as_bytes()));
-        // Start on the first not-done item: prefer the first list, then
-        // fall back to the first list with remaining work, then item 0
-        // (everything already done).
-        let (current_list_index, current_item_index) = document
-            .lists
-            .first()
-            .and_then(first_undone_index)
-            .map(|i| (0, i))
+        // Resume at the first started task; otherwise start on the first
+        // not-done item: prefer the first list, then fall back to the first
+        // list with remaining work, then item 0 (everything already done).
+        let (current_list_index, current_item_index) = first_started(&document)
+            .or_else(|| {
+                document
+                    .lists
+                    .first()
+                    .and_then(first_undone_index)
+                    .map(|i| (0, i))
+            })
             .or_else(|| {
                 document
                     .lists
@@ -139,6 +153,23 @@ impl AppState {
             history_epoch: 0,
             quit_reset_from: None,
         }
+    }
+
+    /// The startup note when the cursor is on the first started task, where
+    /// [`AppState::new`] resumes an interrupted run (#191).
+    pub fn resumed_note(&self) -> Option<String> {
+        self.resumed_label()
+            .map(|label| format!("Resumed at started task: \"{label}\""))
+    }
+
+    /// The label of the task under the cursor when it is the document's
+    /// first started task.
+    fn resumed_label(&self) -> Option<String> {
+        let started = first_started(&self.document)?;
+        (started == (self.current_list_index, self.current_item_index))
+            .then(|| self.current_item())
+            .flatten()
+            .map(Item::label)
     }
 
     /// The list under the cursor. Relies on the ≥1-list invariant documented

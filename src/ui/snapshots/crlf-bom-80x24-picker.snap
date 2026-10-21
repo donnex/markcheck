@@ -6,8 +6,8 @@ expression: "screen(&mut state, width, 24)"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────
 ╭ Go to task ───────────────────────── 3 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ Saved with Windows line e… │
-│ ❯ ☐ Toggle this task, then reopen the file   │  │ ❯ Toggle this task, then … │
-│   ◐ Confirm the line endings are still CRLF… │  │ ◐ Confirm the line ending… │
+│   ☐ Toggle this task, then reopen the file   │  │ ☐ Toggle this task, then … │
+│ ❯ ◐ Confirm the line endings are still CRLF… │  │ ◐ Confirm the line ending… │
 │   ☑ Confirm the byte-order mark is still th… │  │ ☑ Confirm the byte-order … │
 │                                              │  │                            │
 │                                              │  │                            │

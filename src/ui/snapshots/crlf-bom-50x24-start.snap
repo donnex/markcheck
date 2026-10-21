@@ -8,20 +8,20 @@ expression: "screen(&mut state, width, height)"
 
 
 
-                      • Check
-   Saved with Windows line endings (CRLF) and a
- leading byte-order mark, as some Windows editors
- write: the heading above is still the title, and
-      toggling a task keeps both in the file.
 
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/3 ┓
+
+                      • Check
+
+┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓
+┃                                                ┃
+┃    Confirm the line endings are still CRLF:    ┃
+┃                                                ┃
+┃                file crlf-bom.md                ┃
 ┃                                                ┃
 ┃                                                ┃
-┃     Toggle this task, then reopen the file     ┃
-┃                                                ┃
-┃                                                ┃
-┃                                                ┃
-┗ ◉●● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┗ ·◉● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
 
 
 

@@ -7,20 +7,20 @@ expression: "screen(&mut state, width, height)"
                                                   ┌ Overview ──────────────────┐
                                                   │ # [1] Rebuild              │
                                                   │   Sub-lists under a task … │
-                                                  │    >  Rebuild all packages │
-                    # Rebuild                     │   │ [ ] Fetch sources fet… │
- Sub-lists under a task and under a plain note,   │   │ [/] Compile            │
-at several depths. Each sub-item is its own card  │   │ │ [ ] Compile the core │
-   and shows its parent chain as a breadcrumb.    │   │ │ [ ] Compile the plu… │
-                                                  │   │ [ ] Run the test suite │
-╔ [ ] ════════════════════════════════════ 1/9 ╗  │    *  Preparation notes:   │
+                                                  │   [ ] Rebuild all packages │
+                                                  │   │ [ ] Fetch sources fet… │
+                                                  │   │ [/] Compile            │
+                    # Rebuild                     │   │ │ [ ] Compile the core │
+                                                  │   │ │ [ ] Compile the plu… │
+╔ [/] ════════════════════════════════════ 3/9 ╗  │   │ [ ] Run the test suite │
+║                                              ║  │    *  Preparation notes:   │
 ║                                              ║  │   │ [ ] Free up disk space │
-║                                              ║  │   │ [ ] Notify the team o… │
-║             Rebuild all packages             ║  │ # [2] Release              │
+║            Rebuild all packages >            ║  │   │ [ ] Notify the team o… │
+║                    Compile                   ║  │ # [2] Release              │
 ║                                              ║  │   [ ] Tag the release      │
 ║                                              ║  │   [ ] Publish              │
-║                                              ║  │   │ [ ] Upload the artifa… │
-╚ @./...... ═══════════════════════════════════╝  │   │ [ ] Announce the rele… │
+╚ ..@...... ═══════════════════════════════════╝  │   │ [ ] Upload the artifa… │
+                                                  │   │ [ ] Announce the rele… │
                                                   │                            │
                                                   │                            │
                                                   │                            │

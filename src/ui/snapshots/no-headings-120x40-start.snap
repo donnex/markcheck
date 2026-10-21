@@ -6,7 +6,7 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ A document with a title b… │
-                                                                                          │ ❯ First step: example-too… │
+                                                                                          │ ☐ First step: example-too… │
                                                                                           │ ◐ Second step, in progress │
                                                                                           │ ☑ Third step, already done │
                                                                                           │ ▪ A plain note with no ch… │
@@ -17,18 +17,18 @@ expression: "screen(&mut state, width, height)"
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │
-               A document with a title but no ## H2 headings — every task                 │                            │
-              lives in the single, title-less default section (so there are               │                            │
-                    no section tabs and no above-cards list heading).                     │                            │
                                                                                           │                            │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/4 ┓               │                            │
-            ┃                                                             ┃────────────┐  │                            │
-            ┃                         First step:                         ┃            │  │                            │
-            ┃                                                             ┃cond step,  │  │                            │
-            ┃                      example-tool init                      ┃n progress  │  │                            │
-            ┃                                                             ┃            │  │                            │
-            ┃                                                             ┃────────────┘  │                            │
-            ┗ ◉●●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/4 ┓               │                            │
+┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
+│  First ste┃                                                             ┃            │  │                            │
+│ example-to┃                  Second step, in progress                   ┃hird step,  │  │                            │
+│     init  ┃                                                             ┃ready done  │  │                            │
+│           ┃                                                             ┃            │  │                            │
+└───────────┃                                                             ┃────────────┘  │                            │
+            ┗ ·◉●· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

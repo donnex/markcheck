@@ -12,14 +12,14 @@ expression: "screen(&mut state, width, height)"
 
                      • Rebuild
 
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/9 ┓
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4/9 ┓
 ┃                                                ┃
-┃             Rebuild all packages ›             ┃
-┃                  Fetch sources                 ┃
 ┃                                                ┃
-┃               fetch-sources --all              ┃
+┃        Rebuild all packages › Compile ›        ┃
+┃                Compile the core                ┃
 ┃                                                ┃
-┗ ·◉●······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┃                                                ┃
+┗ ··●◉····· ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

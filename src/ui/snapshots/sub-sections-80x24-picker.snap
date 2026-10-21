@@ -6,10 +6,10 @@ expression: "screen(&mut state, width, 24)"
 ━━━━────────────────────────────────────────────────────────────────────────────
 ╭ Go to task ──────────────────────── 34 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Deploy               ▲
-│ ❯ ☐ refresh-cache  — Deploy                  │  │   ❯ refresh-cache          ▓
+│   ☐ refresh-cache  — Deploy                  │  │   ☐ refresh-cache          ▓
 │   ☐ build-tool sync --profile def…  — Deploy │  │   ☐ build-tool sync --pro… ▓
 │   ☐ confirm the staging…  — Deploy › Pre-fl… │  │   ── Pre-flight checks ─── ▓
-│   ◐ run verify-output a…  — Deploy › Pre-fl… │  │   Run these on the stagin… ▓
+│ ❯ ◐ run verify-output a…  — Deploy › Pre-fl… │  │   Run these on the stagin… ▓
 │   ☐ take a snapshot: sn…  — Deploy › Pre-fl… │  │   ☐ confirm the staging h… ▓
 │   ☐ confirm the snapsho…  — Deploy › Pre-fl… │  │   ◐ run verify-output and… ▓
 │   ☑ restart-service  — Deploy › Rollout      │  │     ── Data safety ─────── ▓

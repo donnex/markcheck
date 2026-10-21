@@ -55,7 +55,9 @@ workflow and file-backed state.
 ## Features
 
 - Card-based, one-step-at-a-time navigation with a prev/current/next stack
-- Starts on the first not-done task, so you resume where work remains
+- Resumes where an interrupted run left off: on the first `[/]` started
+  task (`Resumed at started task: "Run the migration"`), else on the first
+  not-done task
 - Four task states — not started, **started/in-progress** (`[/]`),
   **skipped** (`[-]`), and done — each with its own card color and icon
 - Lists from `##` headings, jumpable with number keys
@@ -149,7 +151,7 @@ only".
 ## Usage
 
 ```sh
-markcheck runbook.md
+markcheck runbook.md                  # resumes at the first [/] started task, if any
 markcheck runbook.md#rollback         # open at the first task under "## Rollback"
 markcheck +120 runbook.md             # open at the task on (or after) line 120
 markcheck --icons nerd runbook.md     # icons: auto, unicode, nerd (needs a Nerd Font) or ascii
@@ -569,8 +571,14 @@ previous), and `l` at the end of a list steps into the next list. At the
 very last task `l`/`j` say `Already at the last task` (and `h`/`k` at the
 very first, `Already at the first task`), adding `· Tab finds unfinished ones`
 when any other task is still open; the mouse wheel stops there quietly.
-Finishing every list shows an all-done summary. Jumping to a list (or
-starting up) lands on its first not-done task.
+Finishing every list shows an all-done summary. Jumping to a list lands
+on its first not-done task. Starting up lands on the first `[/]` started
+task anywhere in the file, where an interrupted run was, and says so
+(`Resumed at started task: "Run the migration"`); with none it lands on
+the first list's first not-done task. A `file.md#anchor` or `+N` on the
+command line still wins, and when it finds no task the cursor stays on the
+started task (`no list or task at #nowhere, so resumed at started task:
+"Run the migration"`).
 
 ## Behavior
 

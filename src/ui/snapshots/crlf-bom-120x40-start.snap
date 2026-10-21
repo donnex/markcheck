@@ -6,7 +6,7 @@ expression: "screen(&mut state, width, height)"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ Saved with Windows line e… │
-                                                                                          │ ❯ Toggle this task, then … │
+                                                                                          │ ☐ Toggle this task, then … │
                                                                                           │ ◐ Confirm the line ending… │
                                                                                           │ ☑ Confirm the byte-order … │
                                                                                           │                            │
@@ -16,19 +16,19 @@ expression: "screen(&mut state, width, height)"
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │
-                                         • Check                                          │                            │
-             Saved with Windows line endings (CRLF) and a leading byte-order              │                            │
-             mark, as some Windows editors write: the heading above is still              │                            │
-                 the title, and toggling a task keeps both in the file.                   │                            │
                                                                                           │                            │
-            ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/3 ┓               │                            │
-            ┃                                                             ┃────────────┐  │                            │
-            ┃                                                             ┃onfirm the  │  │                            │
-            ┃           Toggle this task, then reopen the file            ┃ne endings  │  │                            │
-            ┃                                                             ┃are still   │  │                            │
-            ┃                                                             ┃RLF: file   │  │                            │
-            ┃                                                             ┃────────────┘  │                            │
-            ┗ ◉●● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
+                                         • Check                                          │                            │
+                                                                                          │                            │
+            ┏ ◐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/3 ┓               │                            │
+┌ ☐ ────────┃                                                             ┃────────────┐  │                            │
+│  Toggle th┃          Confirm the line endings are still CRLF:           ┃onfirm the  │  │                            │
+│  task, the┃                                                             ┃yte-order   │  │                            │
+│  reopen th┃                      file crlf-bom.md                       ┃rk is still │  │                            │
+│     file  ┃                                                             ┃  there     │  │                            │
+└───────────┃                                                             ┃────────────┘  │                            │
+            ┗ ·◉● ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛               │                            │
+                                                                                          │                            │
                                                                                           │                            │
                                                                                           │                            │
                                                                                           │                            │

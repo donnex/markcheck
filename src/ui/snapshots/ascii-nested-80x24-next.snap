@@ -8,18 +8,18 @@ expression: "screen(&mut state, width, height)"
                                                   │ # [1] Rebuild              │
                                                   │   Sub-lists under a task … │
                                                   │   [ ] Rebuild all packages │
-                                                  │   │  >  Fetch sources fet… │
+                                                  │   │ [ ] Fetch sources fet… │
                                                   │   │ [/] Compile            │
-                    # Rebuild                     │   │ │ [ ] Compile the core │
+                    # Rebuild                     │   │ │  >  Compile the core │
                                                   │   │ │ [ ] Compile the plu… │
-╔ [ ] ════════════════════════════════════ 2/9 ╗  │   │ [ ] Run the test suite │
+╔ [ ] ════════════════════════════════════ 4/9 ╗  │   │ [ ] Run the test suite │
 ║                                              ║  │    *  Preparation notes:   │
-║            Rebuild all packages >            ║  │   │ [ ] Free up disk space │
-║                 Fetch sources                ║  │   │ [ ] Notify the team o… │
-║                                              ║  │ # [2] Release              │
-║              fetch-sources --all             ║  │   [ ] Tag the release      │
+║                                              ║  │   │ [ ] Free up disk space │
+║       Rebuild all packages > Compile >       ║  │   │ [ ] Notify the team o… │
+║               Compile the core               ║  │ # [2] Release              │
+║                                              ║  │   [ ] Tag the release      │
 ║                                              ║  │   [ ] Publish              │
-╚ .@/...... ═══════════════════════════════════╝  │   │ [ ] Upload the artifa… │
+╚ ../@..... ═══════════════════════════════════╝  │   │ [ ] Upload the artifa… │
                                                   │   │ [ ] Announce the rele… │
                                                   │                            │
                                                   │                            │

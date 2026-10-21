@@ -7,19 +7,19 @@ expression: "screen(&mut state, width, height)"
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Deploy               ▲
                                                   │   ☐ refresh-cache          ▓
-                                                  │   ❯ build-tool sync --pro… ▓
+                                                  │   ☐ build-tool sync --pro… ▓
                                                   │   ── Pre-flight checks ─── ▓
-                                                  │   Run these on the stagin… ▓
-                    • Deploy                      │   ☐ confirm the staging h… ▓
+                    • Deploy                      │   Run these on the stagin… ▓
+         Pre-flight checks › Data safety          │   ☐ confirm the staging h… ▓
                                                   │   ◐ run verify-output and… ▓
-┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/29 ┓  │     ── Data safety ─────── ▓
-┃                                              ┃  │   ☐ take a snapshot: snap… │
-┃                                              ┃  │   ☐ confirm the snapshot … │
-┃       build-tool sync --profile default      ┃  │   ── Rollout ───────────── │
-┃                                              ┃  │   ☑ restart-service        │
+┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5/29 ┓  │     ── Data safety ─────── ▓
+┃                                              ┃  │   ❯ take a snapshot: snap… │
+┃               take a snapshot:               ┃  │   ☐ confirm the snapshot … │
+┃                                              ┃  │   ── Rollout ───────────── │
+┃             snapshot-tool create             ┃  │   ☑ restart-service        │
 ┃                                              ┃  │   ☐ check-status example-… │
 ┃                                              ┃  │   ▪ Watch the dashboards   │
-┗ ·◉·●··●······················ ━━━━━━━━━━━━━━━┛  │   ☐ confirm the error rat… │
+┗ ···●◉·●······················ ━━━━━━━━━━━━━━━┛  │   ☐ confirm the error rat… │
                                                   │   ☐ announce the rollout … │
                                                   │   ── Post-rollout ──────── │
                                                   │   ☐ tail the logs for one… │
