@@ -409,6 +409,7 @@ fn git_sync_request_reports_entries_that_do_not_resolve() {
         GitSyncRequest {
             requested: true,
             unresolved: vec![typo.clone()],
+            relative: Vec::new(),
             by_flag: false,
             covering: vec![CoveringEntry {
                 entry: root.clone(),
@@ -438,6 +439,7 @@ fn no_git_sync_turns_off_a_matching_entry_but_still_reports_typos() {
         GitSyncRequest {
             requested: false,
             unresolved: vec![typo],
+            relative: Vec::new(),
             by_flag: false,
             covering: vec![CoveringEntry {
                 entry: root.clone(),
@@ -465,6 +467,7 @@ fn git_sync_request_expands_a_tilde_entry_against_home() {
         GitSyncRequest {
             requested: true,
             unresolved: Vec::new(),
+            relative: Vec::new(),
             by_flag: false,
             covering: vec![CoveringEntry {
                 entry: PathBuf::from("~/checklists"),
@@ -507,24 +510,34 @@ fn expand_tilde_only_rewrites_a_leading_tilde_component() {
     );
 }
 
+fn warning_request(unresolved: &[&str], relative: &[&str]) -> GitSyncRequest {
+    GitSyncRequest {
+        requested: false,
+        unresolved: unresolved.iter().map(PathBuf::from).collect(),
+        relative: relative.iter().map(PathBuf::from).collect(),
+        by_flag: false,
+        covering: Vec::new(),
+    }
+}
+
 #[test]
 fn git_sync_warning_names_unresolved_entries_and_the_detect_reason() {
-    assert_eq!(git_sync_warning(&[], None), None);
+    assert_eq!(git_sync_warning(&warning_request(&[], &[]), None), None);
     assert_eq!(
-        git_sync_warning(&[PathBuf::from("~/checklsts")], None).as_deref(),
+        git_sync_warning(&warning_request(&["~/checklsts"], &[]), None).as_deref(),
         Some("git_sync_paths: ~/checklsts does not exist — ignored")
     );
     assert_eq!(
-        git_sync_warning(&[PathBuf::from("/a"), PathBuf::from("/b")], None).as_deref(),
+        git_sync_warning(&warning_request(&["/a", "/b"], &[]), None).as_deref(),
         Some("git_sync_paths: /a, /b do not exist — ignored")
     );
     assert_eq!(
-        git_sync_warning(&[], Some("git not found on PATH")).as_deref(),
+        git_sync_warning(&warning_request(&[], &[]), Some("git not found on PATH")).as_deref(),
         Some("Git sync off: git not found on PATH")
     );
     assert_eq!(
         git_sync_warning(
-            &[PathBuf::from("/a")],
+            &warning_request(&["/a"], &[]),
             Some("the file is not in a git repository")
         )
         .as_deref(),
@@ -533,6 +546,68 @@ fn git_sync_warning_names_unresolved_entries_and_the_detect_reason() {
                  Git sync off: the file is not in a git repository"
         )
     );
+}
+
+#[test]
+fn git_sync_warning_says_a_relative_entry_must_be_absolute_or_start_with_tilde() {
+    assert_eq!(
+        git_sync_warning(&warning_request(&[], &["checklists"]), None).as_deref(),
+        Some("git_sync_paths: checklists must be an absolute path or start with ~ — ignored")
+    );
+    assert_eq!(
+        git_sync_warning(&warning_request(&["/gone"], &["a", "b/**"]), None).as_deref(),
+        Some(
+            "git_sync_paths: a, b/** must be absolute paths or start with ~ — ignored; \
+             git_sync_paths: /gone does not exist — ignored"
+        )
+    );
+}
+
+#[test]
+fn git_sync_request_ignores_relative_entries_even_when_they_exist_here() {
+    let root = crate::test_support::unique_temp_path("launch-gitsync-relative", "", None);
+    std::fs::create_dir_all(root.join("checklists")).unwrap();
+    let canonical = std::fs::canonicalize(&root).unwrap();
+    let file = canonical.join("checklists").join("todo.md");
+    let cwd = std::env::current_dir().unwrap();
+    let mut relative: PathBuf = cwd.components().skip(1).map(|_| "..").collect();
+    relative.push(canonical.join("checklists").strip_prefix("/").unwrap());
+    assert!(relative.is_relative() && relative.is_dir());
+    let paths = vec![
+        relative.clone(),
+        PathBuf::from("."),
+        PathBuf::from("./**"),
+        PathBuf::from("~other/checklists"),
+        root.join("checklists"),
+    ];
+
+    let request = git_sync_request(false, false, Some(&paths), &file, Some("/nonexistent-home"));
+    assert_eq!(request.relative, paths[..4].to_vec());
+    assert!(request.unresolved.is_empty());
+    assert_eq!(request.covering.len(), 1);
+    assert_eq!(request.covering[0].entry, root.join("checklists"));
+    assert!(request.requested);
+
+    let only_relative = git_sync_request(false, false, Some(&paths[..4]), &file, None);
+    assert!(!only_relative.requested);
+    assert!(only_relative.covering.is_empty());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn git_sync_request_treats_a_tilde_entry_under_a_relative_home_as_unresolved() {
+    let paths = vec![PathBuf::from("~/checklists"), PathBuf::from("~")];
+    let request = git_sync_request(
+        false,
+        false,
+        Some(&paths),
+        Path::new("/srv/checklists/todo.md"),
+        Some("relative-home"),
+    );
+    assert_eq!(request.unresolved, paths);
+    assert!(request.relative.is_empty());
+    assert!(!request.requested);
 }
 
 #[test]
@@ -686,6 +761,7 @@ fn covering_request(entry: &str, prefix: &Path, nested: bool) -> GitSyncRequest 
     GitSyncRequest {
         requested: true,
         unresolved: Vec::new(),
+        relative: Vec::new(),
         by_flag: false,
         covering: vec![CoveringEntry {
             entry: PathBuf::from(entry),

@@ -243,7 +243,12 @@ the title bar shows no `⇅ git` section. It can't be combined with
 `--git-sync`.
 
 A leading `~` in a `git_sync_paths` entry means your home directory
-(`$HOME`), as it would in a shell, so `"~/checklists"` works. An entry that
+(`$HOME`), as it would in a shell, so `"~/checklists"` works. Every entry
+must be an absolute path or start with `~`: a relative one such as
+`"checklists"` would mean a different folder depending on where you run
+`markcheck` from, so it is ignored, and `markcheck` says so at startup
+(`git_sync_paths: checklists must be an absolute path or start with ~ —
+ignored`). `~user` forms aren't expanded and count as relative. An entry that
 doesn't exist can never match anything, so `markcheck` says so at startup
 (`git_sync_paths: ~/checklsts does not exist — ignored`) rather than leaving
 you to wonder why git-sync never turns on.

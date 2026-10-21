@@ -279,6 +279,10 @@ pub struct GitSyncRequest {
     /// Entries, as written in the config, that don't resolve to an existing
     /// path, so they can never match anything.
     pub unresolved: Vec<PathBuf>,
+    /// Entries, as written in the config, that are neither absolute nor
+    /// `~`-prefixed, and so are ignored rather than resolved against
+    /// whatever directory markcheck was started from (#172).
+    pub relative: Vec<PathBuf>,
     /// Asked for with `--git-sync`, which accepts whatever repository holds
     /// the file.
     pub by_flag: bool,
@@ -333,7 +337,10 @@ pub fn git_sync_scope(request: &GitSyncRequest, repo_root: &Path) -> Result<(), 
 /// `file_path`. `--git-sync` and a matching entry are an OR, not the
 /// flag-over-config precedence of the boolean settings; `--no-git-sync`
 /// beats both. Every entry is checked, even once one matches or the feature
-/// is forced off, so a typo is reported either way.
+/// is forced off, so a typo is reported either way. A relative entry is
+/// ignored: resolved against the working directory it would match a
+/// different folder depending on where markcheck was started. A `~` entry
+/// that `home` can't make absolute counts as unresolved.
 pub fn git_sync_request(
     cli_flag: bool,
     cli_off: bool,
@@ -342,11 +349,18 @@ pub fn git_sync_request(
     home: Option<&str>,
 ) -> GitSyncRequest {
     let mut unresolved = Vec::new();
+    let mut relative = Vec::new();
     let mut covering = Vec::new();
     for entry in paths.unwrap_or(&[]) {
         let (path, nested) = split_nested(entry);
         let prefix = expand_tilde(path, home);
-        if !prefix.exists() {
+        if !prefix.is_absolute() {
+            if path.starts_with("~") {
+                unresolved.push(entry.clone());
+            } else {
+                relative.push(entry.clone());
+            }
+        } else if !prefix.exists() {
             unresolved.push(entry.clone());
         } else if git_sync_path_matches(file_path, &prefix)
             && let Ok(prefix) = std::fs::canonicalize(&prefix)
@@ -361,6 +375,7 @@ pub fn git_sync_request(
     GitSyncRequest {
         requested: (cli_flag || !covering.is_empty()) && !cli_off,
         unresolved,
+        relative,
         by_flag: cli_flag,
         covering,
     }
@@ -369,20 +384,36 @@ pub fn git_sync_request(
 /// The sticky startup message for a git-sync that was configured but won't
 /// run: unusable `git_sync_paths` entries, and why `GitSync::detect` refused
 /// when git-sync was asked for.
-pub fn git_sync_warning(unresolved: &[PathBuf], detect_error: Option<&str>) -> Option<String> {
-    let mut warnings = Vec::new();
-    if !unresolved.is_empty() {
-        let entries = unresolved
+pub fn git_sync_warning(request: &GitSyncRequest, detect_error: Option<&str>) -> Option<String> {
+    let list = |entries: &[PathBuf]| {
+        entries
             .iter()
             .map(|entry| entry.display().to_string())
             .collect::<Vec<_>>()
-            .join(", ");
-        let verb = if unresolved.len() == 1 {
+            .join(", ")
+    };
+    let mut warnings = Vec::new();
+    if !request.relative.is_empty() {
+        let rule = if request.relative.len() == 1 {
+            "must be an absolute path or start with ~"
+        } else {
+            "must be absolute paths or start with ~"
+        };
+        warnings.push(format!(
+            "git_sync_paths: {} {rule} — ignored",
+            list(&request.relative)
+        ));
+    }
+    if !request.unresolved.is_empty() {
+        let verb = if request.unresolved.len() == 1 {
             "does not exist"
         } else {
             "do not exist"
         };
-        warnings.push(format!("git_sync_paths: {entries} {verb} — ignored"));
+        warnings.push(format!(
+            "git_sync_paths: {} {verb} — ignored",
+            list(&request.unresolved)
+        ));
     }
     if let Some(reason) = detect_error {
         warnings.push(format!("Git sync off: {reason}"));

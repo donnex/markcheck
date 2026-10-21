@@ -340,7 +340,7 @@ fn main() -> anyhow::Result<()> {
     let warnings = [
         config::unknown_keys_warning(&unknown_keys),
         launch::startup_warning(read_only, save_route, hard_links, foreign_owner.as_deref()),
-        launch::git_sync_warning(&request.unresolved, detect_error.as_deref()),
+        launch::git_sync_warning(&request, detect_error.as_deref()),
         git_sync
             .as_ref()
             .and_then(git_sync::GitSync::identity_warning),

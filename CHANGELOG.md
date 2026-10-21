@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `nerd_font` config key and the `--nerd-font` / `--no-nerd-font` flags, replaced by `icons = "nerd"` and `--icons nerd` / `--icons auto`. They still work, but an `icons` setting wins over `nerd_font` when both are set, and a config file that still uses `nerd_font` gets a startup note naming the `icons` value to use instead. (#171)
 
+### Changed
+
+- A `git_sync_paths` entry in the config file must now be an absolute path (`"/home/you/checklists"`) or start with `~` (`"~/checklists"`); a relative entry such as `"checklists"` is ignored, with a startup warning that names it: `git_sync_paths: checklists must be an absolute path or start with ~ — ignored`. This takes back the 1.3.0 note that relative entries match. A relative entry was looked up from whatever directory markcheck was started in, so the same config turned git sync on for `markcheck checklists/deploy.md` run from your home directory, left it off with a misleading `does not exist` warning when run from inside `checklists/`, and covered an unrelated folder that happened to have the same name when run from elsewhere. If your config has a relative entry, rewrite it as the full path, or as `~/...` for one under your home directory. (#172)
+
 ### Fixed
 
 - A code block written under a heading, before its first task, now keeps its indentation and spacing above the card and is shown as one left-aligned block. Before, each line was word-wrapped like prose, so leading indentation, tabs and runs of spaces collapsed to one space, and every line was centered on its own, which misrepresented a "run this first" command whose indentation matters, such as a shell loop or YAML. A line too long for the card now wraps with a `↩` at the end of the row, as code inside a card does. (#258)
