@@ -11,7 +11,8 @@ use ratatui::widgets::{
 };
 
 use super::{
-    char_width, display_width, expand_tabs, fg, marker_color, split_at_width, state_marker,
+    char_width, display_width, dot_glyph, expand_tabs, fg, marker_color, split_at_width,
+    state_marker,
 };
 use crate::model::{
     AppState, BodySpan, IconSet, Item, ItemKind, List, Overlay, Palette, PreambleBlock,
@@ -993,16 +994,7 @@ fn position_dots(list: &List, current: usize, palette: Palette) -> Line<'static>
             ("◉", Style::default().fg(palette.current))
         } else {
             let color = marker_color(item.kind, None, palette);
-            // Info items keep the small `·` (not a task, no progress of their
-            // own) but in note blue, so the strip stays a faithful item map
-            // while reading as information, not a pending task.
-            let glyph = match item.kind {
-                ItemKind::Checkbox(TaskState::Done) => "●",
-                ItemKind::Checkbox(TaskState::Started) if palette.is_mono() => "◐",
-                ItemKind::Checkbox(TaskState::Started) => "●",
-                ItemKind::Checkbox(TaskState::Skipped) => "-",
-                ItemKind::Checkbox(TaskState::NotStarted) | ItemKind::DisplayOnly => "·",
-            };
+            let glyph = dot_glyph(item.kind, palette.is_mono());
             match color {
                 Some(color) => (glyph, Style::default().fg(color)),
                 None => (glyph, Style::default().add_modifier(Modifier::DIM)),

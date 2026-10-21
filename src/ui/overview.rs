@@ -308,51 +308,41 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             } else {
                 palette.current
             };
-            // Precedence: done > started > info > current > pending, so an
-            // item's kind/state stays visible even on the current row (which
-            // the list's own highlight already marks).
+            // Only a not-started task trades its glyph for the current marker,
+            // so an item's kind/state stays visible even on the current row
+            // (which the list's own highlight already marks).
             let info_state = links[item_index].info_state;
-            let (marker, marker_style, text_style) = match (item.kind, is_current) {
-                (ItemKind::Checkbox(TaskState::Done), _) => (
-                    icons.done,
-                    Style::default()
-                        .fg(palette.done)
-                        .add_modifier(Modifier::BOLD),
+            let (glyph, color) = state_marker(item.kind, info_state, icons, palette);
+            let (marker, marker_style, text_style) = match item.kind {
+                ItemKind::Checkbox(TaskState::Done) => (
+                    glyph,
+                    fg(color).add_modifier(Modifier::BOLD),
                     Style::default().add_modifier(Modifier::DIM),
                 ),
-                (ItemKind::Checkbox(TaskState::Started), _) => (
-                    icons.started,
-                    Style::default().fg(palette.started),
-                    Style::default(),
-                ),
+                ItemKind::Checkbox(TaskState::Started) => (glyph, fg(color), Style::default()),
                 // Skipped: dim and struck through, so it reads as set aside
                 // rather than either done or still to do.
-                (ItemKind::Checkbox(TaskState::Skipped), _) => (
-                    icons.skipped,
-                    Style::default().add_modifier(Modifier::DIM),
+                ItemKind::Checkbox(TaskState::Skipped) => (
+                    glyph,
+                    fg(color).add_modifier(Modifier::DIM),
                     Style::default().add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
                 ),
-                // Info item: the note glyph (shape says "information") tinted
-                // by its sub-list's aggregate state — green
-                // all-done with a dimmed label like a done task, yellow
-                // in-progress, else the plain note blue.
-                (ItemKind::DisplayOnly, _) => {
-                    let (glyph, color) = state_marker(item.kind, info_state, icons, palette);
-                    let text_style = if matches!(info_state, Some(TaskState::Done)) {
-                        Style::default().add_modifier(Modifier::DIM)
-                    } else {
-                        Style::default()
-                    };
-                    (glyph, fg(color), text_style)
-                }
-                (_, true) => (
+                // An info item whose sub-list is all done dims its label like
+                // a done task.
+                ItemKind::DisplayOnly if matches!(info_state, Some(TaskState::Done)) => (
+                    glyph,
+                    fg(color),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                ItemKind::DisplayOnly => (glyph, fg(color), Style::default()),
+                ItemKind::Checkbox(TaskState::NotStarted) if is_current => (
                     icons.current,
                     Style::default().fg(current_marker_fg),
                     Style::default(),
                 ),
-                (_, false) => (
-                    icons.pending,
-                    Style::default().add_modifier(Modifier::DIM),
+                ItemKind::Checkbox(TaskState::NotStarted) => (
+                    glyph,
+                    fg(color).add_modifier(Modifier::DIM),
                     Style::default(),
                 ),
             };

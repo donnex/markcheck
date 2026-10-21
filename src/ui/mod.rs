@@ -578,6 +578,20 @@ fn marker_color(kind: ItemKind, info_state: Option<TaskState>, palette: Palette)
     }
 }
 
+/// An item's glyph in the card's position-dot strip, drawn in
+/// [`marker_color`]: done `●`, started `●` (a half dot `◐` without color, so
+/// it still reads apart from done), skipped `-`, and a small `·` for a pending
+/// task or a note (not a task, no progress of its own).
+fn dot_glyph(kind: ItemKind, mono: bool) -> &'static str {
+    match kind {
+        ItemKind::Checkbox(TaskState::Done) => "●",
+        ItemKind::Checkbox(TaskState::Started) if mono => "◐",
+        ItemKind::Checkbox(TaskState::Started) => "●",
+        ItemKind::Checkbox(TaskState::Skipped) => "-",
+        ItemKind::Checkbox(TaskState::NotStarted) | ItemKind::DisplayOnly => "·",
+    }
+}
+
 /// `color` as a foreground, or the plain style for none.
 fn fg(color: Option<Color>) -> Style {
     color.map_or_else(Style::default, |color| Style::default().fg(color))

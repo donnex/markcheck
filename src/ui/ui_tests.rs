@@ -3722,3 +3722,58 @@ fn the_nerd_font_icon_set_replaces_the_plain_unicode_glyphs() {
         "no plain Unicode box left: {text}"
     );
 }
+
+#[test]
+fn every_view_draws_a_task_state_with_the_same_glyph() {
+    let states = [
+        TaskState::Done,
+        TaskState::Started,
+        TaskState::Skipped,
+        TaskState::NotStarted,
+    ];
+    for task_state in states {
+        let mut task = checkbox(1, "subject", false);
+        task.kind = ItemKind::Checkbox(task_state);
+        let mut state = state_with(vec![List {
+            title: "L".to_string(),
+            banner: None,
+            items: vec![task, display_only(2, "filler")],
+        }]);
+        let (glyph, _) = state_marker(
+            ItemKind::Checkbox(task_state),
+            None,
+            state.icons,
+            state.palette,
+        );
+
+        let rows = buffer_rows(&mut state, 100, 30);
+        let header = rows
+            .iter()
+            .find(|r| r.contains('┏'))
+            .expect("current card's top border");
+        assert!(header.contains(glyph), "{task_state:?} header: {header:?}");
+
+        state.current_item_index = 1;
+        let rows = buffer_rows(&mut state, 100, 30);
+        let overview = rows
+            .iter()
+            .map(|r| r.chars().skip(70).collect::<String>())
+            .find(|r| r.contains("subject"))
+            .expect("overview row");
+        assert!(
+            overview.contains(glyph),
+            "{task_state:?} overview: {overview:?}"
+        );
+
+        state.handle_key(KeyCode::Char('T'));
+        let rows = buffer_rows(&mut state, 100, 30);
+        let y = picker_row_of(&state, &rows, "subject");
+        let area = state.layout.picker_rows_area.expect("picker rows recorded");
+        let picker: String = rows[y as usize]
+            .chars()
+            .skip(area.x as usize)
+            .take(area.width as usize)
+            .collect();
+        assert!(picker.contains(glyph), "{task_state:?} picker: {picker:?}");
+    }
+}
