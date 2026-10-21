@@ -304,6 +304,78 @@ fn git_command_hides_the_terminal_from_gpg() {
         );
     }
 }
+fn env_of<'a>(cmd: &'a Command, name: &str) -> Option<Option<&'a std::ffi::OsStr>> {
+    cmd.get_envs().find(|(k, _)| *k == name).map(|(_, v)| v)
+}
+#[test]
+fn git_command_keeps_gits_messages_untranslated() {
+    for cmd in [
+        git_command(Path::new(".")),
+        literal_pathspec_command(Path::new(".")),
+    ] {
+        assert_eq!(
+            env_of(&cmd, "LC_MESSAGES"),
+            Some(Some(std::ffi::OsStr::new("C"))),
+            "failure_reason reads git's English fatal:/error:/hint: prefixes"
+        );
+        assert_eq!(env_of(&cmd, "LANGUAGE"), Some(None));
+    }
+}
+#[test]
+fn untranslated_messages_leaves_every_other_category_alone() {
+    let mut cmd = Command::new("git");
+    untranslated_messages(&mut cmd, None);
+    assert_eq!(env_of(&cmd, "LC_ALL"), None);
+    assert_eq!(env_of(&cmd, "LC_CTYPE"), None);
+
+    let mut cmd = Command::new("git");
+    untranslated_messages(&mut cmd, Some(std::ffi::OsString::new()));
+    assert_eq!(env_of(&cmd, "LC_ALL"), None);
+    assert_eq!(env_of(&cmd, "LC_CTYPE"), None);
+}
+#[test]
+fn untranslated_messages_spreads_lc_all_over_the_other_categories() {
+    let mut cmd = Command::new("git");
+    untranslated_messages(&mut cmd, Some("de_DE.UTF-8".into()));
+    assert_eq!(
+        env_of(&cmd, "LC_ALL"),
+        Some(None),
+        "LC_ALL would override LC_MESSAGES"
+    );
+    for category in NON_MESSAGE_LOCALE_CATEGORIES {
+        assert_eq!(
+            env_of(&cmd, category),
+            Some(Some(std::ffi::OsStr::new("de_DE.UTF-8"))),
+            "{category} keeps the user's LC_ALL"
+        );
+    }
+    assert_eq!(
+        env_of(&cmd, "LC_MESSAGES"),
+        Some(Some(std::ffi::OsStr::new("C")))
+    );
+}
+#[test]
+fn git_still_runs_with_a_translated_locale_and_reports_in_english() {
+    let dir = crate::test_support::unique_temp_path("git-sync-locale", "dir", None);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cmd = Command::new("git");
+    crate::test_support::isolate_git(&mut cmd);
+    cmd.current_dir(&dir)
+        .env("GIT_CEILING_DIRECTORIES", dir.parent().unwrap())
+        .env("LANG", "de_DE.UTF-8")
+        .env("LANGUAGE", "de")
+        .env("LC_ALL", "de_DE.UTF-8")
+        .args(["rev-parse", "--show-toplevel"]);
+    untranslated_messages(&mut cmd, Some("de_DE.UTF-8".into()));
+    let output = run_with_timeout(cmd, Duration::from_secs(10)).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("fatal: not a git repository"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 #[test]
 fn a_command_runs_in_a_session_of_its_own() {
     // Fields 5 and 6 of /proc/<pid>/stat are the process group and session.

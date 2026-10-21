@@ -698,6 +698,9 @@ askpass/pinentry for a synced repository. A terminal pinentry
 on to git, except by a `gpg-agent` that was already sent to a terminal with
 `gpg-connect-agent updatestartuptty`: that one draws over markcheck and
 shares its keystrokes, so don't run it in the terminal markcheck uses.
+Git's own messages, such as the reason a sync failed, are always shown in
+English, whatever language your locale sets: markcheck reads them to find
+that reason. Only the messages change; hooks still see your character set.
 Quitting while a sync is still running is the one exception:
 `markcheck` stays open with `Waiting for git sync… press q again to
 abandon` and exits as soon as the sync finishes, so a quick `e` then `q`

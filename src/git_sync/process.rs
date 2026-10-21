@@ -251,7 +251,8 @@ include!("../git_env.rs");
 /// cache, which would make the user's own git commands fail meanwhile.
 /// `GPG_TTY` is removed because `gpg-agent` opens a curses pinentry on the
 /// terminal it names, which a new session doesn't prevent: signing then
-/// fails at once instead of drawing over the TUI.
+/// fails at once instead of drawing over the TUI. Messages are kept
+/// untranslated by [`untranslated_messages`].
 pub(super) fn git_command(repo_root: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_root)
@@ -261,11 +262,43 @@ pub(super) fn git_command(repo_root: &Path) -> Command {
     for var in REDIRECTING_GIT_VARS {
         cmd.env_remove(var);
     }
+    untranslated_messages(&mut cmd, std::env::var_os("LC_ALL"));
     // Tests drive this in-process, so without it every commit markcheck
     // makes in a fixture would follow the developer's global git config.
     #[cfg(test)]
     crate::test_support::isolate_git(&mut cmd);
     cmd
+}
+/// Every locale category but `LC_MESSAGES`.
+const NON_MESSAGE_LOCALE_CATEGORIES: [&str; 11] = [
+    "LC_CTYPE",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "LC_COLLATE",
+    "LC_MONETARY",
+    "LC_PAPER",
+    "LC_NAME",
+    "LC_ADDRESS",
+    "LC_TELEPHONE",
+    "LC_MEASUREMENT",
+    "LC_IDENTIFICATION",
+];
+/// Makes git print its messages in English, since [`failure_reason`] and
+/// `detect_git_error` read them by their `fatal:`, `error:` and `hint:`
+/// prefixes and wording, which a translated git changes. Only
+/// `LC_MESSAGES` goes to `C`, so the character set and everything else stay
+/// the user's, for git and for the hooks `git commit` runs. `LANGUAGE`
+/// would override it, so it is removed, and so is a set `LC_ALL`, which
+/// overrides every category: its value is given to each of the other
+/// categories instead.
+fn untranslated_messages(cmd: &mut Command, lc_all: Option<std::ffi::OsString>) {
+    cmd.env("LC_MESSAGES", "C").env_remove("LANGUAGE");
+    if let Some(lc_all) = lc_all.filter(|value| !value.is_empty()) {
+        cmd.env_remove("LC_ALL");
+        for category in NON_MESSAGE_LOCALE_CATEGORIES {
+            cmd.env(category, &lc_all);
+        }
+    }
 }
 /// A [`git_command`] whose pathspecs match literally, so `notes[1].md` cannot
 /// match `notes1.md`. Not set in `git_command` because hooks run by
