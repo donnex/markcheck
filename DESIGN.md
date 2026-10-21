@@ -618,7 +618,7 @@ Raw mode turns off `ISIG`, so `Ctrl-Z` arrives as a key. It cancels armed chords
 
 `request_reset` opens `ConfirmReset`, or says `Nothing to reset: no tasks are done` when no task is done, started or skipped. The dialog says what changes (`This marks 1 done, 2 started and 1 skipped tasks (of 6) as not started`, the total counting skipped tasks too) and offers `y` (everything), `l` (the current list, only with several) and `s` (the sub-list the cursor is in, `sub_list_root`: the task itself when it has sub-tasks, else its parent; only inside one), each line with its count (`reset_count`). All go through `reset_scope(ResetScope)`: one `commit_write`, one undo point, and a git-sync description naming the scope (`Reset "Rollback" to not done`). A scope with nothing to reset keeps the dialog open behind `Nothing to reset there`. A failed write leaves the dialog open with the error and the document rolled back. The cursor stays.
 
-`q` with every task resolved (done or skipped) and at least one of them opens `ConfirmQuitReset` instead of quitting; its `Reset all N tasks` counts skipped ones, and its heading says `done or skipped` when any are, so a finished checklist can be handed back ready for the next run.
+`q` with every task resolved (done or skipped) and at least one of them opens `ConfirmQuitReset` instead of quitting; its `Reset all N tasks` counts skipped ones, and its heading says `done or skipped` when any are, so a finished checklist can be handed back ready for the next run. An answer that quits (`y` after a successful reset, `n`, `q`) closes the dialog as it queues `Effect::Quit`, so a quit that then waits for git sync shows its notice over the checklist rather than under a question already answered.
 
 ---
 

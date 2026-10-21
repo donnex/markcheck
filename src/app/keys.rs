@@ -438,14 +438,19 @@ impl AppState {
         } else {
             // ConfirmQuitReset, offered on quit when all done: y resets
             // then quits, n or q quits without resetting, Esc/anything else
-            // cancels.
+            // cancels. A quit closes the dialog, so a wait for git sync is
+            // shown over the checklist rather than under a stale question.
             match code {
                 KeyCode::Char('y') => {
                     if self.reset_all() {
                         self.effects.push(Effect::Quit);
+                        self.overlay = None;
                     }
                 }
-                KeyCode::Char('n' | 'q') => self.effects.push(Effect::Quit),
+                KeyCode::Char('n' | 'q') => {
+                    self.effects.push(Effect::Quit);
+                    self.overlay = None;
+                }
                 _ => self.overlay = None,
             }
         }

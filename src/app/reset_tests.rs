@@ -194,6 +194,7 @@ fn confirm_quit_reset_yes_resets_and_quits() {
     state.handle_key(KeyCode::Char('y'));
     assert!(state.quit_requested(), "y quits");
     assert_eq!(state.document.progress().done, 0, "y resets all tasks");
+    assert_eq!(state.overlay, None, "the answered dialog closes");
 }
 
 #[test]
@@ -257,6 +258,7 @@ fn confirm_quit_reset_no_quits_without_resetting() {
     state.handle_key(KeyCode::Char('q'));
     state.handle_key(KeyCode::Char('n'));
     assert!(state.quit_requested(), "n quits");
+    assert_eq!(state.overlay, None, "the answered dialog closes");
     assert_eq!(
         state.document.progress().done,
         done_before,
@@ -634,6 +636,7 @@ fn q_twice_on_an_all_done_checklist_quits_without_resetting() {
     assert_eq!(state.overlay, Some(Overlay::ConfirmQuitReset));
     state.handle_key(KeyCode::Char('q'));
     assert!(state.quit_requested(), "a second q quits");
+    assert_eq!(state.overlay, None, "the answered dialog closes");
     assert_eq!(
         state.document.progress().done,
         done_before,

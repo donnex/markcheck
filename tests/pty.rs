@@ -1315,6 +1315,29 @@ fn quitting_during_a_sync_says_it_waits_and_quits_once_it_lands() {
 }
 
 #[test]
+fn answering_the_quit_reset_while_a_sync_runs_closes_the_dialog() {
+    let (path, pid_file) = repo_with_a_slow_hook("gitsync-quit-reset-wait", "sleep 30");
+
+    let mut session = git_sync_session(&path);
+    session.key(" ");
+    wait_for_hook_pid(&pid_file);
+    session.key(" ");
+    wait_for_file(&path, "both tasks done", |s| s.contains("[x] `beta`"));
+    session.key("q");
+    session.wait_for_screen("ready to run again?");
+    session.key("n");
+    session.wait_for_screen("press q again to abandon");
+    let screen = collapse_whitespace(&render_screen(&session.raw_output()));
+    assert!(
+        !screen.contains("ready to run again?") && !screen.contains("keep working"),
+        "the answered dialog must not stay up while quit waits:\n{screen}"
+    );
+    session.key("q");
+    let (ok, _) = session.finish_within(Duration::from_secs(60));
+    assert!(ok, "binary should exit successfully after abandoning");
+}
+
+#[test]
 fn a_second_q_abandons_the_sync_and_leaves_nothing_behind() {
     let (path, pid_file) = repo_with_a_slow_hook("gitsync-abandon", "sleep 30");
     let work = path.parent().unwrap().to_path_buf();

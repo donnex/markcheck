@@ -738,7 +738,8 @@ that reason. Only the messages change; hooks still see your character set.
 Quitting while a sync is still running is the one exception:
 `markcheck` stays open with `Waiting for git sync… press q again to
 abandon` and exits as soon as the sync finishes, so a quick `e` then `q`
-doesn't leave the change unsynced. Press `q` again to stop the sync
+doesn't leave the change unsynced. An answered quit-reset confirmation closes
+first, so the notice shows over the checklist. Press `q` again to stop the sync
 instead: its `git` processes (hooks included) are stopped and cleaned up,
 not left running. Closing the terminal or sending `SIGTERM` quits the same
 way, waiting up to 5 seconds for the sync before stopping it. If that last
