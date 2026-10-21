@@ -368,6 +368,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 spans.push(Span::styled("│ ", Style::default().fg(color)));
             }
             let marker_cells = (has_list_header as usize + item.depth + 1) as u16 * 2;
+            let icon_col = (has_list_header as usize + item.depth.min(max_guides)) as u16 * 2;
             spans.push(Span::styled(format!("{marker} "), marker_style));
             // A critical step still to do (#95) leads with a warning-colored `!`.
             let critical = item.kind != ItemKind::Checkbox(TaskState::Done)
@@ -387,13 +388,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 text_style,
             ));
             list_items.push(ListItem::new(Line::from(spans)));
-            // A checkbox row splits into a marker zone (toggle) and a label
-            // zone (navigate); a display-only row navigates whole.
+            // On a checkbox row only the state icon toggles; the rest of the
+            // row navigates. A display-only row navigates whole.
             row_clicks.push(match item.kind {
                 ItemKind::Checkbox(_) => RowClick::TaskItem {
                     list_index,
                     item_index,
-                    marker_cells,
+                    icon_col,
                 },
                 ItemKind::DisplayOnly => {
                     RowClick::Whole(OverviewTarget::Item(list_index, item_index))
@@ -513,19 +514,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             RowClick::TaskItem {
                 list_index,
                 item_index,
-                marker_cells,
+                icon_col,
             } => {
-                // The marker prefix toggles; the label navigates.
-                let marker_end = (inner.x + marker_cells).min(row_end);
-                state.layout.overview_rows.push((
-                    Rect::new(area.x, y, marker_end - area.x, 1),
-                    OverviewTarget::Toggle(list_index, item_index),
-                ));
-                if marker_end < row_end {
-                    state.layout.overview_rows.push((
-                        Rect::new(marker_end, y, row_end - marker_end, 1),
-                        OverviewTarget::Item(list_index, item_index),
+                let icon_start = (inner.x + icon_col).min(row_end);
+                let icon_end = (icon_start + 2).min(row_end);
+                let navigate = OverviewTarget::Item(list_index, item_index);
+                let rows = &mut state.layout.overview_rows;
+                rows.push((Rect::new(area.x, y, icon_start - area.x, 1), navigate));
+                if icon_start < icon_end {
+                    rows.push((
+                        Rect::new(icon_start, y, icon_end - icon_start, 1),
+                        OverviewTarget::Toggle(list_index, item_index),
                     ));
+                }
+                if icon_end < row_end {
+                    rows.push((Rect::new(icon_end, y, row_end - icon_end, 1), navigate));
                 }
             }
         }
@@ -540,11 +543,12 @@ enum RowClick {
     /// The whole row maps to one target (list-title row, or a display-only
     /// item row that navigates).
     Whole(OverviewTarget),
-    /// A checkbox item row: its marker prefix toggles, its label navigates.
+    /// A checkbox item row: its state icon toggles, the rest navigates.
     TaskItem {
         list_index: usize,
         item_index: usize,
-        marker_cells: u16,
+        /// Columns from the panel's inner left edge to the state icon.
+        icon_col: u16,
     },
 }
 

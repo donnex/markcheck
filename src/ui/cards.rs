@@ -240,7 +240,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             (
                 "click overview row",
-                "toggle (icon) or jump to (label) a task or list",
+                "toggle a task (its icon) or jump to it (the rest)",
             ),
             ("y", "copy the task's code to the clipboard"),
             ("y then N", "copy command [N] when a card has several"),

@@ -3082,11 +3082,19 @@ fn overview_sticky_header_click_rects_stay_consistent_near_a_scroll_boundary() {
     }
 }
 
+fn overview_target_at(state: &AppState, x: u16, y: u16) -> Option<OverviewTarget> {
+    state
+        .layout
+        .overview_rows
+        .iter()
+        .find(|(rect, _)| rect.contains((x, y).into()))
+        .map(|(_, target)| *target)
+}
+
 #[test]
 fn overview_marker_zone_toggles_and_label_zone_navigates() {
-    // A rendered checkbox row exposes a marker (toggle) rect to the
-    // left of a label (navigate) rect for the same item; the marker toggles
-    // in place, the label moves the cursor.
+    // Only the two cells of a checkbox row's state icon toggle; the border,
+    // indent and label to either side navigate to the same item.
     let mut state = state_with(vec![
         List {
             title: "Alpha".to_string(),
@@ -3102,36 +3110,108 @@ fn overview_marker_zone_toggles_and_label_zone_navigates() {
     let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
     terminal.draw(|f| render(f, &mut state)).unwrap();
 
-    let rect_for = |state: &AppState, want: OverviewTarget| {
-        state
-            .layout
-            .overview_rows
-            .iter()
-            .find(|(_, t)| *t == want)
-            .map(|(r, _)| *r)
-    };
-    let toggle = rect_for(&state, OverviewTarget::Toggle(1, 1)).expect("marker rect");
-    let navigate = rect_for(&state, OverviewTarget::Item(1, 1)).expect("label rect");
-    assert!(
-        toggle.x + toggle.width <= navigate.x,
-        "marker zone sits left of the label zone, no overlap"
-    );
-    assert_eq!(toggle.y, navigate.y, "same row");
+    let toggle = state
+        .layout
+        .overview_rows
+        .iter()
+        .find(|(_, t)| *t == OverviewTarget::Toggle(1, 1))
+        .map(|(r, _)| *r)
+        .expect("icon rect");
+    assert_eq!(toggle.width, 2, "the icon and the space after it");
+    let buffer = terminal.backend().buffer().clone();
     assert_eq!(
-        toggle.x,
-        navigate.x - toggle.width,
-        "the two zones tile the row with no gap"
+        buffer[(toggle.x, toggle.y)].symbol(),
+        state.icons.pending,
+        "the toggle zone starts on the state icon"
+    );
+    let label_x = toggle.x + toggle.width;
+    assert_eq!(buffer[(label_x, toggle.y)].symbol(), "d");
+    let row_rects: Vec<_> = state
+        .layout
+        .overview_rows
+        .iter()
+        .filter(|(r, _)| r.y == toggle.y)
+        .collect();
+    let left = row_rects.iter().map(|(r, _)| r.x).min().unwrap();
+    let right = row_rects.iter().map(|(r, _)| r.x + r.width).max().unwrap();
+    for x in left..right {
+        let want = if (toggle.x..label_x).contains(&x) {
+            OverviewTarget::Toggle(1, 1)
+        } else {
+            OverviewTarget::Item(1, 1)
+        };
+        assert_eq!(
+            overview_target_at(&state, x, toggle.y),
+            Some(want),
+            "column {x}"
+        );
+    }
+    assert_eq!(
+        buffer[(left, toggle.y)].symbol(),
+        "│",
+        "the row's zones start on the panel border"
     );
 
-    // Clicking the label navigates without toggling. (The marker-click →
+    // Clicking the label navigates without toggling. (The icon-click →
     // toggle path writes the file, so it's exercised in the app tests against a
     // real temp path; here the render fixture has no backing file.)
-    state.handle_left_click(navigate.x + navigate.width / 2, navigate.y);
+    state.handle_left_click(label_x, toggle.y);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
     assert!(matches!(
         state.document.lists[1].items[1].kind,
         ItemKind::Checkbox(TaskState::NotStarted)
     ));
+}
+
+#[test]
+fn overview_click_on_guides_or_border_navigates_without_toggling() {
+    // A nested task's indent, depth guides and the panel border sit left of
+    // its icon; clicking them selects the task and never checks it.
+    let parent = checkbox(3, "parent", false);
+    let mut child = checkbox(4, "child", false);
+    child.depth = 1;
+    let mut grandchild = checkbox(5, "grandchild", false);
+    grandchild.depth = 2;
+    let mut state = state_with(vec![
+        List {
+            title: "Alpha".to_string(),
+            banner: None,
+            items: vec![checkbox(1, "a", false)],
+        },
+        List {
+            title: "Beta".to_string(),
+            banner: None,
+            items: vec![parent, child, grandchild],
+        },
+    ]);
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    terminal.draw(|f| render(f, &mut state)).unwrap();
+    let toggle = state
+        .layout
+        .overview_rows
+        .iter()
+        .find(|(_, t)| *t == OverviewTarget::Toggle(1, 2))
+        .map(|(r, _)| *r)
+        .expect("icon rect");
+    let buffer = terminal.backend().buffer().clone();
+    assert_eq!(buffer[(toggle.x, toggle.y)].symbol(), state.icons.pending);
+    let guides: Vec<u16> = (0..toggle.x)
+        .filter(|&x| buffer[(x, toggle.y)].symbol() == "│")
+        .collect();
+    assert_eq!(guides.len(), 3, "the panel border and two depth guides");
+    for &x in &guides {
+        assert_eq!(
+            overview_target_at(&state, x, toggle.y),
+            Some(OverviewTarget::Item(1, 2)),
+            "column {x} navigates"
+        );
+        state.handle_left_click(x, toggle.y);
+        assert_eq!((state.current_list_index, state.current_item_index), (1, 2));
+        assert!(matches!(
+            state.document.lists[1].items[2].kind,
+            ItemKind::Checkbox(TaskState::NotStarted)
+        ));
+    }
 }
 
 #[test]

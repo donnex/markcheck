@@ -170,7 +170,7 @@ impl AppState {
                 OverviewTarget::Item(list_index, item_index) => {
                     self.focus_item(list_index, item_index, CursorMove::Navigate)
                 }
-                // The marker prefix toggles in place, cursor unchanged.
+                // The state icon toggles in place, cursor unchanged.
                 OverviewTarget::Toggle(list_index, item_index) => {
                     self.toggle_item(list_index, item_index)
                 }
