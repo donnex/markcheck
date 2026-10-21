@@ -2351,6 +2351,60 @@ fn open_link_spawns_the_configured_browser() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn open_link_starts_the_browser_outside_markchecks_process_group() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let recorded = unique_path("linksession");
+    let browser = unique_path("fakebrowser-session");
+    // Records its own process group and session, then its parent's
+    // (markcheck's), from `/proc/<pid>/stat`.
+    std::fs::write(
+        &browser,
+        format!(
+            "#!/bin/sh\n\
+             ids() {{ sed 's/^.*) //' /proc/$1/stat | cut -d' ' -f3,4; }}\n\
+             printf '%s|%s' \"$(ids $$)\" \"$(ids $PPID)\" > {}\n",
+            recorded.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let md = unique_path("linksessionmd");
+    write_file(&md, "## Work\n\n- [ ] see [rb](https://example.com/rb)\n");
+
+    let mut cmd = markcheck_command();
+    cmd.arg("--no-nerd-font");
+    cmd.arg(&md);
+    cmd.env("BROWSER", browser.to_str().unwrap());
+    let mut session = Session::spawn(cmd);
+    session.key("o");
+    wait_for_file(&recorded, "the opener to record its ids", |s| {
+        s.contains('|')
+    });
+    session.key("q");
+    let (ok, _) = session.finish();
+    assert!(ok, "binary should exit successfully");
+
+    let got = std::fs::read_to_string(&recorded).unwrap();
+    let (own, parent) = got.split_once('|').expect("both sets of ids recorded");
+    let own: Vec<&str> = own.split_whitespace().collect();
+    let parent: Vec<&str> = parent.split_whitespace().collect();
+    assert_eq!(own.len(), 2, "browser's process group and session: {got:?}");
+    assert_eq!(
+        parent.len(),
+        2,
+        "markcheck's process group and session: {got:?}"
+    );
+    assert_ne!(
+        own[0], parent[0],
+        "browser has its own process group: {got:?}"
+    );
+    assert_ne!(own[1], parent[1], "browser has its own session: {got:?}");
+}
+
 #[test]
 fn open_link_tries_each_browser_in_a_colon_list_with_url_placeholder() {
     use std::os::unix::fs::PermissionsExt;

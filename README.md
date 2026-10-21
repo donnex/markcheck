@@ -347,6 +347,8 @@ Finer points:
   `Sent to <program>: <url>` once the opener starts, and if it exits with an
   error within a few seconds (no browser it can use, say) a sticky
   `Couldn't open link (<program> exited with code N)` replaces it. A
+  graphical browser markcheck starts runs apart from its terminal, so
+  closing the terminal leaves it open. A
   terminal browser (`w3m`, `lynx`, `links`, `links2`, `elinks`, `browsh` or
   `carbonyl`, recognised by name) gets the whole terminal instead, the way
   `e` hands it to your editor: markcheck steps aside until you quit the

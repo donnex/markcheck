@@ -14,6 +14,7 @@ mod model;
 mod parser;
 mod printable;
 mod scaffold;
+mod session;
 #[cfg(test)]
 mod temp_test_support;
 #[cfg(test)]
@@ -782,8 +783,8 @@ type RunInTerminal<'a> =
 /// Opens `url`, trying each resolved opener in turn until one starts. A
 /// terminal browser (`launch::is_terminal_browser`) gets the terminal through
 /// `run_here` until it exits; any other opener runs without suspending the
-/// TUI, with no shell and discarded output, reaped on a detached thread that
-/// sends a quick failed exit to `failures`. With no browser to send to at all
+/// TUI, in a session of its own, with no shell and discarded output, reaped
+/// on a detached thread that sends a quick failed exit to `failures`. With no browser to send to at all
 /// (a headless session), copies the link instead; over SSH, copies it as well
 /// (see `launch::link_route`).
 fn open_link(
@@ -849,13 +850,13 @@ fn spawn_opener(
             }
             continue;
         }
-        match Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
+            .stderr(Stdio::null());
+        match session::spawn_in_new_session(command) {
             Ok(mut child) => {
                 state.report_link_sent(program, url, on_this_host);
                 if let Some(warning) = warning {

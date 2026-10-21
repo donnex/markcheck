@@ -53,7 +53,7 @@ impl Children {
         if inner.abandoned {
             return Err(io::Error::other("git sync was abandoned"));
         }
-        let child = spawn_in_new_session(cmd)?;
+        let child = crate::session::spawn_in_new_session(cmd)?;
         inner.pids.push(child.id());
         Ok(child)
     }
@@ -195,27 +195,6 @@ fn run_with_optional_stdin(
         stdout: fs::read(&stdout_path).unwrap_or_default(),
         stderr: fs::read(&stderr_path).unwrap_or_default(),
     })
-}
-/// A new session, which is also a new process group, so a timeout can kill
-/// git's descendants too. With no controlling terminal, a prompt from git,
-/// ssh or gpg fails at once instead of writing over the TUI and then waiting
-/// for the timeout on input nobody can give.
-fn spawn_in_new_session(mut cmd: Command) -> io::Result<Child> {
-    use std::os::unix::process::CommandExt;
-    // SAFETY: runs in the forked child before exec, where only
-    // async-signal-safe calls are allowed; `setsid` is one and touches no
-    // memory shared with the parent.
-    unsafe {
-        cmd.pre_exec(|| {
-            // Fails only for a process group leader, which a freshly forked
-            // child never is, so this branch can't be reached in a test.
-            if libc::setsid() == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    cmd.spawn()
 }
 /// `SIGTERM` first: git's signal handlers remove the lock files it holds in
 /// the user's repository, which an uncatchable `SIGKILL` would leave behind.
