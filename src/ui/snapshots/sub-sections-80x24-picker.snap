@@ -6,23 +6,23 @@ expression: "screen(&mut state, width, 24)"
 ━━━━────────────────────────────────────────────────────────────────────────────
 ╭ Go to task ──────────────────────── 34 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Deploy               ▲
-│ ☐ refresh-cache  — Deploy                    │  │   ❯ refresh-cache          ▓
-│ ☐ build-tool sync --profile defau…  — Deploy │  │   ☐ build-tool sync --pro… ▓
-│ ☐ confirm the staging …  — Deploy › Pre-fli… │  │   ── Pre-flight checks ─── ▓
-│ ◐ run verify-output an…  — Deploy › Pre-fli… │  │   Run these on the stagin… ▓
-│ ☐ take a snapshot: sna…  — Deploy › Pre-fli… │  │   ☐ confirm the staging h… ▓
-│ ☐ confirm the snapshot…  — Deploy › Pre-fli… │  │   ◐ run verify-output and… ▓
-│ ☑ restart-service  — Deploy › Rollout        │  │     ── Data safety ─────── ▓
-│ ☐ check-status example-…  — Deploy › Rollout │  │   ☐ take a snapshot: snap… │
-│ ▪ Watch the dashboards  — Deploy › Rollout   │  │   ☐ confirm the snapshot … │
-│ ☐ confirm the error rat…  — Deploy › Rollout │  │   ── Rollout ───────────── │
-│ ☐ announce the rollout …  — Deploy › Rollout │  │   ☑ restart-service        │
-│ ☐ tail the logs for on…  — Deploy › Post-ro… │  │   ☐ check-status example-… │
-│ ☐ verify-output --final  — Deploy › Post-ro… │  │   ▪ Watch the dashboards   │
-│ ☐ verify service A res…  — Deploy › Extende… │  │   ☐ confirm the error rat… │
-│ ☐ verify service B res…  — Deploy › Extende… │  │   ☐ announce the rollout … │
-│ ☐ verify service C res…  — Deploy › Extende… │  │   ── Post-rollout ──────── │
-│ ☐ confirm queue depth …  — Deploy › Extende… │  │   ☐ tail the logs for one… │
-│ ☐ confirm cache hit ra…  — Deploy › Extende… │  │   ☐ verify-output --final  ▼
+│ ❯ ☐ refresh-cache  — Deploy                  │  │   ❯ refresh-cache          ▓
+│   ☐ build-tool sync --profile def…  — Deploy │  │   ☐ build-tool sync --pro… ▓
+│   ☐ confirm the staging…  — Deploy › Pre-fl… │  │   ── Pre-flight checks ─── ▓
+│   ◐ run verify-output a…  — Deploy › Pre-fl… │  │   Run these on the stagin… ▓
+│   ☐ take a snapshot: sn…  — Deploy › Pre-fl… │  │   ☐ confirm the staging h… ▓
+│   ☐ confirm the snapsho…  — Deploy › Pre-fl… │  │   ◐ run verify-output and… ▓
+│   ☑ restart-service  — Deploy › Rollout      │  │     ── Data safety ─────── ▓
+│   ☐ check-status exampl…  — Deploy › Rollout │  │   ☐ take a snapshot: snap… │
+│   ▪ Watch the dashboards  — Deploy › Rollout │  │   ☐ confirm the snapshot … │
+│   ☐ confirm the error r…  — Deploy › Rollout │  │   ── Rollout ───────────── │
+│   ☐ announce the rollou…  — Deploy › Rollout │  │   ☑ restart-service        │
+│   ☐ tail the logs for o…  — Deploy › Post-r… │  │   ☐ check-status example-… │
+│   ☐ verify-output --fin…  — Deploy › Post-r… │  │   ▪ Watch the dashboards   │
+│   ☐ verify service A re…  — Deploy › Extend… │  │   ☐ confirm the error rat… │
+│   ☐ verify service B re…  — Deploy › Extend… │  │   ☐ announce the rollout … │
+│   ☐ verify service C re…  — Deploy › Extend… │  │   ── Post-rollout ──────── │
+│   ☐ confirm queue depth…  — Deploy › Extend… │  │   ☐ tail the logs for one… │
+│   ☐ confirm cache hit r…  — Deploy › Extend… │  │   ☐ verify-output --final  ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

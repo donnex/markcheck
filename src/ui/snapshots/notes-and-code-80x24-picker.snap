@@ -6,23 +6,23 @@ expression: "screen(&mut state, width, 24)"
 ────────────────────────────────────────────────────────────────────────────────
 ╭ Go to task ──────────────────────── 33 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Reference            ▲
-│ ▪ A note with a command but no…  — Reference │  │   ▪ Read before proceedin… ▓
-│ ☐ A task with a single inline …  — Reference │  │   Non-task content and th… ▓
-│ ☐ Restart the primary applicat…  — Reference │  │   ▪ A note with a command… ▓
-│ ☐ Restart example-service  — Reference       │  │   ❯ A task with a single … ▓
-│ ☐ A task with a fenced block:  — Reference   │  │   ☐ Restart the primary a… ▓
-│ ☐ A task with an indented code…  — Reference │  │   ☐ Restart example-servi… ▓
-│ ☐ A task with a short one-line…  — Reference │  │   ☐ A task with a fenced … ▓
-│ ☐ A task with fenced lines too…  — Reference │  │   ☐ A task with an indent… ▓
-│ ☐ A task with a tab-indented h…  — Reference │  │   ☐ A task with a short o… │
-│ ☐ A task with two commands fir…  — Reference │  │   ☐ A task with fenced li… │
-│ ☐ A task with a command for ea…  — Reference │  │   ☐ A task with a tab-ind… │
-│ ☐ Fetch curl -fsSL https://exa…  — Reference │  │   ☐ A task with two comma… │
-│ ☐ A task with emphasis, mid-li…  — Reference │  │   ☐ A task with a command… │
-│ ☐ A task whose text runs on in…  — Reference │  │   ☐ Fetch curl -fsSL http… │
-│ ☐ A task in wide (two-column) …  — Reference │  │   ☐ A task with emphasis,… │
-│ ☐ Open the project runbook wit…  — Reference │  │   ☐ A task whose text run… │
-│ ☐ A task with a very long link…  — Reference │  │   ☐ A task in wide (two-c… │
-│ ☐ A task with two links — the …  — Reference │  │   ☐ Open the project runb… ▼
+│   ▪ A note with a command but …  — Reference │  │   ▪ Read before proceedin… ▓
+│ ❯ ☐ A task with a single inlin…  — Reference │  │   Non-task content and th… ▓
+│   ☐ Restart the primary applic…  — Reference │  │   ▪ A note with a command… ▓
+│   ☐ Restart example-service  — Reference     │  │   ❯ A task with a single … ▓
+│   ☐ A task with a fenced block:  — Reference │  │   ☐ Restart the primary a… ▓
+│   ☐ A task with an indented co…  — Reference │  │   ☐ Restart example-servi… ▓
+│   ☐ A task with a short one-li…  — Reference │  │   ☐ A task with a fenced … ▓
+│   ☐ A task with fenced lines t…  — Reference │  │   ☐ A task with an indent… ▓
+│   ☐ A task with a tab-indented…  — Reference │  │   ☐ A task with a short o… │
+│   ☐ A task with two commands f…  — Reference │  │   ☐ A task with fenced li… │
+│   ☐ A task with a command for …  — Reference │  │   ☐ A task with a tab-ind… │
+│   ☐ Fetch curl -fsSL https://e…  — Reference │  │   ☐ A task with two comma… │
+│   ☐ A task with emphasis, mid-…  — Reference │  │   ☐ A task with a command… │
+│   ☐ A task whose text runs on …  — Reference │  │   ☐ Fetch curl -fsSL http… │
+│   ☐ A task in wide (two-column…  — Reference │  │   ☐ A task with emphasis,… │
+│   ☐ Open the project runbook w…  — Reference │  │   ☐ A task whose text run… │
+│   ☐ A task with a very long li…  — Reference │  │   ☐ A task in wide (two-c… │
+│   ☐ A task with two links — th…  — Reference │  │   ☐ Open the project runb… ▼
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

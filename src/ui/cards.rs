@@ -83,13 +83,16 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let palette = state.palette;
     let matches = state.picker_matches();
     let multi_list = state.document.lists.len() > 1;
-    // A row's text width inside the borders and padding, less the marker.
-    let text_width = area.width.saturating_sub(4 + 2) as usize;
+    // A row's text width inside the borders and padding, less the
+    // current-task gutter and the marker.
+    let text_width = area.width.saturating_sub(4 + 2 + 2) as usize;
+    let cursor = (state.current_list_index, state.current_item_index);
 
     let rows: Vec<ListItem> = matches
         .iter()
         .map(|&(li, ii)| {
             let item = &state.document.lists[li].items[ii];
+            let is_current = (li, ii) == cursor;
             let (marker, color) = state_marker(item.kind, None, icons, palette);
             let marker_style = match color {
                 Some(color) => Style::default().fg(color),
@@ -119,9 +122,21 @@ fn render_list_picker(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 text_width,
                 text_width / 2,
             );
+            let (gutter, label_style) = if is_current {
+                (
+                    Span::styled(
+                        format!("{} ", icons.current),
+                        Style::default().fg(palette.current),
+                    ),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )
+            } else {
+                (Span::raw("  "), Style::default())
+            };
             let mut spans = vec![
+                gutter,
                 Span::styled(format!("{marker} "), marker_style),
-                Span::raw(super::truncate(&label, label_budget)),
+                Span::styled(super::truncate(&label, label_budget), label_style),
             ];
             if !suffix.is_empty() {
                 spans.push(Span::styled(

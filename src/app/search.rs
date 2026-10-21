@@ -192,13 +192,25 @@ impl AppState {
         self.focus_and_report(target, Some(msg));
     }
 
-    /// Open the "go to task" overlay (`T`): clear the filter and reset the
-    /// selection.
+    /// Open the "go to task" overlay (`T`): clear the filter and highlight
+    /// the task the cursor is on, so the list opens where the reader is.
     pub(super) fn open_list_picker(&mut self) {
         self.picker.query.clear();
-        self.picker.selection = 0;
+        self.picker_select_from_cursor();
         self.layout.picker_rows_area = None;
         self.overlay = Some(Overlay::ListPicker);
+    }
+
+    /// Highlight the first picker entry at or after the cursor, wrapping to
+    /// the first entry — the cursor's own row when the filter is empty, and
+    /// otherwise the next match onward, as `/` lands.
+    pub(super) fn picker_select_from_cursor(&mut self) {
+        let cursor = (self.current_list_index, self.current_item_index);
+        self.picker.selection = self
+            .picker_matches()
+            .iter()
+            .position(|&entry| entry >= cursor)
+            .unwrap_or(0);
     }
 
     /// The picker's current entries: every task when the filter is empty (the
@@ -269,11 +281,17 @@ impl AppState {
     }
 
     /// Jump to the highlighted task (`Enter`), or just close the overlay when
-    /// the filter matched nothing.
+    /// the filter matched nothing. Committing the task the cursor is already
+    /// on leaves the card as it was and says so.
     pub(super) fn picker_commit(&mut self) {
         self.overlay = None;
-        if let Some(&(list_index, item_index)) = self.picker_matches().get(self.picker.selection) {
-            self.focus_item(list_index, item_index, CursorMove::Navigate);
+        let Some(&target) = self.picker_matches().get(self.picker.selection) else {
+            return;
+        };
+        if target == (self.current_list_index, self.current_item_index) {
+            self.set_status("Already on this task".to_string());
+        } else {
+            self.focus_item(target.0, target.1, CursorMove::Navigate);
         }
     }
 

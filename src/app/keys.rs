@@ -144,7 +144,7 @@ impl AppState {
             }
             Some(Overlay::ListPicker) => {
                 self.picker.query.push_str(&line);
-                self.picker.selection = 0;
+                self.picker_select_from_cursor();
             }
             _ => self.set_error("Paste ignored — markcheck takes single-key commands".to_string()),
         }
@@ -524,15 +524,15 @@ impl AppState {
             KeyCode::Char('u') if ctrl => self.picker_move(-self.picker_half_page()),
             KeyCode::Char('w') if ctrl => {
                 delete_last_word(&mut self.picker.query);
-                self.picker.selection = 0;
+                self.picker_select_from_cursor();
             }
             KeyCode::Backspace => {
                 self.picker.query.pop();
-                self.picker.selection = 0;
+                self.picker_select_from_cursor();
             }
             KeyCode::Char(c) if !ctrl => {
                 self.picker.query.push(c);
-                self.picker.selection = 0;
+                self.picker_select_from_cursor();
             }
             _ => {}
         }

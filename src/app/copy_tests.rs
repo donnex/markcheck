@@ -100,7 +100,14 @@ fn auto_copy_fires_on_every_navigation_motion() {
             "T + Enter",
             View::Checklist,
             (1, 1),
-            &[KeyCode::Char('T'), KeyCode::Enter],
+            &[
+                KeyCode::Char('T'),
+                KeyCode::Up,
+                KeyCode::Up,
+                KeyCode::Up,
+                KeyCode::Up,
+                KeyCode::Enter,
+            ],
             (0, 0),
         ),
         (

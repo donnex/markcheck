@@ -676,3 +676,51 @@ fn ctrl_w_deletes_a_word_in_the_picker_and_ctrl_u_still_pages() {
         "Ctrl-U moves, it doesn't clear"
     );
 }
+
+#[test]
+fn t_opens_on_the_current_task_and_enter_stays_put() {
+    let items: Vec<Item> = (1..=12)
+        .map(|n| text_item(n, &format!("item {n}")))
+        .collect();
+    let mut state = AppState::new(document_with_lists(vec![List {
+        title: "L".to_string(),
+        banner: None,
+        items,
+    }]));
+    state.focus_item(0, 9, CursorMove::Quiet);
+    state.card_scroll = 2;
+    state.handle_key(KeyCode::Char('T'));
+    assert_eq!(state.picker.selection, 9, "opens on the cursor's row");
+    state.handle_key(KeyCode::Enter);
+    assert_eq!(shown(&state), (View::Checklist, None));
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 9));
+    assert_eq!(state.card_scroll, 2, "the card is left as it was");
+    assert_eq!(
+        state.status_message.as_deref(),
+        Some("Already on this task")
+    );
+}
+
+#[test]
+fn picker_filter_edits_select_the_next_match_from_the_cursor() {
+    let mut state = AppState::new(two_list_document());
+    state.focus_item(1, 0, CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('T'));
+    assert_eq!(state.picker.selection, 3);
+    type_str(&mut state, "task");
+    assert_eq!(
+        state.picker.selection, 3,
+        "first match at or after the cursor"
+    );
+    state.handle_key(KeyCode::Backspace);
+    assert_eq!(state.picker.selection, 3);
+    type_str(&mut state, "k 2");
+    assert_eq!(state.picker_matches(), vec![(0, 1)]);
+    assert_eq!(state.picker.selection, 0, "wraps to the first match");
+    state.handle_paste("x");
+    assert_eq!(state.picker.selection, 0);
+    state.handle_key_with_mods(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    state.handle_key_with_mods(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    assert_eq!(state.picker.query, "");
+    assert_eq!(state.picker.selection, 3, "back on the cursor's row");
+}

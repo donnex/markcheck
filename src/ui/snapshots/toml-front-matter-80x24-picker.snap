@@ -6,9 +6,9 @@ expression: "screen(&mut state, width, 24)"
 ────────────────────────────────────────────────────────────────────────────────
 ╭ Go to task ───────────────────────── 3 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ ❯ Check the certificate e… │
-│ ☐ Check the certificate expiry dates         │  │ ☐ Prune the old build art… │
-│ ☐ Prune the old build artifacts: prune-arti… │  │ ☐ Update the on-call rota  │
-│ ☐ Update the on-call rota                    │  │                            │
+│ ❯ ☐ Check the certificate expiry dates       │  │ ☐ Prune the old build art… │
+│   ☐ Prune the old build artifacts: prune-ar… │  │ ☐ Update the on-call rota  │
+│   ☐ Update the on-call rota                  │  │                            │
 │                                              │  │                            │
 │                                              │  │                            │
 │                                              │  │                            │

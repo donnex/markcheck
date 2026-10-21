@@ -1670,6 +1670,28 @@ fn list_picker_overlay_lists_tasks_with_count_and_filters() {
     assert!(text.contains("match"), "shows match-count feedback");
 }
 
+#[test]
+fn list_picker_marks_the_current_task_row() {
+    let mut state = sample_state();
+    state.focus_item(1, 0, crate::app::CursorMove::Quiet);
+    state.handle_key(KeyCode::Char('T'));
+    state.handle_key(KeyCode::Up);
+    let rows = buffer_rows(&mut state, 100, 30);
+    let current = picker_row_of(&state, &rows, "gamma");
+    let other = picker_row_of(&state, &rows, "alpha");
+    let marker = state.icons.current;
+    assert!(
+        rows[current as usize].contains(marker),
+        "{:?}",
+        rows[current as usize]
+    );
+    assert!(
+        !rows[other as usize].contains(marker),
+        "{:?}",
+        rows[other as usize]
+    );
+}
+
 fn picker_row_of(state: &AppState, rows: &[String], label: &str) -> u16 {
     let area = state.layout.picker_rows_area.expect("picker rows recorded");
     (area.y..area.y + area.height)
@@ -1731,10 +1753,11 @@ fn picker_click_off_the_rows_or_with_no_matches_is_ignored() {
     state.handle_key(KeyCode::Char('T'));
     let _ = buffer_rows(&mut state, 100, 30);
     let area = state.layout.picker_rows_area.unwrap();
+    let selection = state.picker.selection;
     state.handle_left_click(area.x, area.y.saturating_sub(1));
     state.handle_left_click(area.x, area.y + 3); // past the last entry
     assert_eq!(state.overlay, Some(Overlay::ListPicker));
-    assert_eq!(state.picker.selection, 0);
+    assert_eq!(state.picker.selection, selection);
 
     state.handle_key(KeyCode::Char('z'));
     let _ = buffer_rows(&mut state, 100, 30);

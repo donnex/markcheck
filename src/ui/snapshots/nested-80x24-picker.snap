@@ -1,24 +1,24 @@
 ---
 source: src/ui/golden_tests.rs
-expression: "screen(&mut state, 80, 24)"
+expression: "screen(&mut state, width, 24)"
 ---
  ≡ Nested Checklist │ nested.md                                           ☑ 0/12
 ━━━━━━──────────────────────────────────────────────────────────────────────────
 ╭ Go to task ──────────────────────── 13 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Rebuild              │
-│ ☐ Rebuild all packages  — Rebuild            │  │   Sub-lists under a task … │
-│ ☐ Fetch sources fetch-sources --…  — Rebuild │  │   ❯ Rebuild all packages   │
-│ ◐ Compile  — Rebuild                         │  │   │ ☐ Fetch sources fetch… │
-│ ☐ Compile the core  — Rebuild                │  │   │ ◐ Compile              │
-│ ☐ Compile the plugins  — Rebuild             │  │   │ │ ☐ Compile the core   │
-│ ☐ Run the test suite  — Rebuild              │  │   │ │ ☐ Compile the plugi… │
-│ ▪ Preparation notes:  — Rebuild              │  │   │ ☐ Run the test suite   │
-│ ☐ Free up disk space  — Rebuild              │  │   ▪ Preparation notes:     │
-│ ☐ Notify the team on example.com  — Rebuild  │  │   │ ☐ Free up disk space   │
-│ ☐ Tag the release  — Release                 │  │   │ ☐ Notify the team on … │
-│ ☐ Publish  — Release                         │  │ • [2] Release              │
-│ ☐ Upload the artifact  — Release             │  │   ☐ Tag the release        │
-│ ☐ Announce the release  — Release            │  │   ☐ Publish                │
+│ ❯ ☐ Rebuild all packages  — Rebuild          │  │   Sub-lists under a task … │
+│   ☐ Fetch sources fetch-sources …  — Rebuild │  │   ❯ Rebuild all packages   │
+│   ◐ Compile  — Rebuild                       │  │   │ ☐ Fetch sources fetch… │
+│   ☐ Compile the core  — Rebuild              │  │   │ ◐ Compile              │
+│   ☐ Compile the plugins  — Rebuild           │  │   │ │ ☐ Compile the core   │
+│   ☐ Run the test suite  — Rebuild            │  │   │ │ ☐ Compile the plugi… │
+│   ▪ Preparation notes:  — Rebuild            │  │   │ ☐ Run the test suite   │
+│   ☐ Free up disk space  — Rebuild            │  │   ▪ Preparation notes:     │
+│   ☐ Notify the team on example.c…  — Rebuild │  │   │ ☐ Free up disk space   │
+│   ☐ Tag the release  — Release               │  │   │ ☐ Notify the team on … │
+│   ☐ Publish  — Release                       │  │ • [2] Release              │
+│   ☐ Upload the artifact  — Release           │  │   ☐ Tag the release        │
+│   ☐ Announce the release  — Release          │  │   ☐ Publish                │
 │                                              │  │   │ ☐ Upload the artifact  │
 │                                              │  │   │ ☐ Announce the release │
 │                                              │  │                            │

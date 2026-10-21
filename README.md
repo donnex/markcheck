@@ -1001,9 +1001,13 @@ step by the command it runs, not just its description.
 and note cards alike) with its state marker and a dim `— {list} › {sub-section}`
 suffix (the list name, when there's more than one, then the item's `### H3`+
 sub-section path), for when you want to see the whole checklist at once instead
-of the single-card carousel. Type to filter (same smart-case matching, with a
+of the single-card carousel. It opens on the task you are on, highlighted
+and marked with `❯` in a column of its own, so the mark stays visible after
+the highlight moves; `Enter` there leaves you where you were
+(`Already on this task`). Type to filter (same smart-case matching, with a
 live `N items` / match count — and you can filter by a sub-section name to
-find the tasks under it), move the highlight with the arrows or
+find the tasks under it; each edit of the filter highlights the first match
+at or after your task, as `/` does), move the highlight with the arrows or
 `Ctrl-N`/`Ctrl-P` (and `Ctrl-D`/`Ctrl-U` for half-page jumps; letters go to
 the filter, so `j`/`k` type rather than move; the mouse wheel moves it too;
 `Ctrl-W` deletes the last word of the filter),
