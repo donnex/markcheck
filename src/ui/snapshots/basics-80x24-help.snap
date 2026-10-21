@@ -17,12 +17,12 @@ expression: "screen(&mut state, width, 24)"
 │  space / Enter      toggle the task done, then next open task                │
 │  s                  mark the task started / in progress                      │
 │  -                  skip the task (doesn't apply this run), or unskip        │
+│  - on a parent      skip / reopen all its sub-tasks (asks)                   │
 │  critical step      space or - twice, pausing between                        │
 │  u / Ctrl-R         undo / redo the last change                              │
 │  Ctrl-O             go back after o followed a #section link                 │
 │  Tab                jump to the next unfinished task                         │
 │  Shift-H / Shift-L  previous / next unfinished list                          │
-│  /                  search tasks by text, matches highlighted                │
-│  n / N              next / previous search match                             ▼
+│  /                  search tasks by text, matches highlighted                ▼
 ╰──────────────────────────────────────────────────────────────────────────────╯
 j/k ↑↓: scroll  ·  any other key: close help

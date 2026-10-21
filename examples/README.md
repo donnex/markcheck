@@ -35,6 +35,9 @@ markcheck examples/basics.md
   parent" treatment: toggle its two sub-tasks and its note marker
   goes blue → yellow (one under way) → green (all done), on the card and in the
   overview, while staying a note.
+  The `If publishing to the mirror as well:` note under `## Release` is a
+  conditional branch: `-` on it asks to skip both its sub-tasks in one step,
+  and `-` again, once they are skipped, asks to reopen them.
 - **`notes-and-code.md`** — banners (one long enough to wrap onto several
   rows above the card, and to end in `…` in the overview), a bold-only first
   bullet carrying a command that stays a copyable note card instead of a

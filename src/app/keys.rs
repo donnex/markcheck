@@ -320,6 +320,7 @@ impl AppState {
                 Overlay::ConfirmReset | Overlay::ConfirmQuitReset => {
                     self.handle_confirm_key(overlay, code)
                 }
+                Overlay::ConfirmSkip => self.handle_confirm_skip_key(code),
                 Overlay::Help => self.handle_help_key(code, modifiers),
                 Overlay::Search => self.handle_search_key(code, modifiers),
                 // Letters are filter input, so the selection moves on arrows /
@@ -386,7 +387,9 @@ impl AppState {
             (Some(Overlay::Help), _) => &['e', 'y', 'd', 'u'],
             (Some(Overlay::ListPicker), _) => &['p', 'n', 'd', 'u', 'w'],
             (Some(Overlay::Search), _) => &['u', 'w'],
-            (Some(Overlay::ConfirmReset | Overlay::ConfirmQuitReset), _) => &[],
+            (Some(Overlay::ConfirmReset | Overlay::ConfirmQuitReset | Overlay::ConfirmSkip), _) => {
+                &[]
+            }
         };
         bound.contains(&c)
     }

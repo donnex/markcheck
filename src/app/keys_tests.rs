@@ -576,6 +576,19 @@ fn every_overlay_key_has_a_help_row() {
         state.overlay = Some(Overlay::ConfirmQuitReset);
         state
     });
+    let skip = ["Skip dialog (- on a parent)"];
+    assert_mode_documented("skip dialog", &skip, false, || {
+        let mut child = checkbox(2, "child", false);
+        child.depth = 1;
+        let mut state = AppState::new(document_with_lists(vec![List {
+            title: "S".to_string(),
+            banner: None,
+            items: vec![display_only(1, "parent"), child],
+        }]));
+        state.current_item_index = 0;
+        state.overlay = Some(Overlay::ConfirmSkip);
+        state
+    });
 }
 
 #[test]

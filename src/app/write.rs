@@ -163,13 +163,28 @@ impl AppState {
 
     /// `-` sets a task aside as skipped (`[-]`, not applicable this run), or
     /// back to not started. Like completing it, skipping moves on, since
-    /// nothing is left to decide there (#54).
+    /// nothing is left to decide there (#54). On a parent with sub-tasks it
+    /// asks to skip or reopen the whole branch instead (#259).
     pub fn skip_current(&mut self) {
         let Some(current) = self.current_item() else {
             return;
         };
-        let ItemKind::Checkbox(state) = current.kind else {
-            self.set_error("Nothing to skip: this card is a note, not a task".to_string());
+        let kind = current.kind;
+        if let Some(plan) = self.branch_skip() {
+            self.request_branch_skip(&plan);
+            return;
+        }
+        let ItemKind::Checkbox(state) = kind else {
+            let list = self.current_list();
+            let has_tasks = list
+                .descendants(self.current_item_index)
+                .into_iter()
+                .any(|i| matches!(list.items[i].kind, ItemKind::Checkbox(_)));
+            self.set_error(if has_tasks {
+                "Nothing to skip: every sub-task of this note is done".to_string()
+            } else {
+                "Nothing to skip: this card is a note, not a task".to_string()
+            });
             return;
         };
         let new_state = state.toggle(TaskState::Skipped);

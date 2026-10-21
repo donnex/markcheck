@@ -2,9 +2,9 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Nested Checklist │ nested.md                                           ☑ 0/12
-━━━━━━──────────────────────────────────────────────────────────────────────────
-╭ Go to task ──────────────────────── 13 items ╮  ┌ Overview ──────────────────┐
+ ≡ Nested Checklist │ nested.md                                           ☑ 0/14
+━━━━━───────────────────────────────────────────────────────────────────────────
+╭ Go to task ──────────────────────── 16 items ╮  ┌ Overview ──────────────────┐
 │ Filter:                                      │  │ • [1] Rebuild              │
 │   ☐ Rebuild all packages  — Rebuild          │  │   Sub-lists under a task … │
 │   ☐ Fetch sources fetch-sources …  — Rebuild │  │   ☐ Rebuild all packages   │
@@ -19,10 +19,10 @@ expression: "screen(&mut state, width, 24)"
 │   ☐ Publish  — Release                       │  │ • [2] Release              │
 │   ☐ Upload the artifact  — Release           │  │   ☐ Tag the release        │
 │   ☐ Announce the release  — Release          │  │   ☐ Publish                │
-│                                              │  │   │ ☐ Upload the artifact  │
-│                                              │  │   │ ☐ Announce the release │
-│                                              │  │                            │
-│                                              │  │                            │
-│                                              │  │                            │
+│   ▪ If publishing to the mirror …  — Release │  │   │ ☐ Upload the artifact  │
+│   ☐ Sync the mirror  — Release               │  │   │ ☐ Announce the release │
+│   ☐ Verify the mirror checksum  — Release    │  │   ▪ If publishing to the … │
+│                                              │  │   │ ☐ Sync the mirror      │
+│                                              │  │   │ ☐ Verify the mirror c… │
 ╰──────────────────────────────────────────────╯  └────────────────────────────┘
 type: filter  ↑↓ Ctrl-N/P: move  Ctrl-D/U: page  enter: go  esc: close

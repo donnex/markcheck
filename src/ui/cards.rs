@@ -14,6 +14,7 @@ use super::{
     char_width, display_width, dot_glyph, expand_tabs, fg, marker_color, split_at_width,
     state_marker,
 };
+use crate::app::skip_branch::sub_task_count;
 use crate::model::{
     AppState, BodySpan, CodeBlock, CodeKind, IconSet, Item, ItemKind, List, Overlay, Palette,
     PreambleBlock, PreambleKind, Progress, ResetScope, SubHeading, TaskState, View,
@@ -66,6 +67,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     match state.overlay {
         Some(Overlay::ConfirmReset) => render_confirm_reset(frame, area, state),
         Some(Overlay::ConfirmQuitReset) => render_confirm_quit_reset(frame, area, state),
+        Some(Overlay::ConfirmSkip) => render_confirm_skip(frame, area, state),
         Some(Overlay::Help) => render_help(frame, area, state),
         Some(Overlay::ListPicker) => render_list_picker(frame, area, state),
         // Search keeps the view visible; the query shows in the status bar
@@ -258,6 +260,7 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("space / Enter", "toggle the task done, then next open task"),
             ("s", "mark the task started / in progress"),
             ("-", "skip the task (doesn't apply this run), or unskip"),
+            ("- on a parent", "skip / reopen all its sub-tasks (asks)"),
             ("critical step", "space or - twice, pausing between"),
             ("u / Ctrl-R", "undo / redo the last change"),
             ("Ctrl-O", "go back after o followed a #section link"),
@@ -359,6 +362,13 @@ pub(crate) const HELP_SECTIONS: &[HelpSection] = &[
             ("s", "after R: reset only the current sub-list"),
             ("n / q", "after q: quit without resetting"),
             ("Esc", "cancel (so does any other key)"),
+        ],
+    ),
+    (
+        "Skip dialog (- on a parent)",
+        &[
+            ("y", "skip every open sub-task, or reopen the skipped"),
+            ("n / Esc", "cancel (so does any other key)"),
         ],
     ),
 ];
@@ -2283,6 +2293,62 @@ fn render_confirm_reset(frame: &mut Frame, area: Rect, state: &AppState) {
         lines,
         keys,
     );
+}
+
+/// The `-` branch dialog (#259): skip every open sub-task of the current
+/// card, or reopen every skipped one.
+fn render_confirm_skip(frame: &mut Frame, area: Rect, state: &AppState) {
+    let Some(plan) = state.branch_skip() else {
+        return;
+    };
+    let label = super::truncate(&state.current_list().items[plan.root].label(), 40);
+    let count = sub_task_count(plan.sub_tasks);
+    let (title, question, effect, key) = if plan.reopen {
+        (
+            "Confirm Reopen",
+            format!("Reopen \"{label}\" and its {count}?"),
+            "This marks every skipped task here as not started.",
+            "Press  y  to reopen all",
+        )
+    } else {
+        (
+            "Confirm Skip",
+            format!("Skip \"{label}\" and its {count}?"),
+            "This marks every open task here as skipped.",
+            "Press  y  to skip all",
+        )
+    };
+    let file_name = state
+        .document
+        .file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "the file".to_string());
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            question,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(effect),
+        Line::from(format!("Done tasks stay done; rewrites {file_name}.")),
+    ];
+    match plan.held.len() {
+        0 => {}
+        1 => lines.push(Line::from(
+            "1 critical step stays open: skip it on its own.",
+        )),
+        n => lines.push(Line::from(format!(
+            "{n} critical steps stay open: skip each on its own."
+        ))),
+    }
+    let keys = vec![
+        Line::from(""),
+        Line::from(key),
+        Line::from("Press  n  or any other key to cancel"),
+    ];
+    modal_card(frame, area, title, state.palette.started, lines, keys);
 }
 
 fn render_confirm_quit_reset(frame: &mut Frame, area: Rect, state: &AppState) {

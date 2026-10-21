@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- = Nested Checklist │ nested.md                                         [x] 0/12
-======--------------------------------------------------------------------------
+ = Nested Checklist │ nested.md                                         [x] 0/14
+=====---------------------------------------------------------------------------
                                                   ┌ Overview ──────────────────┐
                                                   │ # [1] Rebuild              │
                                                   │   Sub-lists under a task … │
@@ -21,8 +21,8 @@ expression: "screen(&mut state, width, height)"
 ║                                              ║  │   [ ] Publish              │
 ╚ ..@...... ═══════════════════════════════════╝  │   │ [ ] Upload the artifa… │
                                                   │   │ [ ] Announce the rele… │
-                                                  │                            │
-                                                  │                            │
-                                                  │                            │
+                                                  │    *  If publishing to th… │
+                                                  │   │ [ ] Sync the mirror    │
+                                                  │   │ [ ] Verify the mirror… │
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

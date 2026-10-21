@@ -1384,7 +1384,7 @@ fn help_overlay_lists_keybindings() {
     // The ? overlay shows the cheatsheet.
     let mut state = sample_state();
     state.overlay = Some(Overlay::Help);
-    let text = buffer_text(&mut state, 100, 30);
+    let text = buffer_text(&mut state, 100, 32);
     assert!(text.contains("Keybindings"), "help title");
     assert!(text.contains("toggle the task done"), "a key is listed");
     assert!(text.contains("gg / G"), "gg spelled without a space");
@@ -1428,7 +1428,7 @@ fn help_overlay_lists_keybindings() {
 fn help_overlay_has_a_section_per_mode_and_names_every_scroll_key() {
     let mut state = sample_state();
     state.overlay = Some(Overlay::Help);
-    let rows = buffer_rows(&mut state, 120, 90);
+    let rows = buffer_rows(&mut state, 120, 100);
     let text = rows.concat();
     for (title, _) in HELP_SECTIONS.iter().filter(|(t, _)| !t.is_empty()) {
         assert!(text.contains(title), "section {title:?} shown");
@@ -4074,4 +4074,81 @@ fn the_picker_marks_its_filter_matches() {
     assert_eq!(underlined, "disk", "on the highlighted row");
     let reversed = marked_text(&mut state, 58, 20, 0..58, Modifier::REVERSED);
     assert!(reversed.ends_with("|disk"), "{reversed:?}");
+}
+
+fn branch_state(child_state: TaskState) -> AppState {
+    let mut children: Vec<Item> = (2..5)
+        .map(|line| {
+            let mut child = checkbox(line, &format!("step {line}"), false);
+            child.kind = ItemKind::Checkbox(child_state);
+            child.depth = 1;
+            child
+        })
+        .collect();
+    children[1].kind = ItemKind::Checkbox(TaskState::Done);
+    let mut items = vec![display_only(1, "If using PostgreSQL")];
+    items.extend(children);
+    items.push(checkbox(5, "after", false));
+    let mut state = state_with(vec![List {
+        title: "S".to_string(),
+        banner: None,
+        items,
+    }]);
+    state.current_item_index = 0;
+    state.overlay = Some(Overlay::ConfirmSkip);
+    state
+}
+
+#[test]
+fn skip_dialog_names_the_branch_and_its_open_sub_tasks() {
+    let mut state = branch_state(TaskState::NotStarted);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(text.contains("Confirm Skip"), "{text}");
+    assert!(
+        text.contains("Skip \"If using PostgreSQL\" and its 2 sub-tasks?"),
+        "{text}"
+    );
+    assert!(text.contains("Done tasks stay done"), "{text}");
+    assert!(text.contains("Press  y  to skip all"), "{text}");
+    assert!(text.contains("y:skip all  n:cancel"), "legend: {text}");
+    assert!(!text.contains("critical step"), "{text}");
+}
+
+#[test]
+fn skip_dialog_offers_a_reopen_once_the_branch_is_skipped() {
+    let mut state = branch_state(TaskState::Skipped);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(text.contains("Confirm Reopen"), "{text}");
+    assert!(
+        text.contains("Reopen \"If using PostgreSQL\" and its 2 sub-tasks?"),
+        "{text}"
+    );
+    assert!(text.contains("y:reopen all  n:cancel"), "legend: {text}");
+}
+
+#[test]
+fn skip_dialog_says_which_critical_steps_stay_open() {
+    let mut state = branch_state(TaskState::NotStarted);
+    state.document.critical.insert(2);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        text.contains("1 critical step stays open: skip it on its own."),
+        "{text}"
+    );
+    state.document.critical.insert(4);
+    state.document.critical.insert(1);
+    state.document.lists[0].items[2].kind = ItemKind::Checkbox(TaskState::NotStarted);
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(
+        text.contains("2 critical steps stay open: skip each on its own."),
+        "{text}"
+    );
+}
+
+#[test]
+fn skip_dialog_draws_nothing_without_a_branch() {
+    let mut state = branch_state(TaskState::NotStarted);
+    state.current_item_index = 4;
+    let text = buffer_text(&mut state, 100, 30);
+    assert!(!text.contains("Confirm Skip"), "{text}");
 }

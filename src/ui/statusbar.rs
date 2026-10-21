@@ -15,6 +15,8 @@ const KEYBIND_LEGEND: &str = "hjkl:nav  space:toggle  /:search  y:copy  ?:help  
 const LIST_COMPLETE_LEGEND: &str = "l/enter:next list  h:review  ?:help  q:quit";
 const ALL_COMPLETE_LEGEND: &str = "h:review  R:reset  ?:help  q:quit";
 const CONFIRM_QUIT_LEGEND: &str = "y:reset & quit  n/q:quit  esc:cancel";
+const CONFIRM_SKIP_LEGEND: &str = "y:skip all  n:cancel";
+const CONFIRM_REOPEN_LEGEND: &str = "y:reopen all  n:cancel";
 const HELP_LEGEND: &str = "j/k ↑↓: scroll  ·  any other key: close help";
 const PENDING_G_PROMPT: &str = "g… press g for the first task · any other key cancels";
 const PICKER_LEGEND: &str =
@@ -79,6 +81,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let legend = match (state.overlay, state.view) {
         (Some(Overlay::ConfirmReset), _) => &confirm_legend(state),
         (Some(Overlay::ConfirmQuitReset), _) => CONFIRM_QUIT_LEGEND,
+        (Some(Overlay::ConfirmSkip), _) if state.branch_skip().is_some_and(|p| p.reopen) => {
+            CONFIRM_REOPEN_LEGEND
+        }
+        (Some(Overlay::ConfirmSkip), _) => CONFIRM_SKIP_LEGEND,
         (Some(Overlay::Help), _) => HELP_LEGEND,
         (Some(Overlay::ListPicker), _) => PICKER_LEGEND,
         (Some(Overlay::Search) | None, View::ListComplete) => LIST_COMPLETE_LEGEND,

@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Nested Checklist │ nested.md                                                                                   ☑ 0/12
-━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ≡ Nested Checklist │ nested.md                                                                                   ☑ 0/14
+━━━━━━━━────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ • [1] Rebuild              │
                                                                                           │   Sub-lists under a task … │
@@ -21,9 +21,9 @@ expression: "screen(&mut state, width, height)"
                                         • Rebuild                                         │   ☐ Publish                │
                                                                                           │   │ ☐ Upload the artifact  │
             ┏ ☐ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4/9 ┓               │   │ ☐ Announce the release │
-┌ ◐ ────────┃                                                             ┃────────────┐  │                            │
-│           ┃                                                             ┃            │  │                            │
-│    Compile┃              Rebuild all packages › Compile ›               ┃ompile the  │  │                            │
+┌ ◐ ────────┃                                                             ┃────────────┐  │   ▪ If publishing to the … │
+│           ┃                                                             ┃            │  │   │ ☐ Sync the mirror      │
+│    Compile┃              Rebuild all packages › Compile ›               ┃ompile the  │  │   │ ☐ Verify the mirror c… │
 │           ┃                      Compile the core                       ┃ plugins    │  │                            │
 │           ┃                                                             ┃            │  │                            │
 └───────────┃                                                             ┃────────────┘  │                            │

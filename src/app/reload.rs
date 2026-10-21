@@ -317,6 +317,10 @@ impl AppState {
                 self.overlay = None;
                 Some("quit")
             }
+            Some(Overlay::ConfirmSkip) => {
+                self.overlay = None;
+                Some("skip")
+            }
             Some(Overlay::Help) | None => None,
         }
     }

@@ -32,6 +32,7 @@ file is the state** — it's still just a text file when you close the app.
   - [Git sync](#git-sync)
   - [Search](#search)
   - [Clipboard](#clipboard)
+  - [Skipping a whole sub-list](#skipping-a-whole-sub-list)
   - [Undo and redo](#undo-and-redo)
   - [Editor and reset](#editor-and-reset)
 - [Architecture](#architecture)
@@ -308,7 +309,7 @@ icons; [Icons](#icons) lists the ASCII ones the Linux console gets):
 | `## Heading` | A **list**: its title (the **list header**) appears above the cards and in the overview, and is jumpable with `1`–`9` (and in a dedicated list-tab row on narrow terminals). |
 | `### Heading` (and deeper, `####`–`######`) | A **sub-section** labeling a group of items *within* the current list: a `── Heading` divider above the group in the overview, and a dim `Outer › Inner` breadcrumb above the card. Deeper levels nest. Not a card; the heading itself isn't a cursor target, though `}` / `{` jump between sub-sections. |
 | `- [ ]` / `- [/]` / `- [x]` | A **task card** — not started / started / done. An uppercase `[X]` counts as done too; it keeps its casing until toggled, and is written back as `[x]`. |
-| `- [-]` | A **skipped** task — decided not to do it this run (it doesn't apply). Shown dimmed and struck through with a `⊘` marker. It counts as resolved, so a list of done and skipped tasks is complete, but it is left out of the done count, which the title bar reports apart (`☑ 7/9 (+2 skipped)`). The same marker as Obsidian's task plugins use for cancelled. |
+| `- [-]` | A **skipped** task — decided not to do it this run (it doesn't apply). Shown dimmed and struck through with a `⊘` marker. It counts as resolved, so a list of done and skipped tasks is complete, but it is left out of the done count, which the title bar reports apart (`☑ 7/9 (+2 skipped)`). The same marker as Obsidian's task plugins use for cancelled. `-` on a parent skips its whole sub-list at once (see [Skipping a whole sub-list](#skipping-a-whole-sub-list)). |
 | `1. [ ]` / `1) [/]` / `1. [x]` | An **ordered (numbered) list** has the same four task states, cards and notes as a bulleted one, and each item keeps its **step number** exactly as written (`3.`, `7)`, gaps and all): in front of the card title, or of the card body when there's no title, on the overview row, in the `T` picker (where typing `3.` finds step 3), and in the side cards. The card's ` n/m ` position still counts every card in the list, notes and sub-items included, so it can differ from the step number. |
 | `- **Bold** rest of line` | The leading **bold** becomes the **card title**, shown inside the card (info icon, blue); the rest of the line is the card body. Inline `` `code` `` inside the title is shown as plain title text, not as a command chip, so `y` never copies it — put a command you want to copy in the body. A long title wraps inside the card, which grows to fit. The dimmed previous/next side cards in the wide layout show the title too, above the body. |
 | `- [ ] **! Bold** rest` (a task's bold title starting with `!`) | A **critical step**: the `!` is dropped from the title, the card is framed in the warning color with a `critical` label, and its overview row starts with a `!`. Checking or skipping it takes two presses: the first `Space` only asks "Critical step — press Space again to check it", the first `-` asks for a second `-` to skip it, a first click on its overview marker asks for a second click on that marker instead, and any other key, click, scroll or paste leaves it open. The second press must come after a short pause (half a second): a quicker one, such as a held key's repeats or a reflex double press, keeps the step open and says it was too quick. Unchecking, unskipping, reset and undo stay one key. The `!` stays visible in an editor or on GitHub, so the file still says which steps are critical. |
@@ -519,7 +520,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | left-click an overview row | on a task row, click its **icon** to toggle it done/not-done (cursor stays put), or anywhere else on the row, such as its label, indent or depth guides, to jump to that task; click a list title to jump to that list. Needs mouse capture, so not with `--no-mouse` |
 | `Space` / `Enter` | toggle the current task done; after checking a task, move to the next card that isn't a done task (skipping done tasks, wrapping to the list's first open task), so pressing it again never unchecks a finished step; on an info card (nothing to toggle) advance to the next card instead; on a critical step (`**! Title**`), the first press only asks for a second, which must come after a short pause |
 | `s` | mark the current task started / in progress (`[/]`) |
-| `-` | skip the current task (`[-]`: it doesn't apply this run), or unskip it; skipping moves on to the next open task; on a critical step, the first press only asks for a second, after a short pause |
+| `-` | skip the current task (`[-]`: it doesn't apply this run), or unskip it; skipping moves on to the next open task; on a critical step, the first press only asks for a second, after a short pause. On a task or note with sub-tasks it asks to skip the whole branch instead (see [Skipping a whole sub-list](#skipping-a-whole-sub-list)) |
 | `u` / `Ctrl-R` | undo / redo the last change (toggle, start, skip, or reset) |
 | `Ctrl-O` | go back to where you were before `o` followed a `#section` link, as in vim |
 | `Tab` | jump to the next unfinished task (anywhere in the document; wraps around, and the status bar says when it does) |
@@ -538,7 +539,7 @@ capitals `Shift-H`/`Shift-L` make the bigger jumps between lists.
 | `Ctrl-C` | doesn't quit: as in vim, it shows a "Type q to quit" hint, or cancels search, an overlay or a confirmation like `Esc` |
 | `R` | reset tasks to not-done (asks first): `y` resets everything, `l` only the current list, `s` only the sub-list the cursor is in |
 | `1`–`9` | jump to list N |
-| `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the `o`/`y` digit prompt, the list-complete screen). It uses the full width, with the overview hidden while it's open, and a long description wraps onto the next row. Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
+| `?` | show the keybinding help overlay: every key, with a section per mode (search, the `T` list, the help itself, the reset dialogs, the skip dialog, the `o`/`y` digit prompt, the list-complete screen). It uses the full width, with the overview hidden while it's open, and a long description wraps onto the next row. Scrollable when it doesn't fit — `j`/`k`, the arrows, `Ctrl-E`/`Y`/`D`/`U` and `PageUp`/`PageDown`; any other key closes |
 | `q` | quit; with every task done, first offer to reset them (`q` again quits without resetting); while git sync is running, wait for it (`q` again stops it) |
 | `Esc` | doesn't quit: as in vim, it cancels search, an overlay, a prompt or a confirmation, clears a search highlight (as `:noh`), and otherwise shows a "Type q to quit" hint |
 
@@ -1221,10 +1222,44 @@ command automatically whenever you navigate to its card, with no manual
 `y`. It confirms with the same status message as `y` on a successful copy,
 and stays silent when a card has no command or an ambiguous one.
 
+### Skipping a whole sub-list
+
+Runbooks often have a conditional branch whose steps don't apply this run:
+
+```markdown
+- If using PostgreSQL:
+  - [ ] Stop the replica
+  - [ ] Run the migration
+  - [ ] Restart the replica
+```
+
+`-` on the parent (a note or a task with sub-tasks) asks first:
+`Skip "If using PostgreSQL:" and its 3 sub-tasks?`, with `y` to skip all and
+`n` (or any other key) to cancel, which says `Skip cancelled: nothing
+changed`. `y` marks every open sub-task, and the parent if it is an open
+task, as skipped (`[-]`) in one write, says `Skipped 3 sub-tasks of "If using
+PostgreSQL:"`, and moves on to the next open task. Done tasks stay done. It is
+one undo step (`u` brings the whole branch back) and, with git sync on, one
+commit, `Skip "If using PostgreSQL:" and its sub-tasks`.
+
+Once every sub-task is skipped (or done), `-` on the parent offers the reverse:
+`Reopen "If using PostgreSQL:" and its 3 sub-tasks?`, and `y` sets the skipped
+ones back to `[ ]` (`Reopened 3 sub-tasks of "…"`), again leaving done ones
+alone.
+
+Critical steps (`**! Title**`) are never skipped in bulk: they stay open and
+keep their own two-press confirmation. The dialog says how many stay open, the
+status says `1 critical step stays open: skip it on its own`, and the cursor
+lands on it. When the only open sub-tasks left are critical, `-` on the parent
+says so instead of opening the dialog. A task with sub-tasks that are all
+resolved, or a parent task still open over skipped ones, toggles on its own as
+before. A note whose sub-tasks are all done says `Nothing to skip: every
+sub-task of this note is done`.
+
 ### Undo and redo
 
 `u` undoes the last state-changing action — a toggle, a start (`s`), a skip
-(`-`), or an `R` reset of any scope — restoring the previous state, writing it back, and jumping to the
+(`-`, including a whole sub-list skipped or reopened at once), or an `R` reset of any scope — restoring the previous state, writing it back, and jumping to the
 task that changed so you can see it. `Ctrl-R` redoes what you just undid; making
 a fresh change after an undo clears the redo history (the usual undo/redo rule).
 The status bar confirms each step (`Undo: marked not done`, `Redo: marked done`,

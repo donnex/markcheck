@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- ≡ Nested Checklist │ nested.md                                           ☑ 0/12
-━━━━━━──────────────────────────────────────────────────────────────────────────
+ ≡ Nested Checklist │ nested.md                                           ☑ 0/14
+━━━━━───────────────────────────────────────────────────────────────────────────
                                                   ┌ Overview ──────────────────┐
                                                   │ • [1] Rebuild              │
                                                   │   Sub-lists under a task … │
@@ -21,8 +21,8 @@ expression: "screen(&mut state, width, height)"
 ┃                                              ┃  │   ☐ Publish                │
 ┗ ··◉······ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │   │ ☐ Upload the artifact  │
                                                   │   │ ☐ Announce the release │
-                                                  │                            │
-                                                  │                            │
-                                                  │                            │
+                                                  │   ▪ If publishing to the … │
+                                                  │   │ ☐ Sync the mirror      │
+                                                  │   │ ☐ Verify the mirror c… │
                                                   └────────────────────────────┘
 hjkl:nav  space:toggle  /:search  y:copy  ?:help  q:quit

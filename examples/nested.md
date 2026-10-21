@@ -2,6 +2,8 @@
 
 Sub-lists under a task and under a plain note, at several depths. Each
 sub-item is its own card and shows its parent chain as a breadcrumb.
+On a conditional branch that doesn't apply this run, press `-` on its
+parent to skip every sub-task at once, and `-` there again to reopen them.
 
 ## Rebuild
 
@@ -21,3 +23,6 @@ sub-item is its own card and shows its parent chain as a breadcrumb.
 - [ ] Publish
   - [ ] Upload the artifact
   - [ ] Announce the release
+- If publishing to the mirror as well:
+  - [ ] Sync the mirror
+  - [ ] Verify the mirror checksum

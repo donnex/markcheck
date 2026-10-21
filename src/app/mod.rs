@@ -21,6 +21,7 @@ mod navigation;
 mod reload;
 mod reset;
 mod search;
+pub(crate) mod skip_branch;
 mod write;
 
 #[cfg(test)]

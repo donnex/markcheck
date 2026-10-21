@@ -596,6 +596,24 @@ pub struct ItemLinks {
     pub info_state: Option<TaskState>,
 }
 
+/// What `-` on a parent with sub-tasks offers to do to the whole branch
+/// under it, as one change (#259).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchSkip {
+    /// Reopen the skipped tasks (`[ ]`) rather than skip the open ones.
+    pub reopen: bool,
+    /// The parent's index in the current list.
+    pub root: usize,
+    /// The indices of every task that changes, the parent included when it
+    /// does.
+    pub targets: Vec<usize>,
+    /// How many of `targets` are sub-tasks.
+    pub sub_tasks: usize,
+    /// Open critical steps the skip leaves alone: each keeps its own
+    /// two-press confirmation (#219).
+    pub held: Vec<usize>,
+}
+
 /// What `R` resets (#118).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetScope {
@@ -872,6 +890,9 @@ pub enum Overlay {
     ConfirmReset,
     /// Offered on quit when all tasks are done: reset before quitting?
     ConfirmQuitReset,
+    /// `-` on a parent with sub-tasks: skip (or reopen) the whole branch
+    /// at once? The plan is [`AppState::branch_skip`] (#259).
+    ConfirmSkip,
     /// Full keybinding cheatsheet overlay, opened with `?`.
     Help,
     /// Incremental text search input, entered with `/` from `Checklist`; as

@@ -2,8 +2,8 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, height)"
 ---
- = Nested Checklist │ nested.md                                                                                 [x] 0/12
-==========--------------------------------------------------------------------------------------------------------------
+ = Nested Checklist │ nested.md                                                                                 [x] 0/14
+========----------------------------------------------------------------------------------------------------------------
                                                                                           ┌ Overview ──────────────────┐
                                                                                           │ # [1] Rebuild              │
                                                                                           │   Sub-lists under a task … │
@@ -21,9 +21,9 @@ expression: "screen(&mut state, width, height)"
                                         # Rebuild                                         │   [ ] Publish              │
                                                                                           │   │ [ ] Upload the artifa… │
             ╔ [/] ═══════════════════════════════════════════════════ 3/9 ╗               │   │ [ ] Announce the rele… │
-┌ [ ] ──────║                                                             ║] ──────────┐  │                            │
-│     Fetch ║                                                             ║            │  │                            │
-│    sources║                   Rebuild all packages >                    ║ompile the  │  │                            │
+┌ [ ] ──────║                                                             ║] ──────────┐  │    *  If publishing to th… │
+│     Fetch ║                                                             ║            │  │   │ [ ] Sync the mirror    │
+│    sources║                   Rebuild all packages >                    ║ompile the  │  │   │ [ ] Verify the mirror… │
 │ fetch-sour║                           Compile                           ║  core      │  │                            │
 │    s --all║                                                             ║            │  │                            │
 └───────────║                                                             ║────────────┘  │                            │

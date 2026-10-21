@@ -2,9 +2,9 @@
 source: src/ui/golden_tests.rs
 expression: "screen(&mut state, width, 24)"
 ---
- ≡ Nested Checklist │ nested.md             ☑ 0/12
+ ≡ Nested Checklist │ nested.md             ☑ 0/14
  [1] Rebuild   [2] Release
-━━━━──────────────────────────────────────────────
+━━━───────────────────────────────────────────────
 ╭ Keybindings ───────────────────────────────────╮
 │                                                ▲
 │  h j k l  ← → ↑ ↓   prev / next task (crosses  ▓
