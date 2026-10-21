@@ -203,12 +203,19 @@ fn main() -> anyhow::Result<()> {
     // returns a canonical path.
     let mut start_at = start_line.map(model::StartAt::Line);
     let (file_path, created_new) = if let Some(new_path) = &cli.new {
-        let created = scaffold::create_new_checklist(new_path).with_context(|| {
-            format!(
-                "cannot create {}",
-                printable::printable_line(&new_path.display().to_string())
-            )
-        })?;
+        let shown_new = printable::printable_line(&new_path.display().to_string());
+        // Checked before creating the file, or the retry from a terminal
+        // would find it already there and refuse it. A bad name or an
+        // existing path is reported first, as it would be from a terminal.
+        scaffold::validate_new_path(new_path)
+            .with_context(|| format!("cannot create {shown_new}"))?;
+        if !io::stdout().is_terminal() && new_path.symlink_metadata().is_err() {
+            anyhow::bail!(
+                "cannot create {shown_new}: markcheck is interactive and needs a terminal (stdout is not a TTY)"
+            );
+        }
+        let created = scaffold::create_new_checklist(new_path)
+            .with_context(|| format!("cannot create {shown_new}"))?;
         (created, true)
     } else {
         // clap's `required_unless_present_any` guarantees this is `Some`

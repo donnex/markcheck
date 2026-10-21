@@ -128,6 +128,22 @@ fn non_tty_stdout_reports_that_a_terminal_is_needed() {
 }
 
 #[test]
+fn new_without_a_terminal_creates_nothing() {
+    let path = unique_path("new-no-tty");
+
+    let output = markcheck().arg("--new").arg(&path).output().unwrap();
+
+    assert!(!output.status.success(), "should exit non-zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("needs a terminal"), "{stderr:?}");
+    assert!(
+        stderr.contains(&*path.file_name().unwrap().to_string_lossy()),
+        "names the file: {stderr:?}"
+    );
+    assert!(!path.exists(), "no file is created without a terminal");
+}
+
+#[test]
 fn help_names_the_config_file() {
     let output = markcheck().arg("--help").output().unwrap();
     assert!(output.status.success());
