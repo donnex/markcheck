@@ -1275,6 +1275,87 @@ fn a_checklist_in_a_read_only_folder_is_saved_in_place() {
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+/// A file over `data` whose writes fail with a full disk once `fail_at`
+/// bytes are written, recording each length cut and fsync.
+struct FlakyFile {
+    data: std::cell::RefCell<Vec<u8>>,
+    pos: usize,
+    fail_at: usize,
+    calls: std::cell::RefCell<Vec<String>>,
+}
+
+impl FlakyFile {
+    fn new(data: &str, fail_at: usize) -> Self {
+        FlakyFile {
+            data: std::cell::RefCell::new(data.as_bytes().to_vec()),
+            pos: 0,
+            fail_at,
+            calls: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8(self.data.borrow().clone()).unwrap()
+    }
+}
+
+impl io::Write for FlakyFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.pos >= self.fail_at {
+            return Err(io::Error::from(io::ErrorKind::StorageFull));
+        }
+        let n = buf.len().min(self.fail_at - self.pos);
+        let end = self.pos + n;
+        let mut data = self.data.borrow_mut();
+        if end > data.len() {
+            data.resize(end, 0);
+        }
+        data[self.pos..end].copy_from_slice(&buf[..n]);
+        self.pos = end;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Rewritable for FlakyFile {
+    fn set_len(&self, len: u64) -> io::Result<()> {
+        self.calls.borrow_mut().push(format!("set_len {len}"));
+        self.data.borrow_mut().resize(len as usize, 0);
+        Ok(())
+    }
+
+    fn sync_all(&self) -> io::Result<()> {
+        self.calls.borrow_mut().push("sync".to_string());
+        Ok(())
+    }
+}
+
+#[test]
+fn an_in_place_write_that_fails_part_way_leaves_a_whole_checklist() {
+    let old = "- [ ] a\n- [ ] b\n";
+    let new = "- [x] a\n- [x] b\n";
+    let mut file = FlakyFile::new(old, 10);
+
+    let err = rewrite(&mut file, new.as_bytes()).unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::StorageFull);
+    assert_eq!(file.text(), "- [x] a\n- [ ] b\n", "never truncated");
+    assert!(file.calls.borrow().is_empty(), "{:?}", file.calls.borrow());
+}
+
+#[test]
+fn an_in_place_write_cuts_a_longer_file_to_length_and_syncs() {
+    let mut file = FlakyFile::new("- [ ] a\n- [ ] b\n", usize::MAX);
+
+    rewrite(&mut file, b"- [x] a\n").unwrap();
+
+    assert_eq!(file.text(), "- [x] a\n");
+    assert_eq!(*file.calls.borrow(), ["set_len 8", "sync"]);
+}
+
 #[test]
 fn a_very_long_checklist_name_can_still_be_saved() {
     let dir = crate::test_support::unique_temp_path("writer", "long-name", None);

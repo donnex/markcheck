@@ -540,9 +540,13 @@ keeps the link intact.
 A checklist in a folder you can't write to, but which is itself writable,
 is saved **in place** instead: the file is rewritten directly, since there
 is nowhere beside it to put the temp file. That keeps its inode, owner and
-permissions, but a crash in the middle of that save could leave it
-truncated, so the status bar says so the first time it happens in a
-session (`Saved in place: ...`). When a save fails, the message says why
+permissions, and the status bar says so the first time it happens in a
+session (`Saved in place: ...`). The new content is written over the old
+without emptying the file first, and a save only ever changes checkbox
+markers, so a write that fails or a crash part-way through leaves a whole
+checklist with some markers old and some new, never a truncated one; the
+error then names what stopped that write, such as a full disk. When a save
+fails, the message says why
 (`Write failed — change not saved to disk: the disk is full`, `no
 permission to write the file or its folder`, and so on).
 

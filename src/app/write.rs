@@ -22,7 +22,7 @@ pub(super) const READ_ONLY_MESSAGE: &str =
 pub(super) const CRITICAL_PAUSE: Duration = Duration::from_millis(500);
 
 pub(super) const IN_PLACE_MESSAGE: &str = "Saved in place: this folder doesn't let markcheck create a temp file, \
-     so a crash mid-save could truncate the checklist";
+     so the checklist is overwritten directly";
 
 impl AppState {
     pub fn toggle_current(&mut self) {

@@ -485,7 +485,8 @@ pub struct Saved {
     pub contents: String,
     /// Written over the file in place rather than renamed into place,
     /// because no temp file could be created beside it (a directory the user
-    /// can't write to). A crash mid-write could then leave it truncated.
+    /// can't write to). The old bytes are overwritten rather than truncated,
+    /// so a failed write leaves a mix of old and new markers.
     pub in_place: bool,
 }
 
@@ -547,8 +548,7 @@ pub fn write_back(document: &Document) -> io::Result<Saved> {
     let temp_path = match write_temp(&temp_path_base, &contents, &source) {
         Ok(path) => path,
         Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
-            // The original error is the one worth reporting if this fails too.
-            write_in_place(&document.file_path, &contents).map_err(|_| err)?;
+            write_in_place(&document.file_path, &contents)?;
             return Ok(Saved {
                 contents,
                 in_place: true,
@@ -570,10 +570,9 @@ pub fn write_back(document: &Document) -> io::Result<Saved> {
     })
 }
 
-/// Truncates and rewrites `path` through a handle that refuses a symlink and
-/// is checked to be a regular file, then fsyncs it.
+/// Rewrites `path` through a handle that refuses a symlink and is checked to
+/// be a regular file (see [`rewrite`]).
 fn write_in_place(path: &Path, contents: &str) -> io::Result<()> {
-    use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut file = fs::OpenOptions::new()
@@ -584,8 +583,32 @@ fn write_in_place(path: &Path, contents: &str) -> io::Result<()> {
     if !file_type.is_file() {
         return Err(not_regular(file_type));
     }
-    file.set_len(0)?;
-    file.write_all(contents.as_bytes())?;
+    rewrite(&mut file, contents.as_bytes())
+}
+
+/// A file [`rewrite`] can overwrite, cut to length and fsync.
+trait Rewritable: io::Write {
+    fn set_len(&self, len: u64) -> io::Result<()>;
+    fn sync_all(&self) -> io::Result<()>;
+}
+
+impl Rewritable for fs::File {
+    fn set_len(&self, len: u64) -> io::Result<()> {
+        fs::File::set_len(self, len)
+    }
+
+    fn sync_all(&self) -> io::Result<()> {
+        fs::File::sync_all(self)
+    }
+}
+
+/// Writes `contents` over the file from its start, then cuts it to that
+/// length and fsyncs. Never truncated first: a save only swaps one 3-byte
+/// marker for another, so a write that fails part-way leaves every byte old
+/// or new and the file still a whole checklist.
+fn rewrite(file: &mut impl Rewritable, contents: &[u8]) -> io::Result<()> {
+    file.write_all(contents)?;
+    file.set_len(contents.len() as u64)?;
     file.sync_all()
 }
 
