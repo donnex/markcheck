@@ -68,6 +68,13 @@ jobs:
       - name: cargo deny check licenses
         run: cargo deny check licenses
 
+      # No locked crate version may have a RustSec advisory or be yanked
+      # (#230). This also gates releases, since release.yml calls this
+      # workflow; advisories.yml reruns it weekly, because a new advisory
+      # needs no change here to appear.
+      - name: cargo deny check advisories
+        run: cargo deny check advisories
+
       # deny.toml's list is checked on every push, about.toml's only when
       # release.yml generates the license notices after a tag is pushed; a
       # license on one list but not the other would pass here and fail the

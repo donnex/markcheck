@@ -12,7 +12,7 @@ Each section below states the current contract first, in the present tense. How 
 markcheck/
 ├── Cargo.toml          # rust-version is the minimum Rust; check.yml's msrv job builds with it
 ├── build.rs            # embeds the git short SHA for --version
-├── about.toml, about.hbs, deny.toml   # license allow-lists (cargo-about, cargo-deny)
+├── about.toml, about.hbs, deny.toml   # license allow-lists (cargo-about, cargo-deny); deny.toml also sets the advisory check
 ├── .cargo/mutants.toml # cargo-mutants scope and exclusions for the guard mutation tests
 ├── examples/           # sample checklists covering every Markdown feature; golden-test fixtures
 ├── .gitattributes      # keeps examples/crlf-bom.md's CRLF line endings out of git's normalisation
