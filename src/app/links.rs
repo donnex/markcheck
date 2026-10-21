@@ -46,7 +46,11 @@ impl AppState {
     /// heading, remembering where from for `Ctrl-O`, as in vim (#139).
     pub(super) fn follow_anchor(&mut self, anchor: &str) {
         let Some(target) = self.document.anchor_target(anchor) else {
-            self.set_error(format!("No section named #{anchor} in this file"));
+            self.set_error(if self.document.has_anchor(anchor) {
+                format!("#{anchor} has no tasks: nothing to jump to")
+            } else {
+                format!("No section named #{anchor} in this file")
+            });
             return;
         };
         self.jump_back
@@ -81,8 +85,12 @@ impl AppState {
                 (self.document.anchor_target(anchor), format!("#{anchor}"))
             }
         };
-        let (list_index, item_index) = target
-            .ok_or_else(|| format!("no list or task at {description}, so opened at the start"))?;
+        let (list_index, item_index) = target.ok_or_else(|| match start {
+            crate::model::StartAt::Anchor(anchor) if self.document.has_anchor(anchor) => {
+                format!("#{anchor} has no tasks, so opened at the start")
+            }
+            _ => format!("no list or task at {description}, so opened at the start"),
+        })?;
         self.focus_item(list_index, item_index, CursorMove::Navigate);
         Ok(format!("Opened at {description}"))
     }

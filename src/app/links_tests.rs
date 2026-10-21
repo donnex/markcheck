@@ -504,6 +504,62 @@ fn an_anchor_link_to_no_heading_says_so() {
 }
 
 #[test]
+fn an_anchor_link_to_a_section_without_tasks_stays_put_and_says_so() {
+    let cases = [
+        (
+            "prose-only section",
+            "## Prepare\n\n- [ ] read [the notes](#notes) first\n\n## Notes\n\nJust prose.\n\n## Deploy\n\n- [ ] deploy step\n",
+        ),
+        (
+            "sub-section with no tasks",
+            "## Prepare\n\n- [ ] read [the notes](#notes) first\n\n### Notes\n\nJust prose.\n\n## Deploy\n\n- [ ] deploy step\n",
+        ),
+        (
+            "section whose plain list was dropped",
+            "## Prepare\n\n- [ ] read [the notes](#notes) first\n\n## Notes\n\n- plain note without a checkbox\n\n## Deploy\n\n- [ ] deploy step\n",
+        ),
+    ];
+    for (case, source) in cases {
+        let path = write_real_file(source);
+        let mut state = AppState::new(parser::parse_document(path).unwrap());
+        state.handle_key(KeyCode::Char('o'));
+        assert_eq!(
+            (state.current_list_index, state.current_item_index),
+            (0, 0),
+            "{case}: the cursor stays"
+        );
+        assert_eq!(
+            state.status_message.as_deref(),
+            Some("#notes has no tasks: nothing to jump to"),
+            "{case}"
+        );
+        assert!(state.status_is_error, "{case}");
+        state.handle_key_with_mods(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(
+            state
+                .status_message
+                .as_deref()
+                .is_some_and(|m| m.starts_with("Nothing to go back to")),
+            "{case}: no jump was recorded"
+        );
+    }
+}
+
+#[test]
+fn open_at_an_anchor_without_tasks_says_so() {
+    use crate::model::StartAt;
+    let path = write_real_file(
+        "## Prepare\n\n- [ ] one\n\n## Notes\n\nJust prose.\n\n## Deploy\n\n- [ ] two\n",
+    );
+    let mut state = AppState::new(parser::parse_document(path).unwrap());
+    assert_eq!(
+        state.open_at(&StartAt::Anchor("notes".to_string())),
+        Err("#notes has no tasks, so opened at the start".to_string())
+    );
+    assert_eq!((state.current_list_index, state.current_item_index), (0, 0));
+}
+
+#[test]
 fn open_at_moves_to_a_line_or_an_anchor_or_says_why_not() {
     use crate::model::StartAt;
     let path = write_real_file("## A\n\n- [ ] one\n- [ ] two\n\n## B\n\n- [ ] three\n");

@@ -6,8 +6,8 @@ use pulldown_cmark::utils::TextMergeWithOffset;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::model::{
-    BodySpan, Document, Item, ItemKind, LineNumber, List, PreambleBlock, PreambleKind, SubHeading,
-    TaskState, TextStyle, Unshown,
+    Anchor, BodySpan, Document, Item, ItemKind, LineNumber, List, PreambleBlock, PreambleKind,
+    SubHeading, TaskState, TextStyle, Unshown,
 };
 
 /// Splits `raw` into lines, keeping each line's own terminator, using
@@ -109,6 +109,10 @@ impl LineCounter {
 
 /// The raw Markdown level (1–6) of a `pulldown-cmark` `HeadingLevel`, used to
 /// order the `### H3`+ sub-section stack.
+/// Deeper than any Markdown heading, so the next heading of any level ends
+/// the section of a heading inside a card.
+const IN_CARD_HEADING_LEVEL: u8 = 7;
+
 fn heading_level_number(level: HeadingLevel) -> u8 {
     match level {
         HeadingLevel::H1 => 1,
@@ -671,9 +675,12 @@ struct ParseState<'a> {
     heading: Option<(HeadingLevel, String)>,
     /// The open heading's source line, for its anchor.
     heading_line: LineNumber,
-    /// Every heading's GitHub-style anchor and the line its target is
-    /// searched from, in order.
-    anchors: Vec<(String, LineNumber)>,
+    /// Every heading's GitHub-style anchor and the lines its target is
+    /// searched in, in order.
+    anchors: Vec<Anchor>,
+    /// The anchors whose section is still open, by heading level, as indexes
+    /// into `anchors`; a heading inside a card counts as the deepest level.
+    open_anchor_sections: Vec<(u8, usize)>,
     /// The text of a heading inside a list item, read so far, for its anchor.
     item_heading: Option<String>,
     /// The anchors already in `anchors`, so a repeat is checked in O(1).
@@ -761,6 +768,7 @@ impl<'a> ParseState<'a> {
             heading: None,
             heading_line: 0,
             anchors: Vec::new(),
+            open_anchor_sections: Vec::new(),
             item_heading: None,
             taken_anchors: HashSet::new(),
             next_anchor_suffix: HashMap::new(),
@@ -842,7 +850,7 @@ impl<'a> ParseState<'a> {
     /// there (#139). Every rendered heading takes part, quoted and in-item
     /// ones included, so the numbering matches GitHub's (#186); `target` is
     /// the line the jump searches for a task from.
-    fn add_anchor(&mut self, text: &str, target: LineNumber) {
+    fn add_anchor(&mut self, text: &str, target: LineNumber, level: u8) {
         let base = slug(text);
         let repeat = self.next_anchor_suffix.entry(base.clone()).or_insert(0);
         let mut anchor = match *repeat {
@@ -855,7 +863,25 @@ impl<'a> ParseState<'a> {
         }
         *repeat += 1;
         self.taken_anchors.insert(anchor.clone());
-        self.anchors.push((anchor, target));
+        self.open_anchor_sections.push((level, self.anchors.len()));
+        self.anchors.push(Anchor {
+            name: anchor,
+            from: target,
+            until: None,
+        });
+    }
+
+    /// A heading outside a quote or card ends the section of every anchor at
+    /// its own level or deeper, at its line (#240).
+    fn close_anchor_sections(&mut self, level: u8, line: LineNumber) {
+        let anchors = &mut self.anchors;
+        self.open_anchor_sections.retain(|&(open, index)| {
+            let closes = open >= level;
+            if closes {
+                anchors[index].until = Some(line);
+            }
+            !closes
+        });
     }
 
     /// The first task after a heading takes the preamble written above it.
@@ -993,7 +1019,7 @@ impl<'a> ParseState<'a> {
                 self.item_heading.take(),
                 self.item_stack.last().map(|item| item.line),
             ) {
-                self.add_anchor(text.trim(), line);
+                self.add_anchor(text.trim(), line, IN_CARD_HEADING_LEVEL);
             }
             return;
         };
@@ -1002,11 +1028,15 @@ impl<'a> ParseState<'a> {
             return;
         }
         let text = text.trim();
-        self.add_anchor(text, self.heading_line + 1);
+        let number = heading_level_number(level);
+        if !quoted {
+            self.close_anchor_sections(number, self.heading_line);
+        }
+        self.add_anchor(text, self.heading_line + 1, number);
         if quoted {
             return;
         }
-        self.open_preamble_scope(heading_level_number(level));
+        self.open_preamble_scope(number);
         match level {
             HeadingLevel::H2 => self.start_list(text),
             HeadingLevel::H1 => {

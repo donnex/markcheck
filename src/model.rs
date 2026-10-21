@@ -493,6 +493,19 @@ pub enum StartAt {
     Anchor(String),
 }
 
+/// A heading's `#anchor` and the lines a jump to it may land on (#240).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Anchor {
+    /// The GitHub-style anchor, without its `#`.
+    pub name: String,
+    /// The line its first task is searched from: the line after the heading,
+    /// or a card's own line for a heading inside it.
+    pub from: LineNumber,
+    /// The line of the next heading that ends this one's section (the same
+    /// or a higher level; any level for a heading inside a card), if any.
+    pub until: Option<LineNumber>,
+}
+
 /// One block of prose under a heading, before its first task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreambleBlock {
@@ -578,11 +591,9 @@ pub struct Document {
     pub preambles: std::collections::BTreeMap<LineNumber, Vec<PreambleBlock>>,
     /// What the file has outside task lists that markcheck can't show.
     pub unshown: Unshown,
-    /// Each heading's GitHub-style anchor (`rollback` for `## Rollback`) and
-    /// the line its first task is searched from: the line after the heading,
-    /// or a card's own line for a heading inside it, in document order
-    /// (#114, #139, #186).
-    pub anchors: Vec<(String, LineNumber)>,
+    /// Each heading's GitHub-style anchor (`rollback` for `## Rollback`), in
+    /// document order (#114, #139, #186).
+    pub anchors: Vec<Anchor>,
     /// The lines of critical tasks, whose bold title started with `!`:
     /// checking one takes a second, deliberate press (#95).
     pub critical: std::collections::BTreeSet<LineNumber>,
@@ -602,13 +613,27 @@ impl Document {
             .fold(Progress::default(), Progress::plus)
     }
 
-    /// The first task after the heading `anchor` names (without its `#`,
-    /// percent-encoded or not), as `(list, item)`. `None` when no heading has
-    /// that anchor or nothing follows it.
+    /// The first task in the section of the heading `anchor` names (without
+    /// its `#`, percent-encoded or not), as `(list, item)`. `None` when no
+    /// heading has that anchor or its section has no task (#240).
     pub fn anchor_target(&self, anchor: &str) -> Option<(usize, usize)> {
+        let found = self.find_anchor(anchor)?;
+        let (list, item) = self.first_task_from(found.from)?;
+        let line = self.lists[list].items[item].line_number;
+        found
+            .until
+            .is_none_or(|until| line < until)
+            .then_some((list, item))
+    }
+
+    /// Whether some heading has the anchor `anchor`, tasks under it or not.
+    pub fn has_anchor(&self, anchor: &str) -> bool {
+        self.find_anchor(anchor).is_some()
+    }
+
+    fn find_anchor(&self, anchor: &str) -> Option<&Anchor> {
         let wanted = percent_decode(anchor).to_lowercase();
-        let (_, line) = self.anchors.iter().find(|(taken, _)| *taken == wanted)?;
-        self.first_task_from(*line)
+        self.anchors.iter().find(|taken| taken.name == wanted)
     }
 
     /// The first item on or after source line `line`, as `(list, item)`.

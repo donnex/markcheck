@@ -2648,7 +2648,7 @@ fn headings_get_github_style_anchors_numbered_when_repeated() {
     let document = parse(
         "# Server Upgrade!\n\n## Roll back (v2)\n\n- [ ] a\n\n## Roll back (v2)\n\n- [ ] b\n\n> ## Quoted\n\n### Step_3 — check\n\n- [ ] c\n",
     );
-    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    let anchors: Vec<&str> = document.anchors.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         anchors,
         vec![
@@ -2673,6 +2673,35 @@ fn headings_get_github_style_anchors_numbered_when_repeated() {
 }
 
 #[test]
+fn an_anchor_reaches_only_tasks_in_its_own_section() {
+    let document = parse(
+        "# Runbook\n\n## Prepare\n\n### Notes\n\nProse only.\n\n### Check\n\n- [ ] a\n\n> ## Quoted\n\n## Empty\n\n- plain\n\n## Deploy\n\n- ## In card\n\n  Body.\n- [ ] b\n",
+    );
+    assert_eq!(document.anchor_target("runbook"), Some((0, 0)));
+    assert_eq!(
+        document.anchor_target("prepare"),
+        Some((0, 0)),
+        "a sub-section's tasks are its parent's too"
+    );
+    assert_eq!(document.anchor_target("notes"), None);
+    assert!(document.has_anchor("notes"));
+    assert_eq!(document.anchor_target("check"), Some((0, 0)));
+    assert_eq!(
+        document.anchor_target("quoted"),
+        None,
+        "a quoted heading's section ends at the next heading"
+    );
+    assert_eq!(document.anchor_target("empty"), None);
+    assert!(document.has_anchor("empty"));
+    assert!(!document.has_anchor("missing"));
+    let (list, item) = document.anchor_target("in-card").expect("#in-card");
+    assert_eq!(
+        document.lists[list].items[item].header.as_deref(),
+        Some("In card")
+    );
+}
+
+#[test]
 fn a_percent_encoded_anchor_matches_its_heading() {
     let document = parse("## Intro\n\n- [ ] a\n\n## Déploiement\n\n- [ ] b\n");
     assert_eq!(document.anchor_target("d%C3%A9ploiement"), Some((1, 0)));
@@ -2691,7 +2720,7 @@ fn a_percent_encoded_anchor_matches_its_heading() {
 #[test]
 fn a_quoted_heading_counts_in_the_repeat_numbering() {
     let document = parse("## Prep\n\n> ## Verify\n\n- [ ] a\n\n## Verify\n\n- [ ] b\n");
-    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    let anchors: Vec<&str> = document.anchors.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(anchors, vec!["prep", "verify", "verify-1"]);
     assert_eq!(document.anchor_target("verify"), Some((0, 0)));
     assert_eq!(document.anchor_target("verify-1"), Some((1, 0)));
@@ -2707,7 +2736,7 @@ fn a_heading_inside_a_list_item_anchors_its_card() {
     let document = parse(
         "## Steps\n\n- [ ] a\n- ## Roll *back*\n\n  Undo it.\n- [ ] c\n\n## Roll back\n\n- [ ] d\n",
     );
-    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    let anchors: Vec<&str> = document.anchors.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(anchors, vec!["steps", "roll-back", "roll-back-1"]);
     assert_eq!(document.anchor_target("roll-back"), Some((0, 1)));
     assert_eq!(document.anchor_target("roll-back-1"), Some((1, 0)));
@@ -2722,7 +2751,7 @@ fn repeated_headings_skip_a_suffix_a_literal_heading_already_took() {
     let document = parse(
         "## Verify\n\n- [ ] a\n\n## Verify 1\n\n- [ ] b\n\n## Verify\n\n- [ ] c\n\n## Verify\n\n- [ ] d\n\n## Verify 1\n\n- [ ] e\n\n## Verify\n\n- [ ] f\n",
     );
-    let anchors: Vec<&str> = document.anchors.iter().map(|(a, _)| a.as_str()).collect();
+    let anchors: Vec<&str> = document.anchors.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         anchors,
         vec![
@@ -2747,7 +2776,7 @@ fn thousands_of_repeated_headings_parse_quickly() {
         started.elapsed()
     );
     assert_eq!(document.anchors.len(), 3000);
-    assert_eq!(document.anchors[2999].0, "verify-2999");
+    assert_eq!(document.anchors[2999].name, "verify-2999");
 }
 
 #[test]
