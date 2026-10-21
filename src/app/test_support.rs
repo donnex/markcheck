@@ -10,6 +10,9 @@ pub(super) use crate::effect::{self, Effect};
 pub(super) use crate::git_sync::SyncOutcome;
 pub(super) use crate::model::*;
 pub(super) use crate::parser;
+pub(super) use crate::test_support::fixture::{
+    checkbox, display_only, document_with_lists, document_with_missing_file,
+};
 pub(super) use crate::test_support::{RecordingHost, shown};
 
 impl AppState {
@@ -111,88 +114,8 @@ impl AppState {
     }
 }
 
-pub(super) fn checkbox(line_number: usize, completed: bool) -> Item {
-    Item {
-        ordinal: None,
-        line_number,
-        depth: 0,
-        section: vec![],
-        display_text: format!("task {line_number}"),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::Checkbox(if completed {
-            TaskState::Done
-        } else {
-            TaskState::NotStarted
-        }),
-    }
-}
-
-pub(super) fn display_only(line_number: usize) -> Item {
-    Item {
-        ordinal: None,
-        line_number,
-        depth: 0,
-        section: vec![],
-        display_text: format!("heading {line_number}"),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::DisplayOnly,
-    }
-}
-
 pub(super) fn unique_temp_path() -> PathBuf {
     crate::test_support::unique_temp_path("app", "", Some("md"))
-}
-
-/// The source lines a hand-built `lists` stands for: each item's own line
-/// carries the bullet and checkbox its `kind` claims, so a write-back
-/// rewrites a real marker on the right line. Lines no item claims are blank.
-pub(super) fn raw_lines_for(lists: &[List]) -> Vec<String> {
-    let items = || lists.iter().flat_map(|list| list.items.iter());
-    let max_line = items().map(|item| item.line_number).max().unwrap_or(0);
-    let mut lines = vec!["\n".to_string(); max_line];
-    for item in items() {
-        let marker = match item.kind {
-            ItemKind::Checkbox(TaskState::NotStarted) => "[ ] ",
-            ItemKind::Checkbox(TaskState::Started) => "[/] ",
-            ItemKind::Checkbox(TaskState::Done) => "[x] ",
-            ItemKind::Checkbox(TaskState::Skipped) => "[-] ",
-            ItemKind::DisplayOnly => "",
-        };
-        let indent = "  ".repeat(item.depth);
-        lines[item.line_number - 1] = format!("{indent}- {marker}{}\n", item.display_text);
-    }
-    lines
-}
-
-/// A document from hand-built `lists`, backed by a real file holding exactly
-/// the Markdown those lists describe, so a write test can read the file back.
-pub(super) fn document_with_lists(lists: Vec<List>) -> Document {
-    let document = document_with_missing_file(lists);
-    fs::write(&document.file_path, writer::document_contents(&document)).unwrap();
-    document
-}
-
-/// Like `document_with_lists`, but the backing file is never created, so
-/// `write_back` always fails.
-pub(super) fn document_with_missing_file(lists: Vec<List>) -> Document {
-    let raw_lines = raw_lines_for(&lists);
-    Document {
-        file_path: unique_temp_path(),
-        title: None,
-        has_default_list: false,
-        lists,
-        preambles: Default::default(),
-        unshown: Default::default(),
-        anchors: Vec::new(),
-        critical: Default::default(),
-        raw_lines,
-    }
 }
 
 /// Writes `markdown` to a fresh temp file and loads it the way `main.rs`
@@ -212,12 +135,16 @@ pub(super) fn two_list_document() -> Document {
         List {
             title: "List 1".to_string(),
             banner: None,
-            items: vec![checkbox(1, false), checkbox(2, false), checkbox(3, false)],
+            items: vec![
+                checkbox(1, "task 1", false),
+                checkbox(2, "task 2", false),
+                checkbox(3, "task 3", false),
+            ],
         },
         List {
             title: "List 2".to_string(),
             banner: None,
-            items: vec![checkbox(4, false), checkbox(5, false)],
+            items: vec![checkbox(4, "task 4", false), checkbox(5, "task 5", false)],
         },
     ])
 }
@@ -229,20 +156,22 @@ pub(super) fn two_list_document_first_list_almost_done() -> Document {
         List {
             title: "List 1".to_string(),
             banner: None,
-            items: vec![checkbox(1, true), checkbox(2, true), checkbox(3, false)],
+            items: vec![
+                checkbox(1, "task 1", true),
+                checkbox(2, "task 2", true),
+                checkbox(3, "task 3", false),
+            ],
         },
         List {
             title: "List 2".to_string(),
             banner: None,
-            items: vec![checkbox(4, false), checkbox(5, false)],
+            items: vec![checkbox(4, "task 4", false), checkbox(5, "task 5", false)],
         },
     ])
 }
 
 pub(super) fn text_item(line: usize, text: &str) -> Item {
-    let mut item = checkbox(line, false);
-    item.display_text = text.to_string();
-    item
+    checkbox(line, text, false)
 }
 
 pub(super) fn type_str(state: &mut AppState, text: &str) {
@@ -252,7 +181,7 @@ pub(super) fn type_str(state: &mut AppState, text: &str) {
 }
 
 pub(super) fn item_with_links(line: usize, urls: &[&str]) -> Item {
-    let mut item = checkbox(line, false);
+    let mut item = checkbox(line, &format!("task {line}"), false);
     item.body = urls
         .iter()
         .map(|u| crate::model::BodySpan::Link {
@@ -293,7 +222,7 @@ pub(super) fn all_done_document() -> Document {
     document_with_lists(vec![List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true)],
+        items: vec![checkbox(1, "task 1", true), checkbox(2, "task 2", true)],
     }])
 }
 

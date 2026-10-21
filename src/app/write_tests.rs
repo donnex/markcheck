@@ -9,7 +9,7 @@ fn a_write_is_refused_while_another_instance_holds_the_write_lock() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let path = document.file_path.clone();
     let mut state = AppState::new(document);
@@ -189,7 +189,7 @@ fn toggle_current_on_display_only_advances_without_editing() {
     let document = document_with_lists(vec![List {
         title: "List 1".to_string(),
         banner: None,
-        items: vec![display_only(1), checkbox(2, false)],
+        items: vec![display_only(1, "heading 1"), checkbox(2, "task 2", false)],
     }]);
     let mut state = AppState::new(document);
     // Space/Enter on an info card pages past it instead of doing nothing;
@@ -218,12 +218,12 @@ fn startup_skips_fully_done_first_list() {
         List {
             title: "Done".to_string(),
             banner: None,
-            items: vec![checkbox(1, true)],
+            items: vec![checkbox(1, "task 1", true)],
         },
         List {
             title: "Todo".to_string(),
             banner: None,
-            items: vec![checkbox(2, false)],
+            items: vec![checkbox(2, "task 2", false)],
         },
     ]);
     let state = AppState::new(document);
@@ -237,17 +237,17 @@ fn complete_list_advance_skips_to_next_incomplete() {
         List {
             title: "A".to_string(),
             banner: None,
-            items: vec![checkbox(1, false)],
+            items: vec![checkbox(1, "task 1", false)],
         },
         List {
             title: "B (all done)".to_string(),
             banner: None,
-            items: vec![checkbox(2, true)],
+            items: vec![checkbox(2, "task 2", true)],
         },
         List {
             title: "C".to_string(),
             banner: None,
-            items: vec![checkbox(3, false)],
+            items: vec![checkbox(3, "task 3", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -467,7 +467,7 @@ fn marker_toggle_demotes_a_stale_completion_screen_but_never_promotes() {
     let document = document_with_lists(vec![List {
         title: "Only".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true)],
+        items: vec![checkbox(1, "task 1", true), checkbox(2, "task 2", true)],
     }]);
     let mut state = AppState::new(document);
     // All tasks done: a keyboard toggle would have shown AllComplete.
@@ -494,7 +494,7 @@ fn toggle_current_reports_error_and_does_not_advance_when_write_fails() {
     let document = document_with_missing_file(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false), checkbox(2, false)],
+        items: vec![checkbox(1, "task 1", false), checkbox(2, "task 2", false)],
     }]);
     let mut state = AppState::new(document);
     state.toggle_current();
@@ -522,7 +522,11 @@ fn failed_toggle_does_not_leave_a_phantom_done_item_that_falsely_completes_the_l
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
+        items: vec![
+            checkbox(1, "task 1", true),
+            checkbox(2, "task 2", false),
+            checkbox(3, "task 3", false),
+        ],
     }]);
     let path = document.file_path.clone();
     let original = file_text(&path);
@@ -568,7 +572,7 @@ fn toggle_is_refused_on_a_write_protected_checklist() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let path = document.file_path.clone();
     let before = fs::read(&path).unwrap();
@@ -595,7 +599,7 @@ fn toggle_succeeds_normally_when_disk_content_is_unchanged() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
 
@@ -613,7 +617,7 @@ fn write_back_can_still_overwrite_a_change_that_lands_after_the_diverged_check()
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let path = document.file_path.clone();
     let state = AppState::new(document);
@@ -647,7 +651,7 @@ fn commit_write_updates_content_hash_so_a_second_toggle_does_not_false_positive(
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false), checkbox(2, false)],
+        items: vec![checkbox(1, "task 1", false), checkbox(2, "task 2", false)],
     }]);
     let mut state = AppState::new(document);
 
@@ -671,7 +675,7 @@ fn start_current_reports_error_when_write_fails() {
     let document = document_with_missing_file(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
     state.start_current();
@@ -852,7 +856,7 @@ fn toggle_item_reports_error_when_write_fails() {
     let document = document_with_missing_file(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
     state.toggle_item(0, 0);
@@ -881,12 +885,12 @@ fn toggle_item_click_on_list_complete_screen_stays_when_list_still_done() {
         List {
             title: "Done list".to_string(),
             banner: None,
-            items: vec![checkbox(1, true)],
+            items: vec![checkbox(1, "task 1", true)],
         },
         List {
             title: "Other list".to_string(),
             banner: None,
-            items: vec![checkbox(2, false)],
+            items: vec![checkbox(2, "task 2", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -922,7 +926,7 @@ fn start_current_reports_instead_of_going_silent_on_a_display_only_card() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![display_only(1), checkbox(2, false)],
+        items: vec![display_only(1, "heading 1"), checkbox(2, "task 2", false)],
     }]);
     let mut state = AppState::new(document);
     // AppState::new starts on the first *not-done* item, which skips the
@@ -949,7 +953,7 @@ fn toggle_current_reports_on_a_display_only_card_with_nowhere_to_advance() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false), display_only(2)],
+        items: vec![checkbox(1, "task 1", false), display_only(2, "heading 2")],
     }]);
     let mut state = AppState::new(document);
     state.current_item_index = 1; // the trailing info card

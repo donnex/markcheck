@@ -1,54 +1,14 @@
 use super::*;
-
-fn checkbox(line_number: LineNumber, completed: bool) -> Item {
-    Item {
-        ordinal: None,
-        line_number,
-        depth: 0,
-        section: vec![],
-        display_text: "task".to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::Checkbox(if completed {
-            TaskState::Done
-        } else {
-            TaskState::NotStarted
-        }),
-    }
-}
-
-fn display_only(line_number: LineNumber) -> Item {
-    Item {
-        ordinal: None,
-        line_number,
-        depth: 0,
-        section: vec![],
-        display_text: "heading text".to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::DisplayOnly,
-    }
-}
+use crate::test_support::fixture::{checkbox, display_only, document_with_missing_file, item};
 
 #[test]
 fn search_text_combines_header_body_and_code_blocks() {
     // search_text folds in the title, the body (display_text),
     // and fenced command blocks — the last aren't part of display_text.
     let item = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "restart the service".to_string(),
-        body: vec![],
         header: Some("Reboot".to_string()),
-        code_spans: vec![],
         code_blocks: vec!["systemctl restart svc".to_string()],
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "restart the service", false)
     };
     let text = item.search_text();
     assert!(text.contains("Reboot"), "includes the header");
@@ -61,16 +21,8 @@ fn search_text_combines_header_body_and_code_blocks() {
 
 fn item_at(line_number: LineNumber, depth: usize, kind: ItemKind) -> Item {
     Item {
-        ordinal: None,
-        line_number,
         depth,
-        section: vec![],
-        display_text: "item".to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind,
+        ..item(line_number, "item", kind)
     }
 }
 
@@ -100,7 +52,7 @@ fn descendants_are_the_deeper_run_after_an_item() {
 }
 
 fn item_with_section(line: LineNumber, section: Vec<SubHeading>) -> Item {
-    let mut item = checkbox(line, false);
+    let mut item = checkbox(line, "task", false);
     item.section = section;
     item
 }
@@ -134,7 +86,7 @@ fn sub_section_starts_are_the_divider_positions() {
     let flat = List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false), checkbox(2, false)],
+        items: vec![checkbox(1, "task", false), checkbox(2, "task", false)],
     };
     assert!(flat.sub_section_starts().is_empty());
 }
@@ -269,10 +221,10 @@ fn list_progress_excludes_display_only_items() {
         title: "List".to_string(),
         banner: None,
         items: vec![
-            display_only(1),
-            checkbox(2, true),
-            checkbox(3, false),
-            checkbox(4, true),
+            display_only(1, "heading text"),
+            checkbox(2, "task", true),
+            checkbox(3, "task", false),
+            checkbox(4, "task", true),
         ],
     };
     assert_eq!(
@@ -290,7 +242,11 @@ fn started_tasks_count_as_not_done_in_stats() {
     let mut list = List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
+        items: vec![
+            checkbox(1, "task", true),
+            checkbox(2, "task", false),
+            checkbox(3, "task", false),
+        ],
     };
     list.items[1].kind = ItemKind::Checkbox(TaskState::Started);
     // 3 checkboxes total, only the Done one counts as done.
@@ -304,10 +260,14 @@ fn progress_counts_each_state() {
     let mut list = List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
+        items: vec![
+            checkbox(1, "task", true),
+            checkbox(2, "task", false),
+            checkbox(3, "task", false),
+        ],
     };
     list.items[1].kind = ItemKind::Checkbox(TaskState::Started);
-    list.items.push(checkbox(4, false));
+    list.items.push(checkbox(4, "task", false));
     list.items[3].kind = ItemKind::Checkbox(TaskState::Skipped);
     let progress = list.progress();
     assert_eq!(
@@ -579,28 +539,18 @@ fn rgb_to_256_maps_primaries_and_extremes() {
 
 #[test]
 fn document_progress_sums_across_lists() {
-    let document = Document {
-        file_path: PathBuf::from("test.md"),
-        title: None,
-        has_default_list: false,
-        lists: vec![
-            List {
-                title: "A".to_string(),
-                banner: None,
-                items: vec![checkbox(1, true), checkbox(2, false)],
-            },
-            List {
-                title: "B".to_string(),
-                banner: None,
-                items: vec![display_only(3), checkbox(4, true)],
-            },
-        ],
-        preambles: Default::default(),
-        unshown: Default::default(),
-        anchors: Vec::new(),
-        critical: Default::default(),
-        raw_lines: vec![],
-    };
+    let document = document_with_missing_file(vec![
+        List {
+            title: "A".to_string(),
+            banner: None,
+            items: vec![checkbox(1, "task", true), checkbox(2, "task", false)],
+        },
+        List {
+            title: "B".to_string(),
+            banner: None,
+            items: vec![display_only(3, "heading text"), checkbox(4, "task", true)],
+        },
+    ]);
     assert_eq!(
         document.progress(),
         Progress {

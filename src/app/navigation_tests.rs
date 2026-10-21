@@ -214,7 +214,7 @@ fn shift_l_with_no_incomplete_lists_at_all_reports_it() {
     let mut state = AppState::new(document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true)],
+        items: vec![checkbox(1, "task 1", true), checkbox(2, "task 2", true)],
     }]));
     state.jump_to_next_incomplete_list();
     assert_eq!(
@@ -229,7 +229,7 @@ fn tab_with_no_unfinished_tasks_reports_it() {
     let mut state = AppState::new(document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true)],
+        items: vec![checkbox(1, "task 1", true), checkbox(2, "task 2", true)],
     }]));
     state.jump_to_next_incomplete_task();
     assert_eq!(state.status_message.as_deref(), Some("No unfinished tasks"));
@@ -407,7 +407,11 @@ fn navigate_next_stops_on_display_only_items() {
     let document = document_with_lists(vec![List {
         title: "List 1".to_string(),
         banner: None,
-        items: vec![checkbox(1, false), display_only(2), checkbox(3, false)],
+        items: vec![
+            checkbox(1, "task 1", false),
+            display_only(2, "heading 2"),
+            checkbox(3, "task 3", false),
+        ],
     }]);
     let mut state = AppState::new(document);
     state.navigate_next();
@@ -433,7 +437,7 @@ fn jump_to_list_out_of_range_message_is_singular_for_one_list() {
     let mut state = AppState::new(document_with_lists(vec![List {
         title: "Only".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]));
     state.jump_to_list(3);
     assert_eq!(
@@ -448,12 +452,12 @@ fn completing_last_item_in_list_shows_list_complete() {
         List {
             title: "List 1".to_string(),
             banner: None,
-            items: vec![checkbox(1, false)],
+            items: vec![checkbox(1, "task 1", false)],
         },
         List {
             title: "List 2".to_string(),
             banner: None,
-            items: vec![checkbox(2, false)],
+            items: vec![checkbox(2, "task 2", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -468,7 +472,7 @@ fn completing_all_lists_shows_all_complete() {
     let document = document_with_lists(vec![List {
         title: "List 1".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
     state.toggle_current();
@@ -480,7 +484,7 @@ fn uncompleting_item_returns_to_checklist_screen() {
     let document = document_with_lists(vec![List {
         title: "List 1".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
     state.toggle_current();
@@ -498,7 +502,7 @@ fn list_with_only_display_only_items_never_completes() {
     let document = document_with_lists(vec![List {
         title: "List 1".to_string(),
         banner: None,
-        items: vec![display_only(1), display_only(2)],
+        items: vec![display_only(1, "heading 1"), display_only(2, "heading 2")],
     }]);
     let mut state = AppState::new(document);
     state.navigate_next();
@@ -535,12 +539,12 @@ fn all_complete_k_returns_to_last_list_last_item() {
         List {
             title: "List 1".to_string(),
             banner: None,
-            items: vec![checkbox(1, true)],
+            items: vec![checkbox(1, "task 1", true)],
         },
         List {
             title: "List 2".to_string(),
             banner: None,
-            items: vec![checkbox(2, false), checkbox(3, false)],
+            items: vec![checkbox(2, "task 2", false), checkbox(3, "task 3", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -578,7 +582,7 @@ fn list_with_zero_items_does_not_panic() {
         List {
             title: "Real list".to_string(),
             banner: None,
-            items: vec![checkbox(1, false)],
+            items: vec![checkbox(1, "task 1", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -609,7 +613,7 @@ fn startup_all_done_falls_back_to_first_item() {
     let document = document_with_lists(vec![List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true)],
+        items: vec![checkbox(1, "task 1", true), checkbox(2, "task 2", true)],
     }]);
     let state = AppState::new(document);
     assert_eq!(state.current_list_index, 0);
@@ -622,12 +626,12 @@ fn complete_last_incomplete_list_advance_goes_all_complete() {
         List {
             title: "A".to_string(),
             banner: None,
-            items: vec![checkbox(1, true)],
+            items: vec![checkbox(1, "task 1", true)],
         },
         List {
             title: "B".to_string(),
             banner: None,
-            items: vec![checkbox(2, false)],
+            items: vec![checkbox(2, "task 2", false)],
         },
     ]);
     let mut state = AppState::new(document); // starts on B's undone item
@@ -823,12 +827,12 @@ fn advancing_past_the_last_list_wraps_back_to_an_earlier_incomplete_list() {
         List {
             title: "List 1".to_string(),
             banner: None,
-            items: vec![checkbox(1, false)],
+            items: vec![checkbox(1, "task 1", false)],
         },
         List {
             title: "List 2".to_string(),
             banner: None,
-            items: vec![checkbox(2, false)],
+            items: vec![checkbox(2, "task 2", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -853,12 +857,12 @@ fn advancing_shows_all_complete_only_when_every_list_is_done() {
         List {
             title: "List 1".to_string(),
             banner: None,
-            items: vec![checkbox(1, true)],
+            items: vec![checkbox(1, "task 1", true)],
         },
         List {
             title: "List 2".to_string(),
             banner: None,
-            items: vec![checkbox(2, false)],
+            items: vec![checkbox(2, "task 2", false)],
         },
     ]);
     let mut state = AppState::new(document);

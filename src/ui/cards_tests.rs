@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::TextStyle;
+use crate::test_support::fixture::checkbox;
 
 fn code_bg(color: Color) -> Style {
     Style::default().bg(color)
@@ -152,16 +153,10 @@ fn hard_wrap_breaks_on_display_width_not_character_count() {
 
 fn body_item(body: Vec<BodySpan>, blocks: Vec<&str>, display: &str) -> Item {
     Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
         display_text: display.to_string(),
         body,
-        header: None,
-        code_spans: vec![],
         code_blocks: blocks.into_iter().map(str::to_string).collect(),
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "", false)
     }
 }
 
@@ -174,7 +169,7 @@ fn line_text(line: &Line) -> String {
 
 #[test]
 fn step_number_leads_the_title_when_there_is_one_else_the_body() {
-    let mut item = body_item(vec![], vec![], "take a snapshot");
+    let mut item = checkbox(1, "take a snapshot", false);
     item.ordinal = Some("3.".to_string());
     assert_eq!(body_tokens(&item).0[0].0, "3.");
     let side: Vec<String> = side_card_lines(&item, 40).iter().map(line_text).collect();
@@ -189,7 +184,7 @@ fn step_number_leads_the_title_when_there_is_one_else_the_body() {
 }
 
 fn kind_item(kind: ItemKind) -> Item {
-    let mut item = body_item(vec![], vec![], "item");
+    let mut item = checkbox(1, "item", false);
     item.kind = kind;
     item
 }
@@ -620,19 +615,6 @@ fn short_prose_centered_long_prose_left_aligned() {
 }
 
 #[test]
-fn body_lines_fall_back_to_display_text_when_body_empty() {
-    let item = body_item(vec![], vec![], "plain text");
-    let pairs = span_pairs(&body_lines(&item, 40, code_bg(Color::Magenta)));
-    let text: String = pairs
-        .iter()
-        .map(|(t, _)| t.as_str())
-        .collect::<Vec<_>>()
-        .join("");
-    assert!(text.contains("plain"));
-    assert!(text.contains("text"));
-}
-
-#[test]
 fn current_card_width_is_center_pct_in_stack_and_full_when_narrow() {
     // In the stack tier the center card takes CENTER_CARD_PCT of
     // the width; below NARROW_THRESHOLD it's the full width.
@@ -682,8 +664,8 @@ fn wrap_text_measures_wide_glyphs_in_cells() {
 
 #[test]
 fn breadcrumb_front_truncation_fits_wide_glyphs() {
-    let parent = body_item(vec![], vec![], "漢字漢字漢字");
-    let mut child = body_item(vec![], vec![], "child");
+    let parent = checkbox(1, "漢字漢字漢字", false);
+    let mut child = checkbox(1, "child", false);
     child.line_number = 2;
     child.depth = 1;
     let list = List {

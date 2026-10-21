@@ -26,7 +26,7 @@ fn jump_to_list_resets_item_index_and_screen() {
 
 #[test]
 fn q_offers_the_reset_when_every_task_is_skipped() {
-    let mut skipped = checkbox(1, false);
+    let mut skipped = checkbox(1, "task 1", false);
     skipped.kind = ItemKind::Checkbox(TaskState::Skipped);
     let mut state = AppState::new(document_with_lists(vec![List {
         title: "S".to_string(),
@@ -152,7 +152,7 @@ fn confirm_reset_from_all_complete_cancels_back_to_all_complete() {
     let document = document_with_lists(vec![List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true)],
+        items: vec![checkbox(1, "task 1", true)],
     }]);
     let mut state = AppState::new(document);
     state.view = View::AllComplete;
@@ -227,7 +227,7 @@ fn confirm_quit_reset_yes_stays_running_when_the_write_fails() {
     let mut state = AppState::new(document_with_missing_file(vec![List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true)],
+        items: vec![checkbox(1, "task 1", true), checkbox(2, "task 2", true)],
     }]));
 
     state.handle_key(KeyCode::Char('q'));
@@ -328,7 +328,7 @@ fn reset_all_reports_error_when_write_fails() {
     let document = document_with_missing_file(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, true)],
+        items: vec![checkbox(1, "task 1", true)],
     }]);
     let mut state = AppState::new(document);
     state.handle_key(KeyCode::Char('R'));

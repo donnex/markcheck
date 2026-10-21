@@ -1,18 +1,11 @@
 use super::*;
-use crate::model::{ItemKind, TaskState};
+use crate::test_support::fixture::checkbox;
 
 fn item_with_code(spans: Vec<&str>, blocks: Vec<&str>) -> Item {
     Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "task".to_string(),
-        body: vec![],
-        header: None,
         code_spans: spans.into_iter().map(str::to_string).collect(),
         code_blocks: blocks.into_iter().map(str::to_string).collect(),
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "task", false)
     }
 }
 

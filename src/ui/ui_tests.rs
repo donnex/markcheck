@@ -182,45 +182,12 @@ fn sync_label_says_synced_and_shares_update_labels_lifetime() {
 use crate::model::{
     Document, IconSet, Item, ItemKind, List, Overlay, OverviewTarget, SubHeading, TaskState, View,
 };
+use crate::test_support::fixture::{checkbox, display_only, document_with_missing_file};
 use crate::test_support::shown;
 use crossterm::event::KeyCode;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use std::path::PathBuf;
-
-fn checkbox(line: usize, text: &str, completed: bool) -> Item {
-    Item {
-        ordinal: None,
-        line_number: line,
-        depth: 0,
-        section: vec![],
-        display_text: text.to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::Checkbox(if completed {
-            TaskState::Done
-        } else {
-            TaskState::NotStarted
-        }),
-    }
-}
-
-fn display_only(line: usize, text: &str) -> Item {
-    Item {
-        ordinal: None,
-        line_number: line,
-        depth: 0,
-        section: vec![],
-        display_text: text.to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::DisplayOnly,
-    }
-}
 
 /// Foreground color of the info (`▪`) marker in the overview panel — the
 /// right-hand 30 columns — for the first such cell found. Isolates the
@@ -341,19 +308,21 @@ fn all_complete_card_does_not_green_check_an_unfinished_list() {
 }
 
 fn state_with(lists: Vec<List>) -> AppState {
+    let dir = crate::test_support::unique_temp_path("ui", "render", None);
+    std::fs::create_dir_all(&dir).unwrap();
     let document = Document {
-        file_path: PathBuf::from("render-test.md"),
-        // A short H1 title keeps width-sensitive tab tests stable (the
-        // stem-derived fallback title would eat more columns).
+        // A fixed file name and a short H1 title keep the width-sensitive
+        // title-bar tests stable (the stem-derived fallback title would eat
+        // more columns).
+        file_path: dir.join("render-test.md"),
         title: Some("Doc".to_string()),
-        has_default_list: false,
-        lists,
-        preambles: Default::default(),
-        unshown: Default::default(),
-        anchors: Vec::new(),
-        critical: Default::default(),
-        raw_lines: vec![],
+        ..document_with_missing_file(lists)
     };
+    std::fs::write(
+        &document.file_path,
+        crate::writer::document_contents(&document),
+    )
+    .unwrap();
     let mut state = AppState::new(document);
     // Plain Unicode so assertions don't depend on Nerd Font glyphs.
     state.icons = IconSet::unicode();
@@ -1771,21 +1740,11 @@ fn list_picker_shows_the_sub_section_path() {
     // The go-to-task overlay surfaces each item's `### H3`+
     // sub-section path as a dim `— …` suffix, so tasks are told apart.
     let item = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
         section: vec![crate::model::SubHeading {
             level: 3,
             text: "Pre-flight checks".to_string(),
         }],
-        display_text: "confirm staging is idle".to_string(),
-        body: vec![crate::model::BodySpan::Text(
-            "confirm staging is idle".to_string(),
-        )],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "confirm staging is idle", false)
     };
     let mut state = state_with(vec![List {
         title: "Deploy".to_string(),
@@ -1848,16 +1807,8 @@ fn render_records_code_region_for_click_to_copy() {
     // Rendering the current card records a per-row code region for a
     // fenced block, so a left-click on that row can copy it.
     let item = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "deploy".to_string(),
-        body: vec![crate::model::BodySpan::Text("deploy".to_string())],
-        header: None,
-        code_spans: vec![],
         code_blocks: vec!["kubectl apply".to_string()],
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "deploy", false)
     };
     let mut state = state_with(vec![List {
         title: "Deploy".to_string(),
@@ -1898,11 +1849,6 @@ fn render_records_code_region_for_click_to_copy() {
 fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
     use crate::model::BodySpan;
     let item = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "Run stop-svc then start-svc now.".to_string(),
         body: vec![
             BodySpan::Text("Run".to_string()),
             BodySpan::Code("stop-svc".to_string()),
@@ -1910,10 +1856,8 @@ fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
             BodySpan::Code("start-svc".to_string()),
             BodySpan::Text("now.".to_string()),
         ],
-        header: None,
         code_spans: vec!["stop-svc".to_string(), "start-svc".to_string()],
-        code_blocks: vec![],
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "Run stop-svc then start-svc now.", false)
     };
     let mut state = state_with(vec![List {
         title: "Ops".to_string(),
@@ -1945,18 +1889,8 @@ fn clicking_a_chip_copies_that_chip_not_the_first_on_its_row() {
 #[test]
 fn card_shows_fenced_code_block() {
     let item = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "deploy the service".to_string(),
-        body: vec![crate::model::BodySpan::Text(
-            "deploy the service".to_string(),
-        )],
-        header: None,
-        code_spans: vec![],
         code_blocks: vec!["kubectl apply".to_string()],
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "deploy the service", false)
     };
     let mut state = state_with(vec![List {
         title: "Deploy".to_string(),
@@ -2067,18 +2001,7 @@ fn overview_shows_list_banner() {
 fn note_card_uses_a_rounded_border() {
     // A display-only note card renders with a rounded border (╭)
     // rather than the task card's thick border (┏).
-    let note = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "just a note".to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::DisplayOnly,
-    };
+    let note = display_only(1, "just a note");
     let mut state = state_with(vec![List {
         title: "S".to_string(),
         banner: None,
@@ -2533,18 +2456,7 @@ fn nested_card_breadcrumb_is_depth_colored() {
 fn idle_note_card_border_is_note_colored() {
     // An idle info card's rounded border takes palette.note (blue),
     // matching its note icon, rather than the default color.
-    let note = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "just a note".to_string(),
-        body: vec![],
-        header: None,
-        code_spans: vec![],
-        code_blocks: vec![],
-        kind: ItemKind::DisplayOnly,
-    };
+    let note = display_only(1, "just a note");
     let mut state = state_with(vec![List {
         title: "S".to_string(),
         banner: None,
@@ -3245,15 +3157,23 @@ fn overview_marker_zone_toggles_and_label_zone_navigates() {
         "the row's zones start on the panel border"
     );
 
-    // Clicking the label navigates without toggling. (The icon-click →
-    // toggle path writes the file, so it's exercised in the app tests against a
-    // real temp path; here the render fixture has no backing file.)
     state.handle_left_click(label_x, toggle.y);
     assert_eq!((state.current_list_index, state.current_item_index), (1, 1));
     assert!(matches!(
         state.document.lists[1].items[1].kind,
         ItemKind::Checkbox(TaskState::NotStarted)
     ));
+
+    state.handle_left_click(toggle.x, toggle.y);
+    assert!(matches!(
+        state.document.lists[1].items[1].kind,
+        ItemKind::Checkbox(TaskState::Done)
+    ));
+    let written = std::fs::read_to_string(&state.document.file_path).unwrap();
+    assert!(
+        written.contains("- [x] d"),
+        "the toggle reached the file:\n{written}"
+    );
 }
 
 #[test]
@@ -3691,16 +3611,8 @@ fn a_card_with_a_huge_fenced_block_renders_quickly() {
         .collect::<Vec<_>>()
         .join("\n");
     let item = Item {
-        ordinal: None,
-        line_number: 1,
-        depth: 0,
-        section: vec![],
-        display_text: "deploy".to_string(),
-        body: vec![crate::model::BodySpan::Text("deploy".to_string())],
-        header: None,
-        code_spans: vec![],
         code_blocks: vec![block.clone()],
-        kind: ItemKind::Checkbox(TaskState::NotStarted),
+        ..checkbox(1, "deploy", false)
     };
     let mut state = state_with(vec![List {
         title: "Deploy".to_string(),

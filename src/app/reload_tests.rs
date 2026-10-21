@@ -337,7 +337,7 @@ fn toggle_refuses_and_reloads_when_disk_content_changed_since_load() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let path = document.file_path.clone();
     let mut state = AppState::new(document);

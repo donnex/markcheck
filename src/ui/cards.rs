@@ -1360,15 +1360,6 @@ fn body_tokens(item: &Item) -> BodyTokens {
 }
 
 fn item_body_tokens(item: &Item) -> BodyTokens {
-    if item.body.is_empty() {
-        let tokens = item
-            .display_text
-            .split_whitespace()
-            .map(|w| (w.to_string(), SpanStyle::default(), false))
-            .collect();
-        return (tokens, None);
-    }
-
     let last_meaningful = item.body.iter().rposition(|span| match span {
         BodySpan::Text(t) => !t.trim().is_empty(),
         BodySpan::Styled { text, .. } => !text.trim().is_empty(),

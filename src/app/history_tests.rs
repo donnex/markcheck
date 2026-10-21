@@ -8,7 +8,11 @@ fn startup_selects_started_task_as_first_undone() {
     let mut document = document_with_lists(vec![List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, false), checkbox(3, false)],
+        items: vec![
+            checkbox(1, "task 1", true),
+            checkbox(2, "task 2", false),
+            checkbox(3, "task 3", false),
+        ],
     }]);
     document.lists[0].items[1].kind = ItemKind::Checkbox(TaskState::Started);
     let state = AppState::new(document);
@@ -32,7 +36,11 @@ fn startup_selects_first_undone_item() {
     let document = document_with_lists(vec![List {
         title: "S".to_string(),
         banner: None,
-        items: vec![checkbox(1, true), checkbox(2, true), checkbox(3, false)],
+        items: vec![
+            checkbox(1, "task 1", true),
+            checkbox(2, "task 2", true),
+            checkbox(3, "task 3", false),
+        ],
     }]);
     let state = AppState::new(document);
     assert_eq!(state.current_list_index, 0);
@@ -45,12 +53,12 @@ fn jump_to_list_lands_on_first_undone() {
         List {
             title: "A".to_string(),
             banner: None,
-            items: vec![checkbox(1, false)],
+            items: vec![checkbox(1, "task 1", false)],
         },
         List {
             title: "B".to_string(),
             banner: None,
-            items: vec![checkbox(2, true), checkbox(3, false)],
+            items: vec![checkbox(2, "task 2", true), checkbox(3, "task 3", false)],
         },
     ]);
     let mut state = AppState::new(document);
@@ -449,7 +457,7 @@ fn undo_redo_skip_display_only_items_in_the_snapshot() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![display_only(1), checkbox(2, false)],
+        items: vec![display_only(1, "heading 1"), checkbox(2, "task 2", false)],
     }]);
     let mut state = AppState::new(document);
     state.current_item_index = 1;
@@ -472,7 +480,7 @@ fn redo_is_blocked_when_file_deleted() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
     state.toggle_current();
@@ -494,7 +502,7 @@ fn undo_after_start_then_toggle_reports_marked_started() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false)],
+        items: vec![checkbox(1, "task 1", false)],
     }]);
     let mut state = AppState::new(document);
     state.start_current(); // NotStarted -> Started
@@ -515,7 +523,7 @@ fn undo_and_redo_of_a_skip_name_the_state() {
     let document = document_with_lists(vec![List {
         title: "L".to_string(),
         banner: None,
-        items: vec![checkbox(1, false), checkbox(2, false)],
+        items: vec![checkbox(1, "task 1", false), checkbox(2, "task 2", false)],
     }]);
     let mut state = AppState::new(document);
     state.skip_current();

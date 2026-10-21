@@ -279,7 +279,7 @@ fn o_then_a_non_digit_cancels_the_prompt_and_acts_normally() {
         1,
         &["https://example.com/a", "https://example.com/b"],
     ));
-    doc.lists[0].items.push(checkbox(2, false));
+    doc.lists[0].items.push(checkbox(2, "task 2", false));
     let mut state = AppState::new(doc);
     state.handle_key(KeyCode::Char('o'));
     assert!(state.pending_open_link());

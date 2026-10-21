@@ -162,6 +162,100 @@ impl crate::effect::Host for RecordingHost {
     }
 }
 
+/// Hand-built `Item`s and `Document`s shaped the way the parser builds them,
+/// so a test written against one goes through the same code real cards do.
+pub mod fixture {
+    use crate::model::{BodySpan, Document, Item, ItemKind, LineNumber, List, TaskState};
+
+    /// An item whose body is `text` as one plain run, the way the parser
+    /// records a line of prose in both `display_text` and `body`.
+    pub(crate) fn item(line_number: LineNumber, text: &str, kind: ItemKind) -> Item {
+        Item {
+            ordinal: None,
+            line_number,
+            depth: 0,
+            section: vec![],
+            display_text: text.to_string(),
+            body: if text.is_empty() {
+                vec![]
+            } else {
+                vec![BodySpan::Text(text.to_string())]
+            },
+            header: None,
+            code_spans: vec![],
+            code_blocks: vec![],
+            kind,
+        }
+    }
+
+    /// A `[ ]` task, or a `[x]` one when `completed`.
+    pub(crate) fn checkbox(line_number: LineNumber, text: &str, completed: bool) -> Item {
+        let state = if completed {
+            TaskState::Done
+        } else {
+            TaskState::NotStarted
+        };
+        item(line_number, text, ItemKind::Checkbox(state))
+    }
+
+    /// A plain-bullet note.
+    pub(crate) fn display_only(line_number: LineNumber, text: &str) -> Item {
+        item(line_number, text, ItemKind::DisplayOnly)
+    }
+
+    /// The source lines a hand-built `lists` stands for: each item's own line
+    /// carries the bullet and checkbox its `kind` claims, so a write-back
+    /// rewrites a real marker on the right line. Lines no item claims are
+    /// blank.
+    pub(crate) fn raw_lines_for(lists: &[List]) -> Vec<String> {
+        let items = || lists.iter().flat_map(|list| list.items.iter());
+        let max_line = items().map(|item| item.line_number).max().unwrap_or(0);
+        let mut lines = vec!["\n".to_string(); max_line];
+        for item in items() {
+            let marker = match item.kind {
+                ItemKind::Checkbox(TaskState::NotStarted) => "[ ] ",
+                ItemKind::Checkbox(TaskState::Started) => "[/] ",
+                ItemKind::Checkbox(TaskState::Done) => "[x] ",
+                ItemKind::Checkbox(TaskState::Skipped) => "[-] ",
+                ItemKind::DisplayOnly => "",
+            };
+            let indent = "  ".repeat(item.depth);
+            lines[item.line_number - 1] = format!("{indent}- {marker}{}\n", item.display_text);
+        }
+        lines
+    }
+
+    /// A document from hand-built `lists`, backed by a real file holding
+    /// exactly the Markdown those lists describe, so toggling a task writes
+    /// it and a test can read the file back.
+    pub(crate) fn document_with_lists(lists: Vec<List>) -> Document {
+        let document = document_with_missing_file(lists);
+        std::fs::write(
+            &document.file_path,
+            crate::writer::document_contents(&document),
+        )
+        .unwrap();
+        document
+    }
+
+    /// Like `document_with_lists`, but the backing file is never created, so
+    /// `write_back` always fails.
+    pub(crate) fn document_with_missing_file(lists: Vec<List>) -> Document {
+        let raw_lines = raw_lines_for(&lists);
+        Document {
+            file_path: super::unique_temp_path("fixture", "", Some("md")),
+            title: None,
+            has_default_list: false,
+            lists,
+            preambles: Default::default(),
+            unshown: Default::default(),
+            anchors: Vec::new(),
+            critical: Default::default(),
+            raw_lines,
+        }
+    }
+}
+
 /// Random Markdown for the parser and write-back property tests (#79).
 pub mod markdown {
     use proptest::prelude::*;
