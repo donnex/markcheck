@@ -144,6 +144,14 @@ jobs:
         with:
           tool: cargo-about@0.9.2
 
+      # install-action has no prebuilt cargo-about for every target (none for
+      # x86_64 macOS at 0.9.2), and its cargo-binstall fallback then builds it
+      # without the `cli` feature, which leaves out the binary yet reports
+      # success. Build it with that feature wherever none was installed; keep
+      # the version in step with the pin above.
+      - name: Build cargo-about where no prebuilt one was installed
+        run: command -v cargo-about >/dev/null || cargo install --locked cargo-about@0.9.2 --features cli
+
       - name: Generate third-party license notices
         run: cargo about generate --locked --target "$TARGET" about.hbs -o THIRD-PARTY-LICENSES
 
