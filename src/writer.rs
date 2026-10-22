@@ -720,9 +720,6 @@ pub fn write_back(document: &Document) -> io::Result<Saved> {
     };
     let renamed = fs::rename(&temp_path, &document.file_path);
     let in_place = settle_rename(renamed, &temp_path, &document.file_path, &contents)?;
-    if !in_place {
-        sync_parent_dir(&document.file_path);
-    }
     Ok(Saved { contents, in_place })
 }
 
@@ -736,6 +733,7 @@ fn settle_rename(
     contents: &str,
 ) -> io::Result<bool> {
     let Err(err) = renamed else {
+        sync_parent_dir(target);
         return Ok(false);
     };
     let _ = fs::remove_file(temp_path);

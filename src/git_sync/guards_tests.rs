@@ -641,6 +641,21 @@ fn the_own_commit_record_keeps_the_latest_commits_once_each() {
 }
 
 #[test]
+fn the_own_commit_record_skips_blank_and_non_hex_lines() {
+    let work = init_repo_without_remote();
+    let sha = "a".repeat(40);
+    fs::write(
+        git_dir(&work).unwrap().join(OWN_COMMITS_FILE),
+        format!("not a sha\n\n  {sha}  \nHEAD\n"),
+    )
+    .unwrap();
+
+    let own = own_commits(&work).unwrap();
+
+    assert_eq!(own, HashSet::from([sha]));
+}
+
+#[test]
 fn an_unreadable_own_commit_record_refuses_instead_of_guessing() {
     let (work, _remote) = init_repo_with_remote();
     fs::write(work.join("tracked.md"), "- [x] one\n").unwrap();

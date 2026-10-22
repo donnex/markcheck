@@ -1141,6 +1141,21 @@ fn remove_leftovers_keeps_a_young_file_whose_pid_looks_gone() {
     );
     assert!(young.exists());
 
+    let past_a_commit_timeout =
+        std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 60);
+    fs::File::options()
+        .write(true)
+        .open(&young)
+        .unwrap()
+        .set_modified(past_a_commit_timeout)
+        .unwrap();
+    assert_eq!(
+        remove_leftovers(&dir, "markcheck-index-"),
+        0,
+        "a sync stuck in a commit's 300-second timeout still holds its files"
+    );
+    assert!(young.exists());
+
     age_past_the_sweep(&young);
     assert_eq!(remove_leftovers(&dir, "markcheck-index-"), 1);
     assert!(!young.exists());
@@ -1406,6 +1421,15 @@ fn an_in_place_write_that_fails_part_way_leaves_a_whole_checklist() {
     assert_eq!(err.kind(), io::ErrorKind::StorageFull);
     assert_eq!(file.text(), "- [x] a\n- [ ] b\n", "never truncated");
     assert!(file.calls.borrow().is_empty(), "{:?}", file.calls.borrow());
+}
+
+#[test]
+fn an_in_place_write_to_a_real_file_cuts_it_to_length() {
+    let target = write_temp_file("- [ ] a\n- [ ] b\n");
+
+    write_in_place(&target, "- [x] a\n").unwrap();
+
+    assert_eq!(fs::read_to_string(&target).unwrap(), "- [x] a\n");
 }
 
 #[test]

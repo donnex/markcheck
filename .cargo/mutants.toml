@@ -8,12 +8,26 @@ additional_cargo_test_args = ["--bins"]
 exclude_re = [
     # O_NOFOLLOW and O_NONBLOCK share no bits, so `^` gives the same flags.
     'replace \| with \^ in (open_regular|write_in_place)',
+    # W_OK and X_OK share no bits either.
+    'replace \| with \^ in save_route',
     # write_back refuses a non-regular path before it can reach the in-place
     # write; its own flags guard only a swap racing that check.
     'replace \| with & in write_in_place',
     'delete ! in write_in_place',
-    # An fsync of the directory has no effect a test can observe.
+    # An fsync has no effect a test can observe: of the directory, or of the
+    # file after an in-place write (`rewrite`'s call order is pinned with a
+    # fake file instead).
     'sync_parent_dir',
+    'replace <impl Rewritable for fs::File>::sync_all -> io::Result<\(\)> with Ok\(\(\)\)',
+    # A sticky directory refusing the rename needs both it and the checklist
+    # owned by other users, which a test can't create; sticky_refuses_rename
+    # and save_route_for are pinned on their own.
+    'delete match arm \(Ok\(dir_meta\), Ok\(file_meta\)\) in save_route',
+    # A passwd entry with an empty name can't be created by a test.
+    'replace match guard !name\.is_empty\(\) with true in user_label',
+    # A marker opened at the very nanosecond the clock puts the boot at
+    # can't be arranged, since boot time is derived from the current time.
+    'replace < with <= in marker_is_stale',
     # Lock acquisition branches reached only by a race with another
     # instance, or by the private lock directory turning unwritable mid-run.
     'replace match guard err\.kind\(\) == io::ErrorKind::AlreadyExists with (true|false) in WriteLock::acquire',
