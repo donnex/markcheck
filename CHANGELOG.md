@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-22
+
 ### Added
 
 - `markcheck --doctor [FILE]` prints what markcheck detects about your setup and why, one `ok` or `warn` line per check, then exits without opening anything. When copying, colors, links or git sync misbehave on a new machine, nothing showed what markcheck had decided: which palette it picked from `COLORTERM` and `TERM`, whether `y` copies through the system clipboard or OSC 52 (and wrapped for tmux or screen), which config file it read, where its write lock lives, which editor `e` and which browser `o` would run, or, for a checklist, whether git sync would be on, which git and identity it would use, where it pushes and whether the remote has changes you haven't pulled. The other flags apply as in a real run, and the exit status is 0 when every check is ok and 3 when any warns, so the output can go straight into a bug report or a script. (#195)
