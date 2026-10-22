@@ -2827,10 +2827,10 @@ fn ctrl_z_right_after_a_toggle_pushes_it_before_stopping() {
         head, "checklist.md: Check \"alpha\"",
         "the toggle must be on the remote while markcheck is stopped"
     );
-    assert!(
-        !raw.contains("git sync paused while suspended"),
-        "a sync that landed needs no warning"
-    );
+    // No assertion on the "paused while suspended" line: the push can land
+    // while the worker is still finishing up past the 5 s wait on a loaded
+    // runner, and then the line is right. The unit tests in quit_tests.rs
+    // cover when it shows.
     session.wait_for_screen("Resumed");
     session.key("q");
     assert!(session.finish().0);
