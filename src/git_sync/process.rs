@@ -2,6 +2,7 @@
 //! scratch files, a session of its own with no controlling terminal, and a
 //! timeout that kills the whole process group.
 
+use rustix::process::{Pid, Signal};
 use std::cell::RefCell;
 use std::fs;
 use std::io::{self, Write as _};
@@ -72,7 +73,7 @@ impl Children {
     /// Stops every running child's process group with `signal` (`SIGTERM` or
     /// `SIGKILL`) and refuses new ones from now on. Returns whether any child
     /// was running.
-    pub(super) fn abandon(&self, signal: libc::c_int) -> bool {
+    pub(super) fn abandon(&self, signal: Signal) -> bool {
         let mut inner = self.lock();
         inner.abandoned = true;
         for &pid in &inner.pids {
@@ -230,7 +231,7 @@ fn run_with_optional_stdin(
 /// child's PID, and so the group ID, can be recycled onto something unrelated.
 /// Returns whether the child outlived the grace period and had to be killed.
 fn terminate_and_reap(children: &Children, child: &mut Child, grace: Duration) -> bool {
-    signal_group(child.id(), libc::SIGTERM);
+    signal_group(child.id(), Signal::TERM);
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         if matches!(children.try_wait(child), Ok(Some(_))) {
@@ -238,18 +239,17 @@ fn terminate_and_reap(children: &Children, child: &mut Child, grace: Duration) -
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    signal_group(child.id(), libc::SIGKILL);
+    signal_group(child.id(), Signal::KILL);
     let _ = child.kill();
     children.forget(child);
     let _ = child.wait();
     true
 }
-fn signal_group(pid: u32, signal: libc::c_int) {
-    // SAFETY: `killpg` only sends a signal; it touches no memory. A group
-    // that is already gone just makes it return `ESRCH`, which is ignored.
-    // `pid` came from `Child::id`, a `pid_t` to begin with.
-    unsafe {
-        libc::killpg(pid as libc::pid_t, signal);
+/// A group that is already gone makes `killpg` fail with `ESRCH`, which is
+/// ignored.
+fn signal_group(pid: u32, signal: Signal) {
+    if let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) {
+        let _ = rustix::process::kill_process_group(pid, signal);
     }
 }
 include!("../git_env.rs");

@@ -903,10 +903,6 @@ where
 /// delivered before `kill` returns, so this returns only once it's been
 /// resumed.
 fn stop_self() -> Result<(), String> {
-    // SAFETY: `getpid` and `kill` take plain integers and touch no memory.
-    if unsafe { libc::kill(libc::getpid(), libc::SIGTSTP) } == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error().to_string())
-    }
+    rustix::process::kill_process(rustix::process::getpid(), rustix::process::Signal::TSTP)
+        .map_err(|err| std::io::Error::from(err).to_string())
 }

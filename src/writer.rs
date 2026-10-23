@@ -140,8 +140,7 @@ fn foreign_owner_for(target: &Path, current_uid: u32) -> Option<u32> {
 
 /// The effective UID, which is what a save's temp file will be owned by.
 fn current_uid() -> u32 {
-    // SAFETY: `geteuid` takes no arguments, touches no memory and can't fail.
-    unsafe { libc::geteuid() }
+    rustix::process::geteuid().as_raw()
 }
 
 /// How a save of the checklist will go, so the startup warning can say so
@@ -174,8 +173,11 @@ pub fn save_route(target: &Path) -> SaveRoute {
         _ => false,
     };
     save_route_for(
-        may_access(target, libc::W_OK),
-        may_access(dir, libc::W_OK | libc::X_OK),
+        may_access(target, rustix::fs::Access::WRITE_OK),
+        may_access(
+            dir,
+            rustix::fs::Access::WRITE_OK | rustix::fs::Access::EXEC_OK,
+        ),
         rename_refused,
     )
 }
@@ -196,14 +198,9 @@ fn sticky_refuses_rename(dir_mode: u32, dir_owner: u32, file_owner: u32, uid: u3
     dir_mode & 0o1000 != 0 && uid != 0 && dir_owner != uid && file_owner != uid
 }
 
-/// Whether the effective user may access `path` in `mode` (`W_OK`, ...).
-fn may_access(path: &Path, mode: libc::c_int) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    // SAFETY: `path` is a NUL-terminated string that outlives the call.
-    unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), mode, libc::AT_EACCESS) == 0 }
+/// Whether the effective user may access `path` in `mode` (`WRITE_OK`, ...).
+fn may_access(path: &Path, mode: rustix::fs::Access) -> bool {
+    rustix::fs::accessat(rustix::fs::CWD, path, mode, rustix::fs::AtFlags::EACCESS).is_ok()
 }
 
 /// `uid`'s user name, or the number when it has none.

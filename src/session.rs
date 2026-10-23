@@ -30,16 +30,13 @@ pub(crate) fn spawn_in_new_session(mut cmd: Command) -> io::Result<Child> {
 /// control, a terminal or tmux running markcheck itself, or `ssh -t`. See
 /// [`stop_takes_effect`].
 pub(crate) fn can_stop_for_shell() -> bool {
-    // SAFETY: `getpgrp`, `getsid` and `getppid` take plain integers and touch
-    // no memory.
-    let (group, session, parent_session) = unsafe {
-        (
-            libc::getpgrp(),
-            libc::getsid(0),
-            libc::getsid(libc::getppid()),
-        )
-    };
-    stop_takes_effect(group, session, parent_session)
+    use rustix::process::{Pid, getpgrp, getppid, getsid};
+    let raw = |sid: rustix::io::Result<Pid>| sid.map_or(-1, Pid::as_raw_pid);
+    stop_takes_effect(
+        getpgrp().as_raw_pid(),
+        raw(getsid(None)),
+        getppid().map_or(-1, |parent| raw(getsid(Some(parent)))),
+    )
 }
 
 /// Whether a process in `group` and `session`, whose parent is in

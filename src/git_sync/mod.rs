@@ -668,8 +668,11 @@ impl GitSync {
         self.queued = None;
         self.retry = None;
         self.in_flight = None;
-        self.children
-            .abandon(if force { libc::SIGKILL } else { libc::SIGTERM })
+        self.children.abandon(if force {
+            rustix::process::Signal::KILL
+        } else {
+            rustix::process::Signal::TERM
+        })
     }
 }
 

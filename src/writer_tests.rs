@@ -1830,7 +1830,10 @@ fn save_route_follows_what_the_file_and_folder_allow() {
 fn a_bare_file_name_is_judged_by_the_current_folder() {
     let missing = Path::new("markcheck-no-such-checklist.md");
     assert_eq!(save_route(missing), SaveRoute::Replace);
-    assert!(!may_access(Path::new("nul\0byte"), libc::W_OK));
+    assert!(!may_access(
+        Path::new("nul\0byte"),
+        rustix::fs::Access::WRITE_OK
+    ));
 }
 
 #[test]
