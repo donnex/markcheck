@@ -1,6 +1,6 @@
 [package]
 name = "markcheck"
-version = "1.4.1"
+version = "1.4.2"
 edition = "2024"
 rust-version = "1.88"
 description = "A pilot-checklist TUI for Markdown runbooks"
